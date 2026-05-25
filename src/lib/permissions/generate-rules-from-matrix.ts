@@ -36,24 +36,24 @@ const CAPABILITY_TO_RULE_ACTION: Record<CapabilityKey, string> = {
   create: 'create',
   edit: 'update',
   delete: 'delete',
-  approve: 'update /* approve = update + status guard (ต้องเขียน guard เอง) */',
+  approve: 'update /* approve = update + status guard (write guard manually) */',
 };
 
 const CAPABILITY_LABEL_TH: Record<CapabilityKey, string> = {
-  view: 'ดู',
-  create: 'สร้าง',
-  edit: 'แก้ไข',
-  delete: 'ลบ',
-  approve: 'อนุมัติ',
+  view: 'view',
+  create: 'create',
+  edit: 'edit',
+  delete: 'delete',
+  approve: 'approve',
 };
 
 const DOMAIN_HEADER_TH: Record<ModuleFirestoreSpec['domain'], string> = {
-  commercial: 'Commercial (การค้า)',
-  ops: 'Operations (ปฏิบัติการ)',
-  store: 'Store / Vendor (คลัง + คู่ค้า)',
-  hr: 'HR & Payroll (บุคคล)',
-  accounting: 'Accounting (บัญชี)',
-  admin: 'Administration (ระบบ)',
+  commercial: 'Commercial',
+  ops: 'Operations',
+  store: 'Store / Vendor',
+  hr: 'HR & Payroll',
+  accounting: 'Accounting',
+  admin: 'Administration',
   portal: 'Client Portal',
   self: 'Self / Overview',
 };
@@ -657,4 +657,19 @@ export function generateFullSimplifiedRules(opts: GenerateFullRulesOptions): Gen
       estimatedBytes: new TextEncoder().encode(fullText).length,
     },
   };
+}
+
+/**
+ * Firebase Console rules editor requires ASCII-only content for publish to succeed.
+ * Strip non-ASCII chars; replace common ones (Thai/emoji) with ASCII equivalents first.
+ * Call this on the FINAL text right before writing/pasting into Console.
+ */
+export function sanitizeRulesToAscii(text: string): string {
+  return text
+    .replace(/\u26a0\ufe0f|\u26a0/g, '!')
+    .replace(/\u2014|\u2013/g, '-')
+    .replace(/\u2018|\u2019/g, "'")
+    .replace(/\u201c|\u201d/g, '"')
+    .replace(/\u00d7/g, 'x')
+    .replace(/[^\x00-\x7F]+/g, '');
 }

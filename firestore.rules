@@ -2,15 +2,15 @@ rules_version = '2';
 // =====================================================================
 // GENERATED firestore.rules (simplified, matrix-driven)
 // Source: /system-admin/menu-permissions + module-to-firestore-paths.ts
-// Generated: 2026-05-25T05:42:07.442Z
+// Generated: 2026-05-25T08:30:50.561Z
 // By: cli
 // =====================================================================
-// ⚠️ Pre-flight checklist ก่อน deploy:
-//   1. ทุก block ที่มี comment '⚠️ PRESERVE-FROM-ORIGINAL' ต้องวาง match block เดิม
-//      จาก firestore.rules ปัจจุบัน (portal scope / status guard / business logic)
-//   2. ทดสอบใน emulator: firebase emulators:start --only firestore
-//   3. ทดสอบบทบาทสำคัญ: admin / hr_manager / accounting_officer / client_user
-//   4. Deploy: npm run deploy:rules (รอ Google API 503 หาย)
+// ! Pre-flight checklist  deploy:
+//   1.  block  comment '! PRESERVE-FROM-ORIGINAL'  match block 
+//       firestore.rules  (portal scope / status guard / business logic)
+//   2.  emulator: firebase emulators:start --only firestore
+//   3. : admin / hr_manager / accounting_officer / client_user
+//   4. Deploy: npm run deploy:rules ( Google API 503 )
 // =====================================================================
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -39,7 +39,7 @@ service cloud.firestore {
         || ('userType' in d && d.userType == 'customer_portal')
       );
     }
-    /** Single role source — assignedRoleKey only; normalize 'operation_manager' typo */
+    /** Single role source - assignedRoleKey only; normalize 'operation_manager' typo */
     function canonicalAssignedRoleKey(d) {
       return d != null && 'assignedRoleKey' in d && d.assignedRoleKey is string && d.assignedRoleKey.size() > 0
         ? (d.assignedRoleKey.lower() == 'operation_manager' ? 'operations_manager' : d.assignedRoleKey.lower())
@@ -55,11 +55,11 @@ service cloud.firestore {
     }
     function isAdmin() { return isInternalUser() && userRole() == 'system_admin'; }
     function isAccounting() { return isInternalUser() && (userRole() == 'accounting_manager' || userRole() == 'accounting_officer'); }
-    /** ใช้ใน append-only collection (audit logs, etc.) */
+    /**  append-only collection (audit logs, etc.) */
     function internalStaffFirestoreActor() {
       return isSignedIn() && exists(userRef()) && isInternalTypeData(get(userRef()).data) && !isCustomerPortalData(get(userRef()).data);
     }
-    /** Portal scope helper — admin วาง preserved blocks ของ portal เอง */
+    /** Portal scope helper - admin  preserved blocks  portal  */
     function portalCustomerIdOk() {
       return isClientPortalUser() && 'customerId' in userData() && userData().customerId is string;
     }
@@ -67,7 +67,7 @@ service cloud.firestore {
       return portalCustomerIdOk() && resource.data.customerId == userData().customerId;
     }
     // =====================================================================
-    // PRESERVED HELPERS — ดึงจาก firestore.rules เดิม (ใช้โดย preserved match blocks)
+    // PRESERVED HELPERS -  firestore.rules  ( preserved match blocks)
     // =====================================================================
     function canReadCustomers() {
       return hasUserDoc()
@@ -928,150 +928,150 @@ service cloud.firestore {
     // =====================================================================
     // MATRIX-DERIVED GATES (auto-generated from /system-admin/menu-permissions)
     // =====================================================================
-    // ===== Commercial (การค้า) — Gates =====
-    // ----- ทะเบียนลูกค้า (customers) -----
+    // ===== Commercial - Gates =====
+    // -----  (customers) -----
     function canFullCustomers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- ใบเสนอราคา (quotations) -----
+    // -----  (quotations) -----
     function canReadQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
     function canCreateQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canEditQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canDeleteQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canApproveQuotations() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- สัญญาหลัก (main_contracts) -----
+    // -----  (main_contracts) -----
     function canReadMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
     function canCreateMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canEditMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canDeleteMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canApproveMainContracts() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- ใบสั่งซื้อลูกค้า (customer_pos) -----
+    // -----  (customer_pos) -----
     function canReadCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
     function canCreateCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canEditCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canDeleteCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canApproveCustomerPos() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- เงื่อนไขการขาย (sales_contract_terms) -----
+    // -----  (sales_contract_terms) -----
     function canFullSalesContractTerms() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- กฎการคำนวณราคา (rate_conditions) -----
+    // -----  (rate_conditions) -----
     function canFullRateConditions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- ประมาณการกำไร (profit_estimates) -----
+    // -----  (profit_estimates) -----
     function canFullProfitEstimates() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ===== Operations (ปฏิบัติการ) — Gates =====
-    // ----- Waves/รอบงาน (waves) -----
+    // ===== Operations - Gates =====
+    // ----- Waves/ (waves) -----
     function canFullWaves() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
-    // ----- การมอบหมาย (assignments) -----
+    // -----  (assignments) -----
     function canFullAssignments() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
-    // ----- การส่งตัว (mobilization) -----
+    // -----  (mobilization) -----
     function canFullMobilization() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
-    // ----- ใบแจ้งหนี้ (commercial invoice) (draft_invoices) -----
+    // -----  (commercial invoice) (draft_invoices) -----
     function canReadCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'sales_manager', 'operations_manager', 'accounting_manager']); }
     function canCreateCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
     function canEditCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
     function canDeleteCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
     function canApproveCommercialInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
-    // ----- Petty Cash หน้างาน (operations_petty_cash) -----
+    // ----- Petty Cash  (operations_petty_cash) -----
     function canFullOperationsPettyCash() { return (isInternalUser() && userRole() in ['system_admin', 'operations_manager']); }
-    // ===== Store / Vendor (คลัง + คู่ค้า) — Gates =====
-    // ----- คู่ค้า (vendors) -----
+    // ===== Store / Vendor - Gates =====
+    // -----  (vendors) -----
     function canFullVendors() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- ใบสั่งซื้อ (PO) (purchases) -----
+    // -----  (PO) (purchases) -----
     function canFullPurchases() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- คลังอุปกรณ์ (store_inventory) -----
+    // -----  (store_inventory) -----
     function canFullStoreInventory() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
-    // ===== HR & Payroll (บุคคล) — Gates =====
-    // ----- ทะเบียนคนงาน (workers) -----
+    // ===== HR & Payroll - Gates =====
+    // -----  (workers) -----
     function canReadWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
     function canCreateWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
     function canEditWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
     function canDeleteWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canApproveWorkers() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
-    // ----- ตำแหน่งงาน (positions) -----
+    // -----  (positions) -----
     function canReadPositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
     function canCreatePositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canEditPositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canDeletePositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canApprovePositions() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- พนักงานออฟฟิศ (office_staff) -----
+    // -----  (office_staff) -----
     function canFullOfficeStaff() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- แคตตาล็อกเอกสารบุคลากร (worker_documents) -----
+    // -----  (worker_documents) -----
     function canReadWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
     function canCreateWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canEditWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canDeleteWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canApproveWorkerDocCatalog() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- เงื่อนไขต้นทุนแรงงาน (labor_cost_contract_terms) -----
+    // -----  (labor_cost_contract_terms) -----
     function canFullLaborCostContractTerms() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- ลงเวลา (timesheets) -----
+    // -----  (timesheets) -----
     function canReadTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
     function canCreateTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
     function canEditTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
     function canDeleteTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
     function canApproveTimesheets() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
-    // ----- จ่ายเงินคนงาน (worker_payroll) -----
+    // -----  (worker_payroll) -----
     function canFullWorkerPayroll() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- รอบจ่ายคนงาน (payroll_runs) -----
+    // -----  (payroll_runs) -----
     function canFullPayrollRuns() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- สลิปเงินเดือนคนงาน (payslips) -----
+    // -----  (payslips) -----
     function canFullPayslips() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- เงินเดือนออฟฟิศ (office_payroll) -----
+    // -----  (office_payroll) -----
     function canFullOfficePayroll() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- ไฟล์โอนเงินธนาคาร (payment_export_batches) -----
+    // -----  (payment_export_batches) -----
     function canFullPaymentExportBatches() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- เบิกเงินล่วงหน้า (cash_advances) -----
+    // -----  (cash_advances) -----
     function canReadCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer', 'employee_self']); }
     function canCreateCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer', 'employee_self']); }
     function canEditCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canDeleteCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canApproveCashAdvanceRequests() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ----- ศูนย์กลาง HR (configuration) (hr_hub) -----
+    // -----  HR (configuration) (hr_hub) -----
     function canFullHrHub() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ===== Self / Overview — Gates =====
-    // ----- โปรไฟล์ของฉัน (employee_self_profile) -----
+    // ===== Self / Overview - Gates =====
+    // -----  (employee_self_profile) -----
     function canReadEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer', 'employee_self']); }
     function canCreateEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer', 'employee_self']); }
     function canEditEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer', 'employee_self']); }
     function canDeleteEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin']); }
     function canApproveEmployeeSelfProfile() { return (isInternalUser() && userRole() in ['system_admin']); }
-    // ----- แดชบอร์ดหลัก (overview_dashboard) -----
+    // -----  (overview_dashboard) -----
     function canReadOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
     function canCreateOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canEditOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canDeleteOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canApproveOverviewDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    // ===== Accounting (บัญชี) — Gates =====
-    // ----- แดชบอร์ดบัญชี (accounting_dashboard) -----
+    // ===== Accounting - Gates =====
+    // -----  (accounting_dashboard) -----
     function canFullAccountingDashboard() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    // ----- ใบวางบิลลูกหนี้ (billing_notes) -----
+    // -----  (billing_notes) -----
     function canFullBillingNotes() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    // ----- ใบกำกับภาษี (tax_invoices) -----
+    // -----  (tax_invoices) -----
     function canReadTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canCreateTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     function canEditTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function canDeleteTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
     function canApproveTaxInvoices() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    // ----- ใบเสร็จรับเงิน (receipts) -----
+    // -----  (receipts) -----
     function canFullReceipts() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    // ----- รับวางบิลเจ้าหนี้ (ap_bills) -----
+    // -----  (ap_bills) -----
     function canFullApBills() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    // ----- ลูกหนี้การค้า (AR) (accounts_receivable) -----
+    // -----  (AR) (accounts_receivable) -----
     function canFullAccountsReceivable() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    // ----- เจ้าหนี้การค้า (AP) (accounts_payable) -----
+    // -----  (AP) (accounts_payable) -----
     function canFullAccountsPayable() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    // ----- หัก ณ ที่จ่าย (withholding_tax_items) -----
+    // -----    (withholding_tax_items) -----
     function canFullWithholdingTaxItems() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    // ----- สมุดรับ-จ่าย (cashbook) -----
+    // ----- - (cashbook) -----
     function canFullCashbook() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    // ----- บัญชีธนาคาร (bank_accounts) -----
+    // -----  (bank_accounts) -----
     function canFullBankAccounts() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    // ----- เงินเดือนผู้บริหาร (executive_payroll) -----
+    // -----  (executive_payroll) -----
     function canFullExecutivePayroll() { return (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']); }
-    // ===== Administration (ระบบ) — Gates =====
-    // ----- จัดการระบบ (system_admin) -----
+    // ===== Administration - Gates =====
+    // -----  (system_admin) -----
     function canFullSystemAdmin() { return (isInternalUser() && userRole() in ['system_admin']); }
-    // ----- เลขที่เอกสาร (document_numbering) -----
+    // -----  (document_numbering) -----
     function canFullDocumentNumbering() { return (isInternalUser() && userRole() in ['system_admin']); }
-    // ----- ประวัติกิจกรรม (audit_logs) -----
+    // -----  (audit_logs) -----
     function canFullAuditLogs() { return (isInternalUser() && userRole() in ['system_admin']); }
-    // ===== Client Portal — Gates =====
+    // ===== Client Portal - Gates =====
     // ----- Client Portal (client_portal) -----
     function canReadClientPortal() { return (isInternalUser() && userRole() in ['system_admin']) || (isClientPortalUser() && userRole() in ['client_user']); }
     function canCreateClientPortal() { return (isInternalUser() && userRole() in ['system_admin']); }
@@ -1081,7 +1081,7 @@ service cloud.firestore {
     // =====================================================================
     // MATCH BLOCKS (matrix-gated; simple collections only)
     // =====================================================================
-    // ===== Commercial (การค้า) — Match blocks =====
+    // ===== Commercial - Match blocks =====
     match /customers/{id} {
       allow read, write: if canFullCustomers();
     }
@@ -1142,7 +1142,7 @@ service cloud.firestore {
     match /profit_estimates/{id} {
       allow read, write: if canFullProfitEstimates();
     }
-    // ===== Operations (ปฏิบัติการ) — Match blocks =====
+    // ===== Operations - Match blocks =====
     match /waves/{id} {
       allow read, write: if canFullWaves();
     }
@@ -1161,7 +1161,7 @@ service cloud.firestore {
     match /petty_cash_entries/{id} {
       allow read, write: if canFullOperationsPettyCash();
     }
-    // ===== Store / Vendor (คลัง + คู่ค้า) — Match blocks =====
+    // ===== Store / Vendor - Match blocks =====
     match /vendors/{id} {
       allow read, write: if canFullVendors();
     }
@@ -1195,7 +1195,7 @@ service cloud.firestore {
     match /store_return_slips/{id} {
       allow read, write: if canFullStoreInventory();
     }
-    // ===== HR & Payroll (บุคคล) — Match blocks =====
+    // ===== HR & Payroll - Match blocks =====
     match /workers/{workerId}/{document=**} {
       allow read:   if canReadWorkers();
       allow create: if canCreateWorkers();
@@ -1280,7 +1280,7 @@ service cloud.firestore {
     match /payroll_wht_certificates/{id} {
       allow read, write: if canFullWorkerPayroll();
     }
-    // NOTE: ทับซ้อน worker_payroll — เลือกใช้ฟังก์ชันใดฟังก์ชันหนึ่ง
+    // NOTE:  worker_payroll - 
     match /payroll_runs/{id} {
       allow read, write: if canFullPayrollRuns();
     }
@@ -1303,10 +1303,10 @@ service cloud.firestore {
     match /hr_configuration/{docId} {
       allow read, write: if canFullHrHub();
     }
-    // ===== Self / Overview — Match blocks =====
-    // [overview_dashboard] — แดชบอร์ดหลัก: ไม่มี Firestore path (ไม่มี collection — เป็นแค่หน้า aggregate; ใช้ filter UI เท่านั้น)
-    // ===== Accounting (บัญชี) — Match blocks =====
-    // [accounting_dashboard] — แดชบอร์ดบัญชี: ไม่มี Firestore path (ไม่มี collection ผูกตรง — ใช้กรอง UI ในเมนูเท่านั้น)
+    // ===== Self / Overview - Match blocks =====
+    // [overview_dashboard] - :  Firestore path ( collection -  aggregate;  filter UI )
+    // ===== Accounting - Match blocks =====
+    // [accounting_dashboard] - :  Firestore path ( collection  -  UI )
     match /billing_notes/{id} {
       allow read, write: if canFullBillingNotes();
     }
@@ -1364,31 +1364,31 @@ service cloud.firestore {
     match /executive_payroll_staff/{id} {
       allow read, write: if canFullExecutivePayroll();
     }
-    // ===== Administration (ระบบ) — Match blocks =====
+    // ===== Administration - Match blocks =====
     match /roles_system_admin/{id} {
       allow read, write: if isAdmin();
     }
     match /permission_profiles/{id} {
       allow read, write: if isAdmin();
     }
-    // ===== Client Portal — Match blocks =====
+    // ===== Client Portal - Match blocks =====
     // =====================================================================
-    // ⚠️ PRESERVED ORIGINAL LOGIC — ต้องคัดลอกจาก firestore.rules ปัจจุบันมาวางที่นี่
-    //   collections เหล่านี้มี business logic ที่ matrix ไม่ครอบคลุม (portal scope,
-    //   status guards, numbering, append-only validation ฯลฯ)
+    // ! PRESERVED ORIGINAL LOGIC -  firestore.rules 
+    //   collections  business logic  matrix  (portal scope,
+    //   status guards, numbering, append-only validation )
     // =====================================================================
-        // ✅ PRESERVED from original (customers/{customerId}/{document=**})
+        //  PRESERVED from original (customers/{customerId}/{document=**})
     match /customers/{customerId}/{document=**} {
       allow read: if canReadCustomers();
       allow write: if canWriteCustomers();
         }
-        // ✅ PRESERVED from original (purchase_orders/{id})
+        //  PRESERVED from original (purchase_orders/{id})
     match /purchase_orders/{id} {
       allow read: if canReadCommercialDocs() || portalOwnsResourceCustomerId();
       allow create, update: if canWriteCommercialDocs();
       allow delete: if isAdmin() || canDeleteOpsScheduling();
         }
-        // ✅ PRESERVED from original (commercial_invoices/{id})
+        //  PRESERVED from original (commercial_invoices/{id})
     match /commercial_invoices/{id} {
       allow read: if canReadCommercialInvoices()
         || (portalCustomerIdOk()
@@ -1425,7 +1425,7 @@ service cloud.firestore {
       allow delete: if (isAdmin() && resource.data.status != 'ISSUED')
         || (canWriteCommercialInvoicesInternal() && resource.data.status == 'DRAFT');
         }
-        // ✅ PRESERVED from original (workers/{workerId})
+        //  PRESERVED from original (workers/{workerId})
     match /workers/{workerId} {
       allow read: if canReadWorkers()
         || (isEmployeeSelfPortalUser()
@@ -1440,7 +1440,7 @@ service cloud.firestore {
       allow create, update: if canWriteWorkers() && !isEmployeeSelfPortalUser();
       allow delete: if canDeleteWorkers();
         }
-        // ✅ PRESERVED from original (daily_timesheets/{id})
+        //  PRESERVED from original (daily_timesheets/{id})
     match /daily_timesheets/{id} {
       allow read: if canReadTimesheetsInternal() || portalOwnsResourceCustomerId() || portalDailyTimesheetReadableViaWave() || portalDailyTimesheetReadableViaPo();
       allow create, delete: if canWriteDailyTimesheet();
@@ -1453,40 +1453,40 @@ service cloud.firestore {
           && portalTimesheetBillingLockKeysOnly()
         );
         }
-        // ✅ PRESERVED from original (attendance_punches/{id})
+        //  PRESERVED from original (attendance_punches/{id})
     match /attendance_punches/{id} {
       allow read: if internalPayrollDataReader();
       allow create: if attendancePunchCreateValid();
       allow update, delete: if false;
         }
-        // ✅ PRESERVED from original (attendance_correction_requests/{id})
+        //  PRESERVED from original (attendance_correction_requests/{id})
     match /attendance_correction_requests/{id} {
       allow read: if internalPayrollDataReader();
       allow create: if attendanceCorrectionRequestCreateValid();
       allow update: if attendanceCorrectionRequestResolveValid();
       allow delete: if false;
         }
-        // ✅ PRESERVED from original (attendance_day_overrides/{id})
+        //  PRESERVED from original (attendance_day_overrides/{id})
     match /attendance_day_overrides/{id} {
       allow read: if internalPayrollDataReader();
       allow create: if attendanceDayOverrideCreateValid();
       allow update, delete: if false;
         }
-        // ✅ PRESERVED from original (leave_requests/{id})
+        //  PRESERVED from original (leave_requests/{id})
     match /leave_requests/{id} {
       allow read: if internalPayrollDataReader() || leaveRequestOwnedByCaller();
       allow create: if leaveRequestCreateValid();
       allow update: if leaveRequestSelfCancelValid() || leaveRequestManagerDecisionValid() || leaveRequestDraftUpdateValid();
       allow delete: if false;
         }
-        // ✅ PRESERVED from original (payroll_correction_requests/{id})
+        //  PRESERVED from original (payroll_correction_requests/{id})
     match /payroll_correction_requests/{id} {
       allow read: if canReadWorkerPayrollStack();
       allow write: if canPreparePayroll();
         }
-        // ✅ PRESERVED from original (cash_advance_requests/{id})
+        //  PRESERVED from original (cash_advance_requests/{id})
     match /cash_advance_requests/{id} {
-      /** เงื่อนไขเจ้าของเรื่องมาก่อน — ไม่ต้องประเมิน privileged reader (หลีกเลี่ยง userData() ล้มเมื่อยังไม่มี users/{uid}) */
+      /**  -  privileged reader ( userData()  users/{uid}) */
       allow read: if (
           isSignedIn()
           && resource.data.keys().hasAll(['subjectLinkedUserId'])
@@ -1512,7 +1512,7 @@ service cloud.firestore {
         );
       allow delete: if cashAdvancePrivilegedReader();
         }
-        // ✅ PRESERVED from original (workers/{workerId})
+        //  PRESERVED from original (workers/{workerId})
     match /workers/{workerId} {
       allow read: if canReadWorkers()
         || (isEmployeeSelfPortalUser()
@@ -1527,13 +1527,13 @@ service cloud.firestore {
       allow create, update: if canWriteWorkers() && !isEmployeeSelfPortalUser();
       allow delete: if canDeleteWorkers();
         }
-        // ✅ PRESERVED from original (withholding_certificate_documents/{id})
+        //  PRESERVED from original (withholding_certificate_documents/{id})
     match /withholding_certificate_documents/{id} {
       allow read: if canReadAccountingInternal() || canReadPurchases();
       allow create: if canWriteAccountingDocs();
       allow update: if canWriteAccountingDocs();
       /**
-       * Delete: accounting/admin — plus internal cleanup when removing a purchase-linked cert during PO cascade
+       * Delete: accounting/admin - plus internal cleanup when removing a purchase-linked cert during PO cascade
        * (UI gate still blocks paid vendor bills / paid milestones).
        */
       allow delete: if canWriteAccountingDocs()
@@ -1545,7 +1545,7 @@ service cloud.firestore {
           && resource.data.sourcePurchaseId.size() > 0
         );
         }
-        // ✅ PRESERVED from original (users/{userId})
+        //  PRESERVED from original (users/{userId})
     match /users/{userId} {
       allow get: if isAdmin() || isOwner(userId) || (isOperationsPillarExecutive() && resource.data.userType == 'customer_portal');
       allow list: if isAdmin() || isOperationsPillarExecutive();
@@ -1560,25 +1560,25 @@ service cloud.firestore {
       allow delete: if isAdmin()
         || (isOperationsPillarExecutive() && resource.data.userType == 'customer_portal');
         }
-        // ✅ PRESERVED from original (system/{docId})
+        //  PRESERVED from original (system/{docId})
     match /system/{docId} {
       allow read: if systemDocReadOk(docId);
       allow create: if systemBootstrapCreateOk(docId);
       allow update, delete: if isAdmin();
         }
-        // ✅ PRESERVED from original (number_sequences/{id})
+        //  PRESERVED from original (number_sequences/{id})
     match /number_sequences/{id} {
       allow read: if isAdmin() || numberSequenceAllowsWrite(id);
       allow write: if numberSequenceAllowsWrite(id);
         }
-        // ✅ PRESERVED from original (audit_logs/{id})
+        //  PRESERVED from original (audit_logs/{id})
     match /audit_logs/{id} {
       allow read: if isAdmin();
       allow create: if internalStaffFirestoreActor()
         || (clientPortalUserActive() && request.resource.data.actorUserId == request.auth.uid);
       allow update, delete: if isAdmin();
         }
-        // ✅ PRESERVED from original (client_portal/{document=**})
+        //  PRESERVED from original (client_portal/{document=**})
     match /client_portal/{document=**} {
       allow read, write: if clientPortalUserActive();
         }

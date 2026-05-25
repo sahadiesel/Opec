@@ -12,6 +12,7 @@
  */
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
+import { sanitizeRulesToAscii } from '../src/lib/permissions/generate-rules-from-matrix';
 
 const RULES_ORIGINAL = resolve(process.cwd(), 'firestore.rules');
 const DRAFT_PATH = resolve(process.cwd(), 'firestore.rules.simplified.draft');
@@ -188,6 +189,9 @@ function main() {
   if (!keepBlanks) {
     draft = draft.split('\n').filter((l) => l.trim().length > 0).join('\n') + '\n';
   }
+
+  /** Firebase Console rules editor rejects non-ASCII; sanitize as final step */
+  draft = sanitizeRulesToAscii(draft);
 
   writeFileSync(DRAFT_PATH, draft, 'utf8');
 
