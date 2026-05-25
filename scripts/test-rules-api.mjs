@@ -50,7 +50,7 @@ function initAdmin() {
 }
 
 const tests = [
-  { name: 'MINIMAL (38 fns, 21 KB)', source: readFileSync(resolve(root, 'firestore.rules.minimal'), 'utf8') },
+  { name: 'MINIMAL v2 (+ critical paths)', source: readFileSync(resolve(root, 'firestore.rules.minimal'), 'utf8') },
 ];
 
 async function main() {

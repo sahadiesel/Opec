@@ -38,6 +38,87 @@ const PATH_FALLBACKS = {
   'audit_logs/{id}': 'allow read: if isInternalUser(); allow create: if internalStaffFirestoreActor(); allow update, delete: if isAdmin();',
 };
 
+/**
+ * Extra critical match blocks the matrix generator never emits because
+ * the paths aren't tied to a UI module (login flow, kiosk sessions, etc.).
+ * Appended right before the closing braces of `match /databases/{database}/documents`.
+ */
+const EXTRA_BLOCKS = `
+    // ===== Critical infrastructure paths (not in matrix) =====
+    match /users/{userId} {
+      allow get: if request.auth != null && (
+        request.auth.uid == userId
+        || isAdmin()
+        || isInternalUser()
+      );
+      allow list: if isAdmin() || isInternalUser();
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow update: if request.auth != null && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+    match /auth_register_pendings/{id} {
+      allow read, write: if request.auth != null;
+    }
+    match /number_sequences/{id} {
+      allow read, write: if isInternalUser();
+    }
+    match /client_portal/{document=**} {
+      allow read, write: if isInternalUser() || isClientPortalUser();
+    }
+    match /workers/{workerId} {
+      allow read, write: if isInternalUser();
+    }
+    match /attendance_kiosk_sessions/{token} {
+      allow read, write: if isInternalUser();
+    }
+    match /attendance_punches/{id} {
+      allow read, write: if isInternalUser();
+    }
+    match /attendance_day_overrides/{id} {
+      allow read, write: if isInternalUser();
+    }
+    match /payroll_correction_requests/{id} {
+      allow read, write: if isInternalUser();
+    }
+    match /withholding_certificate_documents/{docId}/audit_logs/{logId} {
+      allow read: if isInternalUser();
+      allow write: if internalStaffFirestoreActor();
+    }
+    match /withholding_certificate_documents/{docId}/xml_export_logs/{logId} {
+      allow read: if isInternalUser();
+      allow write: if internalStaffFirestoreActor();
+    }
+    match /purchase_orders/{purchaseOrderId}/po_lines/{lineId} {
+      allow read, write: if isInternalUser();
+    }
+    match /purchase_orders/{purchaseOrderId}/{document=**} {
+      allow read, write: if isInternalUser();
+    }
+`;
+
+function insertExtraBlocks(text) {
+  /** Locate the opening brace of `match /databases/{database}/documents { ... }` —
+   *  the LITERAL match-block-opening brace is the one right at end of that line,
+   *  not the `{` inside `{database}`. Look for the literal substring including `{` at end. */
+  const header = 'match /databases/{database}/documents {';
+  const docMatchOpen = text.indexOf(header);
+  if (docMatchOpen < 0) return text;
+  const blockOpen = docMatchOpen + header.length - 1; // index of the trailing '{'
+
+  let depth = 0;
+  let i = blockOpen;
+  for (; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  if (i >= text.length) return text;
+  return text.substring(0, i) + EXTRA_BLOCKS + '\n  ' + text.substring(i);
+}
+
 function replacePreservedPlaceholders(text) {
   let count = 0;
   const out = text.replace(
@@ -102,6 +183,7 @@ function main() {
   text = sanitizeAscii(text);
   const repl = replacePreservedPlaceholders(text);
   text = repl.text;
+  text = insertExtraBlocks(text);
   const dedupe = dedupeMatrixFns(text);
   text = dedupe.text;
   /** Strip blank lines */
