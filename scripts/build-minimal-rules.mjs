@@ -94,6 +94,19 @@ const EXTRA_BLOCKS = `
     match /purchase_orders/{purchaseOrderId}/{document=**} {
       allow read, write: if isInternalUser();
     }
+    // bank_accounts / cashbook are owned by accounting, but operations_manager
+    // needs READ access for the Petty Cash page (filtered client-side by accountType).
+    match /bank_accounts/{id} {
+      allow read: if isInternalUser();
+      allow write: if isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer'];
+    }
+    match /cashbook_entries/{id} {
+      allow read: if isInternalUser();
+      allow write: if isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer', 'operations_manager'];
+    }
+    match /petty_cash_entries/{id} {
+      allow read, write: if isInternalUser() && userRole() in ['system_admin', 'operations_manager', 'accounting_manager', 'accounting_officer'];
+    }
 `;
 
 function insertExtraBlocks(text) {
