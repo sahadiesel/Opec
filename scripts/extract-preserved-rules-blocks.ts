@@ -183,6 +183,12 @@ function main() {
     draft = draft.substring(0, safeInjectIdx) + helpersText + draft.substring(safeInjectIdx);
   }
 
+  /** Strip blank lines เพื่อลดขนาด (ใช้ --keep-blanks เพื่อเก็บไว้) */
+  const keepBlanks = process.argv.includes('--keep-blanks');
+  if (!keepBlanks) {
+    draft = draft.split('\n').filter((l) => l.trim().length > 0).join('\n') + '\n';
+  }
+
   writeFileSync(DRAFT_PATH, draft, 'utf8');
 
   const ok = replacements.filter((r) => r.success).length;

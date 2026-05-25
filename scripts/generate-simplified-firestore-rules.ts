@@ -128,8 +128,18 @@ function main() {
     generatedBy: updatedBy,
   });
 
+  /** Strip blank lines เพื่อลดขนาดไฟล์ — formatter เดิมใส่ \n เว้นวรรค section ที่ไม่จำเป็น
+   *  (ใช้ --keep-blanks ถ้าอยากเก็บไว้เพื่ออ่านง่าย) */
+  const keepBlanks = process.argv.includes('--keep-blanks');
+  const finalText = keepBlanks
+    ? result.text
+    : result.text
+        .split('\n')
+        .filter((l) => l.trim().length > 0)
+        .join('\n') + '\n';
+
   const outPath = resolve(process.cwd(), args.out ?? 'firestore.rules.simplified.draft');
-  writeFileSync(outPath, result.text, 'utf8');
+  writeFileSync(outPath, finalText, 'utf8');
 
   /** Compare with original */
   let originalBytes = 0;
