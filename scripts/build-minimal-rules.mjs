@@ -96,9 +96,18 @@ const EXTRA_BLOCKS = `
     }
     // bank_accounts / cashbook are owned by accounting, but operations_manager
     // needs READ access for the Petty Cash page (filtered client-side by accountType).
+    // Operations manager may also UPDATE petty-cash bank accounts (currentBalance
+    // increments) so they can post petty cash entries that adjust the fund balance.
     match /bank_accounts/{id} {
       allow read: if isInternalUser();
-      allow write: if isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer'];
+      allow create, delete: if isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer'];
+      allow update: if isInternalUser() && (
+        userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']
+        || (
+          userRole() == 'operations_manager'
+          && resource.data.accountType == 'PETTY_CASH'
+        )
+      );
     }
     match /cashbook_entries/{id} {
       allow read: if isInternalUser();

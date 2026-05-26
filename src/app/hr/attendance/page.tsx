@@ -7,12 +7,13 @@ import {
   query,
   where,
   orderBy,
+  doc,
   Firestore,
 } from 'firebase/firestore';
 import { addMonths, format, startOfMonth } from 'date-fns';
 import { AppShell } from '@/components/layout/app-shell';
 import { useAppUser } from '@/hooks/use-app-user';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import { useFirestore, useCollection, useDoc, useMemoFirebase } from '@/firebase';
 import { canAccessHrAttendanceKioskPages } from '@/lib/navigation/nav-access';
 import {
   canSubmitAttendanceCorrectionRequest,
@@ -52,14 +53,18 @@ import {
   enumerateYmDsForMonth,
   bangkokIsoWeekdayFromYmd,
   formatBangkokHmFromUtcMs,
-  isBangkokWeekendYmd,
+  isBangkokWeeklyRestDayYmd,
+  weeklyRestPatternLabelTh,
+  type WeeklyRestPatternForCalendar,
 } from '@/lib/attendance/bangkok-calendar';
-import { countBangkokWorkingDaysInMonth, isThaiPublicHolidayYmd } from '@/lib/calendar/thailand-public-holidays';
+import { isThaiPublicHolidayYmd } from '@/lib/calendar/thailand-public-holidays';
 import {
   buildAttendanceDayRows,
   countDaysWithEffectiveRecord,
 } from '@/lib/attendance/correction-merge';
 import { AttendanceCorrectionRequestDialog } from '@/components/attendance/attendance-correction-request-dialog';
+import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import type { PayrollPolicyRecord } from '@/lib/types';
 
 type SubjectKey = `${AttendanceSubjectType}:${string}`;
 
@@ -81,12 +86,16 @@ function groupBySubject(rows: Array<AttendancePunchDoc & { id: string }>): Map<S
   return m;
 }
 
-function dayKindBadges(ymd: string) {
+function dayKindBadges(ymd: string, weeklyRestPattern: WeeklyRestPatternForCalendar) {
   const tags: string[] = [];
   if (isThaiPublicHolidayYmd(ymd)) tags.push('วันหยุดนักขัตฤกษ์');
   const iso = bangkokIsoWeekdayFromYmd(ymd);
-  if (iso === 7) tags.push('วันอาทิตย์');
-  else if (iso === 6) tags.push('วันเสาร์');
+  /** ขึ้นป้าย "เสาร์/อาทิตย์" เฉพาะเมื่อตรงกับนโยบายวันหยุดประจำสัปดาห์ที่ตั้งไว้ใน HR Settings */
+  if (iso === 7 && (weeklyRestPattern === 'sat_sun' || weeklyRestPattern === 'sunday_only')) {
+    tags.push('วันอาทิตย์');
+  } else if (iso === 6 && weeklyRestPattern === 'sat_sun') {
+    tags.push('วันเสาร์');
+  }
   if (tags.length === 0) return <span className="text-muted-foreground text-xs">วันทำงาน</span>;
   return (
     <div className="flex flex-wrap gap-1">
@@ -126,7 +135,30 @@ export default function HrAttendanceManagePage() {
 
   const payrollMonth = format(viewMonth, 'yyyy-MM');
   const ymDs = useMemo(() => enumerateYmDsForMonth(viewMonth), [viewMonth]);
-  const workingDaysInCalendarMonth = useMemo(() => countBangkokWorkingDaysInMonth(ymDs), [ymDs]);
+
+  /** อ่าน HR Settings รูปแบบวันหยุดประจำสัปดาห์ — ใช้ทั้ง badge แต่ละวันและสรุปวันทำงานในเดือน */
+  const workerGlobalLaborRef = useMemoFirebase(
+    () => (firestore ? doc(firestore as Firestore, 'payroll_policies', HR_WORKER_GLOBAL_LABOR_POLICY_ID) : null),
+    [firestore],
+  );
+  const { data: workerGlobalLaborPolicy } = useDoc<PayrollPolicyRecord>(workerGlobalLaborRef as any);
+  const weeklyRestPattern: WeeklyRestPatternForCalendar = useMemo(() => {
+    const cfg = workerGlobalLaborPolicy?.config as Record<string, unknown> | undefined;
+    const v = cfg?.weeklyRestPattern;
+    if (v === 'sat_sun' || v === 'sunday_only' || v === 'none') return v;
+    return 'sat_sun';
+  }, [workerGlobalLaborPolicy]);
+
+  /** วันทำงาน = วันที่ไม่ใช่วันหยุดประจำสัปดาห์ (ตามนโยบาย) และไม่ใช่วันหยุดนักขัตฤกษ์ */
+  const workingDaysInCalendarMonth = useMemo(() => {
+    let n = 0;
+    for (const ymd of ymDs) {
+      if (isBangkokWeeklyRestDayYmd(ymd, weeklyRestPattern)) continue;
+      if (isThaiPublicHolidayYmd(ymd)) continue;
+      n++;
+    }
+    return n;
+  }, [ymDs, weeklyRestPattern]);
 
   const canUse = useMemo(
     () => !!currentUser && canAccessHrAttendanceKioskPages(currentUser as User, null),
@@ -276,7 +308,9 @@ export default function HrAttendanceManagePage() {
           <CardHeader className="border-b bg-muted/20">
             <CardTitle className="text-lg">สรุปรายเดือน</CardTitle>
             <CardDescription>
-              วันทำงานตามปฏิทิน = จันทร์–ศุกร์ ไม่รวมเสาร์–อาทิตย์และวันหยุดนักขัตฤกษ์ (รายการประกาศในระบบ) · วันมีบันทึก = มีเวลาเข้าและ/หรือออกที่ใช้จริง (รวมหลังแก้ไขที่อนุมัติแล้ว)
+              วันทำงานตามปฏิทิน = ทุกวันยกเว้น{' '}
+              <span className="font-semibold text-foreground">วันหยุดประจำสัปดาห์ ({weeklyRestPatternLabelTh(weeklyRestPattern)})</span>
+              {' '}และวันหยุดนักขัตฤกษ์ — ปรับนโยบายได้ที่ HR Settings · วันมีบันทึก = มีเวลาเข้าและ/หรือออกที่ใช้จริง (รวมหลังแก้ไขที่อนุมัติแล้ว)
             </CardDescription>
             <div className="pt-2 max-w-md">
               <Input
@@ -365,7 +399,7 @@ export default function HrAttendanceManagePage() {
                                 <TableBody>
                                   {row.dayRows.map((d) => {
                                     const weekendOrHol =
-                                      isBangkokWeekendYmd(d.ymd) || isThaiPublicHolidayYmd(d.ymd);
+                                      isBangkokWeeklyRestDayYmd(d.ymd, weeklyRestPattern) || isThaiPublicHolidayYmd(d.ymd);
                                     return (
                                       <TableRow
                                         key={d.ymd}
@@ -377,7 +411,7 @@ export default function HrAttendanceManagePage() {
                                         <TableCell className="font-mono text-sm whitespace-nowrap align-top">
                                           {formatDateThaiBE(d.ymd)}
                                         </TableCell>
-                                        <TableCell className="align-top">{dayKindBadges(d.ymd)}</TableCell>
+                                        <TableCell className="align-top">{dayKindBadges(d.ymd, weeklyRestPattern)}</TableCell>
                                         <TableCell className="font-mono text-sm align-top">
                                           {d.effectiveInMs != null ? (
                                             <span>

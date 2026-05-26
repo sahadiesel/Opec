@@ -74,3 +74,28 @@ export function isBangkokWeekendYmd(ymd: string): boolean {
   const iso = bangkokIsoWeekdayFromYmd(ymd);
   return iso === 6 || iso === 7;
 }
+
+/**
+ * วันหยุดประจำสัปดาห์แบบยืดหยุ่น — อิงค่าจาก HR Settings (`weeklyRestPattern`)
+ *  - 'sat_sun'      → เสาร์ + อาทิตย์ เป็นวันหยุด
+ *  - 'sunday_only'  → เฉพาะอาทิตย์เป็นวันหยุด (เสาร์เป็นวันทำงาน)
+ *  - 'none'         → ไม่มีวันหยุดประจำสัปดาห์ (วันทำงาน 7 วัน)
+ */
+export type WeeklyRestPatternForCalendar = 'none' | 'sat_sun' | 'sunday_only';
+
+export function isBangkokWeeklyRestDayYmd(
+  ymd: string,
+  pattern: WeeklyRestPatternForCalendar,
+): boolean {
+  const iso = bangkokIsoWeekdayFromYmd(ymd);
+  if (pattern === 'sat_sun') return iso === 6 || iso === 7;
+  if (pattern === 'sunday_only') return iso === 7;
+  return false;
+}
+
+/** ป้ายชื่อวันหยุดประจำสัปดาห์สำหรับ UI (เช่น "เสาร์–อาทิตย์", "อาทิตย์", "ไม่มี") */
+export function weeklyRestPatternLabelTh(pattern: WeeklyRestPatternForCalendar): string {
+  if (pattern === 'sat_sun') return 'เสาร์–อาทิตย์';
+  if (pattern === 'sunday_only') return 'อาทิตย์';
+  return 'ไม่มี (ทำงานทุกวัน)';
+}

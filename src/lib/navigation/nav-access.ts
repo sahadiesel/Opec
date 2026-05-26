@@ -146,6 +146,10 @@ export function canViewHrHubItem(
     if (isTimekeeper(user) && canView(user, 'timesheets', profile)) return true;
     return false;
   }
+  /** เมนู หัก ณ ที่จ่าย / ปกส. ใต้กลุ่ม Payroll — เปิดให้ payroll lead โดยไม่ต้องผ่าน module accounting */
+  if (item.payrollLeadOnly) {
+    return canViewHrPayrollFlowSubsection(user, profile, admin);
+  }
   const rkForHrHub = getPrimaryLegacyRole(user);
   if (
     (rkForHrHub === 'operations_officer' || rkForHrHub === 'timekeeper') &&
@@ -279,6 +283,25 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     return false;
   }
 
+  /**
+   * เมนูใต้กลุ่ม Payroll ที่ลิงก์ไปยังหน้าใต้ /accounting/... — เปิดให้ payroll lead
+   * (hr_manager · operations_manager · payroll_officer) เข้าได้นอกเหนือจากฝั่งบัญชี
+   *  - หัก ณ ที่จ่าย (พนักงาน)  → /accounting/withholding-payroll
+   *  - จ่ายประกันสังคม          → /accounting/social-security-payroll
+   * ส่วน /accounting/withholding-payroll/executive ใต้พาธเดียวกัน — เปิดให้ payroll lead เห็น
+   * เฉพาะหน้านี้ (เพราะใช้ url ภายใต้ /accounting/withholding-payroll/) ก็ผ่าน prefix นี้เช่นกัน
+   */
+  const payrollLeadAccountingPaths = [
+    '/accounting/withholding-payroll',
+    '/accounting/social-security-payroll',
+  ];
+  if (
+    payrollLeadAccountingPaths.some((pre) => p === pre || p.startsWith(`${pre}/`))
+    && canViewHrPayrollFlowSubsection(user, profile, admin)
+  ) {
+    return true;
+  }
+
   const accountingPrefixes = [
     '/billing-notes',
     '/tax-invoices',
@@ -292,6 +315,7 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     '/accounting/withholding-tax',
     '/accounting/withholding-payroll',
     '/accounting/withholding-vendor',
+    '/accounting/social-security-payroll',
     '/accounting/dashboard',
   ];
   if (accountingPrefixes.some((pre) => p === pre || p.startsWith(`${pre}/`))) {

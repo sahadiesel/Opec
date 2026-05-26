@@ -23,6 +23,7 @@ import {
   QrCode,
   Clock,
   CalendarOff,
+  Percent,
 } from 'lucide-react';
 import type { ModuleKey } from '@/lib/permissions';
 
@@ -37,6 +38,12 @@ export interface HrNavItem {
    * ไม่ใช้สิทธิ์ operations_officer / timekeeper แม้มีโมดูล timesheets
    */
   payrollAttendanceManageOnly?: boolean;
+  /**
+   * เมนูใต้กลุ่ม Payroll ที่ผูกกับงานบัญชี (เช่น หัก ณ ที่จ่าย / ปกส.) —
+   * เปิดให้ผู้กำกับ payroll (hr_manager · operations_manager · payroll_officer) + admin
+   * โดยไม่ต้องอาศัยสิทธิ์ withholding_tax_items ในเมทริกซ์
+   */
+  payrollLeadOnly?: boolean;
 }
 
 export interface HrNavSubsection {
@@ -96,6 +103,28 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
         href: '/hr/leaves',
         icon: CalendarOff,
         payrollAttendanceManageOnly: true,
+      },
+    ],
+  },
+  {
+    title: 'หัก ณ ที่จ่าย / ปกส.',
+    description: 'hr_manager · operations_manager · payroll_officer',
+    icon: Percent,
+    audiencePayrollLeadsOnly: true,
+    items: [
+      {
+        key: 'withholding_tax_items',
+        title: '1. หัก ณ ที่จ่าย (พนักงาน)',
+        href: '/accounting/withholding-payroll',
+        icon: FileText,
+        payrollLeadOnly: true,
+      },
+      {
+        key: 'withholding_tax_items',
+        title: '2. จ่ายประกันสังคม',
+        href: '/accounting/social-security-payroll',
+        icon: ShieldCheck,
+        payrollLeadOnly: true,
       },
     ],
   },

@@ -11,6 +11,7 @@ import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { canAccess, canSeeAccountingPillarUi, canView, isMatrixControlledRole } from '@/lib/permissions';
+import { canViewHrPayrollFlowSubsection } from '@/lib/navigation/nav-access';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin } from '@/lib/simple-tier-model';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -71,7 +72,11 @@ export default function AccountingPayrollWorkerWhtCertificatePage({
   }
 
   const user = currentUser as User;
-  if (!canSeeAccountingPillarUi(user, profile)) {
+  /** เปิดให้ทั้ง accounting (เดิม) และทีม payroll (hr_manager · operations_manager · payroll_officer) */
+  const canSeePage =
+    canSeeAccountingPillarUi(user, profile)
+    || canViewHrPayrollFlowSubsection(user, profile, isSystemAdmin(user));
+  if (!canSeePage) {
     return (
       <AppShell user={user} onLogout={() => {}}>
         <div className="max-w-3xl mx-auto py-16 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูบัญชี</div>

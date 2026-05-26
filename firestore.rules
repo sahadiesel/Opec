@@ -289,6 +289,26 @@ service cloud.firestore {
       allow update: if rs11() || rs0();
       allow delete: if rs0();
     }
+
+    /**
+     * ทะเบียนชื่อธนาคาร (master data ฝั่ง HR) — ใช้เป็น dropdown ในฟอร์ม office_staff/worker
+     * เปิดอ่านให้ internal user ทุกคนเพื่อให้ฟอร์มในแผนกอื่นที่อ้างถึงทำงานได้
+     * เขียนเฉพาะ hr_manager / system_admin (rs11) — admin ผ่าน rs0
+     */
+    match /bank_name_catalog/{id} {
+      allow read:   if isInternalUser();
+      allow create: if rs11();
+      allow update: if rs11() || rs0();
+      allow delete: if rs0();
+    }
+
+    /** ทะเบียนโรงพยาบาล สปส. — pattern เดียวกับ bank_name_catalog */
+    match /sso_hospital_catalog/{id} {
+      allow read:   if isInternalUser();
+      allow create: if rs11();
+      allow update: if rs11() || rs0();
+      allow delete: if rs0();
+    }
     match /labor_cost_contract_terms/{id} {
       allow read, write: if rs11();
     }
@@ -418,17 +438,26 @@ service cloud.firestore {
     match /bank_accounts/{id} {
       allow read, write: if rs19();
     }
+    /**
+     * เงินเดือนผู้บริหาร — เปิดให้ payroll lead (hr_manager · operations_manager · payroll_officer)
+     * เห็นยอด หัก ณ ที่จ่าย / ประกันสังคม ของผู้บริหารในเมนู payroll ได้ (read-only)
+     * ส่วนการสร้าง/แก้ไข/ลบ ยังจำกัดเฉพาะ admin + accounting (rs19) ตามเดิม
+     */
     match /executive_payroll_runs/{id} {
-      allow read, write: if rs19();
+      allow read: if rs15();
+      allow write: if rs19();
     }
     match /executive_payroll_runs/{runId}/lines/{lineId} {
-      allow read, write: if rs19();
+      allow read: if rs15();
+      allow write: if rs19();
     }
     match /executive_payroll_runs/{runId}/{document=**} {
-      allow read, write: if rs19();
+      allow read: if rs15();
+      allow write: if rs19();
     }
     match /executive_payroll_staff/{id} {
-      allow read, write: if rs19();
+      allow read: if rs15();
+      allow write: if rs19();
     }
     // ===== Administration - Match blocks =====
     match /roles_system_admin/{id} {
@@ -543,9 +572,18 @@ service cloud.firestore {
     }
     // bank_accounts / cashbook are owned by accounting, but operations_manager
     // needs READ access for the Petty Cash page (filtered client-side by accountType).
+    // Operations manager may also UPDATE petty-cash bank accounts (currentBalance
+    // increments) so they can post petty cash entries that adjust the fund balance.
     match /bank_accounts/{id} {
       allow read: if isInternalUser();
-      allow write: if isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer'];
+      allow create, delete: if isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer'];
+      allow update: if isInternalUser() && (
+        userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']
+        || (
+          userRole() == 'operations_manager'
+          && resource.data.accountType == 'PETTY_CASH'
+        )
+      );
     }
     match /cashbook_entries/{id} {
       allow read: if isInternalUser();

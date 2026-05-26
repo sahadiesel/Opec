@@ -233,6 +233,20 @@ export const MODULE_FIRESTORE_SPECS: ModuleFirestoreSpec[] = [
     paths: [{ path: 'worker_document_catalog/{id}', shape: 'crud' }],
   },
   {
+    moduleKey: 'bank_registry',
+    label: 'ทะเบียนธนาคาร',
+    domain: 'hr',
+    fnPrefix: 'BankNameCatalog',
+    paths: [{ path: 'bank_name_catalog/{id}', shape: 'crud' }],
+  },
+  {
+    moduleKey: 'sso_hospital_registry',
+    label: 'ทะเบียนโรงพยาบาล สปส.',
+    domain: 'hr',
+    fnPrefix: 'SsoHospitalCatalog',
+    paths: [{ path: 'sso_hospital_catalog/{id}', shape: 'crud' }],
+  },
+  {
     moduleKey: 'labor_cost_contract_terms',
     label: 'เงื่อนไขต้นทุนแรงงาน',
     domain: 'hr',

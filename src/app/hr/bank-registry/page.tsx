@@ -24,7 +24,7 @@ import type { BankNameCatalogItem, User } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
+import { getEffectiveAccessGroup, isSystemAdmin } from '@/lib/permissions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,10 +41,13 @@ export default function BankRegistryPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  const canManage = useMemo(
-    () => canView(currentUser, 'office_staff') || canView(currentUser, 'workers'),
-    [currentUser],
-  );
+  // ทะเบียนธนาคารเป็น master data ฝั่ง HR — accounting/operations/store ไม่จำเป็นต้องเข้ามาแก้ไข
+  // จำกัด UI gate ให้ตรงสิทธิ์จริง เพื่อไม่ให้ยิง Firestore แล้วโดน rules บล็อก -> overlay error
+  const canManage = useMemo(() => {
+    if (!currentUser) return false;
+    if (isSystemAdmin(currentUser)) return true;
+    return getEffectiveAccessGroup(currentUser) === 'hr';
+  }, [currentUser]);
 
   const [banks, setBanks] = useState<BankNameCatalogItem[] | null>(null);
   const loadingBanks = banks === null;
@@ -59,7 +62,9 @@ export default function BankRegistryPage() {
       const snap = await getDocs(q);
       setBanks(snap.docs.map((d) => ({ id: d.id, ...d.data() } as BankNameCatalogItem)));
     } catch (e) {
-      console.error(e);
+      // กลืน permission-denied แบบเงียบ — UI gate ข้างบนจะแสดง "ไม่มีสิทธิ์" อยู่แล้ว ไม่ต้องดัน Next.js error overlay
+      const code = (e as { code?: string } | undefined)?.code;
+      if (code !== 'permission-denied') console.error(e);
       setBanks([]);
     }
   }, [firestore, canManage]);

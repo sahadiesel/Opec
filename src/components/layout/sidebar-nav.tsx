@@ -45,6 +45,7 @@ import {
   Wallet,
   QrCode,
   ExternalLink,
+  Briefcase,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -141,7 +142,7 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
     ],
   },
   {
-    title: 'หัก ณ ที่จ่าย',
+    title: 'หัก ณ ที่จ่าย / ปกส.',
     icon: Percent,
     items: [
       {
@@ -152,9 +153,21 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
       },
       {
         key: 'withholding_tax_items',
-        title: '2. เอกสาร หัก ณ ที่จ่าย (คู่ค้า)',
+        title: '2. เอกสาร หัก ณ ที่จ่าย (ผู้บริหาร)',
+        href: '/accounting/withholding-payroll/executive',
+        icon: Briefcase,
+      },
+      {
+        key: 'withholding_tax_items',
+        title: '3. เอกสาร หัก ณ ที่จ่าย (คู่ค้า)',
         href: '/accounting/withholding-vendor',
         icon: Building2,
+      },
+      {
+        key: 'withholding_tax_items',
+        title: '4. จ่ายประกันสังคม',
+        href: '/accounting/social-security-payroll',
+        icon: ShieldCheck,
       },
     ],
   },
