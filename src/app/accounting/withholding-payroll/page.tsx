@@ -256,6 +256,9 @@ export default function AccountingWithholdingPayrollHubPage() {
     [filteredOffice],
   );
 
+  /** ยอดหัก ภงด.1 รวมลูกจ้าง + พนักงานออฟฟิศ ตามรายการที่ค้นหา/กรองเดือนปัจจุบัน */
+  const grandTotalPit = workerTotalPit + officeTotalTax;
+
   if (isLoading || !currentUser) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -315,6 +318,10 @@ export default function AccountingWithholdingPayrollHubPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="w-full rounded-lg border-2 border-primary/40 bg-primary/5 px-4 py-3 sm:max-w-[220px] sm:shrink-0">
+                <p className="text-xs font-medium text-muted-foreground">รวมลูกจ้าง + ออฟฟิศ (ในตาราง)</p>
+                <p className="text-2xl font-bold tabular-nums tracking-tight text-primary">{fmtBaht(grandTotalPit)}</p>
               </div>
             </div>
           </CardHeader>
