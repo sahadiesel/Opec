@@ -375,7 +375,6 @@ function MobileAttendanceInner() {
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">สถานะโค้ด</CardTitle>
-              <CardDescription>โค้ดใช้ครั้งเดียวและมีอายุ 60 วินาที</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               {sessionLoading && (

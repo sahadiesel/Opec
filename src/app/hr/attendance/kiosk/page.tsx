@@ -190,9 +190,6 @@ export default function HrAttendanceKioskPage() {
           </Button>
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-primary">Kiosk ลงเวลา (QR)</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              QR ใช้ครั้งเดียวต่อ 1 คน อายุ 60 วินาที — ระบบจะสร้างโค้ดใหม่ให้อัตโนมัติหลังสแกน
-            </p>
             {hasConfiguredPublicAppOrigin() ? (
               <p className="text-xs text-muted-foreground mt-2">
                 ใช้ URL สาธารณะจาก <span className="font-mono">NEXT_PUBLIC_APP_ORIGIN</span> ใน QR
