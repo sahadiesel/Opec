@@ -1,7 +1,9 @@
 'use client';
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import {
   collection,
   doc,
@@ -14,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { AppShell } from '@/components/layout/app-shell';
 import { useAppUser } from '@/hooks/use-app-user';
-import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useAuth, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import type { User } from '@/lib/types';
 import { ATTENDANCE_KIOSK_SESSIONS_COLLECTION, ATTENDANCE_PUNCHES_COLLECTION } from '@/lib/attendance/constants';
@@ -33,9 +35,102 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { AlertCircle, CheckCircle2, Loader2, LogIn, LogOut } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateTimeThaiBE } from '@/lib/date-thai';
+
+function MobileAttendanceLoginGate({
+  token,
+  onSignedIn,
+}: {
+  token: string;
+  onSignedIn?: () => void;
+}) {
+  const auth = useAuth();
+  const { toast } = useToast();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const login = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!auth) return;
+    const em = email.trim();
+    const pw = password;
+    if (!em || !pw) {
+      toast({ variant: 'destructive', title: 'กรุณากรอกอีเมลและรหัสผ่าน' });
+      return;
+    }
+    setBusy(true);
+    try {
+      await signInWithEmailAndPassword(auth, em, pw);
+      onSignedIn?.();
+    } catch (err: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'เข้าสู่ระบบไม่สำเร็จ',
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="min-h-dvh flex flex-col items-center justify-center bg-sky-50 px-4 py-10">
+      <Card className="w-full max-w-sm shadow-md">
+        <CardHeader className="text-center pb-2">
+          <CardTitle className="text-lg text-primary">ลงเวลา (มือถือ)</CardTitle>
+          <CardDescription>
+            สแกน QR จาก Kiosk แล้ว — ล็อกอินบัญชีพนักงาน/ลูกจ้างก่อนกดเข้างานหรือออกงาน
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!token && (
+            <p className="text-sm text-destructive text-center">
+              ไม่พบรหัสในลิงก์ (?t=…) — สแกน QR จากหน้า Kiosk อีกครั้ง
+            </p>
+          )}
+          <form className="space-y-3" onSubmit={(e) => void login(e)}>
+            <div className="space-y-1.5">
+              <Label htmlFor="mobile-att-email">อีเมล</Label>
+              <Input
+                id="mobile-att-email"
+                type="email"
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={busy}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="mobile-att-password">รหัสผ่าน</Label>
+              <Input
+                id="mobile-att-password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={busy}
+              />
+            </div>
+            <Button type="submit" className="w-full gap-2" disabled={busy || !token}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+              เข้าสู่ระบบเพื่อลงเวลา
+            </Button>
+          </form>
+          <p className="text-xs text-center text-muted-foreground">
+            <Link href="/" className="text-primary underline-offset-2 hover:underline">
+              กลับหน้าเข้าสู่ระบบหลัก
+            </Link>
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
 
 type ResolvedSubject =
   | { subjectType: AttendanceSubjectType; subjectId: string; displayName: string }
@@ -45,7 +140,7 @@ function MobileAttendanceInner() {
   const searchParams = useSearchParams();
   const token = (searchParams.get('t') || '').trim();
 
-  const { currentUser, isLoading: userLoading } = useAppUser();
+  const { currentUser, isLoading: userLoading, userDocError } = useAppUser();
   const { user: fbUser, isUserLoading: authLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -210,10 +305,33 @@ function MobileAttendanceInner() {
     }
   };
 
-  if (authLoading || userLoading || !currentUser) {
+  const authBootstrapPending = authLoading || (!!fbUser && userLoading);
+
+  if (authBootstrapPending) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center text-muted-foreground text-sm gap-2">
+      <div className="flex min-h-dvh items-center justify-center text-muted-foreground text-sm gap-2">
         <Loader2 className="h-5 w-5 animate-spin" /> กำลังโหลด…
+      </div>
+    );
+  }
+
+  if (!fbUser) {
+    return <MobileAttendanceLoginGate token={token} />;
+  }
+
+  if (!currentUser) {
+    return (
+      <div className="min-h-dvh flex flex-col items-center justify-center px-4 py-10 text-center max-w-md mx-auto gap-3">
+        <AlertCircle className="h-10 w-10 text-destructive" />
+        <p className="font-semibold text-destructive">โหลดโปรไฟล์ผู้ใช้ไม่สำเร็จ</p>
+        <p className="text-sm text-muted-foreground">
+          {userDocError
+            ? userDocError.message
+            : 'ไม่พบข้อมูลผู้ใช้ในระบบ — ติดต่อผู้ดูแลเพื่อเปิดบัญชีพนักงานภายใน'}
+        </p>
+        <Button type="button" variant="outline" asChild>
+          <Link href="/">กลับหน้าเข้าสู่ระบบ</Link>
+        </Button>
       </div>
     );
   }
