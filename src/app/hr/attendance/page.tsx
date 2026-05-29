@@ -18,7 +18,7 @@ import { canAccessHrAttendanceKioskPages } from '@/lib/navigation/nav-access';
 import {
   canSubmitAttendanceCorrectionRequest,
 } from '@/lib/permissions';
-import type { User } from '@/lib/types';
+import type { User, OfficeStaff } from '@/lib/types';
 import {
   ATTENDANCE_PUNCHES_COLLECTION,
   ATTENDANCE_DAY_OVERRIDES_COLLECTION,
@@ -65,6 +65,11 @@ import {
 import { AttendanceCorrectionRequestDialog } from '@/components/attendance/attendance-correction-request-dialog';
 import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import type { PayrollPolicyRecord } from '@/lib/types';
+
+/** พนักงานออฟฟิศที่อยู่ในทะเบียนปัจจุบัน — ไม่รวมผู้บริหาร (แยกทะเบียน/งวด) */
+function isOfficeStaffOnActiveRegistry(s: OfficeStaff): boolean {
+  return s.status === 'ACTIVE' && s.payrollBand !== 'EXECUTIVE';
+}
 
 type SubjectKey = `${AttendanceSubjectType}:${string}`;
 
@@ -180,6 +185,14 @@ export default function HrAttendanceManagePage() {
     );
   }, [firestore, canUse, range.startMs, range.endExclusiveMs]);
 
+  const officeStaffQuery = useMemoFirebase(() => {
+    if (!firestore || !canUse) return null;
+    return collection(firestore as Firestore, 'office_staff');
+  }, [firestore, canUse]);
+
+  const { data: officeStaffRows, isLoading: staffLoading, error: staffError } =
+    useCollection<OfficeStaff>(officeStaffQuery as any);
+
   const { data: punchRows, isLoading: punchesLoading, error: punchesError } =
     useCollection<AttendancePunchDoc>(punchesQuery as any);
 
@@ -206,17 +219,25 @@ export default function HrAttendanceManagePage() {
     return m;
   }, [overrideRows]);
 
+  const activeOfficeStaff = useMemo(() => {
+    return (officeStaffRows ?? []).filter(isOfficeStaffOnActiveRegistry);
+  }, [officeStaffRows]);
+
   const summaryRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const entries = [...grouped.entries()].map(([key, punches]) => {
-      const name = punches[0]?.subjectNameSnapshot ?? key;
+    const entries = activeOfficeStaff.map((staff) => {
+      const key = subjectKey('office_staff', staff.id);
+      const punches = (grouped.get(key) ?? []) as (AttendancePunchDoc & { id: string })[];
+      const name = staff.fullName?.trim() || punches[0]?.subjectNameSnapshot?.trim() || staff.id;
       const subjectOverrides = overridesBySubject.get(key) ?? [];
       const dayRows = buildAttendanceDayRows(ymDs, punches as AttendancePunchDoc[], subjectOverrides);
       const daysRecorded = countDaysWithEffectiveRecord(dayRows);
       return {
         key,
+        staffId: staff.id,
+        staffCode: staff.staffCode,
         name,
-        punches: punches as (AttendancePunchDoc & { id: string })[],
+        punches,
         dayRows,
         daysRecorded,
         workingDaysInCalendarMonth,
@@ -224,8 +245,13 @@ export default function HrAttendanceManagePage() {
     });
     entries.sort((a, b) => a.name.localeCompare(b.name, 'th'));
     if (!q) return entries;
-    return entries.filter((r) => r.name.toLowerCase().includes(q));
-  }, [grouped, search, ymDs, overridesBySubject, workingDaysInCalendarMonth]);
+    return entries.filter(
+      (r) =>
+        r.name.toLowerCase().includes(q)
+        || r.staffCode.toLowerCase().includes(q)
+        || r.staffId.toLowerCase().includes(q),
+    );
+  }, [activeOfficeStaff, grouped, ymDs, overridesBySubject, workingDaysInCalendarMonth, search]);
 
   const toggleOpen = (key: string) => {
     setOpenRows((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -269,7 +295,8 @@ export default function HrAttendanceManagePage() {
             <div>
               <h1 className="text-2xl font-bold tracking-tight text-primary">จัดการการลงเวลา</h1>
               <p className="text-sm text-muted-foreground mt-1">
-                สรุปการลงเวลาผ่าน Kiosk (QR) รายเดือน — แสดงทุกวันในปฏิทิน (รวมวันหยุด) และการขอแก้ไขเวลาหลังอนุมัติจากผู้จัดการ
+                สรุปการสแกน Kiosk (QR) รายเดือนของพนักงานออฟฟิศจากทะเบียนปัจจุบัน — แสดงทุกคนที่ ACTIVE ในระบบ
+                (ไม่รวมผู้ที่ถูกลบออกจากทะเบียนแล้ว แม้เคยมีบันทึกสแกน) · ใช้ประกอบงวดจ่ายเงินเดือนออฟฟิศ
               </p>
             </div>
           </div>
@@ -322,23 +349,30 @@ export default function HrAttendanceManagePage() {
             </div>
           </CardHeader>
           <CardContent className="pt-4">
-            {punchesLoading && (
+            {(punchesLoading || staffLoading) && (
               <div className="flex items-center gap-2 text-muted-foreground text-sm py-8">
                 <Loader2 className="h-4 w-4 animate-spin" /> กำลังโหลดข้อมูล…
               </div>
             )}
-            {punchesError && (
+            {(punchesError || staffError) && (
               <p className="text-sm text-destructive py-4">
                 โหลดไม่สำเร็จ —{' '}
-                {punchesError instanceof Error ? punchesError.message : String(punchesError)}
+                {String(
+                  (punchesError as Error | undefined)?.message
+                    || (staffError as Error | undefined)?.message
+                    || punchesError
+                    || staffError,
+                )}
               </p>
             )}
-            {!punchesLoading && !punchesError && summaryRows.length === 0 && (
+            {!punchesLoading && !staffLoading && !punchesError && !staffError && summaryRows.length === 0 && (
               <p className="text-sm text-muted-foreground py-8 text-center">
-                ไม่มีบันทึกการลงเวลาผ่าน Kiosk ในเดือนนี้
+                {search.trim()
+                  ? 'ไม่พบพนักงานออฟฟิศที่ตรงกับคำค้น'
+                  : 'ไม่มีพนักงานออฟฟิศ ACTIVE ในทะเบียน — เพิ่มรายชื่อที่เมนูทะเบียนพนักงานออฟฟิศ'}
               </p>
             )}
-            {!punchesLoading && !punchesError && summaryRows.length > 0 && (
+            {!punchesLoading && !staffLoading && !punchesError && !staffError && summaryRows.length > 0 && (
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -350,8 +384,6 @@ export default function HrAttendanceManagePage() {
                 </TableHeader>
                 <TableBody>
                   {summaryRows.map((row) => {
-                    const colon = row.key.indexOf(':');
-                    const st = row.key.slice(0, colon) as AttendanceSubjectType;
                     const isOpen = !!openRows[row.key];
                     return (
                       <Fragment key={row.key}>
@@ -373,8 +405,8 @@ export default function HrAttendanceManagePage() {
                           <TableCell className="font-medium align-top">
                             <div className="flex flex-col gap-0.5">
                               <span>{row.name}</span>
-                              <span className="text-[11px] text-muted-foreground font-normal">
-                                {st === 'office_staff' ? 'พนักงานออฟฟิศ' : 'ลูกจ้าง'}
+                              <span className="text-[11px] text-muted-foreground font-normal font-mono">
+                                {row.staffCode || row.staffId} · พนักงานออฟฟิศ
                               </span>
                             </div>
                           </TableCell>
@@ -449,8 +481,8 @@ export default function HrAttendanceManagePage() {
                                               className="h-8"
                                               onClick={() =>
                                                 openCorrection({
-                                                  subjectType: st,
-                                                  subjectId: row.key.slice(colon + 1),
+                                                  subjectType: 'office_staff',
+                                                  subjectId: row.staffId,
                                                   subjectNameSnapshot: row.name,
                                                   workDateYmd: d.ymd,
                                                   previousInAtMs: d.effectiveInMs,
