@@ -242,17 +242,19 @@ export function computeOfficePayrollPeriodAdjustments(
     const unpaidFromQuota = Math.max(0, usedInPeriod - paidInPeriod);
     unpaidLeaveDays += unpaidFromQuota;
 
-    leaveSummary.push({
+    const row: OfficePayrollLineLeaveSummaryRow = {
       leaveType,
       entitlementDays: ent,
       usedInPeriodDays: usedInPeriod,
       usedYtdDays: usedYtd,
       paidInPeriodDays: round2(paidInPeriod),
       unpaidInPeriodDays: round2(unpaidFromQuota),
-      vacationEligible: leaveType === 'VACATION' ? isEligibleForVacation(input.staff, input.periodEndMs) : undefined,
-      vacationEligibleFrom:
-        leaveType === 'VACATION' ? vacationEligibleFromDate(input.staff) : undefined,
-    });
+    };
+    if (leaveType === 'VACATION') {
+      row.vacationEligible = isEligibleForVacation(input.staff, input.periodEndMs);
+      row.vacationEligibleFrom = vacationEligibleFromDate(input.staff);
+    }
+    leaveSummary.push(row);
   }
 
   unpaidLeaveDays = round2(unpaidLeaveDays);

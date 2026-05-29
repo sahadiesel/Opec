@@ -664,6 +664,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                 <div className="space-y-2">
                   <Label className="font-bold flex items-center gap-2">
                     <MapPin className="h-3.5 w-3.5" /> ที่อยู่
+                    <span className="text-[10px] font-normal text-amber-700 dark:text-amber-400">(จำเป็นสำหรับงวดเงินเดือน/ภงด.1)</span>
                   </Label>
                   <Textarea
                     value={formData.address ?? ''}

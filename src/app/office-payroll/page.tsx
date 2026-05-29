@@ -79,6 +79,7 @@ import {
   getStaffIdsUsedInOtherRunsForSameMonth,
   isOfficeStaffEligibleForStandardOfficeRun,
 } from '@/lib/payroll/office-payroll-run-apply';
+import { listOfficeStaffPayrollIdentityBlockers } from '@/lib/payroll/office-staff-payroll-identity';
 import { fetchOfficePayrollMonthConsolidation, type OfficePayrollMonthConsolidation } from '@/lib/payroll/office-month-staff-aggregate';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
@@ -309,6 +310,26 @@ export default function OfficePayrollPage() {
     );
   }, [eligibleForCreate, createStaffSearch]);
 
+  const payrollIdentityIssuesByStaffId = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const s of eligibleForCreate) {
+      const blockers = listOfficeStaffPayrollIdentityBlockers([s]);
+      if (blockers[0]?.reasons.length) map.set(s.id, blockers[0].reasons);
+    }
+    return map;
+  }, [eligibleForCreate]);
+
+  const selectedPayrollIdentityBlockers = useMemo(() => {
+    if (!allOfficeStaff) return [];
+    const byId = new Map(allOfficeStaff.map((s) => [s.id, s]));
+    const selected: OfficeStaff[] = [];
+    for (const id of selectedStaffIds) {
+      const s = byId.get(id);
+      if (s) selected.push(s);
+    }
+    return listOfficeStaffPayrollIdentityBlockers(selected);
+  }, [allOfficeStaff, selectedStaffIds]);
+
   const handleCreateRun = async () => {
     if (!canCreateOfficePayroll) {
       toast({ variant: "destructive", title: "ไม่มีสิทธิ์", description: "คุณไม่มีสิทธิ์สร้างงวดเงินเดือนออฟฟิศ" });
@@ -341,6 +362,18 @@ export default function OfficePayrollPage() {
     }
     if (staffList.length === 0) {
       toast({ variant: "destructive", title: "รายชื่อไม่ถูกต้อง" });
+      return;
+    }
+
+    const identityBlockers = listOfficeStaffPayrollIdentityBlockers(staffList);
+    if (identityBlockers.length > 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลทะเบียนพนักงานไม่ครบ',
+        description: identityBlockers
+          .map((b) => `${b.staff.fullName} (${b.staff.staffCode}): ${b.reasons.join(' · ')}`)
+          .join('\n'),
+      });
       return;
     }
 
@@ -693,10 +726,12 @@ export default function OfficePayrollPage() {
                   )}
                   <ScrollArea className="h-[220px] rounded-md border p-2">
                     <div className="space-y-2 pr-3">
-                      {filteredEligible.map((s) => (
+                      {filteredEligible.map((s) => {
+                        const identityIssues = payrollIdentityIssuesByStaffId.get(s.id);
+                        return (
                         <label
                           key={s.id}
-                          className="flex items-start gap-3 rounded-md border border-transparent px-2 py-1.5 hover:bg-muted/50 cursor-pointer"
+                          className={`flex items-start gap-3 rounded-md border px-2 py-1.5 cursor-pointer hover:bg-muted/50 ${identityIssues?.length ? 'border-amber-300 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20' : 'border-transparent'}`}
                         >
                           <Checkbox
                             checked={selectedStaffIds.has(s.id)}
@@ -708,18 +743,43 @@ export default function OfficePayrollPage() {
                                 return next;
                               });
                             }}
+                            className="mt-0.5"
                           />
-                          <span className="text-sm leading-tight">
+                          <span className="text-sm leading-tight min-w-0 flex-1">
                             <span className="font-semibold">{s.fullName}</span>
                             <span className="text-muted-foreground text-xs block font-mono">{s.staffCode} · {s.department}</span>
+                            {identityIssues?.length ? (
+                              <span className="text-[11px] text-amber-800 dark:text-amber-300 block mt-1 leading-snug">
+                                ข้อมูลไม่ครบสำหรับงวด/ภงด.1: {identityIssues.join(' · ')}{' '}
+                                <Link href={`/office-staff/${s.id}`} className="underline font-semibold" onClick={(e) => e.stopPropagation()}>
+                                  แก้ทะเบียน
+                                </Link>
+                              </span>
+                            ) : null}
                           </span>
                         </label>
-                      ))}
+                      )})}
                       {filteredEligible.length === 0 && !loadingLocked && (
                         <p className="text-sm text-muted-foreground py-6 text-center">ไม่มีรายชื่อที่เลือกได้ในเดือนนี้</p>
                       )}
                     </div>
                   </ScrollArea>
+                  {selectedPayrollIdentityBlockers.length > 0 && (
+                    <Alert className="bg-amber-50 border-amber-300 dark:bg-amber-950/30 dark:border-amber-800 py-2">
+                      <AlertTitle className="text-xs font-bold flex items-center gap-1.5">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                        มีรายชื่อที่เลือกแล้วแต่ข้อมูลทะเบียนไม่ครบ ({selectedPayrollIdentityBlockers.length} คน)
+                      </AlertTitle>
+                      <AlertDescription className="text-[11px] leading-snug space-y-1">
+                        {selectedPayrollIdentityBlockers.map((b) => (
+                          <p key={b.staff.id}>
+                            <span className="font-semibold">{b.staff.fullName}</span> ({b.staff.staffCode}): {b.reasons.join(' · ')}
+                          </p>
+                        ))}
+                        <p className="pt-1 text-muted-foreground">แก้ที่ทะเบียนพนักงานก่อนกดสร้างงวด — หรือยกเลิกการเลือกรายชื่อที่มีปัญหา</p>
+                      </AlertDescription>
+                    </Alert>
+                  )}
                   {lockedOutForCreate.length > 0 && (
                     <Alert className="bg-amber-50 border-amber-200 py-2">
                       <AlertTitle className="text-xs font-bold">อยู่งวดจ่ายอื่นในเดือนนี้แล้ว ({lockedOutForCreate.length} คน)</AlertTitle>
@@ -735,7 +795,7 @@ export default function OfficePayrollPage() {
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>
                   ยกเลิก
                 </Button>
-                <Button onClick={() => void handleCreateRun()} className="bg-primary font-bold" disabled={isCreating || !canCreateOfficePayroll}>
+                <Button onClick={() => void handleCreateRun()} className="bg-primary font-bold" disabled={isCreating || !canCreateOfficePayroll || selectedPayrollIdentityBlockers.length > 0}>
                   {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                   สร้างงวดและคำนวณ
                 </Button>

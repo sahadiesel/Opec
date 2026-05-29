@@ -28,16 +28,25 @@ export function validateOfficeStaffIdentityForPayroll(staff: OfficeStaff): strin
   return reasons;
 }
 
+/** รายการพนักงานที่ข้อมูลไม่ครบสำหรับงวด/ภงด.1 — ใช้แสดงใน UI ก่อนสร้างงวด */
+export function listOfficeStaffPayrollIdentityBlockers(
+  staffList: OfficeStaff[],
+): Array<{ staff: OfficeStaff; reasons: string[] }> {
+  return staffList
+    .map((staff) => ({ staff, reasons: validateOfficeStaffIdentityForPayroll(staff) }))
+    .filter((row) => row.reasons.length > 0);
+}
+
+function formatOfficeStaffPayrollIdentityError(staffList: OfficeStaff[]): string {
+  const blockers = listOfficeStaffPayrollIdentityBlockers(staffList);
+  const lines = blockers.map((b) => `${b.staff.fullName} (${b.staff.staffCode}): ${b.reasons.join(' · ')}`);
+  return `ไม่สามารถดำเนินการได้ — ข้อมูลทะเบียนพนักงานออฟฟิศไม่ครบสำหรับงวดเงินเดือน/หัก ณ ที่จ่าย:\n${lines.join('\n')}`;
+}
+
 export function assertOfficeStaffListPayrollIdentityComplete(staffList: OfficeStaff[]): void {
-  const lines: string[] = [];
-  for (const s of staffList) {
-    const r = validateOfficeStaffIdentityForPayroll(s);
-    if (r.length) lines.push(`${s.fullName} (${s.staffCode}): ${r.join(' · ')}`);
-  }
-  if (lines.length === 0) return;
-  throw new Error(
-    `ไม่สามารถดำเนินการได้ — ข้อมูลทะเบียนพนักงานออฟฟิศไม่ครบสำหรับงวดเงินเดือน/หัก ณ ที่จ่าย:\n${lines.join('\n')}`,
-  );
+  const blockers = listOfficeStaffPayrollIdentityBlockers(staffList);
+  if (blockers.length === 0) return;
+  throw new Error(formatOfficeStaffPayrollIdentityError(staffList));
 }
 
 /** ตรวจจากทะเบียนล่าสุดใน `office_staff` ก่อนบัญชีบันทึกจ่าย (กรณีแก้ทะเบียนหลังคำนวณงวด) */

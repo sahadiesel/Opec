@@ -22,6 +22,7 @@ import { assertOfficeStaffListPayrollIdentityComplete } from '@/lib/payroll/offi
 import { computeOfficePayrollPeriodAdjustments } from '@/lib/payroll/office-payroll-period-deductions';
 import { sumApprovedOfficeOvertimePayInPeriod } from '@/lib/payroll/office-overtime-pay';
 import { loadOfficePayrollRunComputationContext } from '@/lib/payroll/office-payroll-run-context';
+import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
 
 /** วันที่ 1 และวันสุดท้ายของเดือน (ปฏิทินเกรกอเรียน YYYY-MM-DD) */
 export function getPayrollMonthPeriodBounds(yyyyMm: string): { payrollPeriodStart: string; payrollPeriodEnd: string } {
@@ -187,7 +188,7 @@ export async function applyStandardOfficeRunLines(
       updatedAt: Date.now(),
     };
 
-    batch.set(lineDoc, newLine);
+    batch.set(lineDoc, stripUndefinedForFirestore(newLine));
     totalGross += d8.grossPay;
     totalNet += d8.netPay;
     totalAllowances += allowance + bonus;
