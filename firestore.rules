@@ -511,6 +511,15 @@ service cloud.firestore {
     match /withholding_certificate_documents/{id} {
       allow read, write: if isInternalUser();
     }
+    // หัวเอกสาร (ชื่อบริษัท/โลโก้) — พนักงานอ่านได้เพื่อสลิป/เอกสาร; แก้ไขเฉพาะ admin
+    match /system/company_profile {
+      allow read: if isInternalUser() || isClientPortalUser();
+      allow write: if isAdmin();
+    }
+    match /system/drug_test_panel {
+      allow read: if isInternalUser();
+      allow write: if isAdmin();
+    }
     //    generated gate  path 
     // PRESERVED-PATH (simplified fallback): system/{docId}
     match /system/{docId} {

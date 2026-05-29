@@ -5,6 +5,7 @@ import type {
   PayrollBatchIncomeSegment,
   PayrollBatchLine,
   PayrollLineD8Snapshot,
+  PayrollRunStatus,
   PayslipWorkDaySplit,
 } from '@/lib/types';
 import { formatDateThaiBE, formatOfficePayrollRunPeriodLabelThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
@@ -43,7 +44,8 @@ export type PayslipViewModel = {
   periodLabel: string;
   payrollTypeLabel: string;
   documentRef: string;
-  paymentDateLabel: string;
+  /** แสดงเมื่องวดอนุมัติแล้วเท่านั้น (office) — ไม่ตั้งค่าก่อน HR อนุมัติ */
+  paymentDateLabel?: string;
   policyVersionLabel: string;
   /** รายการรายได้แต่ละบรรทัด (ครบทั้ง timesheet + HR) */
   incomeLines: PayslipLineItem[];
@@ -355,8 +357,12 @@ export function buildPayslipFromWorkerLine(
   };
 }
 
-function officePaymentTimestamp(run: OfficePayrollRun): number | undefined {
-  return run.lockedAt ?? run.updatedAt ?? run.createdAt;
+function officePaymentDateLabel(run: OfficePayrollRun): string | undefined {
+  const approvedStatuses: PayrollRunStatus[] = ['HR_APPROVED', 'FINANCE_APPROVED', 'PAID', 'LOCKED'];
+  if (!approvedStatuses.includes(run.status)) return undefined;
+  const ts = run.managerApprovedAt;
+  if (ts == null || !Number.isFinite(ts)) return undefined;
+  return formatDateThaiBE(ts);
 }
 
 export function buildPayslipFromOfficeLine(
@@ -458,7 +464,7 @@ export function buildPayslipFromOfficeLine(
     payrollTypeLabel:
       payrollTypeLabelOverride?.trim() || 'พนักงานออฟฟิศ / Office Payroll (รายเดือน)',
     documentRef: run.payrollRunNo,
-    paymentDateLabel: formatPaymentDate(officePaymentTimestamp(run)),
+    paymentDateLabel: officePaymentDateLabel(run),
     policyVersionLabel: formatPolicyVersionFromSnapshot(line.d8Snapshot),
     incomeLines,
     grossTotal: round2(gross),

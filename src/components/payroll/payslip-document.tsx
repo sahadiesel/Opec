@@ -79,10 +79,12 @@ export function PayslipDocument({ model, className }: { model: PayslipViewModel;
           <dt>เลขที่อ้างอิง / Reference</dt>
           <dd className="mono">{model.documentRef}</dd>
         </div>
-        <div>
-          <dt>วันที่จ่าย / Payment date</dt>
-          <dd>{model.paymentDateLabel}</dd>
-        </div>
+        {model.paymentDateLabel ? (
+          <div>
+            <dt>วันที่จ่าย / Payment date</dt>
+            <dd>{model.paymentDateLabel}</dd>
+          </div>
+        ) : null}
       </dl>
 
       <section>

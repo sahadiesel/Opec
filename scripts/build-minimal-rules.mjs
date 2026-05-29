@@ -129,6 +129,14 @@ const EXTRA_BLOCKS = `
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
+    match /system/company_profile {
+      allow read: if isInternalUser() || isClientPortalUser();
+      allow write: if isAdmin();
+    }
+    match /system/drug_test_panel {
+      allow read: if isInternalUser();
+      allow write: if isAdmin();
+    }
     // ===== Broad READ fallback for internal staff =====
     // Matrix gates above narrow write access by role, but every internal
     // user needs READ visibility on core business collections to do their
