@@ -7,6 +7,37 @@ export type AttendanceCorrectionRequestStatus =
   | 'APPROVED'
   | 'REJECTED';
 
+export type AttendanceOvertimeRequestStatus = AttendanceCorrectionRequestStatus;
+
+/** Stored at `attendance_overtime_requests/{id}` */
+export type AttendanceOvertimeRequestDoc = {
+  id: string;
+  subjectType: AttendanceSubjectType;
+  subjectId: string;
+  subjectNameSnapshot: string;
+  subjectKey: string;
+  payrollMonth: string;
+  workDateYmd: string;
+  /** ชั่วโมง OT ที่ขอ */
+  requestedOtHours: number;
+  /** ชั่วโมง OT ที่ผู้จัดการอนุมัติ */
+  approvedOtHours?: number | null;
+  /** snapshot ตอนอนุมัติ */
+  monthlySalarySnapshot?: number;
+  hourlyRateSnapshot?: number;
+  otMultiplierSnapshot?: number;
+  otPayAmountSnapshot?: number;
+  reason: string;
+  status: AttendanceOvertimeRequestStatus;
+  requestedByUid: string;
+  requestedByName?: string;
+  requestedAt: number;
+  reviewedByUid?: string;
+  reviewedByName?: string;
+  reviewedAt?: number;
+  rejectReason?: string;
+};
+
 /** Stored at `attendance_correction_requests/{id}` */
 export type AttendanceCorrectionRequestDoc = {
   id: string;

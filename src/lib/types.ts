@@ -580,6 +580,11 @@ export interface OfficeStaff {
   dailyWage?: number;
   /** รายเดือนแต่ไม่อ้างอิงการสแกน/เวลาเข้างาน */
   monthlyAttendanceExempt?: boolean;
+  /**
+   * ฐานคิดหักสาย/ขาดจากเวลาเข้างาน (admin เท่านั้นที่ตั้ง)
+   * — BASE_SALARY = ไม่หักจากสแกน แต่ยังหักจากวันลา/ขาดที่บันทึกในระบบ
+   */
+  officePayrollTimeDeductionBasis?: 'SCAN' | 'BASE_SALARY';
   /** ไม่นำเข้างวดจ่ายเงินเดือนออฟฟิศอัตโนมัติ (เช่น ฝึกงาน / จ่ายนอกระบบ) */
   excludeFromPayrollRuns?: boolean;
   startDate: string;
@@ -1895,8 +1900,37 @@ export interface OfficePayrollLine {
   d8Snapshot?: PayrollLineD8Snapshot;
   /** รายรับเพิ่ม / หักเพิ่ม — คำนวณรวมใน gross / deductions ผ่าน D8 */
   hrLineAdjustments?: OfficePayrollLineHrAdjustments | null;
+  /** สรุปวันลาในงวด — snapshot ตอนคำนวณงวด */
+  leaveSummary?: OfficePayrollLineLeaveSummaryRow[];
+  /** สรุปหักสาย/ขาด/ลาไม่จ่าย — snapshot ตอนคำนวณงวด */
+  attendanceSummary?: OfficePayrollLineAttendanceSummary | null;
+  /** หักก่อนคำนวณภาษีจากสาย/ขาด/ลา — เก็บเพื่อคงยอดเมื่อ HR ปรับรายคน */
+  periodPreStatutoryDeductions?: Array<{ code: string; amount: number }>;
   createdAt: number;
   updatedAt: number;
+}
+
+/** สรุปวันลาบนสลิปพนักงานออฟฟิศ */
+export interface OfficePayrollLineLeaveSummaryRow {
+  leaveType: 'SICK' | 'PERSONAL' | 'VACATION';
+  entitlementDays: number;
+  usedInPeriodDays: number;
+  usedYtdDays: number;
+  paidInPeriodDays: number;
+  unpaidInPeriodDays: number;
+  vacationEligible?: boolean;
+  vacationEligibleFrom?: string | null;
+}
+
+/** สรุปหักจากเวลาเข้างาน/ลาไม่จ่าย */
+export interface OfficePayrollLineAttendanceSummary {
+  scanDeductionsApplied: boolean;
+  lateMinutes: number;
+  scanAbsenceDays: number;
+  unpaidLeaveDays: number;
+  lateDeductionAmount: number;
+  scanAbsenceDeductionAmount: number;
+  unpaidLeaveDeductionAmount: number;
 }
 
 /** งวดเงินเดือนผู้บริหาร — โครงเดียวกับ office แต่คนละคอลเลกชันและสิทธิ์เฉพาะบัญชี */

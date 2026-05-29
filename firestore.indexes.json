@@ -329,6 +329,22 @@
       ]
     },
     {
+      "collectionGroup": "attendance_overtime_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "requestedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "attendance_overtime_requests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "payrollMonth", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "attendance_day_overrides",
       "queryScope": "COLLECTION",
       "fields": [

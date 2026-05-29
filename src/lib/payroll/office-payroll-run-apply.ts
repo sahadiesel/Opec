@@ -19,6 +19,9 @@ import {
   runStatusToD8Lifecycle,
 } from '@/lib/payroll/d8';
 import { assertOfficeStaffListPayrollIdentityComplete } from '@/lib/payroll/office-staff-payroll-identity';
+import { computeOfficePayrollPeriodAdjustments } from '@/lib/payroll/office-payroll-period-deductions';
+import { sumApprovedOfficeOvertimePayInPeriod } from '@/lib/payroll/office-overtime-pay';
+import { loadOfficePayrollRunComputationContext } from '@/lib/payroll/office-payroll-run-context';
 
 /** วันที่ 1 และวันสุดท้ายของเดือน (ปฏิทินเกรกอเรียน YYYY-MM-DD) */
 export function getPayrollMonthPeriodBounds(yyyyMm: string): { payrollPeriodStart: string; payrollPeriodEnd: string } {
@@ -96,7 +99,7 @@ export interface ApplyOfficeRunLinesResult {
 export async function applyStandardOfficeRunLines(
   firestore: Firestore,
   runId: string,
-  run: Pick<OfficePayrollRun, 'payrollMonth' | 'payrollPeriodEnd'>,
+  run: Pick<OfficePayrollRun, 'payrollMonth' | 'payrollPeriodStart' | 'payrollPeriodEnd'>,
   staffList: OfficeStaff[],
   options: { newStatus?: PayrollRunStatus },
 ): Promise<ApplyOfficeRunLinesResult> {
@@ -107,6 +110,7 @@ export async function applyStandardOfficeRunLines(
   const asOf = run.payrollPeriodEnd || `${run.payrollMonth}-28`;
   const policyRecords = await loadPayrollPoliciesFromFirestore(firestore);
   const officePolicies = resolvePayrollPoliciesForDate(asOf, policyRecords, 'office');
+  const payrollCtx = await loadOfficePayrollRunComputationContext(firestore, run, policyRecords);
 
   const linesCol = collection(firestore, 'office_payroll_runs', runId, 'lines');
   const batch = writeBatch(firestore);
@@ -123,14 +127,36 @@ export async function applyStandardOfficeRunLines(
     const baseSalary = staff.monthlySalary || 0;
     const allowance = 0;
     const bonus = 0;
+
+    const periodAdj = computeOfficePayrollPeriodAdjustments({
+      staff,
+      periodStart: run.payrollPeriodStart,
+      periodEnd: run.payrollPeriodEnd,
+      periodEndMs: payrollCtx.periodEndMs,
+      leaveRequests: payrollCtx.leaveRequests,
+      attendanceDayRows: payrollCtx.attendanceRowsByStaffId.get(staff.id) ?? [],
+      leaveEntitlements: payrollCtx.leaveEntitlements,
+      monthlyWorkNorm: payrollCtx.monthlyWorkNorm,
+      weeklyRestPattern: payrollCtx.weeklyRestPattern,
+      calendarHolidays: payrollCtx.calendarHolidays,
+    });
+
+    const overtimeAmount = sumApprovedOfficeOvertimePayInPeriod(
+      staff.id,
+      run.payrollPeriodStart,
+      run.payrollPeriodEnd,
+      payrollCtx.approvedOvertimeRequests,
+    );
+
     const d8 = computeOfficePayrollLineD8({
       asOfDate: asOf,
       policies: officePolicies,
       baseSalary,
       allowance,
       bonus,
-      overtimeAmount: 0,
+      overtimeAmount,
       otherIncome: 0,
+      preStatutoryDeductions: periodAdj.preStatutoryDeductions,
     });
 
     const newLine: OfficePayrollLine = {
@@ -144,7 +170,7 @@ export async function applyStandardOfficeRunLines(
       baseSalary,
       allowance,
       bonus,
-      overtimeAmount: 0,
+      overtimeAmount,
       otherIncome: 0,
       deductions: d8.deductions,
       tax: d8.tax,
@@ -152,6 +178,11 @@ export async function applyStandardOfficeRunLines(
       grossPay: d8.grossPay,
       netPay: d8.netPay,
       d8Snapshot: d8.snapshot,
+      leaveSummary: periodAdj.leaveSummary.length ? periodAdj.leaveSummary : undefined,
+      attendanceSummary: periodAdj.attendanceSummary,
+      periodPreStatutoryDeductions: periodAdj.preStatutoryDeductions.length
+        ? periodAdj.preStatutoryDeductions
+        : undefined,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };

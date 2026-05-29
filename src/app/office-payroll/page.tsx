@@ -368,7 +368,7 @@ export default function OfficePayrollPage() {
       await applyStandardOfficeRunLines(
         firestore,
         docRef.id,
-        { payrollMonth: newRun.payrollMonth, payrollPeriodEnd: newRun.payrollPeriodEnd },
+        { payrollMonth: newRun.payrollMonth, payrollPeriodStart: newRun.payrollPeriodStart, payrollPeriodEnd: newRun.payrollPeriodEnd },
         staffList,
         { newStatus: 'CALCULATED' },
       );

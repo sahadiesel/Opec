@@ -213,6 +213,9 @@ export default function HrSettingsPage() {
   const [lateGraceMinutes, setLateGraceMinutes] = useState(
     DEFAULT_MONTHLY_WORK_NORM.lateGraceMinutes ?? 5,
   );
+  const [officeOvertimeHourMultiplier, setOfficeOvertimeHourMultiplier] = useState(
+    DEFAULT_MONTHLY_WORK_NORM.officeOvertimeHourMultiplier ?? 1.5,
+  );
   /** เงินเดือนสมมุติเพื่อแสดงตัวอย่างหักรายวัน/รายนาที (ไม่บันทึก) */
   const [absenceDemoSalary, setAbsenceDemoSalary] = useState(26000);
 
@@ -264,6 +267,7 @@ export default function HrSettingsPage() {
         setWorkStartTime(cfg.workStartTime);
         setBreakStartTime(cfg.breakStartTime ?? '12:00');
         setLateGraceMinutes(cfg.lateGraceMinutes ?? 5);
+        setOfficeOvertimeHourMultiplier(cfg.officeOvertimeHourMultiplier ?? 1.5);
       }
       const wlRec = policies.find((p) => p.id === HR_WORKER_GLOBAL_LABOR_POLICY_ID);
       setWorkerLaborDraft(workerGlobalLaborContextFromPolicy(wlRec ?? null));
@@ -390,6 +394,7 @@ export default function HrSettingsPage() {
       workStartTime: workStartTime.trim(),
       breakStartTime: breakStartTime?.trim() || undefined,
       lateGraceMinutes: Math.max(0, Math.round(Number(lateGraceMinutes) || 0)),
+      officeOvertimeHourMultiplier: Math.max(0.5, Math.min(10, Number(officeOvertimeHourMultiplier) || 1.5)),
     };
     const mwErr = validateMonthlyWorkNormForSave(monthlyWorkCfg);
     if (mwErr) {
@@ -474,6 +479,7 @@ export default function HrSettingsPage() {
           workStartTime: monthlyWorkCfg.workStartTime,
           breakStartTime: monthlyWorkCfg.breakStartTime ?? '12:00',
           lateGraceMinutes: monthlyWorkCfg.lateGraceMinutes ?? 0,
+          officeOvertimeHourMultiplier: monthlyWorkCfg.officeOvertimeHourMultiplier ?? 1.5,
         },
         updatedAt: now,
         createdAt: mwCreated,
@@ -720,6 +726,8 @@ export default function HrSettingsPage() {
                 onBreakStartTime={setBreakStartTime}
                 lateGraceMinutes={lateGraceMinutes}
                 onLateGraceMinutes={setLateGraceMinutes}
+                officeOvertimeHourMultiplier={officeOvertimeHourMultiplier}
+                onOfficeOvertimeHourMultiplier={setOfficeOvertimeHourMultiplier}
                 absenceDemoSalary={absenceDemoSalary}
                 onAbsenceDemoSalary={setAbsenceDemoSalary}
                 footerNote={
@@ -1093,6 +1101,8 @@ export default function HrSettingsPage() {
               onBreakStartTime={setBreakStartTime}
               lateGraceMinutes={lateGraceMinutes}
               onLateGraceMinutes={setLateGraceMinutes}
+              officeOvertimeHourMultiplier={officeOvertimeHourMultiplier}
+              onOfficeOvertimeHourMultiplier={setOfficeOvertimeHourMultiplier}
               absenceDemoSalary={absenceDemoSalary}
               onAbsenceDemoSalary={setAbsenceDemoSalary}
               showThreePeriodRules

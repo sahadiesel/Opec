@@ -22,7 +22,7 @@ import type {
   User,
   WaveMonthTimesheetReview,
 } from '@/lib/types';
-import { ATTENDANCE_CORRECTION_REQUESTS_COLLECTION } from '@/lib/attendance/constants';
+import { ATTENDANCE_CORRECTION_REQUESTS_COLLECTION, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION } from '@/lib/attendance/constants';
 
 function ApprovalSectionPendingBadge({
   count,
@@ -153,6 +153,18 @@ export default function HrApprovalCenterPage() {
     attendanceCorrectionPendingQ as any,
   );
 
+  const overtimePendingQ = useMemoFirebase(
+    () =>
+      firestore && approvalGate
+        ? query(
+            collection(firestore, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION),
+            where('status', '==', 'PENDING_MANAGER_APPROVAL'),
+          )
+        : null,
+    [firestore, approvalGate],
+  );
+  const { data: overtimePendingRows, isLoading: loadingOvertime } = useCollection(overtimePendingQ as any);
+
   const leavePendingQ = useMemoFirebase(
     () =>
       firestore && approvalGate
@@ -177,6 +189,8 @@ export default function HrApprovalCenterPage() {
   }, [purchasePendingRows, purchaseRequestPendingRows]);
 
   const attendanceCorrectionPendingCount = attendanceCorrectionPendingRows?.length ?? 0;
+  const overtimePendingCount = overtimePendingRows?.length ?? 0;
+  const attendanceQueuePendingCount = attendanceCorrectionPendingCount + overtimePendingCount;
   const leavePendingCount = leavePendingRows?.length ?? 0;
 
   const canSee = approvalGate;
@@ -328,23 +342,26 @@ export default function HrApprovalCenterPage() {
           <Card className="relative flex h-full flex-col overflow-hidden rounded-xl border border-sky-500/20 bg-card shadow-sm ring-1 ring-black/[0.03] transition-shadow hover:shadow-md dark:ring-white/[0.06]">
             <CardHeader className="relative pb-3 pr-28 pt-6 sm:pr-36">
               <ApprovalSectionPendingBadge
-                count={attendanceCorrectionPendingCount}
-                loading={loadingAttendanceCorrection}
-                kindLabel="แก้ไขเวลาลงเวลา"
+                count={attendanceQueuePendingCount}
+                loading={loadingAttendanceCorrection || loadingOvertime}
+                kindLabel="แก้ไขเวลา / OT"
               />
               <CardTitle className="flex items-start gap-2.5 pr-0 text-lg leading-snug">
                 <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-500/15 text-sky-800 dark:text-sky-300">
                   <Clock className="h-5 w-5" />
                 </span>
-                <span>อนุมัติแก้ไขเวลาลงเวลา (Kiosk)</span>
+                <span>อนุมัติแก้ไขเวลาลงเวลา / OT (Kiosk)</span>
               </CardTitle>
               <CardDescription className="text-sm leading-relaxed">
-                ฝ่ายเงินเดือนส่งคำขอเมื่อพนักงานลืมสแกนหรือเวลาผิด — ผู้จัดการ HR / ปฏิบัติการอนุมัติแล้วระบบจะใช้เวลาที่แก้ในหน้าสรุปลงเวลา
+                ฝ่ายเงินเดือนส่งคำขอเมื่อพนักงานลืมสแกนหรือเวลาผิด — หรือขออนุมัติ OT ตามชั่วโมงที่ทำงานล่วงเวลา ผู้จัดการ HR / ปฏิบัติการอนุมัติแล้วระบบจะใช้ในหน้าสรุปลงเวลาและคำนวณเงิน OT ในงวดจ่าย
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2">
               <Button asChild>
                 <Link href="/hr/approval-center/attendance-corrections">เปิดคิวอนุมัติแก้ไขเวลา</Link>
+              </Button>
+              <Button asChild variant="secondary">
+                <Link href="/hr/approval-center/overtime">เปิดคิวอนุมัติ OT</Link>
               </Button>
               <Button variant="outline" size="sm" asChild>
                 <Link href="/hr/attendance">ไปสรุปลงเวลารายเดือน</Link>

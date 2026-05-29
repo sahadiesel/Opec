@@ -8,6 +8,7 @@ import type {
   PayslipWorkDaySplit,
 } from '@/lib/types';
 import { formatDateThaiBE } from '@/lib/date-thai';
+import { leaveSummaryLabelTh } from '@/lib/payroll/office-payroll-period-deductions';
 
 export const PAYSLIP_DEFAULT_COMPANY_TH = 'โอพีอีซี ออปส์โฟลว์';
 export const PAYSLIP_DEFAULT_COMPANY_EN = 'OPEC OpsFlow';
@@ -28,6 +29,11 @@ function resolvePayslipCompanyNames(source: PayslipCompanyProfileSource): { comp
 
 export type PayslipLineItem = { label: string; amount: number };
 
+export type PayslipLeaveSummaryLine = {
+  label: string;
+  detail: string;
+};
+
 export type PayslipViewModel = {
   companyNameTh: string;
   companyNameEn: string;
@@ -46,6 +52,8 @@ export type PayslipViewModel = {
   deductionLines: PayslipLineItem[];
   deductionsTotal: number;
   netPay: number;
+  /** สรุปวันลาในงวด (office payroll) */
+  leaveSummaryLines?: PayslipLeaveSummaryLine[];
   /** true ถ้ายอดรวมรายการกับ snapshot คลาดกันเล็กน้อย (ปัดเศษ) */
   roundingNote?: boolean;
 };
@@ -91,6 +99,9 @@ function humanizeDeductionKey(key: string): string {
     social_security: 'ประกันสังคม',
     pit_withholding: 'ภาษี ณ ที่จ่าย (ภงด. 1)',
     cash_advance_recovery: 'หักคืนเบิกล่วงหน้า',
+    late_deduction: 'หักมาสาย',
+    absence_deduction: 'หักขาดงาน (จากสแกน)',
+    unpaid_leave_deduction: 'หักลาเกินสิทธิ์ / ลาไม่อนุมัติ',
   };
   return map[key] || key.replace(/_/g, ' ');
 }
@@ -419,6 +430,25 @@ export function buildPayslipFromOfficeLine(
   const netPay = round2(line.netPay);
   const impliedNet = round2(gross - deductionsTotal);
 
+  const leaveSummaryLines =
+    line.leaveSummary?.map((row) => ({
+      label: leaveSummaryLabelTh(row),
+      detail:
+        row.unpaidInPeriodDays > 0
+          ? `หักเงิน ${row.unpaidInPeriodDays} วัน (เกินสิทธิ์หรือไม่อนุมัติ)`
+          : row.usedInPeriodDays > 0
+            ? 'ลาในสิทธิ์ — ไม่หักเงินเดือน'
+            : 'ไม่มีการลาในงวดนี้',
+    })) ?? undefined;
+
+  const att = line.attendanceSummary;
+  const attendanceNote =
+    att?.scanDeductionsApplied && (att.lateMinutes > 0 || att.scanAbsenceDays > 0)
+      ? `หักจากสแกน: สาย ${att.lateMinutes} นาที · ขาด/ไม่สแกน ${att.scanAbsenceDays} วัน`
+      : att && !att.scanDeductionsApplied
+        ? 'คำนวนจากฐานเงินเดือน — ไม่หักสาย/ขาดจากสแกน'
+        : undefined;
+
   return {
     companyNameTh,
     companyNameEn,
@@ -435,6 +465,16 @@ export function buildPayslipFromOfficeLine(
     deductionLines,
     deductionsTotal,
     netPay,
+    leaveSummaryLines: leaveSummaryLines?.length
+      ? [
+          ...leaveSummaryLines,
+          ...(attendanceNote
+            ? [{ label: attendanceNote, detail: att?.unpaidLeaveDays ? `หักลาไม่จ่ายรวม ${att.unpaidLeaveDays} วัน` : '' }]
+            : []),
+        ]
+      : attendanceNote
+        ? [{ label: attendanceNote, detail: '' }]
+        : undefined,
     roundingNote:
       Math.abs(impliedNet - netPay) >= 0.02 ||
       Math.abs(summedDed - round2(line.deductions)) >= 0.02,

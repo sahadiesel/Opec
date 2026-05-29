@@ -72,6 +72,8 @@ export type HrProxyLeaveDialogProps = {
   currentUser: User;
   officeStaff: OfficeStaff[];
   entCfg: OfficeLeaveEntitlementsDoc | null;
+  /** เปิดแก้ไขใบลาที่มีอยู่ (DRAFT / SUBMITTED) */
+  editLeave?: (OfficeLeaveRequestDoc & { id: string }) | null;
 };
 
 export function HrProxyLeaveDialog({
@@ -81,6 +83,7 @@ export function HrProxyLeaveDialog({
   currentUser,
   officeStaff,
   entCfg,
+  editLeave = null,
 }: HrProxyLeaveDialogProps) {
   const { toast } = useToast();
   const [staffId, setStaffId] = useState<string>('');
@@ -108,12 +111,25 @@ export function HrProxyLeaveDialog({
   const eligibleVacFromRaw = selectedStaff ? vacationEligibleFromDate(selectedStaff) : null;
   const eligibleVacFrom = eligibleVacFromRaw ? formatDateThaiBE(eligibleVacFromRaw) : null;
 
+  const isEditing = !!editLeave?.id;
+
   useEffect(() => {
     if (!open) return;
+    if (editLeave) {
+      setDraftDocId(editLeave.id);
+      setStaffId(editLeave.staffId);
+      setLeaveType(editLeave.leaveType);
+      setStartDate(editLeave.startDate.slice(0, 10));
+      setEndDate(editLeave.endDate.slice(0, 10));
+      setReason(editLeave.reason ?? '');
+      setIsHalfDay(!!editLeave.isHalfDay);
+      setHalfDaySession(editLeave.halfDaySession ?? 'MORNING');
+      return;
+    }
     if (!staffId && officeStaff.length) {
       setStaffId(officeStaff[0].id);
     }
-  }, [open, staffId, officeStaff]);
+  }, [open, editLeave, staffId, officeStaff]);
 
   useEffect(() => {
     if (!allowedTypes.includes(leaveType)) setLeaveType(allowedTypes[0] ?? 'SICK');
@@ -130,6 +146,7 @@ export function HrProxyLeaveDialog({
 
   function resetForm() {
     setDraftDocId(null);
+    setStaffId('');
     setReason('');
     setIsHalfDay(false);
     setStartDate(todayYmdBkk());
@@ -143,7 +160,9 @@ export function HrProxyLeaveDialog({
     resetForm();
   }
 
-  function buildPayload(status: 'DRAFT' | 'SUBMITTED'): Omit<OfficeLeaveRequestDoc, 'status'> & { status: typeof status } {
+  function buildPayload(
+    status: OfficeLeaveRequestDoc['status'],
+  ): Omit<OfficeLeaveRequestDoc, 'status'> & { status: typeof status } {
     if (!selectedStaff) throw new Error('no staff');
     const ts = Date.now();
     return {
@@ -160,11 +179,16 @@ export function HrProxyLeaveDialog({
       halfDaySession: isHalfDay ? halfDaySession : null,
       year: bkkYearOfYmd(startDate),
       status,
-      createdByUid: currentUser.id,
-      createdByName: currentUser.displayName || currentUser.email || '',
-      createdAt: ts,
+      createdByUid: editLeave?.createdByUid ?? currentUser.id,
+      createdByName: editLeave?.createdByName ?? (currentUser.displayName || currentUser.email || ''),
+      createdAt: editLeave?.createdAt ?? ts,
       updatedAt: ts,
     };
+  }
+
+  function draftSaveStatus(): 'DRAFT' | 'SUBMITTED' {
+    if (editLeave?.status === 'SUBMITTED') return 'SUBMITTED';
+    return 'DRAFT';
   }
 
   async function handleSaveDraft() {
@@ -184,13 +208,13 @@ export function HrProxyLeaveDialog({
     try {
       const ts = Date.now();
       if (draftDocId) {
-        const p = buildPayload('DRAFT');
-        const { createdAt: _c, ...upd } = p;
+        const p = buildPayload(draftSaveStatus());
+        const { createdAt: _c, createdByUid: _u, createdByName: _n, ...upd } = p;
         await updateDoc(doc(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION, draftDocId), {
           ...upd,
           updatedAt: ts,
         });
-        toast({ title: 'บันทึกฉบับร่างแล้ว' });
+        toast({ title: isEditing ? 'บันทึกการแก้ไขแล้ว' : 'บันทึกฉบับร่างแล้ว' });
       } else {
         const p = buildPayload('DRAFT');
         const ref = await addDoc(collection(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION), {
@@ -230,14 +254,14 @@ export function HrProxyLeaveDialog({
     setBusy(true);
     try {
       const ts = Date.now();
-      const raw = buildPayload('SUBMITTED');
       if (draftDocId) {
-        const { createdAt: _c, ...upd } = raw;
+        const { createdAt: _c, createdByUid: _u, createdByName: _n, ...upd } = buildPayload('SUBMITTED');
         await updateDoc(doc(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION, draftDocId), {
           ...upd,
           updatedAt: ts,
         });
       } else {
+        const raw = buildPayload('SUBMITTED');
         await addDoc(collection(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION), {
           ...raw,
           createdAt: ts,
@@ -265,17 +289,19 @@ export function HrProxyLeaveDialog({
       <Dialog open={open} onOpenChange={(v) => (v ? onOpenChange(true) : closeDialog())}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>สร้างใบลาแทนพนักงาน</DialogTitle>
+            <DialogTitle>{isEditing ? 'แก้ไขใบลา' : 'สร้างใบลาแทนพนักงาน'}</DialogTitle>
             <DialogDescription>
-              ใช้เมื่อพนักงานไม่สามารถยื่นในระบบได้ — บันทึกร่างหรือส่งเข้าคิวผู้จัดการเหมือนคำขอปกติ (ประวัติเก็บใน{' '}
-              <span className="font-mono text-xs">leave_requests</span>)
+              {isEditing
+                ? 'แก้ไขรายละเอียดใบลา — บันทึกฉบับร่างหรือส่งเข้าคิวอนุมัติได้ตามสถานะเดิม'
+                : 'ใช้เมื่อพนักงานไม่สามารถยื่นในระบบได้ — บันทึกร่างหรือส่งเข้าคิวผู้จัดการเหมือนคำขอปกติ'}{' '}
+              (ประวัติเก็บใน <span className="font-mono text-xs">leave_requests</span>)
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 py-2">
             <div className="space-y-2">
               <Label>พนักงาน</Label>
-              <Select value={staffId} onValueChange={setStaffId}>
+              <Select value={staffId} onValueChange={setStaffId} disabled={isEditing}>
                 <SelectTrigger>
                   <SelectValue placeholder="เลือกพนักงาน" />
                 </SelectTrigger>
@@ -377,7 +403,7 @@ export function HrProxyLeaveDialog({
             </Button>
             <Button type="button" variant="secondary" onClick={() => void handleSaveDraft()} disabled={busy || !staffId}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              บันทึกฉบับร่าง
+              {isEditing && editLeave?.status === 'SUBMITTED' ? 'บันทึกการแก้ไข' : 'บันทึกฉบับร่าง'}
             </Button>
             <Button type="button" onClick={() => setConfirmSubmitOpen(true)} disabled={busy || !staffId}>
               ส่งคำขอ (เข้าคิวอนุมัติ)

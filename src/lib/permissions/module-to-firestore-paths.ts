@@ -263,6 +263,7 @@ export const MODULE_FIRESTORE_SPECS: ModuleFirestoreSpec[] = [
       { path: 'exception_requests/{id}', shape: 'crud' },
       { path: 'attendance_punches/{id}', shape: 'crud' },
       { path: 'attendance_correction_requests/{id}', shape: 'crud' },
+      { path: 'attendance_overtime_requests/{id}', shape: 'crud' },
       { path: 'attendance_day_overrides/{id}', shape: 'crud' },
       { path: 'leave_requests/{id}', shape: 'crud' },
       { path: 'wave_month_timesheet_reviews/{id}', shape: 'crud' },

@@ -44,7 +44,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ArrowLeft, CalendarOff, CheckCircle2, Loader2, MoreHorizontal, Plus, XCircle } from 'lucide-react';
+import { ArrowLeft, CalendarOff, CheckCircle2, Loader2, MoreHorizontal, Pencil, Plus, Send, XCircle } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -77,10 +77,74 @@ import type {
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { HrProxyLeaveDialog } from '@/components/leaves/hr-proxy-leave-dialog';
 
-const yearOptions = (() => {
+const BE_YEAR_OFFSET = 543;
+
+const THAI_MONTH_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: 'มกราคม' },
+  { value: 2, label: 'กุมภาพันธ์' },
+  { value: 3, label: 'มีนาคม' },
+  { value: 4, label: 'เมษายน' },
+  { value: 5, label: 'พฤษภาคม' },
+  { value: 6, label: 'มิถุนายน' },
+  { value: 7, label: 'กรกฎาคม' },
+  { value: 8, label: 'สิงหาคม' },
+  { value: 9, label: 'กันยายน' },
+  { value: 10, label: 'ตุลาคม' },
+  { value: 11, label: 'พฤศจิกายน' },
+  { value: 12, label: 'ธันวาคม' },
+];
+
+function ceYearFromBe(beYear: number): number {
+  return beYear - BE_YEAR_OFFSET;
+}
+
+function beYearFromCe(ceYear: number): number {
+  return ceYear + BE_YEAR_OFFSET;
+}
+
+const yearOptionsBe = (() => {
   const cy = new Date().getFullYear();
-  return Array.from({ length: 6 }, (_, i) => cy - i);
+  return Array.from({ length: 8 }, (_, i) => beYearFromCe(cy - i));
 })();
+
+/** คำขอลาทับกับเดือน/ปีที่กรอง (ปีเป็น พ.ศ. หรือ ALL) */
+function leaveMatchesMonthYearFilter(
+  r: OfficeLeaveRequestDoc,
+  yearBe: 'ALL' | number,
+  month: 'ALL' | number,
+): boolean {
+  const start = r.startDate.slice(0, 10);
+  const end = r.endDate.slice(0, 10);
+  if (yearBe === 'ALL' && month === 'ALL') return true;
+
+  if (yearBe !== 'ALL' && month === 'ALL') {
+    const ceYear = ceYearFromBe(yearBe);
+    return start <= `${ceYear}-12-31` && end >= `${ceYear}-01-01`;
+  }
+
+  if (yearBe === 'ALL' && month !== 'ALL') {
+    const startMs = Date.parse(`${start}T00:00:00+07:00`);
+    const endMs = Date.parse(`${end}T00:00:00+07:00`);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return false;
+    for (let t = startMs; t <= endMs; t += 86_400_000) {
+      const ymd = new Date(t).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+      if (Number(ymd.slice(5, 7)) === month) return true;
+    }
+    return false;
+  }
+
+  const ceYear = ceYearFromBe(yearBe);
+  const m = String(month).padStart(2, '0');
+  const monthStart = `${ceYear}-${m}-01`;
+  const lastDay = new Date(ceYear, month, 0).getDate();
+  const monthEnd = `${ceYear}-${m}-${String(lastDay).padStart(2, '0')}`;
+  return start <= monthEnd && end >= monthStart;
+}
+
+function yearFilterSummaryLabel(yearBe: 'ALL' | number): string {
+  if (yearBe === 'ALL') return 'ทุกปี (พ.ศ.)';
+  return `พ.ศ. ${yearBe}`;
+}
 
 const STATUS_FILTER: Array<{ value: 'ALL' | OfficeLeaveStatus; label: string }> = [
   { value: 'ALL', label: 'ทุกสถานะ' },
@@ -105,7 +169,8 @@ export default function HrLeavesManagementPage() {
 
   const canManage = !!currentUser && canViewHrPayrollFlowSubsection(currentUser, null, false);
 
-  const [year, setYear] = useState<number>(new Date().getFullYear());
+  const [yearFilter, setYearFilter] = useState<'ALL' | number>('ALL');
+  const [monthFilter, setMonthFilter] = useState<'ALL' | number>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | OfficeLeaveStatus>('ALL');
   const [typeFilter, setTypeFilter] = useState<'ALL' | OfficeLeaveType>('ALL');
   const [staffFilter, setStaffFilter] = useState<string>('ALL');
@@ -148,16 +213,16 @@ export default function HrLeavesManagementPage() {
     };
   }, [firestore, canManage, toast]);
 
-  /** leave requests ของปีที่เลือก */
+  /** leave requests — กรองปีที่ Firestore เมื่อเลือกปี พ.ศ. เฉพาะเจาะจง */
   const requestsQuery = useMemoFirebase(() => {
     if (!firestore || !canManage) return null;
-    return query(
-      collection(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION),
-      where('year', '==', year),
-      orderBy('createdAt', 'desc'),
-      limit(2000),
-    );
-  }, [firestore, canManage, year]);
+    const col = collection(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION);
+    if (yearFilter === 'ALL') {
+      return query(col, orderBy('createdAt', 'desc'), limit(3000));
+    }
+    const ceYear = ceYearFromBe(yearFilter);
+    return query(col, where('year', '==', ceYear), orderBy('createdAt', 'desc'), limit(2000));
+  }, [firestore, canManage, yearFilter]);
 
   const { data: leaves, isLoading: leavesLoading } = useCollection<OfficeLeaveRequestDoc>(
     requestsQuery as any,
@@ -166,19 +231,20 @@ export default function HrLeavesManagementPage() {
   const filteredLeaves = useMemo(() => {
     const rows = leaves ?? [];
     return rows.filter((r) => {
+      if (!leaveMatchesMonthYearFilter(r, yearFilter, monthFilter)) return false;
       if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
       if (typeFilter !== 'ALL' && r.leaveType !== typeFilter) return false;
       if (staffFilter !== 'ALL' && r.staffId !== staffFilter) return false;
       return true;
     });
-  }, [leaves, statusFilter, typeFilter, staffFilter]);
+  }, [leaves, yearFilter, monthFilter, statusFilter, typeFilter, staffFilter]);
 
   const summaryRows = useMemo(() => {
     const byStaff = new Map<
       string,
       { approved: Record<OfficeLeaveType, number>; pending: Record<OfficeLeaveType, number> }
     >();
-    for (const r of leaves ?? []) {
+    for (const r of filteredLeaves) {
       const cur = byStaff.get(r.staffId) ?? {
         approved: { SICK: 0, PERSONAL: 0, VACATION: 0 },
         pending: { SICK: 0, PERSONAL: 0, VACATION: 0 },
@@ -203,11 +269,11 @@ export default function HrLeavesManagementPage() {
       };
     });
     return staffFilter === 'ALL' ? list : list.filter((r) => r.staff.id === staffFilter);
-  }, [leaves, officeStaff, entCfg, staffFilter]);
+  }, [filteredLeaves, officeStaff, entCfg, staffFilter]);
 
   const pendingCount = useMemo(
-    () => (leaves ?? []).filter((r) => r.status === 'SUBMITTED').length,
-    [leaves],
+    () => filteredLeaves.filter((r) => r.status === 'SUBMITTED').length,
+    [filteredLeaves],
   );
 
   const [approving, setApproving] = useState<OfficeLeaveRequestDoc & { id: string } | null>(null);
@@ -215,6 +281,22 @@ export default function HrLeavesManagementPage() {
   const [rejectReason, setRejectReason] = useState('');
   const [submitBusy, setSubmitBusy] = useState(false);
   const [proxyDialogOpen, setProxyDialogOpen] = useState(false);
+  const [editingLeave, setEditingLeave] = useState<(OfficeLeaveRequestDoc & { id: string }) | null>(null);
+
+  function openCreateLeaveDialog() {
+    setEditingLeave(null);
+    setProxyDialogOpen(true);
+  }
+
+  function openEditLeaveDialog(row: OfficeLeaveRequestDoc & { id: string }) {
+    setEditingLeave(row);
+    setProxyDialogOpen(true);
+  }
+
+  function handleProxyDialogOpenChange(open: boolean) {
+    setProxyDialogOpen(open);
+    if (!open) setEditingLeave(null);
+  }
 
   async function handleApprove() {
     if (!firestore || !currentUser?.id || !approving) return;
@@ -233,6 +315,37 @@ export default function HrLeavesManagementPage() {
       toast({
         variant: 'destructive',
         title: 'อนุมัติไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setSubmitBusy(false);
+    }
+  }
+
+  async function handleSubmitDraft(row: OfficeLeaveRequestDoc & { id: string }) {
+    if (!firestore) return;
+    if (!row.reason?.trim()) {
+      toast({
+        variant: 'destructive',
+        title: 'ส่งไม่ได้',
+        description: 'กรุณาระบุเหตุผลในใบลาก่อนส่งให้อนุมัติ',
+      });
+      return;
+    }
+    setSubmitBusy(true);
+    try {
+      await updateDoc(doc(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION, row.id), {
+        status: 'SUBMITTED',
+        updatedAt: serverTimestamp(),
+      });
+      toast({
+        title: 'ส่งเข้าคิวอนุมัติแล้ว',
+        description: 'ผู้จัดการจะเห็นในหน้าคิวอนุมัติวันลา',
+      });
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'ส่งไม่สำเร็จ',
         description: e instanceof Error ? e.message : String(e),
       });
     } finally {
@@ -308,20 +421,43 @@ export default function HrLeavesManagementPage() {
         <Card>
           <CardContent className="pt-6">
             <div className="flex flex-wrap items-end gap-3">
-              <Button type="button" className="gap-2" onClick={() => setProxyDialogOpen(true)}>
+              <Button type="button" className="gap-2" onClick={openCreateLeaveDialog}>
                 <Plus className="h-4 w-4" />
                 สร้างใบลาแทนพนักงาน
               </Button>
-              <div className="space-y-1.5 w-32">
-                <Label className="text-xs">ปี</Label>
-                <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
+              <div className="space-y-1.5 w-36">
+                <Label className="text-xs">เดือน</Label>
+                <Select
+                  value={monthFilter === 'ALL' ? 'ALL' : String(monthFilter)}
+                  onValueChange={(v) => setMonthFilter(v === 'ALL' ? 'ALL' : Number(v))}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {yearOptions.map((y) => (
+                    <SelectItem value="ALL">ทุกเดือน</SelectItem>
+                    {THAI_MONTH_OPTIONS.map((m) => (
+                      <SelectItem key={m.value} value={String(m.value)}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5 w-36">
+                <Label className="text-xs">ปี (พ.ศ.)</Label>
+                <Select
+                  value={yearFilter === 'ALL' ? 'ALL' : String(yearFilter)}
+                  onValueChange={(v) => setYearFilter(v === 'ALL' ? 'ALL' : Number(v))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">ทุกปี</SelectItem>
+                    {yearOptionsBe.map((y) => (
                       <SelectItem key={y} value={String(y)}>
-                        {y}
+                        พ.ศ. {y}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -394,9 +530,15 @@ export default function HrLeavesManagementPage() {
           <TabsContent value="summary" className="mt-4 space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">สรุปวันลาประจำปี {year}</CardTitle>
+                <CardTitle className="text-base">
+                  สรุปวันลา ({yearFilterSummaryLabel(yearFilter)}
+                  {monthFilter !== 'ALL'
+                    ? ` · ${THAI_MONTH_OPTIONS.find((m) => m.value === monthFilter)?.label ?? ''}`
+                    : ''}
+                  )
+                </CardTitle>
                 <CardDescription>
-                  คอลัมน์ = สิทธิ์/ใช้/รออนุมัติ/คงเหลือ — ลาพักร้อนของผู้ที่ทำงานยังไม่ครบ 365 วันจะแสดง 0
+                  คอลัมน์ = สิทธิ์/ใช้/รออนุมัติ/คงเหลือ ตามช่วงที่กรอง — สิทธิ์อ้างอิงตั้งค่า HR ปีปัจจุบัน
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-0">
@@ -576,6 +718,23 @@ export default function HrLeavesManagementPage() {
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
                                   <DropdownMenuItem
+                                    disabled={r.status !== 'DRAFT' && r.status !== 'SUBMITTED'}
+                                    onSelect={() =>
+                                      openEditLeaveDialog({ ...(r as OfficeLeaveRequestDoc), id: r.id })
+                                    }
+                                  >
+                                    <Pencil className="h-4 w-4 mr-2" /> แก้ไขใบลา
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    disabled={r.status !== 'DRAFT' || submitBusy}
+                                    onSelect={() =>
+                                      void handleSubmitDraft({ ...(r as OfficeLeaveRequestDoc), id: r.id })
+                                    }
+                                  >
+                                    <Send className="h-4 w-4 mr-2 text-primary" /> ส่งให้อนุมัติ
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
                                     disabled={r.status !== 'SUBMITTED'}
                                     onSelect={() =>
                                       setApproving({ ...(r as OfficeLeaveRequestDoc), id: r.id })
@@ -666,11 +825,12 @@ export default function HrLeavesManagementPage() {
         {firestore && currentUser && (
           <HrProxyLeaveDialog
             open={proxyDialogOpen}
-            onOpenChange={setProxyDialogOpen}
+            onOpenChange={handleProxyDialogOpenChange}
             firestore={firestore}
             currentUser={currentUser}
             officeStaff={officeStaff}
             entCfg={entCfg}
+            editLeave={editingLeave}
           />
         )}
       </div>

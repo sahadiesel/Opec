@@ -85,6 +85,25 @@ function readCalendarHolidays(cfg: Record<string, unknown>): CalendarHolidayEntr
   return out;
 }
 
+/** วันหยุดในปฏิทินจาก HR Settings (`calendarHolidays`) — yyyy-MM-dd */
+export function isHrSettingsCalendarHolidayYmd(
+  ymd: string,
+  holidays: CalendarHolidayEntry[] | undefined | null,
+): boolean {
+  if (!holidays?.length) return false;
+  return holidays.some((h) => h.date === ymd);
+}
+
+/** ชื่อวันหยุดในปฏิทินจาก HR Settings สำหรับ yyyy-MM-dd (ถ้ามี) */
+export function hrSettingsCalendarHolidayLabelForYmd(
+  ymd: string,
+  holidays: CalendarHolidayEntry[] | undefined | null,
+): string | null {
+  if (!holidays?.length) return null;
+  const hit = holidays.find((h) => h.date === ymd);
+  return hit?.label?.trim() || null;
+}
+
 export function workerGlobalLaborContextFromPolicy(rec: PayrollPolicyRecord | null | undefined): WorkerGlobalLaborContext {
   if (!rec || rec.kind !== 'worker_global_labor' || rec.status !== 'active') {
     return DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT;

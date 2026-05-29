@@ -25,6 +25,8 @@ export type MonthlyWorkNormPolicyFieldsProps = {
   onBreakStartTime: (v: string) => void;
   lateGraceMinutes: number;
   onLateGraceMinutes: (v: number) => void;
+  officeOvertimeHourMultiplier: number;
+  onOfficeOvertimeHourMultiplier: (v: number) => void;
   absenceDemoSalary: number;
   onAbsenceDemoSalary: (v: number) => void;
   /** แสดงคำอธิบายกติกา 3 ช่วง (สแกนเข้าหลังช่วงที่ 1 / 2) */
@@ -47,6 +49,8 @@ export function MonthlyWorkNormPolicyFields({
   onBreakStartTime,
   lateGraceMinutes,
   onLateGraceMinutes,
+  officeOvertimeHourMultiplier,
+  onOfficeOvertimeHourMultiplier,
   absenceDemoSalary,
   onAbsenceDemoSalary,
   showThreePeriodRules,
@@ -59,6 +63,7 @@ export function MonthlyWorkNormPolicyFields({
     workStartTime,
     breakStartTime,
     lateGraceMinutes,
+    officeOvertimeHourMultiplier,
   };
   const computedWorkEndLabel = computeWorkDayEndDisplay(preview);
   const shiftWindows = computeShiftWindowsLabels(preview);
@@ -173,6 +178,22 @@ export function MonthlyWorkNormPolicyFields({
             onChange={(e) => onBreakHoursPerDay(Number(e.target.value))}
             className="font-mono max-w-[120px]"
           />
+        </div>
+        <div className="grid gap-2 sm:col-span-2 rounded-md border border-dashed bg-muted/40 px-3 py-3">
+          <Label className="text-muted-foreground">กำหนดค่าตัวคูณชั่วโมง OT (พนักงานออฟฟิศ)</Label>
+          <Input
+            type="number"
+            min={0.5}
+            max={10}
+            step={0.1}
+            disabled={disabled}
+            value={officeOvertimeHourMultiplier}
+            onChange={(e) => onOfficeOvertimeHourMultiplier(Number(e.target.value))}
+            className="font-mono max-w-[120px] bg-muted"
+          />
+          <p className="text-[11px] text-muted-foreground leading-snug">
+            ค่า OT = (เงินเดือน ÷ {workDaysPerMonth} ÷ {normalWorkHoursPerDay}) × ตัวคูณ {officeOvertimeHourMultiplier} × ชั่วโมงที่อนุมัติ
+          </p>
         </div>
       </div>
 

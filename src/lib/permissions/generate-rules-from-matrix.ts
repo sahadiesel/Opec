@@ -307,6 +307,7 @@ const COLLECTIONS_REQUIRING_PRESERVED_LOGIC: readonly string[] = [
   'attendance_kiosk_sessions/{token}',
   'attendance_punches/{id}',
   'attendance_correction_requests/{id}',
+  'attendance_overtime_requests/{id}',
   'attendance_day_overrides/{id}',
   'withholding_certificate_documents/{id}',
   'withholding_certificate_documents/{docId}/audit_logs/{logId}',

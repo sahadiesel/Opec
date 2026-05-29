@@ -57,13 +57,18 @@ import {
   weeklyRestPatternLabelTh,
   type WeeklyRestPatternForCalendar,
 } from '@/lib/attendance/bangkok-calendar';
-import { isThaiPublicHolidayYmd } from '@/lib/calendar/thailand-public-holidays';
 import {
   buildAttendanceDayRows,
   countDaysWithEffectiveRecord,
 } from '@/lib/attendance/correction-merge';
 import { AttendanceCorrectionRequestDialog } from '@/components/attendance/attendance-correction-request-dialog';
+import { AttendanceOvertimeRequestDialog } from '@/components/attendance/attendance-overtime-request-dialog';
 import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import {
+  hrSettingsCalendarHolidayLabelForYmd,
+  isHrSettingsCalendarHolidayYmd,
+  workerGlobalLaborContextFromPolicy,
+} from '@/lib/payroll/worker-global-labor-policy';
 import type { PayrollPolicyRecord } from '@/lib/types';
 
 /** พนักงานออฟฟิศที่อยู่ในทะเบียนปัจจุบัน — ไม่รวมผู้บริหาร (แยกทะเบียน/งวด) */
@@ -91,9 +96,13 @@ function groupBySubject(rows: Array<AttendancePunchDoc & { id: string }>): Map<S
   return m;
 }
 
-function dayKindBadges(ymd: string, weeklyRestPattern: WeeklyRestPatternForCalendar) {
+function dayKindBadges(
+  ymd: string,
+  weeklyRestPattern: WeeklyRestPatternForCalendar,
+  calendarHolidayLabel: string | null,
+) {
   const tags: string[] = [];
-  if (isThaiPublicHolidayYmd(ymd)) tags.push('วันหยุดนักขัตฤกษ์');
+  if (calendarHolidayLabel) tags.push(calendarHolidayLabel);
   const iso = bangkokIsoWeekdayFromYmd(ymd);
   /** ขึ้นป้าย "เสาร์/อาทิตย์" เฉพาะเมื่อตรงกับนโยบายวันหยุดประจำสัปดาห์ที่ตั้งไว้ใน HR Settings */
   if (iso === 7 && (weeklyRestPattern === 'sat_sun' || weeklyRestPattern === 'sunday_only')) {
@@ -132,6 +141,14 @@ export default function HrAttendanceManagePage() {
     previousOutPunchId: string | null;
   } | null>(null);
 
+  const [otOpen, setOtOpen] = useState(false);
+  const [otCtx, setOtCtx] = useState<{
+    subjectType: AttendanceSubjectType;
+    subjectId: string;
+    subjectNameSnapshot: string;
+    workDateYmd: string;
+  } | null>(null);
+
   const range = useMemo(() => {
     const startMs = viewMonth.getTime();
     const endExclusiveMs = addMonths(viewMonth, 1).getTime();
@@ -141,29 +158,29 @@ export default function HrAttendanceManagePage() {
   const payrollMonth = format(viewMonth, 'yyyy-MM');
   const ymDs = useMemo(() => enumerateYmDsForMonth(viewMonth), [viewMonth]);
 
-  /** อ่าน HR Settings รูปแบบวันหยุดประจำสัปดาห์ — ใช้ทั้ง badge แต่ละวันและสรุปวันทำงานในเดือน */
+  /** อ่าน HR Settings — วันหยุดประจำสัปดาห์ + วันหยุดในปฏิทิน (แหล่งความจริงเดียวกับ HR Settings) */
   const workerGlobalLaborRef = useMemoFirebase(
     () => (firestore ? doc(firestore as Firestore, 'payroll_policies', HR_WORKER_GLOBAL_LABOR_POLICY_ID) : null),
     [firestore],
   );
   const { data: workerGlobalLaborPolicy } = useDoc<PayrollPolicyRecord>(workerGlobalLaborRef as any);
-  const weeklyRestPattern: WeeklyRestPatternForCalendar = useMemo(() => {
-    const cfg = workerGlobalLaborPolicy?.config as Record<string, unknown> | undefined;
-    const v = cfg?.weeklyRestPattern;
-    if (v === 'sat_sun' || v === 'sunday_only' || v === 'none') return v;
-    return 'sat_sun';
-  }, [workerGlobalLaborPolicy]);
+  const workerGlobalLabor = useMemo(
+    () => workerGlobalLaborContextFromPolicy(workerGlobalLaborPolicy ?? null),
+    [workerGlobalLaborPolicy],
+  );
+  const weeklyRestPattern: WeeklyRestPatternForCalendar = workerGlobalLabor.weeklyRestPattern;
+  const calendarHolidays = workerGlobalLabor.calendarHolidays;
 
-  /** วันทำงาน = วันที่ไม่ใช่วันหยุดประจำสัปดาห์ (ตามนโยบาย) และไม่ใช่วันหยุดนักขัตฤกษ์ */
+  /** วันทำงาน = วันที่ไม่ใช่วันหยุดประจำสัปดาห์ (ตามนโยบาย) และไม่ใช่วันหยุดในปฏิทิน HR Settings */
   const workingDaysInCalendarMonth = useMemo(() => {
     let n = 0;
     for (const ymd of ymDs) {
       if (isBangkokWeeklyRestDayYmd(ymd, weeklyRestPattern)) continue;
-      if (isThaiPublicHolidayYmd(ymd)) continue;
+      if (isHrSettingsCalendarHolidayYmd(ymd, calendarHolidays)) continue;
       n++;
     }
     return n;
-  }, [ymDs, weeklyRestPattern]);
+  }, [ymDs, weeklyRestPattern, calendarHolidays]);
 
   const canUse = useMemo(
     () => !!currentUser && canAccessHrAttendanceKioskPages(currentUser as User, null),
@@ -262,6 +279,11 @@ export default function HrAttendanceManagePage() {
     setCorrOpen(true);
   };
 
+  const openOvertimeRequest = (ctx: NonNullable<typeof otCtx>) => {
+    setOtCtx(ctx);
+    setOtOpen(true);
+  };
+
   if (userLoading || !currentUser) {
     return (
       <div className="flex min-h-screen items-center justify-center text-muted-foreground text-sm">
@@ -337,7 +359,7 @@ export default function HrAttendanceManagePage() {
             <CardDescription>
               วันทำงานตามปฏิทิน = ทุกวันยกเว้น{' '}
               <span className="font-semibold text-foreground">วันหยุดประจำสัปดาห์ ({weeklyRestPatternLabelTh(weeklyRestPattern)})</span>
-              {' '}และวันหยุดนักขัตฤกษ์ — ปรับนโยบายได้ที่ HR Settings · วันมีบันทึก = มีเวลาเข้าและ/หรือออกที่ใช้จริง (รวมหลังแก้ไขที่อนุมัติแล้ว)
+              {' '}และวันหยุดในปฏิทิน HR Settings ({calendarHolidays.length} วัน) — ปรับได้ที่ HR Settings · วันมีบันทึก = มีเวลาเข้าและ/หรือออกที่ใช้จริง (รวมหลังแก้ไขที่อนุมัติแล้ว)
             </CardDescription>
             <div className="pt-2 max-w-md">
               <Input
@@ -430,8 +452,13 @@ export default function HrAttendanceManagePage() {
                                 </TableHeader>
                                 <TableBody>
                                   {row.dayRows.map((d) => {
+                                    const calendarHolidayLabel = hrSettingsCalendarHolidayLabelForYmd(
+                                      d.ymd,
+                                      calendarHolidays,
+                                    );
                                     const weekendOrHol =
-                                      isBangkokWeeklyRestDayYmd(d.ymd, weeklyRestPattern) || isThaiPublicHolidayYmd(d.ymd);
+                                      isBangkokWeeklyRestDayYmd(d.ymd, weeklyRestPattern)
+                                      || isHrSettingsCalendarHolidayYmd(d.ymd, calendarHolidays);
                                     return (
                                       <TableRow
                                         key={d.ymd}
@@ -443,7 +470,9 @@ export default function HrAttendanceManagePage() {
                                         <TableCell className="font-mono text-sm whitespace-nowrap align-top">
                                           {formatDateThaiBE(d.ymd)}
                                         </TableCell>
-                                        <TableCell className="align-top">{dayKindBadges(d.ymd, weeklyRestPattern)}</TableCell>
+                                        <TableCell className="align-top">
+                                          {dayKindBadges(d.ymd, weeklyRestPattern, calendarHolidayLabel)}
+                                        </TableCell>
                                         <TableCell className="font-mono text-sm align-top">
                                           {d.effectiveInMs != null ? (
                                             <span>
@@ -474,26 +503,44 @@ export default function HrAttendanceManagePage() {
                                         </TableCell>
                                         <TableCell className="text-right align-top">
                                           {canRequestCorrection ? (
-                                            <Button
-                                              type="button"
-                                              variant="outline"
-                                              size="sm"
-                                              className="h-8"
-                                              onClick={() =>
-                                                openCorrection({
-                                                  subjectType: 'office_staff',
-                                                  subjectId: row.staffId,
-                                                  subjectNameSnapshot: row.name,
-                                                  workDateYmd: d.ymd,
-                                                  previousInAtMs: d.effectiveInMs,
-                                                  previousOutAtMs: d.effectiveOutMs,
-                                                  previousInPunchId: d.rawFirstIn?.id ?? null,
-                                                  previousOutPunchId: d.rawLastOut?.id ?? null,
-                                                })
-                                              }
-                                            >
-                                              ขอแก้ไข
-                                            </Button>
+                                            <div className="flex flex-col items-end gap-1">
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-8"
+                                                onClick={() =>
+                                                  openCorrection({
+                                                    subjectType: 'office_staff',
+                                                    subjectId: row.staffId,
+                                                    subjectNameSnapshot: row.name,
+                                                    workDateYmd: d.ymd,
+                                                    previousInAtMs: d.effectiveInMs,
+                                                    previousOutAtMs: d.effectiveOutMs,
+                                                    previousInPunchId: d.rawFirstIn?.id ?? null,
+                                                    previousOutPunchId: d.rawLastOut?.id ?? null,
+                                                  })
+                                                }
+                                              >
+                                                ขอแก้ไข
+                                              </Button>
+                                              <Button
+                                                type="button"
+                                                variant="secondary"
+                                                size="sm"
+                                                className="h-8"
+                                                onClick={() =>
+                                                  openOvertimeRequest({
+                                                    subjectType: 'office_staff',
+                                                    subjectId: row.staffId,
+                                                    subjectNameSnapshot: row.name,
+                                                    workDateYmd: d.ymd,
+                                                  })
+                                                }
+                                              >
+                                                ขอ OT
+                                              </Button>
+                                            </div>
                                           ) : (
                                             <span className="text-[11px] text-muted-foreground">—</span>
                                           )}
@@ -540,6 +587,23 @@ export default function HrAttendanceManagePage() {
           previousOutAtMs={corrCtx.previousOutAtMs}
           previousInPunchId={corrCtx.previousInPunchId}
           previousOutPunchId={corrCtx.previousOutPunchId}
+        />
+      ) : null}
+
+      {otCtx && currentUser ? (
+        <AttendanceOvertimeRequestDialog
+          open={otOpen}
+          onOpenChange={(v) => {
+            setOtOpen(v);
+            if (!v) setOtCtx(null);
+          }}
+          firestore={firestore}
+          currentUser={currentUser as User}
+          subjectType={otCtx.subjectType}
+          subjectId={otCtx.subjectId}
+          subjectNameSnapshot={otCtx.subjectNameSnapshot}
+          payrollMonth={payrollMonth}
+          workDateYmd={otCtx.workDateYmd}
         />
       ) : null}
     </AppShell>

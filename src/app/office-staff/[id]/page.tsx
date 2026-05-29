@@ -66,6 +66,11 @@ import { sortPositionsByDisplayName } from '@/lib/position-display';
 import { useActiveBankNameCatalog, useActiveSsoHospitalCatalog } from '@/hooks/use-hrm-name-catalogs';
 import { buildUserAccessSummaryLines } from '@/lib/hr/user-access-display';
 import { SubjectAttendanceHistory } from '@/components/attendance/subject-attendance-history';
+import {
+  OFFICE_PAYROLL_TIME_DEDUCTION_BASIS_OPTIONS,
+  officeStaffShowsTimeDeductionBasisField,
+  type OfficePayrollTimeDeductionBasis,
+} from '@/lib/payroll/office-staff-payroll-attendance-basis';
 
 /** ตำแหน่งที่ผูกพนักงานออฟฟิศได้: หมวด Office ทั้งหมด หรือ Onshore/Offshore ที่ฐานเงินเดือนเป็นรายเดือน (เช่น Construction Manager) — ไม่ดึงคนงานรายวัน (DAILY/HOURLY) ทั้งแผง */
 function positionEligibleForOfficeStaff(p: Position): boolean {
@@ -149,6 +154,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
     monthlySalary: 0,
     dailyWage: 0,
     monthlyAttendanceExempt: false,
+    officePayrollTimeDeductionBasis: 'SCAN',
     excludeFromPayrollRuns: false,
     startDate: timestampToHtmlDateValue(Date.now()),
     employmentEndDate: '',
@@ -315,6 +321,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
             payrollBand: staffData.payrollBand ?? 'OFFICE',
             dailyWage: staffData.dailyWage,
             monthlyAttendanceExempt: staffData.monthlyAttendanceExempt,
+            officePayrollTimeDeductionBasis: staffData.officePayrollTimeDeductionBasis ?? 'SCAN',
             excludeFromPayrollRuns: staffData.excludeFromPayrollRuns,
           }
         : !canEditMoneyFields && isNew
@@ -324,8 +331,16 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
               salaryType: 'MONTHLY' as StaffSalaryType,
               payrollBand: 'OFFICE' as const,
               monthlyAttendanceExempt: false,
+              officePayrollTimeDeductionBasis: 'SCAN' as const,
               excludeFromPayrollRuns: false,
             }
+          : {};
+
+    const attendanceBasisPatch =
+      !canAdminUserLink && !isNew && staffData
+        ? { officePayrollTimeDeductionBasis: staffData.officePayrollTimeDeductionBasis ?? 'SCAN' }
+        : !canAdminUserLink && isNew
+          ? { officePayrollTimeDeductionBasis: 'SCAN' as const }
           : {};
 
     try {
@@ -339,6 +354,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
           sanitizeFirestorePayload({
             ...formBody,
             ...compensationPatch,
+            ...attendanceBasisPatch,
             ...userLinkPatch,
             supervisorId: deleteField(),
             staffCode: finalCode,
@@ -360,6 +376,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
             ...formBody,
             staffCode: staffData!.staffCode,
             ...compensationPatch,
+            ...attendanceBasisPatch,
             ...userLinkPatch,
             supervisorId: deleteField(),
             positionId: resolvedPositionId,
@@ -726,25 +743,59 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2 md:col-span-2">
                     <Label className="font-bold">ประเภทการจ่ายเงิน</Label>
-                    <Select
-                      disabled={!canEditMoneyFields}
-                      value={paymentKindFromStaff(formData)}
-                      onValueChange={(k: OfficePaymentKind) =>
-                        setFormData(staffPatchForPaymentKind(k, formData) as Partial<OfficeStaff>)
-                      }
-                    >
-                      <SelectTrigger className="h-11">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="MONTHLY">รายเดือน</SelectItem>
-                        <SelectItem value="DAILY">รายวัน</SelectItem>
-                        <SelectItem value="MONTHLY_NO_ATT">รายเดือน (ไม่อ้างอิงสแกน/เวลาเข้างาน)</SelectItem>
-                        <SelectItem value="NONE">ไม่คิดเงินเดือนผ่านงวดออฟฟิศ (จ่ายนอกระบบ / ฝึกงาน ฯลฯ)</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <Select
+                        disabled={!canEditMoneyFields}
+                        value={paymentKindFromStaff(formData)}
+                        onValueChange={(k: OfficePaymentKind) =>
+                          setFormData(staffPatchForPaymentKind(k, formData) as Partial<OfficeStaff>)
+                        }
+                      >
+                        <SelectTrigger className="h-11">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="MONTHLY">รายเดือน</SelectItem>
+                          <SelectItem value="DAILY">รายวัน</SelectItem>
+                          <SelectItem value="MONTHLY_NO_ATT">รายเดือน (ไม่อ้างอิงสแกน/เวลาเข้างาน)</SelectItem>
+                          <SelectItem value="NONE">ไม่คิดเงินเดือนผ่านงวดออฟฟิศ (จ่ายนอกระบบ / ฝึกงาน ฯลฯ)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {officeStaffShowsTimeDeductionBasisField(formData) ? (
+                        <div className="space-y-1">
+                          <Select
+                            disabled={!canAdminUserLink}
+                            value={formData.officePayrollTimeDeductionBasis ?? 'SCAN'}
+                            onValueChange={(v: OfficePayrollTimeDeductionBasis) =>
+                              setFormData({ ...formData, officePayrollTimeDeductionBasis: v })
+                            }
+                          >
+                            <SelectTrigger className="h-11">
+                              <SelectValue placeholder="ฐานคิดสาย/ขาด" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {OFFICE_PAYROLL_TIME_DEDUCTION_BASIS_OPTIONS.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {!canAdminUserLink ? (
+                            <p className="text-[11px] text-muted-foreground">
+                              เฉพาะ Admin เปลี่ยนฐานคิดสาย/ขาดจากการสแกนได้
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="flex h-11 items-center rounded-md border border-dashed px-3 text-xs text-muted-foreground">
+                          ใช้กับพนักงานรายเดือนที่ยังอ้างอิงเวลาเข้างาน
+                        </div>
+                      )}
+                    </div>
                     <p className="text-[11px] text-muted-foreground">
-                      เลือก &quot;ไม่คิดเงินเดือนผ่านงวด…&quot; จะไม่ดึงเข้าศูนย์งานจ่ายเงินออฟฟิศอัตโนมัติ
+                      ช่องขวา: &quot;คำนวนจากฐานเงินเดือน&quot; ไม่หักสาย/ขาดจากสแกน แต่ยังหักวันลา/ขาดที่บันทึกในระบบตามปกติ
+                      — เลือก &quot;ไม่คิดเงินเดือนผ่านงวด…&quot; จะไม่ดึงเข้าศูนย์งานจ่ายเงินออฟฟิศอัตโนมัติ
                     </p>
                   </div>
                   <div className="space-y-2">

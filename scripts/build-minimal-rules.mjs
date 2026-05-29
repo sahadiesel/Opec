@@ -31,6 +31,7 @@ const PATH_FALLBACKS = {
   'commercial_invoices/{id}': 'allow read, write: if isInternalUser();',
   'daily_timesheets/{id}': 'allow read, write: if isInternalUser();',
   'attendance_correction_requests/{id}': 'allow read, write: if isInternalUser();',
+  'attendance_overtime_requests/{id}': 'allow read, write: if isInternalUser();',
   'leave_requests/{id}': 'allow read, write: if isInternalUser();',
   'cash_advance_requests/{id}': 'allow read, write: if isInternalUser();',
   'withholding_certificate_documents/{id}': 'allow read, write: if isInternalUser();',

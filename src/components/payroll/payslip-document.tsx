@@ -111,6 +111,32 @@ export function PayslipDocument({ model, className }: { model: PayslipViewModel;
         </table>
       </section>
 
+      {model.leaveSummaryLines && model.leaveSummaryLines.length > 0 ? (
+        <section style={{ marginTop: 18 }}>
+          <h2 className="payslip-section-title">สรุปการลา / Leave summary</h2>
+          <table className="payslip-table">
+            <thead>
+              <tr>
+                <th scope="col">รายการ</th>
+                <th scope="col" style={{ width: '32%' }}>
+                  หมายเหตุ
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {model.leaveSummaryLines.map((row, i) => (
+                <tr key={`${row.label}-${i}`}>
+                  <td className="lbl">{row.label}</td>
+                  <td className="lbl" style={{ fontSize: 12, color: '#64748b' }}>
+                    {row.detail || '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
+
       <section style={{ marginTop: 18 }}>
         <h2 className="payslip-section-title">รายการหัก / Deductions</h2>
         <table className="payslip-table">

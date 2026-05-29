@@ -3,6 +3,7 @@ export const ATTENDANCE_KIOSK_SESSIONS_COLLECTION = 'attendance_kiosk_sessions';
 export const ATTENDANCE_PUNCHES_COLLECTION = 'attendance_punches';
 /** Payroll officer submits; HR / operations manager approves — applies {@link AttendanceDayOverrideDoc} */
 export const ATTENDANCE_CORRECTION_REQUESTS_COLLECTION = 'attendance_correction_requests';
+export const ATTENDANCE_OVERTIME_REQUESTS_COLLECTION = 'attendance_overtime_requests';
 /** Approved effective IN/OUT per calendar day (Bangkok) — merged into summaries */
 export const ATTENDANCE_DAY_OVERRIDES_COLLECTION = 'attendance_day_overrides';
 export const HR_CONFIGURATION_COLLECTION = 'hr_configuration';

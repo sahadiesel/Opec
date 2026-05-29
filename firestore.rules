@@ -492,6 +492,10 @@ service cloud.firestore {
     match /attendance_correction_requests/{id} {
       allow read, write: if isInternalUser();
     }
+    // PRESERVED-PATH (simplified fallback): attendance_overtime_requests/{id}
+    match /attendance_overtime_requests/{id} {
+      allow read, write: if isInternalUser();
+    }
     //    generated gate  path 
     // PRESERVED-PATH (simplified fallback): leave_requests/{id}
     match /leave_requests/{id} {

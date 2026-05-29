@@ -1737,6 +1737,7 @@ export class PayrollService {
       otherIncome: isExecutivePayrollRun ? 0 : (line.otherIncome ?? 0),
       hrAllowanceItems: input.allowanceItems,
       hrDeductionItems: input.deductionItems,
+      preStatutoryDeductions: line.periodPreStatutoryDeductions ?? [],
       deductSocialSecurity,
       pitMode,
       pitManualPercent: pitMode === 'MANUAL_PERCENT' ? Number(input.pitManualPercent) || 0 : undefined,

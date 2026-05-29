@@ -743,10 +743,13 @@ export default function MyProfilePage() {
                             />
                           </div>
                           {(linked.record.monthlyAttendanceExempt ||
-                            linked.record.excludeFromPayrollRuns) && (
+                            linked.record.excludeFromPayrollRuns ||
+                            linked.record.officePayrollTimeDeductionBasis === 'BASE_SALARY') && (
                             <p className="text-xs text-muted-foreground sm:col-span-2">
                               {[
                                 linked.record.monthlyAttendanceExempt && 'ยกเว้นการอ้างอิงเวลาเข้างาน (รายเดือน)',
+                                linked.record.officePayrollTimeDeductionBasis === 'BASE_SALARY' &&
+                                  'คำนวนจากฐานเงินเดือน (ไม่หักสาย/ขาดจากสแกน)',
                                 linked.record.excludeFromPayrollRuns && 'ไม่นำเข้างวดจ่ายอัตโนมัติ',
                               ]
                                 .filter(Boolean)
