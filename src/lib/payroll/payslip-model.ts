@@ -7,7 +7,7 @@ import type {
   PayrollLineD8Snapshot,
   PayslipWorkDaySplit,
 } from '@/lib/types';
-import { formatDateThaiBE } from '@/lib/date-thai';
+import { formatDateThaiBE, formatOfficePayrollRunPeriodLabelThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { leaveSummaryLabelTh } from '@/lib/payroll/office-payroll-period-deductions';
 
 export const PAYSLIP_DEFAULT_COMPANY_TH = 'โอพีอีซี ออปส์โฟลว์';
@@ -336,7 +336,7 @@ export function buildPayslipFromWorkerLine(
     companyNameEn,
     companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
     employeeName: line.workerNameSnapshot,
-    periodLabel: periodLabel || `${line.periodStartDate} → ${line.periodEndDate}`,
+    periodLabel: periodLabel || formatYmdRangeThaiBE(line.periodStartDate, line.periodEndDate),
     payrollTypeLabel: 'ลูกจ้าง / Worker Payroll (Timesheet batch)',
     documentRef: batch.id,
     paymentDateLabel: formatPaymentDate(workerPaymentTimestamp(batch)),
@@ -454,7 +454,7 @@ export function buildPayslipFromOfficeLine(
     companyNameEn,
     companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
     employeeName: line.staffName,
-    periodLabel: `${run.payrollPeriodStart} → ${run.payrollPeriodEnd} (${run.payrollMonth})`,
+    periodLabel: formatOfficePayrollRunPeriodLabelThaiBE(run),
     payrollTypeLabel:
       payrollTypeLabelOverride?.trim() || 'พนักงานออฟฟิศ / Office Payroll (รายเดือน)',
     documentRef: run.payrollRunNo,

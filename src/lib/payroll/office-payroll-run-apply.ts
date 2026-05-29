@@ -23,6 +23,7 @@ import { computeOfficePayrollPeriodAdjustments } from '@/lib/payroll/office-payr
 import { sumApprovedOfficeOvertimePayInPeriod } from '@/lib/payroll/office-overtime-pay';
 import { loadOfficePayrollRunComputationContext } from '@/lib/payroll/office-payroll-run-context';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
+import { standardOfficePayrollLineDocId } from '@/lib/payroll/office-payroll-line-ids';
 
 /** วันที่ 1 และวันสุดท้ายของเดือน (ปฏิทินเกรกอเรียน YYYY-MM-DD) */
 export function getPayrollMonthPeriodBounds(yyyyMm: string): { payrollPeriodStart: string; payrollPeriodEnd: string } {
@@ -122,7 +123,7 @@ export async function applyStandardOfficeRunLines(
   let totalDeductions = 0;
 
   for (const staff of staffList) {
-    const lineId = `OPL-${staff.staffCode}-${runId.substring(0, 5)}`;
+    const lineId = standardOfficePayrollLineDocId(staff.staffCode, runId);
     const lineDoc = doc(linesCol, lineId);
 
     const baseSalary = staff.monthlySalary || 0;

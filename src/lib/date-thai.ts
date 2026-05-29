@@ -187,3 +187,29 @@ export function formatPayrollYearMonthEnAbbrev(ym: string | null | undefined, em
   const d = new Date(y, mo - 1, 1, 12, 0, 0, 0);
   return d.toLocaleDateString('en-US', { month: 'short' });
 }
+
+/** งวดเงินเดือน YYYY-MM → ชื่อเดือนไทย + ปี พ.ศ. เช่น พฤษภาคม 2569 */
+export function formatPayrollYearMonthThaiBE(ym: string | null | undefined, empty: string = '—'): string {
+  const s = (ym || '').trim();
+  const m = PAYROLL_YM.exec(s);
+  if (!m) return empty;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  if (!Number.isFinite(y) || mo < 1 || mo > 12) return empty;
+  const d = new Date(y, mo - 1, 1, 12, 0, 0, 0);
+  const monthTh = d.toLocaleDateString('th-TH', { month: 'long' });
+  return `${monthTh} ${y + 543}`;
+}
+
+/** ช่วงงวด office payroll บนสลิป/เอกสาร — dd/mm/yyyy พ.ศ. และชื่อเดือนงวด */
+export function formatOfficePayrollRunPeriodLabelThaiBE(
+  run: { payrollPeriodStart?: string; payrollPeriodEnd?: string; payrollMonth?: string },
+  empty: string = '—',
+): string {
+  const range = formatYmdRangeThaiBE(run.payrollPeriodStart, run.payrollPeriodEnd, '');
+  const monthLabel = formatPayrollYearMonthThaiBE(run.payrollMonth, '');
+  if (range && monthLabel && monthLabel !== '—') return `${range} (${monthLabel})`;
+  if (range) return range;
+  if (monthLabel && monthLabel !== '—') return monthLabel;
+  return empty;
+}

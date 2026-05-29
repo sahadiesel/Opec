@@ -35,7 +35,7 @@ import {
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { collection, query, where, limit, doc } from 'firebase/firestore';
+import { collection, doc } from 'firebase/firestore';
 import { OfficePayrollLine, OfficePayrollPitMode, OfficePayrollRun, User } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -45,6 +45,7 @@ import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useToast } from '@/hooks/use-toast';
 import { PayrollService } from '@/lib/services/payroll-service';
+import { pickOfficePayrollLineForStaff } from '@/lib/payroll/office-payroll-line-ids';
 
 function hrAllowanceTotal(line: OfficePayrollLine): number {
   return (line.hrLineAdjustments?.allowanceItems ?? []).reduce((s, x) => s + (Number(x.amount) || 0), 0);
@@ -88,19 +89,15 @@ export default function OfficePayrollStaffLinePage({
   );
   const { data: run, isLoading: runLoading } = useDoc<OfficePayrollRun>(runRef as any);
 
-  const lineQuery = useMemoFirebase(
+  const linesQuery = useMemoFirebase(
     () =>
       firestore && isAuthorized
-        ? query(
-            collection(firestore, 'office_payroll_runs', runId, 'lines'),
-            where('staffId', '==', staffId),
-            limit(1),
-          )
+        ? collection(firestore, 'office_payroll_runs', runId, 'lines')
         : null,
-    [firestore, isAuthorized, runId, staffId],
+    [firestore, isAuthorized, runId],
   );
-  const { data: lineRows, isLoading: lineLoading } = useCollection<OfficePayrollLine>(lineQuery as any);
-  const line = lineRows?.[0] ?? null;
+  const { data: lineRows, isLoading: lineLoading } = useCollection<OfficePayrollLine>(linesQuery as any);
+  const line = useMemo(() => pickOfficePayrollLineForStaff(lineRows, staffId), [lineRows, staffId]);
 
   const [allowanceRows, setAllowanceRows] = useState<Array<{ label: string; amount: string }>>([
     { label: '', amount: '' },

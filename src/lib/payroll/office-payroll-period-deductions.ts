@@ -18,6 +18,7 @@ import {
 } from '@/lib/leaves/policy';
 import type { OfficeLeaveRequestDoc, OfficeLeaveType } from '@/lib/leaves/types';
 import { officeStaffAppliesScanTimeDeductions } from '@/lib/payroll/office-staff-payroll-attendance-basis';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import type { CalendarHolidayEntry } from '@/lib/contract-position-rate-extras';
 import {
   isHrSettingsCalendarHolidayYmd,
@@ -299,7 +300,7 @@ export function leaveSummaryLabelTh(row: OfficePayrollLineLeaveSummaryRow): stri
   const typeLabel = OFFICE_LEAVE_TYPE_LABELS[row.leaveType];
   if (row.leaveType === 'VACATION' && row.vacationEligible === false) {
     const from = row.vacationEligibleFrom;
-    return `${typeLabel}: ยังไม่มีสิทธิ์${from ? ` (ครบ 365 วันเมื่อ ${from})` : ' (ทำงานครบ 1 ปี)'}`;
+    return `${typeLabel}: ยังไม่มีสิทธิ์${from ? ` (ครบ 365 วันเมื่อ ${formatYmdLocalThaiBE(from)})` : ' (ทำงานครบ 1 ปี)'}`;
   }
   return `${typeLabel}: ลาในงวด ${row.usedInPeriodDays} วัน · สิทธิ์ ${row.entitlementDays} วัน/ปี · ใช้สะสมปีนี้ ${row.usedYtdDays} วัน`;
 }
