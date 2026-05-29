@@ -54,6 +54,7 @@ import {
   officeStaffHasBank,
   officeStaffHasSalary,
   officeStaffHasTax,
+  officeStaffNotInPayrollMonth,
   workerWaveHasTimesheet,
   workerWavePayrollComplete,
 } from '@/lib/hr/payroll-workbench-stats';
@@ -234,11 +235,11 @@ export default function HrPayrollWorkbenchPage() {
     const missingBank = staff.filter((s) => !officeStaffHasBank(s)).length;
     const missingTax = staff.filter((s) => !officeStaffHasTax(s)).length;
     const missingSalary = staff.filter((s) => !officeStaffHasSalary(s)).length;
-    const notInRun = linesResolved
-      ? staff.filter((s) => !lineIds.has(s.id)).length
-      : focusOfficeRun
-        ? undefined
-        : total;
+    const notInRunStaff = linesResolved
+      ? officeStaffNotInPayrollMonth(staff, lineIds)
+      : [];
+    const notInRun = linesResolved ? notInRunStaff.length : focusOfficeRun ? undefined : total;
+    const inRunCount = linesResolved ? staff.filter((s) => lineIds.has(s.id)).length : undefined;
     const masterComplete = staff.filter(officeMasterDataComplete).length;
     const readyInRun = linesResolved
       ? staff.filter((s) => officeMasterDataComplete(s) && lineIds.has(s.id)).length
@@ -250,6 +251,8 @@ export default function HrPayrollWorkbenchPage() {
       missingTax,
       missingSalary,
       notInRun,
+      notInRunStaff,
+      inRunCount,
       masterComplete,
       readyInRun,
       incompleteMaster,
@@ -619,25 +622,55 @@ export default function HrPayrollWorkbenchPage() {
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <div className="rounded-lg border bg-muted/30 p-3 text-center">
                   <div className="text-2xl font-bold tabular-nums">{officeStats.total}</div>
-                  <div className="text-[11px] text-muted-foreground">พนักงานในงวด</div>
+                  <div className="text-[11px] text-muted-foreground leading-snug">พนักงาน ACTIVE ในทะเบียน</div>
                 </div>
                 <div className="rounded-lg border bg-emerald-500/10 p-3 text-center">
                   <div className="text-2xl font-bold tabular-nums text-emerald-800 dark:text-emerald-200">
                     {officeStats.readyInRun ?? '—'}
                   </div>
-                  <div className="text-[11px] text-muted-foreground">พร้อมจ่าย (ครบข้อมูล + มีบรรทัดในงวด)</div>
+                  <div className="text-[11px] text-muted-foreground leading-snug">พร้อมจ่าย (อยู่ในงวด + ข้อมูลครบ)</div>
                 </div>
                 <div className="rounded-lg border bg-amber-500/10 p-3 text-center">
                   <div className="text-2xl font-bold tabular-nums text-amber-900 dark:text-amber-200">{officeStats.incompleteMaster}</div>
-                  <div className="text-[11px] text-muted-foreground">ข้อมูลยังไม่ครบ</div>
+                  <div className="text-[11px] text-muted-foreground leading-snug">ข้อมูลทะเบียนยังไม่ครบ</div>
                 </div>
-                <div className="rounded-lg border p-3 text-center">
+                <div className={`rounded-lg border p-3 text-center ${(officeStats.notInRun ?? 0) > 0 ? 'border-sky-300 bg-sky-50/80 dark:border-sky-800 dark:bg-sky-950/30' : ''}`}>
                   <div className="text-2xl font-bold tabular-nums">{officeStats.notInRun ?? '—'}</div>
-                  <div className="text-[11px] text-muted-foreground">ยังไม่เข้างวด (ไม่มีบรรทัด)</div>
+                  <div className="text-[11px] text-muted-foreground leading-snug">ยังไม่ถูกเลือกในงวดเดือนนี้</div>
                 </div>
               </div>
+              {(officeStats.notInRunStaff?.length ?? 0) > 0 && (
+                <div className="rounded-md border border-sky-200 bg-sky-50/60 p-3 space-y-2 dark:border-sky-900 dark:bg-sky-950/20">
+                  <p className="text-xs font-semibold text-sky-900 dark:text-sky-200 flex items-start gap-1.5">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    ยังไม่เข้างวด หมายถึงอะไร?
+                  </p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    พนักงานเหล่านี้ <strong className="text-foreground">ยังไม่ถูกเลือก</strong> ตอนสร้างงวดจ่ายเดือน{' '}
+                    <strong className="text-foreground">{officeStats.payrollMonth ?? '—'}</strong> — ระบบจึงยังไม่มีบรรทัดเงินเดือนให้คำนวณ/จ่าย
+                  </p>
+                  <ul className="text-[11px] space-y-1">
+                    {officeStats.notInRunStaff!.map((s) => (
+                      <li key={s.id}>
+                        <Link href={`/office-staff/${s.id}`} className="font-semibold text-primary hover:underline">
+                          {s.fullName}
+                        </Link>{' '}
+                        <span className="font-mono text-muted-foreground">({s.staffCode})</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed pt-1 border-t border-sky-200/80 dark:border-sky-800">
+                    <strong className="text-foreground">สิ่งที่ต้องทำ:</strong> ไปที่{' '}
+                    <Link href="/office-payroll" className="text-primary font-semibold underline">
+                      งวดจ่ายพนักงานออฟฟิศ
+                    </Link>{' '}
+                    → กด <strong className="text-foreground">สร้างงวดใหม่</strong> เลือกเดือนเดียวกัน แล้วติ๊กเลือกรายชื่อด้านบน
+                    (ถ้างวดเดิมล็อกแล้ว ให้สร้างงวดแยกสำหรับคนที่เหลือในเดือนเดียวกันได้)
+                  </p>
+                </div>
+              )}
               <div className="space-y-1.5 rounded-md border bg-muted/20 p-3">
-                <p className="text-xs font-semibold text-muted-foreground">รายละเอียดย่อย</p>
+                <p className="text-xs font-semibold text-muted-foreground">รายละเอียดย่อย (ทะเบียน)</p>
                 <StatLine label="ไม่มีบัญชีธนาคาร" value={officeStats.missingBank} variant={officeStats.missingBank ? 'warn' : 'ok'} />
                 <StatLine label="ไม่มีเลขภาษี" value={officeStats.missingTax} variant={officeStats.missingTax ? 'warn' : 'ok'} />
                 <StatLine label="เงินเดือนยังไม่กำหนด (0)" value={officeStats.missingSalary} variant={officeStats.missingSalary ? 'warn' : 'ok'} />

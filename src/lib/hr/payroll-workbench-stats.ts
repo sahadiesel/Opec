@@ -54,6 +54,16 @@ export function buildOfficeLineStaffIdSet(lines: OfficePayrollLine[] | undefined
   return set;
 }
 
+/** พนักงาน ACTIVE ที่ยังไม่มีบรรทัดในงวดจ่ายเดือนนั้น (ทุก run รวมกัน) */
+export function officeStaffNotInPayrollMonth(
+  staff: OfficeStaff[],
+  lineStaffIds: Set<string>,
+): OfficeStaff[] {
+  return staff
+    .filter((s) => !lineStaffIds.has(s.id))
+    .sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
+}
+
 /** Per (waveId, workerId): all timesheets in window are payroll-ready (or LOCKED). */
 export function workerWavePayrollComplete(
   timesheets: DailyTimesheet[],
