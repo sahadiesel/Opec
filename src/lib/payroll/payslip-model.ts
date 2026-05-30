@@ -487,6 +487,60 @@ export function buildPayslipFromOfficeLine(
   };
 }
 
+/** สร้างหัวงวด office จากบรรทัด — ใช้ My Profile เมื่ออ่าน run ไม่ได้ (employee_self) */
+export function officePayrollRunStubFromLine(
+  line: OfficePayrollLine,
+  run?: OfficePayrollRun | null,
+): OfficePayrollRun {
+  if (run) return run;
+  const month = (line.payrollMonth || '').trim();
+  const parts = month.match(/^(\d{4})-(\d{2})$/);
+  const start = month ? `${month}-01` : '';
+  const end =
+    parts != null
+      ? `${month}-${String(new Date(Number(parts[1]), Number(parts[2]), 0).getDate()).padStart(2, '0')}`
+      : '';
+  return {
+    id: line.officePayrollRunId || line.id,
+    payrollRunNo: month ? `OFF-${month}` : line.id.slice(0, 12),
+    payrollMonth: month || '—',
+    payrollPeriodStart: start,
+    payrollPeriodEnd: end,
+    status: 'HR_APPROVED',
+    staffCount: 1,
+    grossAmount: line.grossPay,
+    totalAllowances: 0,
+    totalDeductions: line.deductions,
+    netAmount: line.netPay,
+    managerApprovedAt: line.updatedAt,
+    createdAt: line.createdAt,
+    updatedAt: line.updatedAt,
+  };
+}
+
+/** สร้างหัว batch จากบรรทัด — ใช้ My Profile เมื่ออ่าน batch ไม่ได้ */
+export function payrollBatchStubFromLine(
+  line: PayrollBatchLine,
+  batch?: PayrollBatch | null,
+): PayrollBatch {
+  if (batch) return batch;
+  const ts = line.financePaidAt ?? Date.now();
+  return {
+    id: line.payrollBatchId,
+    payrollPeriodId: '',
+    workModeScope: 'mixed',
+    status: 'GENERATED',
+    totalWorkers: 1,
+    grossAmount: line.grossAmount,
+    totalDeductions: Math.max(0, round2(line.grossAmount - line.netAmount)),
+    netAmount: line.netAmount,
+    createdBy: '—',
+    updatedBy: '—',
+    createdAt: ts,
+    updatedAt: ts,
+  };
+}
+
 /** ดึง batch id จาก path เช่น payroll_batches/PAY-xxx/lines/abc */
 export function payrollBatchIdFromLineDocPath(path: string): string | null {
   const m = path.match(/^payroll_batches\/([^/]+)\/lines\//);

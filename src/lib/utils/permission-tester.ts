@@ -64,6 +64,7 @@ export function runPermissionLogicSuite(): ValidationSummary {
 
   const hrOfficer = createMockUser(['hr_officer'], 'hr', 'officer');
   const hrWorkers = getPermissions(hrOfficer, 'workers');
+  const hrTimesheets = getPermissions(hrOfficer, 'timesheets');
   const hrHub = getPermissions(hrOfficer, 'hr_hub');
   const hrAccessToAccounting = getPermissions(hrOfficer, 'billing_notes');
   assert(
@@ -72,13 +73,18 @@ export function runPermissionLogicSuite(): ValidationSummary {
       hrWorkers.create &&
       hrWorkers.edit &&
       !hrWorkers.delete &&
+      hrTimesheets.view &&
+      hrTimesheets.create &&
+      hrTimesheets.edit &&
+      !hrTimesheets.approve &&
       hrHub.view &&
       !hrAccessToAccounting.view,
-    'HR Officer should manage workers (create/edit, no delete) + HR hub / master data, no accounting finance'
+    'HR Officer should manage workers + timesheets (incl. attach), HR hub / master data, no accounting finance'
   );
 
   const payrollOfficer = createMockUser(['payroll_officer'], 'hr', 'officer');
   const payrollWorkers = getPermissions(payrollOfficer, 'workers');
+  const payrollTimesheets = getPermissions(payrollOfficer, 'timesheets');
   const payrollWorkerPayroll = getPermissions(payrollOfficer, 'worker_payroll');
   assert(
     'Payroll Officer worker registry',
@@ -87,9 +93,12 @@ export function runPermissionLogicSuite(): ValidationSummary {
       payrollWorkers.edit &&
       payrollWorkers.approve &&
       !payrollWorkers.delete &&
+      payrollTimesheets.view &&
+      payrollTimesheets.create &&
+      payrollTimesheets.edit &&
       payrollWorkerPayroll.view &&
       payrollWorkerPayroll.edit,
-    'Payroll officer should edit worker registry (incl. ready/unready) and prepare payroll, not delete workers'
+    'Payroll officer should edit worker registry + attach timesheets and prepare payroll, not delete workers'
   );
 
   const hybridUser = createMockUser(['operations_officer', 'hr_officer'], 'operations', 'officer');

@@ -5,7 +5,8 @@ import { registerFirebaseMemoTarget } from '@/firebase/firestore/memo-registry';
 import { FirebaseApp } from 'firebase/app';
 import { Firestore } from 'firebase/firestore';
 import { Auth, User, onAuthStateChanged } from 'firebase/auth';
-import { FirebaseErrorListener } from '@/components/FirebaseErrorListener'
+import { FirebaseErrorListener } from '@/components/FirebaseErrorListener';
+import { clearFirestoreLoggingOut } from '@/firebase/firestore/suppress-logout-permission-error';
 
 interface FirebaseProviderProps {
   children: ReactNode;
@@ -107,6 +108,7 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
       auth,
       (firebaseUser) => {
         clearSafety();
+        if (firebaseUser) clearFirestoreLoggingOut();
         setUserAuthState({ user: firebaseUser, isUserLoading: false, userError: null });
       },
       (error) => {

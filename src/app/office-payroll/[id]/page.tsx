@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useMemo } from 'react';
+import { useState, use, useMemo, useEffect, useRef } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -27,7 +27,8 @@ import {
   Building2,
   Briefcase,
   ShieldAlert,
-  Printer
+  Printer,
+  UserCircle,
 } from 'lucide-react';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
@@ -61,6 +62,10 @@ import {
   applyStandardOfficeRunLines,
   isOfficeStaffEligibleForStandardOfficeRun,
 } from '@/lib/payroll/office-payroll-run-apply';
+import {
+  officeRunNeedsMyProfileIndexSync,
+  syncOfficeRunMyProfileIndex,
+} from '@/lib/payroll/sync-office-run-my-profile-index';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 export default function OfficePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -114,7 +119,48 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
         ? 'งวดนี้ยังไม่พร้อมใบหัก ณ ที่จ่าย (ต้องคำนวณแล้ว)'
         : undefined;
 
+  const isLocked = run?.status === 'LOCKED';
+
   const [isProcessing, setIsProcessing] = useState(false);
+  const [myProfileSyncBusy, setMyProfileSyncBusy] = useState(false);
+  const autoMyProfileSyncDone = useRef(false);
+
+  useEffect(() => {
+    if (!firestore || !canMutate || !lines?.length || autoMyProfileSyncDone.current) return;
+    if (!isLocked && !officeRunNeedsMyProfileIndexSync(lines)) return;
+    autoMyProfileSyncDone.current = true;
+    void syncOfficeRunMyProfileIndex(firestore, id, lines).then(({ synced, skipped }) => {
+      if (synced > 0) {
+        toast({
+          title: 'อัปเดต My Profile แล้ว',
+          description: `สร้าง index สลิป ${synced} รายการ${skipped ? ` (ข้าม ${skipped})` : ''}`,
+        });
+      }
+    });
+  }, [firestore, canMutate, lines, id, isLocked, toast]);
+
+  const handleSyncMyProfileIndex = async () => {
+    if (!firestore || !lines?.length) return;
+    setMyProfileSyncBusy(true);
+    try {
+      const { synced, skipped } = await syncOfficeRunMyProfileIndex(firestore, id, lines);
+      toast({
+        title: synced > 0 ? 'อัปเดต My Profile แล้ว' : 'ไม่มีรายการที่ sync',
+        description:
+          synced > 0
+            ? `พนักงาน ${synced} คนจะเห็นสลิป/ใบหักในหน้า My Profile${skipped ? ` (ข้าม ${skipped} — ไม่มี linkedUserId หรือไม่ ACTIVE)` : ''}`
+            : 'ตรวจสอบ linkedUserId และสถานะ ACTIVE ในทะเบียนพนักงาน',
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'อัปเดต My Profile ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setMyProfileSyncBusy(false);
+    }
+  };
 
   // STRICT ENFORCEMENT: Only from 'office_staff' collection
   const staffQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'office_staff') : null), [firestore, isAuthorized]);
@@ -250,8 +296,6 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
     );
   }
 
-  const isLocked = run.status === 'LOCKED';
-
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="max-w-[1600px] mx-auto space-y-6">
@@ -371,12 +415,31 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                   <CardTitle className="text-lg">รายการจ่ายเงินพนักงานบริษัท (Internal Settlement)</CardTitle>
                   <CardDescription>รายชื่อและยอดเฉพาะงวด {run.payrollRunNo} — ไม่รวมงวดอื่นในเดือนเดียวกัน</CardDescription>
                 </div>
-                {!isLocked && canMutate && (run.status === 'DRAFT' || run.status === 'CALCULATED') && (
-                  <Button onClick={handleCalculate} disabled={isProcessing} className="bg-blue-600 hover:bg-blue-700">
-                    {isProcessing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Calculator className="h-4 w-4 mr-2" />}
-                    {run.status === 'DRAFT' ? 'คำนวณเงินเดือนพนักงาน' : 'คำนวณใหม่ (Refresh)'}
-                  </Button>
-                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {canMutate && (lines?.length ?? 0) > 0 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleSyncMyProfileIndex()}
+                      disabled={myProfileSyncBusy}
+                      title="ให้พนักงานแต่ละคนเห็นสลิป/ใบหัก ณ ที่จ่ายในหน้า My Profile"
+                    >
+                      {myProfileSyncBusy ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <UserCircle className="h-4 w-4 mr-2" />
+                      )}
+                      อัปเดต My Profile
+                    </Button>
+                  )}
+                  {!isLocked && canMutate && (run.status === 'DRAFT' || run.status === 'CALCULATED') && (
+                    <Button onClick={handleCalculate} disabled={isProcessing} className="bg-blue-600 hover:bg-blue-700">
+                      {isProcessing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Calculator className="h-4 w-4 mr-2" />}
+                      {run.status === 'DRAFT' ? 'คำนวณเงินเดือนพนักงาน' : 'คำนวณใหม่ (Refresh)'}
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>

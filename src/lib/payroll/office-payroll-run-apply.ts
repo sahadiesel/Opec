@@ -24,6 +24,10 @@ import { sumApprovedOfficeOvertimePayInPeriod } from '@/lib/payroll/office-overt
 import { loadOfficePayrollRunComputationContext } from '@/lib/payroll/office-payroll-run-context';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
 import { standardOfficePayrollLineDocId } from '@/lib/payroll/office-payroll-line-ids';
+import {
+  buildOfficeStaffSelfPayrollLineIndex,
+  officeStaffSelfPayrollLineIndexRef,
+} from '@/lib/payroll/self-payroll-line-index';
 
 /** วันที่ 1 และวันสุดท้ายของเดือน (ปฏิทินเกรกอเรียน YYYY-MM-DD) */
 export function getPayrollMonthPeriodBounds(yyyyMm: string): { payrollPeriodStart: string; payrollPeriodEnd: string } {
@@ -76,15 +80,25 @@ export async function getStaffIdsUsedInOtherRunsForSameMonth(
 async function deleteAllLinesForOfficeRun(firestore: Firestore, runId: string): Promise<void> {
   const linesCol = collection(firestore, 'office_payroll_runs', runId, 'lines');
   const snap = await getDocs(linesCol);
-  const refs = snap.docs.map((x) => x.ref);
-  const chunkSize = 400;
-  for (let i = 0; i < refs.length; i += chunkSize) {
-    const batch = writeBatch(firestore);
-    for (const ref of refs.slice(i, i + chunkSize)) {
-      batch.delete(ref);
-    }
+  let batch = writeBatch(firestore);
+  let ops = 0;
+  const flush = async () => {
+    if (ops <= 0) return;
     await batch.commit();
+    batch = writeBatch(firestore);
+    ops = 0;
+  };
+  for (const lineDoc of snap.docs) {
+    const line = lineDoc.data() as { staffId?: string };
+    batch.delete(lineDoc.ref);
+    ops++;
+    if (line.staffId) {
+      batch.delete(officeStaffSelfPayrollLineIndexRef(firestore, line.staffId, lineDoc.id));
+      ops++;
+    }
+    if (ops >= 400) await flush();
   }
+  await flush();
 }
 
 export interface ApplyOfficeRunLinesResult {
@@ -165,6 +179,7 @@ export async function applyStandardOfficeRunLines(
       id: lineId,
       officePayrollRunId: runId,
       payrollMonth: run.payrollMonth,
+      ...(staff.linkedUserId?.trim() ? { subjectLinkedUserId: staff.linkedUserId.trim() } : {}),
       staffId: staff.id,
       staffName: staff.fullName,
       department: staff.department,
@@ -190,6 +205,15 @@ export async function applyStandardOfficeRunLines(
     };
 
     batch.set(lineDoc, stripUndefinedForFirestore(newLine));
+
+    const linked = staff.linkedUserId?.trim();
+    if (linked && staff.status === 'ACTIVE') {
+      batch.set(
+        officeStaffSelfPayrollLineIndexRef(firestore, staff.id, lineId),
+        buildOfficeStaffSelfPayrollLineIndex({ ...newLine, subjectLinkedUserId: linked }),
+      );
+    }
+
     totalGross += d8.grossPay;
     totalNet += d8.netPay;
     totalAllowances += allowance + bonus;

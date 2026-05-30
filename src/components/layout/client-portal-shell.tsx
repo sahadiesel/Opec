@@ -6,6 +6,7 @@ import { Loader2, LogOut, Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/firebase';
 import { signOut } from 'firebase/auth';
+import { markFirestoreLoggingOut } from '@/firebase/firestore/suppress-logout-permission-error';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import type { PortalDictKey } from '@/lib/i18n/client-portal-dictionary';
@@ -39,12 +40,14 @@ export function ClientPortalShell({ children }: { children: React.ReactNode }) {
   } = useClientPortalIdentity();
 
   const handleLogout = async () => {
+    markFirestoreLoggingOut();
+    localStorage.removeItem('opsflow_user');
+    router.push('/');
     try {
       await signOut(auth);
     } catch (e) {
       console.error(e);
     }
-    router.push('/');
   };
 
   const roleLabel =

@@ -14,6 +14,7 @@ import { User, PermissionProfile } from '@/lib/types';
 import type { WithId } from '@/firebase/firestore/use-collection';
 import { FirestorePermissionError } from '@/firebase/errors';
 import { errorEmitter } from '@/firebase/error-emitter';
+import { shouldSuppressFirestorePermissionError } from '@/firebase/firestore/suppress-logout-permission-error';
 import { normalizePermissionProfileDocumentId } from '@/lib/role-key-normalizer';
 
 /** Effective profile key: primary field first, else first transitional array entry (no aggregation). */
@@ -63,7 +64,13 @@ export function usePermissionProfiles(user: User | null) {
         }
         setIsLoading(false);
       },
-      (_err: FirestoreError) => {
+      (err: FirestoreError) => {
+        if (shouldSuppressFirestorePermissionError(err)) {
+          setProfile(null);
+          setIsLoading(false);
+          setError(null);
+          return;
+        }
         const contextualError = new FirestorePermissionError({
           operation: 'get',
           path: `permission_profiles/${profileKey}`,

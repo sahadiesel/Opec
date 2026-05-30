@@ -12,6 +12,7 @@ import { useFirestore, useAuth } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { usePermissionProfiles, getEffectivePermissionProfileKey } from '@/hooks/use-permission-profiles';
 import { signOut } from 'firebase/auth';
+import { markFirestoreLoggingOut } from '@/firebase/firestore/suppress-logout-permission-error';
 import { getEffectiveDepartment, getEffectiveLevel, deriveBusinessRoleKey, BUSINESS_ROLES } from '@/lib/auth-mapping';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -64,25 +65,28 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
   const routeAllowed = user ? userMayAccessPath(user, permissionProfile, pathname) : true;
 
   const handleLogout = async () => {
+    markFirestoreLoggingOut();
+    localStorage.removeItem('opsflow_user');
+
     if (user && firestore) {
       try {
         await updateDoc(doc(firestore, 'users', user.id), {
-          lastLogoutAt: Date.now()
+          lastLogoutAt: Date.now(),
         });
-      } catch (error) {
-        console.error('Failed to log logout time', error);
+      } catch {
+        /* ignore during logout */
       }
     }
-    
+
+    router.push('/');
+
     try {
       await signOut(auth);
     } catch (e) {
       console.error('Failed to sign out from Firebase Auth', e);
     }
-    
-    localStorage.removeItem('opsflow_user');
+
     if (onLogout) onLogout();
-    router.push('/');
   };
 
   if (!user) return <>{children}</>;

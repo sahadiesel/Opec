@@ -66,6 +66,66 @@ service cloud.firestore {
     function portalOwnsResourceCustomerId() {
       return portalCustomerIdOk() && resource.data.customerId == userData().customerId;
     }
+    /** พนักงาน/ลูกจ้างดู payroll line ของตนเอง (My Profile — linkedUserId) */
+    function ownsOfficePayrollLineByLinkedUser() {
+      return isSignedIn()
+        && 'staffId' in resource.data
+        && resource.data.staffId is string
+        && resource.data.staffId.size() > 0
+        && exists(/databases/$(database)/documents/office_staff/$(resource.data.staffId))
+        && get(/databases/$(database)/documents/office_staff/$(resource.data.staffId)).data.get('linkedUserId', '') == request.auth.uid;
+    }
+    function ownsWorkerPayrollLineByLinkedUser() {
+      return isSignedIn()
+        && 'workerId' in resource.data
+        && resource.data.workerId is string
+        && resource.data.workerId.size() > 0
+        && exists(/databases/$(database)/documents/workers/$(resource.data.workerId))
+        && get(/databases/$(database)/documents/workers/$(resource.data.workerId)).data.get('linkedUserId', '') == request.auth.uid;
+    }
+    function ownsPayrollLineBySubjectUid() {
+      return isSignedIn()
+        && 'subjectLinkedUserId' in resource.data
+        && resource.data.subjectLinkedUserId == request.auth.uid;
+    }
+    function canReadOwnPayrollLine() {
+      return ownsPayrollLineBySubjectUid() || ownsOfficePayrollLineByLinkedUser() || ownsWorkerPayrollLineByLinkedUser();
+    }
+    /** query บรรทัด payroll ของตนเอง — ไม่ใช้ get() (ใช้กับ collectionGroup / list) */
+    function canListOwnPayrollLineByStaffRegistry() {
+      return isSignedIn()
+        && 'staffId' in resource.data
+        && resource.data.staffId is string
+        && resource.data.staffId.size() > 0
+        && ownsLinkedOfficeStaffRecord(resource.data.staffId);
+    }
+    function canListOwnPayrollLineByWorkerRegistry() {
+      return isSignedIn()
+        && 'workerId' in resource.data
+        && resource.data.workerId is string
+        && resource.data.workerId.size() > 0
+        && ownsLinkedWorkerRecord(resource.data.workerId);
+    }
+    function canListOwnPayrollLine() {
+      return ownsPayrollLineBySubjectUid()
+        || canListOwnPayrollLineByStaffRegistry()
+        || canListOwnPayrollLineByWorkerRegistry();
+    }
+    /** get บรรทัด payroll ของตนเอง — รองรับข้อมูลเก่าที่ยังไม่มี subjectLinkedUserId */
+    function canGetOwnPayrollLine() {
+      return ownsPayrollLineBySubjectUid() || ownsOfficePayrollLineByLinkedUser() || ownsWorkerPayrollLineByLinkedUser();
+    }
+    function ownsLinkedOfficeStaffRecord(staffId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/office_staff/$(staffId))
+        && get(/databases/$(database)/documents/office_staff/$(staffId)).data.get('linkedUserId', '') == request.auth.uid
+        && get(/databases/$(database)/documents/office_staff/$(staffId)).data.get('status', '') in ['ACTIVE', 'active'];
+    }
+    function ownsLinkedWorkerRecord(workerId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/workers/$(workerId))
+        && get(/databases/$(database)/documents/workers/$(workerId)).data.get('linkedUserId', '') == request.auth.uid;
+    }
     // ===== Matrix role sets (deduped) =====
     function rs0() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function rs1() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
@@ -80,7 +140,7 @@ service cloud.firestore {
     function rs10() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
     function rs11() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function rs12() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
-    function rs13() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
+    function rs13() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
     function rs14() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer', 'employee_self']); }
     function rs15() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function rs16() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer', 'employee_self']); }
@@ -262,6 +322,10 @@ service cloud.firestore {
       allow read, write: if rs7();
     }
     // ===== HR & Payroll - Match blocks =====
+    match /workers/{workerId}/self_payroll_lines/{lineRefId} {
+      allow read: if ownsLinkedWorkerRecord(workerId);
+      allow write: if rs0();
+    }
     match /workers/{workerId}/{document=**} {
       allow read:   if rs8();
       allow create: if rs2();
@@ -282,6 +346,10 @@ service cloud.firestore {
     }
     match /office_staff/{id} {
       allow read, write: if rs0();
+    }
+    match /office_staff/{staffId}/self_payroll_lines/{lineRefId} {
+      allow read: if ownsLinkedOfficeStaffRecord(staffId);
+      allow write: if rs0();
     }
     match /worker_document_catalog/{id} {
       allow read:   if rs10();
@@ -342,14 +410,36 @@ service cloud.firestore {
       allow update: if rs13() || rs13();
       allow delete: if rs13();
     }
+    match /monthly_timesheet_photo_bundles/{id} {
+      allow read:   if rs12();
+      allow create: if rs13();
+      allow update: if rs13();
+      allow delete: if rs13();
+    }
+    match /po_month_timesheet_photo_bundles/{id} {
+      allow read:   if rs12();
+      allow create: if rs13();
+      allow update: if rs13();
+      allow delete: if rs13();
+    }
+    match /wave_month_timesheet_photo_bundles/{id} {
+      allow read:   if rs12();
+      allow create: if rs13();
+      allow update: if rs13();
+      allow delete: if rs13();
+    }
     match /payroll_runs/{id} {
       allow read, write: if rs0();
     }
     match /payroll_batches/{id} {
-      allow read, write: if rs0();
+      allow get: if isInternalUser();
+      allow list: if rs0() || (isInternalUser() && userRole() == 'employee_self');
+      allow write: if rs0();
     }
     match /payroll_batches/{batchId}/lines/{lineId} {
-      allow read, write: if rs0();
+      allow list: if rs0() || canListOwnPayrollLine();
+      allow get: if rs0() || canGetOwnPayrollLine();
+      allow write: if rs0();
     }
     match /payroll_batches/{batchId}/{document=**} {
       allow read, write: if rs0();
@@ -358,7 +448,8 @@ service cloud.firestore {
       allow read, write: if rs0();
     }
     match /payroll_policies/{id} {
-      allow read, write: if rs0();
+      allow read: if rs0() || isInternalUser();
+      allow write: if rs0();
     }
     match /worker_payment_profiles/{id} {
       allow read, write: if rs0();
@@ -372,13 +463,19 @@ service cloud.firestore {
     }
     // NOTE: payslip = batch line
     match /payroll_batches/{batchId}/lines/{lineId} {
-      allow read, write: if rs0();
+      allow list: if rs0() || canListOwnPayrollLine();
+      allow get: if rs0() || canGetOwnPayrollLine();
+      allow write: if rs0();
     }
     match /office_payroll_runs/{id} {
-      allow read, write: if rs0();
+      allow get: if isInternalUser();
+      allow list: if isInternalUser();
+      allow write: if rs0();
     }
     match /office_payroll_runs/{runId}/lines/{lineId} {
-      allow read, write: if rs0();
+      allow list: if rs0() || canListOwnPayrollLine();
+      allow get: if rs0() || canGetOwnPayrollLine();
+      allow write: if rs0();
     }
     match /office_payroll_runs/{runId}/{document=**} {
       allow read, write: if rs0();
@@ -444,11 +541,13 @@ service cloud.firestore {
      * ส่วนการสร้าง/แก้ไข/ลบ ยังจำกัดเฉพาะ admin + accounting (rs19) ตามเดิม
      */
     match /executive_payroll_runs/{id} {
-      allow read: if rs15();
+      allow get: if rs15() || isInternalUser();
+      allow list: if rs15();
       allow write: if rs19();
     }
     match /executive_payroll_runs/{runId}/lines/{lineId} {
-      allow read: if rs15();
+      allow list: if rs15() || canListOwnPayrollLine();
+      allow get: if rs15() || canGetOwnPayrollLine();
       allow write: if rs19();
     }
     match /executive_payroll_runs/{runId}/{document=**} {
@@ -663,7 +762,10 @@ service cloud.firestore {
     match /labor_cost_contract_terms/{id} { allow read: if isInternalUser(); }
     match /office_staff/{id} { allow read: if isInternalUser(); }
     // Payroll subcollections: each batch/run has nested 'lines' read via collectionGroup
-    match /{parent}/{batchId}/lines/{lineId} { allow read: if isInternalUser(); }
+    match /{parent}/{batchId}/lines/{lineId} {
+      allow list: if isInternalUser() && (rs0() || canListOwnPayrollLine());
+      allow get: if isInternalUser() && (rs0() || canGetOwnPayrollLine());
+    }
     // Document numbering / counters used by services across roles
     match /document_numbering/{id} { allow read: if isInternalUser(); allow write: if isAdmin(); }
     match /counters/{id} { allow read: if isInternalUser(); allow write: if isAdmin(); }

@@ -116,7 +116,10 @@ export function resolvePayrollMatrixDecision(
   }
 
   if (persona === 'payroll_officer') {
-    if (resource === 'timesheet') return action === 'view' ? 'allow' : 'deny';
+    if (resource === 'timesheet') {
+      if (action === 'view' || action === 'create' || action === 'edit') return 'allow';
+      return 'deny';
+    }
     if (resource === 'payroll_worker') {
       if (action === 'view' || action === 'create_batch' || action === 'edit_batch') return 'allow';
       if (action === 'approve' || action === 'lock' || action === 'finance_approve') return 'deny';

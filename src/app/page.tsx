@@ -40,6 +40,7 @@ import {
 import { doc, getDoc, getDocFromServer, updateDoc, setDoc } from 'firebase/firestore';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { markFirestoreLoggingOut } from '@/firebase/firestore/suppress-logout-permission-error';
 import { BUSINESS_ROLES, deriveBusinessRoleKey } from '@/lib/auth-mapping';
 import { usePermissions } from '@/hooks/use-permissions';
 import { UI_LABELS } from '@/lib/constants/labels';
@@ -423,9 +424,10 @@ export default function Home() {
   };
 
   const handleLogout = async () => {
-    await signOut(auth);
-    setUser(null);
+    markFirestoreLoggingOut();
     localStorage.removeItem('opsflow_user');
+    setUser(null);
+    await signOut(auth);
   };
 
   if (isUserLoading && !authBootstrapTimedOut) {

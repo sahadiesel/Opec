@@ -273,8 +273,8 @@ const MODULE_KEY_SET = new Set<ModuleKey>(SYSTEM_MODULES.map((m) => m.key));
 const MODULE_KEYS_WITHOUT_DOMAIN_ALIAS: ReadonlySet<string> = new Set(['payroll_runs', 'payslips']);
 
 /**
- * HR Officer: ทะเบียนลูกจ้าง (workers) สร้าง/แก้ไขได้ — ไม่มี commercial, ไม่มี payroll/timesheets,
- * ไม่มีทะเบียนพนักงานออฟฟิศ / office payroll
+ * HR Officer: ทะเบียนลูกจ้าง (workers) สร้าง/แก้ไขได้ — ไม่มี commercial, ไม่มี payroll,
+ * ไม่มีทะเบียนพนักงานออฟฟิศ / office payroll (timesheets แยก branch ด้านล่าง)
  */
 const HR_OFFICER_BLOCKED_MODULE_KEYS = new Set<ModuleKey>([
   'customers',
@@ -286,7 +286,6 @@ const HR_OFFICER_BLOCKED_MODULE_KEYS = new Set<ModuleKey>([
   'profit_estimates',
   'office_staff',
   'office_payroll',
-  'timesheets',
   'worker_payroll',
   'payroll_runs',
   'payslips',
@@ -378,7 +377,10 @@ export function getPayrollOfficerModulePermission(moduleKey: ModuleKey): ModuleP
   if (moduleKey === 'office_payroll') {
     return { view: true, create: true, edit: true, delete: false, approve: false };
   }
-  if (moduleKey === 'timesheets' || moduleKey === 'hr_hub' || moduleKey === 'labor_cost_contract_terms') {
+  if (moduleKey === 'timesheets') {
+    return { view: true, create: true, edit: true, delete: false, approve: false };
+  }
+  if (moduleKey === 'hr_hub' || moduleKey === 'labor_cost_contract_terms') {
     return { ...READ_ONLY };
   }
   if (
@@ -623,6 +625,11 @@ export function getPermissions(
   /** HR Officer: ทะเบียนลูกจ้าง — สร้าง/แก้ไข ไม่ลบรายการหลัก (ลบตามนโยบาย manager/admin) */
   if (isPrimaryHrOfficer(u) && moduleKey === 'workers') {
     return clonePermission(OFFICER_ACCESS);
+  }
+
+  /** HR Officer: ลงเวลา / แนบเอกสาร timesheet — ไม่ submit/verify (manager) */
+  if (isPrimaryHrOfficer(u) && moduleKey === 'timesheets') {
+    return clonePermission({ view: true, create: true, edit: true, delete: false, approve: false });
   }
 
   if (isPrimaryHrOfficer(u) && HR_OFFICER_BLOCKED_MODULE_KEYS.has(moduleKey)) {

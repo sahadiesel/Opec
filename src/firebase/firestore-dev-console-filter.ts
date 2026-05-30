@@ -3,6 +3,9 @@
  * Next.js 15 dev จับ console.error → แสดง overlay บังทั้งหน้า แม้แอปยังทำงานแบบ offline ได้
  * ใน development เท่านั้น: แปลงข้อความ transient นี้เป็น warn แทน
  */
+import { getAuth } from 'firebase/auth';
+import { isFirestoreLoggingOut } from '@/firebase/firestore/suppress-logout-permission-error';
+
 declare global {
   interface Window {
     __opecFirestoreDevConsoleFilterInstalled?: boolean;
@@ -17,6 +20,18 @@ const FIRESTORE_RESOURCE_EXHAUSTED =
 const FIRESTORE_INDEX_NEEDED =
   /(?:requires an index|Missing composite index|The query requires an index)/i;
 const FIREBASE_CONSOLE_INDEX_URL = /https:\/\/console\.firebase\.google\.com\/[^\s"'<>]+/gi;
+/** permission-denied จาก SDK ระหว่าง logout — Next.js dev overlay จับ console.error */
+const FIRESTORE_PERMISSION_DENIED =
+  /Missing or insufficient permissions|FirebaseError.*permission|permission-denied/i;
+
+function shouldSuppressPermissionNoise(): boolean {
+  try {
+    if (isFirestoreLoggingOut()) return true;
+    return getAuth().currentUser === null;
+  } catch {
+    return false;
+  }
+}
 
 export function installFirestoreDevConsoleFilter(): void {
   if (typeof window === 'undefined') return;
@@ -25,12 +40,13 @@ export function installFirestoreDevConsoleFilter(): void {
   window.__opecFirestoreDevConsoleFilterInstalled = true;
 
   const orig = console.error.bind(console);
+
   console.error = (...args: unknown[]) => {
     try {
       const text = args
         .map((a) => {
           if (typeof a === 'string') return a;
-          if (a instanceof Error) return `${a.message}\n${a.stack ?? ''}`;
+          if (a instanceof Error) return `${a.name} ${a.message}\n${a.stack ?? ''}`;
           try {
             return JSON.stringify(a);
           } catch {
@@ -38,6 +54,9 @@ export function installFirestoreDevConsoleFilter(): void {
           }
         })
         .join(' ');
+      if (FIRESTORE_PERMISSION_DENIED.test(text) && shouldSuppressPermissionNoise()) {
+        return;
+      }
       if (FIRESTORE_UNREACHABLE.test(text)) {
         console.warn(
           '[Firestore] เชื่อมต่อ Cloud ชั่วคราวไม่ได้ — ทำงานแบบ offline จนกว่าเครือข่ายจะพร้อม (ตรวจ VPN/ไฟร์วอลล์ แล้วรีเฟรช)',

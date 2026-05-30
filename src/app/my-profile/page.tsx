@@ -21,15 +21,19 @@ import {
 import { Loader2, UserCircle, KeyRound, Clock } from 'lucide-react';
 import { SubjectAttendanceHistory } from '@/components/attendance/subject-attendance-history';
 import { SelfLeavePanel } from '@/components/leaves/self-leave-panel';
+import { OfficeStaffPayslipHistory } from '@/components/payroll/office-staff-payslip-history';
+import { WorkerPayslipHistory } from '@/components/payroll/worker-payslip-history';
+import {
+  SelfProfileOfficeWhtPrintButton,
+  SelfProfileWorkerWhtPrintButton,
+} from '@/components/payroll/self-profile-wht-print-button';
 import { useFirestore, useCollection, useMemoFirebase, useAuth } from '@/firebase';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
 import {
   addDoc,
   collection,
-  collectionGroup,
   doc,
   getDoc,
-  limit,
   query,
   updateDoc,
   where,
@@ -55,6 +59,10 @@ import {
 import { formatDateThaiBE, formatDateTimeThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { WEEKLY_REST_OPTIONS } from '@/lib/contract-position-rate-extras';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
+import {
+  useOfficeStaffPayrollLines,
+  useWorkerPayrollLines,
+} from '@/lib/payroll/fetch-self-payroll-lines';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 
@@ -251,38 +259,52 @@ export default function MyProfilePage() {
     })();
   }, [firestore, linked]);
 
-  /** ไม่ใช้ orderBy — collection group + orderBy ต้องการ composite index ที่ Firebase มักยังสร้างไม่ทัน; เรียงฝั่ง client แทน */
-  const myPayrollLinesQuery = useMemoFirebase(() => {
-    if (!firestore || !linked) return null;
-    if (linked.kind === 'office_staff') {
-      return query(
-        collectionGroup(firestore, 'lines'),
-        where('staffId', '==', linked.record.id),
-        limit(120),
-      );
-    }
-    if (linked.kind === 'worker') {
-      return query(
-        collectionGroup(firestore, 'lines'),
-        where('workerId', '==', linked.record.id),
-        limit(120),
-      );
-    }
-    return null;
-  }, [firestore, linked]);
+  const officeSelfPayrollEnabled =
+    linked?.kind === 'office_staff' &&
+    (linked.record.status === 'ACTIVE' || linked.record.status === 'active');
 
-  const { data: myPayrollLinesRaw, isLoading: myPayrollLinesLoading } = useCollection<
-    OfficePayrollLine | PayrollBatchLine
-  >(myPayrollLinesQuery as any);
+  const officePayrollLinesHook = useOfficeStaffPayrollLines(
+    firestore,
+    linked?.kind === 'office_staff' ? linked.record.id : null,
+    !!linked && linked.kind === 'office_staff' && officeSelfPayrollEnabled,
+    { linkedUserId: currentUser?.id },
+  );
+  const workerPayrollLinesHook = useWorkerPayrollLines(
+    firestore,
+    linked?.kind === 'worker' ? linked.record.id : null,
+    !!linked && linked.kind === 'worker',
+    { linkedUserId: currentUser?.id },
+  );
 
-  const myPayrollLines = useMemo(() => {
-    const rows = myPayrollLinesRaw ?? [];
-    const ts = (r: OfficePayrollLine | PayrollBatchLine) => {
-      const x = r as OfficePayrollLine & PayrollBatchLine & { createdAt?: number; updatedAt?: number };
-      return Number(x.updatedAt ?? x.createdAt ?? x.financePaidAt ?? 0) || 0;
-    };
-    return [...rows].sort((a, b) => ts(b) - ts(a)).slice(0, 48);
-  }, [myPayrollLinesRaw]);
+  const myPayrollLinesLoading =
+    linked?.kind === 'office_staff'
+      ? officePayrollLinesHook.isLoading
+      : linked?.kind === 'worker'
+        ? workerPayrollLinesHook.isLoading
+        : false;
+
+  const myPayrollLines = useMemo((): (OfficePayrollLine | PayrollBatchLine)[] => {
+    if (linked?.kind === 'office_staff') return officePayrollLinesHook.lines ?? [];
+    if (linked?.kind === 'worker') return workerPayrollLinesHook.lines ?? [];
+    return [];
+  }, [linked, officePayrollLinesHook.lines, workerPayrollLinesHook.lines]);
+
+  const myPayrollLinesError =
+    linked?.kind === 'office_staff'
+      ? officePayrollLinesHook.error
+      : linked?.kind === 'worker'
+        ? workerPayrollLinesHook.error
+        : null;
+
+  const myPayrollLinesSyncHint =
+    linked?.kind === 'office_staff' ? officePayrollLinesHook.syncHint : null;
+
+  const reloadMyPayrollLines =
+    linked?.kind === 'office_staff'
+      ? officePayrollLinesHook.reload
+      : linked?.kind === 'worker'
+        ? workerPayrollLinesHook.reload
+        : undefined;
 
   const handleChangePassword = async () => {
     const u = auth.currentUser;
@@ -819,6 +841,18 @@ export default function MyProfilePage() {
             </TabsContent>
 
             <TabsContent value="holidays" className="mt-4">
+              {linked.kind === 'office_staff' &&
+              linked.record.status !== 'ACTIVE' &&
+              linked.record.status !== 'active' ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">วันหยุดและกฎค่าจ้างอ้างอิง</CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-sm text-muted-foreground">
+                    ทะเบียนพนักงานของคุณไม่ได้อยู่ในสถานะ ACTIVE — ติดต่อ HR หากต้องการตรวจสอบสถานะการจ้าง
+                  </CardContent>
+                </Card>
+              ) : (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">วันหยุดและกฎค่าจ้างอ้างอิง</CardTitle>
@@ -887,19 +921,51 @@ export default function MyProfilePage() {
                   )}
                 </CardContent>
               </Card>
+              )}
             </TabsContent>
 
             <TabsContent value="payslips" className="mt-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">ใบสลิปเงินเดือน</CardTitle>
-                  <CardDescription>เฟสถัดไป — ดึงจากงวดจ่ายออฟฟิศ / ลูกจ้างตามสิทธิ์</CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm text-muted-foreground">ยังไม่มีข้อมูลในขณะนี้</CardContent>
-              </Card>
+              {linked.kind === 'office_staff' &&
+              linked.record.status !== 'ACTIVE' &&
+              linked.record.status !== 'active' ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">สลิปเงินเดือน</CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-sm text-muted-foreground">
+                    ทะเบียนพนักงานของคุณไม่ได้อยู่ในสถานะ ACTIVE — ไม่แสดงสลิปใน My Profile
+                  </CardContent>
+                </Card>
+              ) : linked.kind === 'office_staff' ? (
+                <OfficeStaffPayslipHistory
+                  staffId={linked.record.id}
+                  currentUser={currentUser}
+                  selfProfileOnly
+                  linkedUserId={currentUser.id}
+                />
+              ) : (
+                <WorkerPayslipHistory
+                  workerId={linked.record.id}
+                  currentUser={currentUser}
+                  selfProfileOnly
+                  linkedUserId={currentUser.id}
+                />
+              )}
             </TabsContent>
 
             <TabsContent value="wht" className="mt-4">
+              {linked.kind === 'office_staff' &&
+              linked.record.status !== 'ACTIVE' &&
+              linked.record.status !== 'active' ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">ใบหัก ณ ที่จ่าย (ภงด.1)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-sm text-muted-foreground">
+                    ทะเบียนพนักงานของคุณไม่ได้อยู่ในสถานะ ACTIVE — ไม่แสดงใบหัก ณ ที่จ่ายใน My Profile
+                  </CardContent>
+                </Card>
+              ) : (
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">ใบหัก ณ ที่จ่าย (ภงด.1)</CardTitle>
@@ -913,9 +979,19 @@ export default function MyProfilePage() {
                       <Loader2 className="h-7 w-7 animate-spin text-primary" />
                     </div>
                   ) : !myPayrollLines?.length ? (
-                    <p className="text-muted-foreground">
-                      ยังไม่มีบรรทัดงวดจ่ายในประวัติ — เมื่อมีงวดที่คุณอยู่ในชุดจ่าย จะแสดงที่นี่
-                    </p>
+                    <div className="space-y-3 text-muted-foreground">
+                      <p>
+                        {myPayrollLinesError
+                          ? `โหลดข้อมูลไม่สำเร็จ: ${myPayrollLinesError}`
+                          : myPayrollLinesSyncHint ||
+                            'ยังไม่มีบรรทัดงวดจ่ายในประวัติ — เมื่อมีงวดที่คุณอยู่ในชุดจ่าย จะแสดงที่นี่'}
+                      </p>
+                      {linked.kind === 'office_staff' && reloadMyPayrollLines ? (
+                        <Button type="button" variant="outline" size="sm" onClick={() => void reloadMyPayrollLines()}>
+                          โหลดสลิปจากระบบ
+                        </Button>
+                      ) : null}
+                    </div>
                   ) : (
                     <>
                       <Table>
@@ -924,6 +1000,7 @@ export default function MyProfilePage() {
                             <TableHead>งวด / ช่วง</TableHead>
                             <TableHead className="text-right">เงินได้รวม</TableHead>
                             <TableHead className="text-right">ภาษีหัก ณ ที่จ่าย</TableHead>
+                            <TableHead className="text-right whitespace-nowrap">ใบหัก ณ ที่จ่าย</TableHead>
                             <TableHead className="text-right whitespace-nowrap">อัปเดตล่าสุด</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -944,6 +1021,13 @@ export default function MyProfilePage() {
                                   </TableCell>
                                   <TableCell className="text-right tabular-nums">
                                     {pit.toLocaleString('th-TH', { maximumFractionDigits: 2 })}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    <SelfProfileOfficeWhtPrintButton
+                                      line={ol}
+                                      staff={linked.record}
+                                      currentUser={currentUser}
+                                    />
                                   </TableCell>
                                   <TableCell className="text-right text-xs text-muted-foreground whitespace-nowrap">
                                     {formatDateTimeThaiBE(ol.updatedAt)}
@@ -968,6 +1052,13 @@ export default function MyProfilePage() {
                                 <TableCell className="text-right tabular-nums">
                                   {pit.toLocaleString('th-TH', { maximumFractionDigits: 2 })}
                                 </TableCell>
+                                <TableCell className="text-right">
+                                  <SelfProfileWorkerWhtPrintButton
+                                    line={wl}
+                                    worker={linked.record}
+                                    currentUser={currentUser}
+                                  />
+                                </TableCell>
                                 <TableCell className="text-right text-xs text-muted-foreground whitespace-nowrap">
                                   {ts ? formatDateTimeThaiBE(ts) : '—'}
                                 </TableCell>
@@ -977,12 +1068,13 @@ export default function MyProfilePage() {
                         </TableBody>
                       </Table>
                       <p className="text-xs text-muted-foreground">
-                        ใบหัก ณ ที่จ่ายฉบับพิมพ์อย่างเป็นทางการออกจากเมนูบัญชี / งวดจ่าย — ติดต่อ HR หากต้องการสำเนาเพิ่ม
+                        กด «ใบหักฯ» เพื่อดูตัวอย่างและพิมพ์ใบหัก ณ ที่จ่าย (สำเนาผู้ถูกหัก) — ข้อมูลจากงวดจ่ายที่คุณอยู่ในชุด payroll
                       </p>
                     </>
                   )}
                 </CardContent>
               </Card>
+              )}
             </TabsContent>
 
             <TabsContent value="leave" className="mt-4">

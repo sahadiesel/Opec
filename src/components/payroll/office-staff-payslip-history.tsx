@@ -2,11 +2,12 @@
 
 import { useMemo } from 'react';
 import Link from 'next/link';
-import { collectionGroup, limit, query, where, doc } from 'firebase/firestore';
-import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
+import { doc } from 'firebase/firestore';
+import { useFirestore, useMemoFirebase, useDoc } from '@/firebase';
 import { canViewPayrollPerFirestoreRules } from '@/lib/permission-core';
 import type { OfficePayrollLine, OfficePayrollRun, User } from '@/lib/types';
-import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
+import { buildPayslipFromOfficeLine, officePayrollRunStubFromLine } from '@/lib/payroll/payslip-model';
+import { useOfficeStaffPayrollLines } from '@/lib/payroll/fetch-self-payroll-lines';
 import type { CompanyDocumentProfileNames } from '@/hooks/use-company-document-profile';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
@@ -18,15 +19,18 @@ import { Loader2 } from 'lucide-react';
 function StaffPayslipRow({
   line,
   companyProfile,
+  selfProfileOnly,
 }: {
   line: OfficePayrollLine;
   companyProfile?: CompanyDocumentProfileNames | null;
+  /** My Profile — ไม่ลิงก์ไปพิมพ์ทั้งงวด (มีสลิปคนอื่น) */
+  selfProfileOnly?: boolean;
 }) {
   const firestore = useFirestore();
   const runId = line.officePayrollRunId;
   const runRef = useMemoFirebase(
-    () => (firestore && runId ? doc(firestore, 'office_payroll_runs', runId) : null),
-    [firestore, runId]
+    () => (firestore && runId && !selfProfileOnly ? doc(firestore, 'office_payroll_runs', runId) : null),
+    [firestore, runId, selfProfileOnly],
   );
   const { data: run, isLoading } = useDoc<OfficePayrollRun>(runRef as any);
 
@@ -41,53 +45,62 @@ function StaffPayslipRow({
     );
   }
 
-  if (isLoading || !run) {
+  if (isLoading && !selfProfileOnly) {
     return (
       <TableRow>
         <TableCell colSpan={4} className="text-muted-foreground text-sm">
-          {isLoading ? 'กำลังโหลด…' : 'ไม่พบงวด'}
+          กำลังโหลด…
         </TableCell>
       </TableRow>
     );
   }
 
-  const model = buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined);
+  const runForPayslip = officePayrollRunStubFromLine(line, run ?? null);
+  const model = buildPayslipFromOfficeLine(line, runForPayslip, companyProfile ?? undefined);
 
   return (
     <TableRow>
-      <TableCell className="font-mono text-xs">{run.payrollRunNo}</TableCell>
-      <TableCell className="text-sm">{run.payrollMonth}</TableCell>
+      <TableCell className="font-mono text-xs">{runForPayslip.payrollRunNo}</TableCell>
+      <TableCell className="text-sm">{runForPayslip.payrollMonth}</TableCell>
       <TableCell className="text-right tabular-nums">฿{line.netPay.toLocaleString('th-TH')}</TableCell>
       <TableCell className="text-right">
         <div className="flex justify-end gap-2">
           <PayslipDialog model={model} />
-          <Button variant="ghost" size="sm" asChild>
-            <Link href={`/office-payroll/${runId}/print`}>งวดเต็ม</Link>
-          </Button>
+          {!selfProfileOnly && runId ? (
+            <Button variant="ghost" size="sm" asChild>
+              <Link href={`/office-payroll/${runId}/print`}>งวดเต็ม</Link>
+            </Button>
+          ) : null}
         </div>
       </TableCell>
     </TableRow>
   );
 }
 
-export function OfficeStaffPayslipHistory({ staffId, currentUser }: { staffId: string; currentUser: User | null }) {
+export function OfficeStaffPayslipHistory({
+  staffId,
+  currentUser,
+  selfProfileOnly = false,
+  linkedUserId,
+}: {
+  staffId: string;
+  currentUser: User | null;
+  /** หน้า My Profile — เฉพาะสลิปของตนเอง ไม่เปิดงวดเต็ม */
+  selfProfileOnly?: boolean;
+  linkedUserId?: string | null;
+}) {
   const firestore = useFirestore();
   const { profile: companyProfile } = useCompanyDocumentProfile();
   const allowed = canViewPayrollPerFirestoreRules(currentUser);
 
-  const linesQuery = useMemoFirebase(
-    () =>
-      firestore && allowed
-        ? query(collectionGroup(firestore, 'lines'), where('staffId', '==', staffId), limit(100))
-        : null,
-    [firestore, staffId, allowed]
+  const { lines, isLoading, error, syncHint, reload } = useOfficeStaffPayrollLines(
+    firestore,
+    staffId,
+    allowed,
+    selfProfileOnly && linkedUserId ? { linkedUserId } : undefined,
   );
-  const { data: lines, isLoading } = useCollection<OfficePayrollLine>(linesQuery as any);
 
-  const sorted = useMemo(() => {
-    if (!lines) return [];
-    return [...lines].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-  }, [lines]);
+  const sorted = useMemo(() => lines ?? [], [lines]);
 
   if (!allowed) {
     return (
@@ -104,7 +117,11 @@ export function OfficeStaffPayslipHistory({ staffId, currentUser }: { staffId: s
     <Card>
       <CardHeader>
         <CardTitle>สลิปเงินเดือน (Office Payroll)</CardTitle>
-        <CardDescription>จาก Office Payroll Line ที่เกี่ยวกับพนักงานนี้</CardDescription>
+        <CardDescription>
+          {selfProfileOnly
+            ? 'เฉพาะงวดของคุณจากทะเบียนที่ผูกบัญชี — กด «สลิป» เพื่อดู/พิมพ์'
+            : 'จาก Office Payroll Line ที่เกี่ยวกับพนักงานนี้'}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {isLoading && (
@@ -112,10 +129,22 @@ export function OfficeStaffPayslipHistory({ staffId, currentUser }: { staffId: s
             <Loader2 className="h-8 w-8 animate-spin" />
           </div>
         )}
-        {!isLoading && sorted.length === 0 && (
-          <p className="text-sm text-muted-foreground py-8 text-center">ยังไม่มีบรรทัด payroll</p>
+        {!isLoading && error ? (
+          <p className="text-sm text-destructive py-4 text-center">{error}</p>
+        ) : null}
+        {!isLoading && !error && sorted.length === 0 && (
+          <div className="py-8 text-center space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {syncHint || 'ยังไม่มีบรรทัด payroll'}
+            </p>
+            {selfProfileOnly ? (
+              <Button type="button" variant="outline" size="sm" onClick={() => void reload()}>
+                โหลดสลิปจากระบบ
+              </Button>
+            ) : null}
+          </div>
         )}
-        {!isLoading && sorted.length > 0 && (
+        {!isLoading && !error && sorted.length > 0 && (
           <Table>
             <TableHeader>
               <TableRow>
@@ -127,7 +156,12 @@ export function OfficeStaffPayslipHistory({ staffId, currentUser }: { staffId: s
             </TableHeader>
             <TableBody>
               {sorted.map((line) => (
-                <StaffPayslipRow key={line.id} line={line} companyProfile={companyProfile} />
+                <StaffPayslipRow
+                  key={line.id}
+                  line={line}
+                  companyProfile={companyProfile}
+                  selfProfileOnly={selfProfileOnly}
+                />
               ))}
             </TableBody>
           </Table>

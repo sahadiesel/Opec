@@ -270,6 +270,9 @@ export const MODULE_FIRESTORE_SPECS: ModuleFirestoreSpec[] = [
       { path: 'po_month_timesheet_reviews/{id}', shape: 'crud' },
       { path: 'po_location_month_timesheets/{id}', shape: 'crud' },
       { path: 'monthly_timesheet_documents/{id}', shape: 'crud' },
+      { path: 'monthly_timesheet_photo_bundles/{id}', shape: 'crud' },
+      { path: 'po_month_timesheet_photo_bundles/{id}', shape: 'crud' },
+      { path: 'wave_month_timesheet_photo_bundles/{id}', shape: 'crud' },
     ],
   },
   {

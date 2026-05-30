@@ -560,6 +560,15 @@ export interface PositionToolRequirement {
 export const STORE_ITEM_CATEGORIES = ['PPE', 'Workwear', 'Tool', 'Medical Supplies', 'General'] as const;
 export type StoreItemCatalogCategory = (typeof STORE_ITEM_CATEGORIES)[number];
 
+/** ชี้ไปบรรทัด payroll ของพนักงานออฟฟิศ — ใช้ My Profile อ่านทีละบรรทัด (get) */
+export type OfficeStaffPayrollLineRef = {
+  runCollection: 'office_payroll_runs' | 'executive_payroll_runs';
+  runId: string;
+  lineId: string;
+  payrollMonth?: string;
+  updatedAt: number;
+};
+
 export interface OfficeStaff {
   id: string;
   staffCode: string;
@@ -608,6 +617,8 @@ export interface OfficeStaff {
   status: 'ACTIVE' | 'INACTIVE' | 'RESIGNED';
   notes?: string;
   linkedUserId?: string;
+  /** อ้างอิงบรรทัด payroll ของตนเอง — sync จากงวดจ่าย (My Profile อ่านด้วย get รายบรรทัด) */
+  payrollLineRefs?: OfficeStaffPayrollLineRef[];
   /** @deprecated ไม่ใช้ใน UI — เก็บไว้เฉพาะข้อมูลเก่าใน Firestore */
   supervisorId?: string;
   /** snapshot ตอนผู้ดูแลระบบผูกบัญชี — ให้ HR ดูชื่อ/อีเมลโดยไม่ต้องอ่าน users/{id} */
@@ -1882,6 +1893,8 @@ export interface OfficePayrollLine {
   officePayrollRunId?: string;
   /** YYYY-MM — snapshot จากหัวงวด (My Profile / สลิป) */
   payrollMonth?: string;
+  /** UID บัญชีพนักงาน — ใช้ self-service / Firestore rules */
+  subjectLinkedUserId?: string | null;
   staffId: string;
   staffName: string;
   department: string;
@@ -2077,6 +2090,8 @@ export interface HrPayrollLineAdjustments {
 export interface PayrollBatchLine {
   id: string;
   payrollBatchId: string;
+  /** UID บัญชีลูกจ้าง — ใช้ self-service / Firestore rules */
+  subjectLinkedUserId?: string | null;
   workerId: string;
   workerNameSnapshot: string;
   workerPaymentProfileSnapshot: Partial<WorkerPaymentProfile>;

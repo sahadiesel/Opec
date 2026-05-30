@@ -2,11 +2,12 @@
 
 import { useMemo } from 'react';
 import Link from 'next/link';
-import { collectionGroup, limit, query, where, doc } from 'firebase/firestore';
-import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
+import { doc } from 'firebase/firestore';
+import { useFirestore, useMemoFirebase, useDoc } from '@/firebase';
 import { canViewPayrollPerFirestoreRules } from '@/lib/permission-core';
 import type { PayrollBatch, PayrollBatchLine, User } from '@/lib/types';
-import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
+import { buildPayslipFromWorkerLine, payrollBatchStubFromLine } from '@/lib/payroll/payslip-model';
+import { useWorkerPayrollLines } from '@/lib/payroll/fetch-self-payroll-lines';
 import type { CompanyDocumentProfileNames } from '@/hooks/use-company-document-profile';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
@@ -18,9 +19,11 @@ import { Loader2 } from 'lucide-react';
 function WorkerPayslipRow({
   line,
   companyProfile,
+  selfProfileOnly,
 }: {
   line: PayrollBatchLine;
   companyProfile?: CompanyDocumentProfileNames | null;
+  selfProfileOnly?: boolean;
 }) {
   const firestore = useFirestore();
   const batchRef = useMemoFirebase(
@@ -31,17 +34,18 @@ function WorkerPayslipRow({
 
   const periodLabel = `${line.periodStartDate} → ${line.periodEndDate}`;
 
-  if (isLoading || !batch) {
+  if (isLoading) {
     return (
       <TableRow>
         <TableCell colSpan={4} className="text-muted-foreground text-sm">
-          {isLoading ? 'กำลังโหลด…' : 'ไม่พบ batch'}
+          กำลังโหลด…
         </TableCell>
       </TableRow>
     );
   }
 
-  const model = buildPayslipFromWorkerLine(line, batch, periodLabel, companyProfile ?? undefined);
+  const batchForPayslip = payrollBatchStubFromLine(line, batch ?? null);
+  const model = buildPayslipFromWorkerLine(line, batchForPayslip, periodLabel, companyProfile ?? undefined);
 
   return (
     <TableRow>
@@ -51,33 +55,40 @@ function WorkerPayslipRow({
       <TableCell className="text-right">
         <div className="flex justify-end gap-2">
           <PayslipDialog model={model} />
-          <Button variant="ghost" size="sm" asChild>
-            <Link href={`/payroll/batches/${line.payrollBatchId}/print`}>งวดเต็ม</Link>
-          </Button>
+          {!selfProfileOnly ? (
+            <Button variant="ghost" size="sm" asChild>
+              <Link href={`/payroll/batches/${line.payrollBatchId}/print`}>งวดเต็ม</Link>
+            </Button>
+          ) : null}
         </div>
       </TableCell>
     </TableRow>
   );
 }
 
-export function WorkerPayslipHistory({ workerId, currentUser }: { workerId: string; currentUser: User | null }) {
+export function WorkerPayslipHistory({
+  workerId,
+  currentUser,
+  selfProfileOnly = false,
+  linkedUserId,
+}: {
+  workerId: string;
+  currentUser: User | null;
+  selfProfileOnly?: boolean;
+  linkedUserId?: string | null;
+}) {
   const firestore = useFirestore();
   const { profile: companyProfile } = useCompanyDocumentProfile();
   const allowed = canViewPayrollPerFirestoreRules(currentUser);
 
-  const linesQuery = useMemoFirebase(
-    () =>
-      firestore && allowed
-        ? query(collectionGroup(firestore, 'lines'), where('workerId', '==', workerId), limit(100))
-        : null,
-    [firestore, workerId, allowed]
+  const { lines, isLoading, error } = useWorkerPayrollLines(
+    firestore,
+    workerId,
+    allowed,
+    selfProfileOnly && linkedUserId ? { linkedUserId } : undefined,
   );
-  const { data: lines, isLoading } = useCollection<PayrollBatchLine>(linesQuery as any);
 
-  const sorted = useMemo(() => {
-    if (!lines) return [];
-    return [...lines].sort((a, b) => (b.periodEndDate || '').localeCompare(a.periodEndDate || ''));
-  }, [lines]);
+  const sorted = useMemo(() => lines ?? [], [lines]);
 
   if (!allowed) {
     return (
@@ -94,7 +105,11 @@ export function WorkerPayslipHistory({ workerId, currentUser }: { workerId: stri
     <Card>
       <CardHeader>
         <CardTitle>สลิปเงินเดือน (Worker Payroll)</CardTitle>
-        <CardDescription>สรุปจาก Payroll Batch Line — ดู/พิมพ์ย้อนหลัง</CardDescription>
+        <CardDescription>
+          {selfProfileOnly
+            ? 'เฉพาะงวดของคุณจากทะเบียนที่ผูกบัญชี — กด «สลิป» เพื่อดู/พิมพ์'
+            : 'สรุปจาก Payroll Batch Line — ดู/พิมพ์ย้อนหลัง'}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {isLoading && (
@@ -102,10 +117,13 @@ export function WorkerPayslipHistory({ workerId, currentUser }: { workerId: stri
             <Loader2 className="h-8 w-8 animate-spin" />
           </div>
         )}
-        {!isLoading && sorted.length === 0 && (
+        {!isLoading && error ? (
+          <p className="text-sm text-destructive py-4 text-center">{error}</p>
+        ) : null}
+        {!isLoading && !error && sorted.length === 0 && (
           <p className="text-sm text-muted-foreground py-8 text-center">ยังไม่มีบรรทัด payroll สำหรับคนงานนี้</p>
         )}
-        {!isLoading && sorted.length > 0 && (
+        {!isLoading && !error && sorted.length > 0 && (
           <Table>
             <TableHeader>
               <TableRow>
@@ -121,6 +139,7 @@ export function WorkerPayslipHistory({ workerId, currentUser }: { workerId: stri
                   key={`${line.payrollBatchId}_${line.id}`}
                   line={line}
                   companyProfile={companyProfile}
+                  selfProfileOnly={selfProfileOnly}
                 />
               ))}
             </TableBody>
