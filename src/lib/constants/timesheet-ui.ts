@@ -324,7 +324,15 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
     if (inGapBeforeWorkWithoutStandbyField) {
       floor = assignStart;
     } else if (/^\d{4}-\d{2}-\d{2}$/.test(assignStart)) {
-      floor = assignStart >= mobSegmentStart ? assignStart : mobSegmentStart;
+      /**
+       * mobilization บนไซต์ก่อนวันบันทึกมอบหมาย (assignStart ช้ากว่า mobSegmentStart) —
+       * ใช้วัน mobilization เป็นขอบล่าง ไม่ตัด SB/W ก่อนวันมอบหมายในเอกสาร
+       */
+      if (assignStart > mobSegmentStart) {
+        floor = mobSegmentStart;
+      } else {
+        floor = assignStart >= mobSegmentStart ? assignStart : mobSegmentStart;
+      }
     } else {
       floor = mobSegmentStart;
     }

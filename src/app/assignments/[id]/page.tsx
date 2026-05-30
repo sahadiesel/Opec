@@ -148,6 +148,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   }, [currentUser]);
 
   const [workLocationDraft, setWorkLocationDraft] = useState('');
+  const [assignmentStartDraft, setAssignmentStartDraft] = useState('');
   const [poCeilingDraft, setPoCeilingDraft] = useState('');
   const [deploymentEditing, setDeploymentEditing] = useState(false);
   const [isSavingDeployment, setIsSavingDeployment] = useState(false);
@@ -159,10 +160,15 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       (assignment.workLocation || poLine?.workLocation || '').toString().trim(),
     );
     setPoCeilingDraft(normalizeStoredYmd(assignment.endDate));
+    setAssignmentStartDraft(
+      normalizeStoredYmd(assignment.assignedDate || assignment.startDate),
+    );
   }, [
     assignment?.id,
     assignment?.workLocation,
     assignment?.endDate,
+    assignment?.assignedDate,
+    assignment?.startDate,
     poLine?.id,
     poLine?.workLocation,
     deploymentEditing,
@@ -182,6 +188,9 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       (assignment.workLocation || poLine?.workLocation || '').toString().trim(),
     );
     setPoCeilingDraft(normalizeStoredYmd(assignment.endDate));
+    setAssignmentStartDraft(
+      normalizeStoredYmd(assignment.assignedDate || assignment.startDate),
+    );
     setDeploymentEditing(true);
   };
 
@@ -192,13 +201,25 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       (assignment.workLocation || poLine?.workLocation || '').toString().trim(),
     );
     setPoCeilingDraft(normalizeStoredYmd(assignment.endDate));
+    setAssignmentStartDraft(
+      normalizeStoredYmd(assignment.assignedDate || assignment.startDate),
+    );
   };
 
   const handleSaveDeploymentSummary = async () => {
     if (!firestore || !currentUser || !canEditAssignments || !assignment || isDeploymentReleased) return;
 
     const trimmed = workLocationDraft.trim();
+    const startYmd = normalizeStoredYmd(assignmentStartDraft);
     const ceiling = normalizeStoredYmd(poCeilingDraft);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startYmd)) {
+      toast({
+        variant: 'destructive',
+        title: 'วันเริ่มมอบหมายไม่ถูกต้อง',
+        description: 'เลือกวันเริ่มมอบหมาย (yyyy-mm-dd)',
+      });
+      return;
+    }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(ceiling)) {
       toast({
         variant: 'destructive',
@@ -207,8 +228,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       });
       return;
     }
-    const startYmd = normalizeStoredYmd(assignment.startDate);
-    if (startYmd && ceiling < startYmd) {
+    if (ceiling < startYmd) {
       toast({
         variant: 'destructive',
         title: 'เพดานสั้นเกินไป',
@@ -216,7 +236,24 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       });
       return;
     }
+    const mobStandbyYmd = normalizeStoredYmd(assignment.mobStandbyDate);
+    if (mobStandbyYmd && startYmd > mobStandbyYmd) {
+      toast({
+        variant: 'destructive',
+        title: 'วันเริ่มมอบหมายไม่สอดคล้อง',
+        description: `ต้องไม่หลังวัน Standby ที่บันทึกแล้ว (${formatYmdLocalThaiBE(mobStandbyYmd)}) — แก้วัน Standby ที่ Mobilization ก่อน`,
+      });
+      return;
+    }
     const workStartYmd = normalizeStoredYmd(assignment.mobWorkingStartDate);
+    if (workStartYmd && startYmd > workStartYmd) {
+      toast({
+        variant: 'destructive',
+        title: 'วันเริ่มมอบหมายไม่สอดคล้อง',
+        description: `ต้องไม่หลังวันเริ่มงานที่ไซต์ (${formatYmdLocalThaiBE(workStartYmd)}) — ขั้นตอน Mob คงเดิม`,
+      });
+      return;
+    }
     if (workStartYmd && ceiling < workStartYmd) {
       toast({
         variant: 'destructive',
@@ -240,6 +277,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     try {
       const patch: Record<string, unknown> = {
         updatedAt: Date.now(),
+        assignedDate: startYmd,
+        startDate: startYmd,
         endDate: ceiling,
       };
       if (trimmed) {
@@ -254,7 +293,8 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
       await updateDoc(mobD, patch as DocumentData);
       toast({
         title: 'บันทึกข้อมูลแล้ว',
-        description: 'สถานที่และเพดาน PO อัปเดตแล้ว — วัน Standby / เริ่มทำงานยังตั้งที่ Mobilization ตามเดิม',
+        description:
+          'วันเริ่มมอบหมาย สถานที่ และเพดาน PO อัปเดตแล้ว — วัน Standby / เริ่มงานที่ไซต์ยังตั้งที่ Mobilization',
       });
       setDeploymentEditing(false);
     } catch (err: unknown) {
@@ -543,18 +583,23 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                   ) : (
                     <>
                       <div className="col-span-2 rounded-md border border-muted bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                        วันเริ่ม Standby / ทำงานแก้ได้ที่หน้า{' '}
+                        วันเริ่ม Standby / เริ่มงานที่ไซต์ ตั้งที่หน้า{' '}
                         <Link href={`/mobilization/${id}`} className="font-semibold text-primary underline">
                           Mobilization
                         </Link>{' '}
-                        เท่านั้น — ขั้นตอน Mob ไม่เปลี่ยน
+                        — วันเริ่มมอบหมายด้านล่างใช้กำหนดขอบล่างลงเวลา (เช่น mob ก่อนวันสร้างเอกสาร)
                       </div>
-                      <div>
-                        <Label className="text-xs uppercase text-muted-foreground">วันเริ่มมอบหมาย (อ่านอย่างเดียว)</Label>
-                        <p className="font-bold mt-0.5">
-                          {formatYmdLocalThaiBE(
-                            (assignment.assignedDate || assignment.startDate || '').trim() || '—',
-                          )}
+                      <div className="space-y-2">
+                        <Label className="text-xs uppercase text-muted-foreground">วันเริ่มมอบหมาย</Label>
+                        <Input
+                          type="date"
+                          className="font-mono w-full max-w-[220px]"
+                          value={assignmentStartDraft}
+                          max={poCeilingDraft || undefined}
+                          onChange={(e) => setAssignmentStartDraft(e.target.value)}
+                        />
+                        <p className="text-[10px] text-muted-foreground leading-snug">
+                          ต้องไม่หลังวัน Standby ที่บันทึกแล้ว (ถ้ามี) — ใช้เป็นขอบล่างตาราง Wave / สรุปรายเดือน
                         </p>
                       </div>
                       <div className="space-y-2">
@@ -563,7 +608,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                           type="date"
                           className="font-mono w-full max-w-[220px]"
                           value={poCeilingDraft}
-                          min={normalizeStoredYmd(assignment.startDate) || undefined}
+                          min={assignmentStartDraft || undefined}
                           onChange={(e) => setPoCeilingDraft(e.target.value)}
                         />
                         <p className="text-[10px] text-muted-foreground leading-snug">
