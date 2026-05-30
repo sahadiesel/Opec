@@ -545,6 +545,17 @@ export function isPayrollOfficer(user: User | null): boolean {
   return getPrimaryLegacyRole(user) === 'payroll_officer';
 }
 
+/**
+ * ฝ่ายเงินเดือน/HR: ส่งงวด office หลังคำนวณ (CALCULATED → HR_REVIEW)
+ * — payroll officer, HR manager, แอดมิน (ไม่ใช่ผู้จัดการปฏิบัติการที่รออนุมัติ)
+ */
+export function canSubmitOfficeRunForManagerReview(user: User | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user) || isSimpleAdmin(user)) return true;
+  if (isPayrollOfficer(user) || isHrManager(user)) return true;
+  return false;
+}
+
 /** อนุมัติงวด office หลังฝ่ายเงินเดือนส่ง (HR_REVIEW) — ผู้จัดการปฏิบัติการ / HR manager + แอดมิน */
 export function canApproveOfficePayrollAsManager(user: User | null): boolean {
   if (!user) return false;

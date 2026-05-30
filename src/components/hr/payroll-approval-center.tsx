@@ -75,6 +75,10 @@ import { cn } from '@/lib/utils';
 import { formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
 import { runStatusToD8Lifecycle } from '@/lib/payroll/d8';
 import { workerPayrollBatchStatusLabelTh } from '@/lib/payroll/worker-batch-status-display';
+import {
+  isOfficeRunPendingManagerApproval,
+  officePayrollRunStatusLabelTh,
+} from '@/lib/payroll/office-payroll-run-status-display';
 
 /** รายการใน D6 รวมงวดย้อนหลังเพื่อเปิดสลิป */
 const WORKER_D6_STATUSES = new Set([
@@ -132,10 +136,13 @@ function CheckRow({ c }: { c: ValidationCheck }) {
 export function PayrollApprovalCenterD6({
   currentUser,
   initialWorkerBatchId,
+  initialOfficeRunId,
 }: {
   currentUser: User;
   /** จาก /hr/payroll-approval?batch= ให้โฟกัส batch นั้น (เช่น ลิงก์จาก dashboard) */
   initialWorkerBatchId?: string;
+  /** จาก /hr/payroll-approval?run= ให้โฟกัสงวด office นั้น */
+  initialOfficeRunId?: string;
 }) {
   const firestore = useFirestore();
   const { profile: companyProfile } = useCompanyDocumentProfile();
@@ -216,6 +223,11 @@ export function PayrollApprovalCenterD6({
     });
     return list;
   }, [allRuns]);
+
+  const officePendingRuns = useMemo(
+    () => officeRuns.filter((r) => isOfficeRunPendingManagerApproval(r.status)),
+    [officeRuns]
+  );
 
   const officeMonthOptions = useMemo(() => {
     const s = new Set(officeRuns.map((r) => r.payrollMonth).filter(Boolean));
@@ -317,6 +329,22 @@ export function PayrollApprovalCenterD6({
       setSelectedBatchId(initialWorkerBatchId);
     }
   }, [initialWorkerBatchId, workerBatches]);
+
+  useEffect(() => {
+    if (!initialOfficeRunId || !officeRuns.length) return;
+    if (officeRuns.some((r) => r.id === initialOfficeRunId)) {
+      setTab('office');
+      setSelectedRunId(initialOfficeRunId);
+    }
+  }, [initialOfficeRunId, officeRuns]);
+
+  useEffect(() => {
+    if (initialWorkerBatchId || initialOfficeRunId) return;
+    if (officePendingRuns.length > 0 && tab === 'worker' && !selectedBatchId) {
+      setTab('office');
+      setSelectedRunId((prev) => prev ?? officePendingRuns[0]?.id ?? null);
+    }
+  }, [initialWorkerBatchId, initialOfficeRunId, officePendingRuns, tab, selectedBatchId]);
 
   const workerChecks: ValidationCheck[] = useMemo(() => {
     if (!selectedBatch || !workerLines) return [];
@@ -424,7 +452,7 @@ export function PayrollApprovalCenterD6({
         hrApprovedBy: name,
         updatedAt: Date.now(),
       });
-      toast({ title: 'อนุมัติงวดออฟฟิศแล้ว', description: `${selectedRun.payrollRunNo} → HR_APPROVED` });
+      toast({ title: 'อนุมัติงวดออฟฟิศแล้ว', description: `${selectedRun.payrollRunNo} → HR_APPROVED (คิวบัญชีรอจ่าย)` });
       setOfficeLines(null);
       await loadOfficeLines(selectedRun.id);
     } catch (e) {
@@ -485,9 +513,10 @@ export function PayrollApprovalCenterD6({
         <p className="text-muted-foreground text-lg">
           Flow ลูกจ้าง: ฝ่ายเงินเดือนกดส่งขออนุมัติ → สถานะ{' '}
           <strong className="text-foreground">รอผู้จัดการอนุมัติ</strong> (รหัส HR_REVIEWED)
-          จากนั้น <strong className="text-foreground">ผู้จัดการ HR / ผู้จัดการปฏิบัติการ</strong> กด{' '}
-          <strong className="text-foreground">อนุมัติจ่ายเงิน</strong> ครั้งเดียว → <span className="font-mono">FINANCE_PREPARED</span> (คิวบัญชีรอจ่าย) — ไม่มีขั้น
-          HR_APPROVED + ส่งบัญชีแยก หลังถึงบัญชีแล้วแก้ตรงไม่ได้ ต้องใช้ขั้นตอน correction
+          จากนั้นผู้จัดการอนุมัติ → <span className="font-mono">FINANCE_PREPARED</span> (คิวบัญชีรอจ่าย)
+          {' · '}
+          Flow ออฟฟิศ: ส่งอนุมัติจากหน้างวด → <span className="font-mono">HR_REVIEW</span> → ผู้จัดการอนุมัติ →{' '}
+          <span className="font-mono">HR_APPROVED</span> (คิวบัญชีรอจ่าย)
         </p>
       </div>
 
@@ -496,8 +525,13 @@ export function PayrollApprovalCenterD6({
           <TabsTrigger value="worker" className="gap-2 py-2">
             <Coins className="h-4 w-4" /> Worker Payroll
           </TabsTrigger>
-          <TabsTrigger value="office" className="gap-2 py-2">
+          <TabsTrigger value="office" className="gap-2 py-2 relative">
             <Building2 className="h-4 w-4" /> Office Payroll
+            {officePendingRuns.length > 0 ? (
+              <Badge className="ml-1 h-5 min-w-5 px-1.5 text-[10px] bg-amber-600 hover:bg-amber-600">
+                {officePendingRuns.length}
+              </Badge>
+            ) : null}
           </TabsTrigger>
         </TabsList>
 
@@ -790,6 +824,17 @@ export function PayrollApprovalCenterD6({
             </div>
           ) : (
             <>
+              {officePendingRuns.length > 0 ? (
+                <Alert className="border-amber-300 bg-amber-50/80 text-amber-950">
+                  <AlertTriangle className="h-4 w-4 text-amber-700" />
+                  <AlertTitle className="font-bold">งวดออฟฟิศรอผู้จัดการอนุมัติ ({officePendingRuns.length})</AlertTitle>
+                  <AlertDescription className="text-sm">
+                    ฝ่ายเงินเดือนส่งอนุมัติแล้ว — เลือกงวดด้านล่างแล้วกด{' '}
+                    <strong>อนุมัติ (ผู้จัดการ)</strong> หลังอนุมัติงวดจะไปคิว{' '}
+                    <strong>บัญชี · รอจ่าย</strong> (สถานะ HR_APPROVED)
+                  </AlertDescription>
+                </Alert>
+              ) : null}
               <Card>
                 <CardHeader className="pb-2 space-y-3">
                   <div>
@@ -848,7 +893,11 @@ export function PayrollApprovalCenterD6({
                         officeRunsFiltered.map((r) => (
                           <TableRow
                             key={r.id}
-                            className={cn('cursor-pointer', selectedRunId === r.id && 'bg-muted/50')}
+                            className={cn(
+                              'cursor-pointer',
+                              selectedRunId === r.id && 'bg-muted/50',
+                              isOfficeRunPendingManagerApproval(r.status) && 'bg-amber-50/70 hover:bg-amber-50'
+                            )}
                             onClick={() => {
                               setSelectedRunId(r.id);
                               setOfficeLines(null);
@@ -859,7 +908,16 @@ export function PayrollApprovalCenterD6({
                               {formatPayrollYearMonthEnAbbrev(r.payrollMonth)} <span className="text-muted-foreground">({r.payrollMonth})</span>
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline">{r.status}</Badge>
+                              <Badge
+                                variant={isOfficeRunPendingManagerApproval(r.status) ? 'default' : 'outline'}
+                                className={
+                                  isOfficeRunPendingManagerApproval(r.status)
+                                    ? 'bg-amber-600 hover:bg-amber-600'
+                                    : undefined
+                                }
+                              >
+                                {officePayrollRunStatusLabelTh(r.status)}
+                              </Badge>
                             </TableCell>
                             <TableCell className="text-right tabular-nums">{r.staffCount}</TableCell>
                             <TableCell className="text-right tabular-nums">{moneyTH(r.netAmount)}</TableCell>
@@ -897,7 +955,16 @@ export function PayrollApprovalCenterD6({
                       </div>
                       <div>
                         <div className="text-muted-foreground text-xs uppercase">สถานะ</div>
-                        <Badge>{selectedRun.status}</Badge>
+                        <Badge
+                          variant={isOfficeRunPendingManagerApproval(selectedRun.status) ? 'default' : 'outline'}
+                          className={
+                            isOfficeRunPendingManagerApproval(selectedRun.status)
+                              ? 'bg-amber-600 hover:bg-amber-600'
+                              : undefined
+                          }
+                        >
+                          {officePayrollRunStatusLabelTh(selectedRun.status)}
+                        </Badge>
                       </div>
                       <div>
                         <div className="text-muted-foreground text-xs uppercase">Gross</div>

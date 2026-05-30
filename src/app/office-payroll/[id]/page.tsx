@@ -52,7 +52,8 @@ import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { canView } from '@/lib/permissions';
-import { canApproveOfficePayrollAsManager, isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
+import { canApproveOfficePayrollAsManager, canSubmitOfficeRunForManagerReview } from '@/lib/permission-core';
+import { submitOfficeRunForManagerReview } from '@/lib/payroll/office-submit-hr-review';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Label } from '@/components/ui/label';
 import { runStatusToD8Lifecycle } from '@/lib/payroll/d8';
@@ -120,13 +121,31 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
   const { data: allStaff } = useCollection<OfficeStaff>(staffQuery as any);
 
   const canSubmitForReview = useMemo(
-    () => Boolean(currentUser && (isSystemAdmin(currentUser) || isPayrollOfficer(currentUser)) && canMutate),
+    () => Boolean(currentUser && canSubmitOfficeRunForManagerReview(currentUser) && canMutate),
     [currentUser, canMutate]
   );
   const canManagerApprove = useMemo(
     () => Boolean(currentUser && canApproveOfficePayrollAsManager(currentUser) && canMutate),
     [currentUser, canMutate]
   );
+
+  const handleSubmitForReview = async () => {
+    if (!firestore || !run || !currentUser) return;
+    try {
+      await submitOfficeRunForManagerReview(firestore, run.id, currentUser);
+      toast({
+        title: 'ส่งขออนุมัติแล้ว',
+        description: `${run.payrollRunNo} → รอผู้จัดการ (ศูนย์อนุมัติ Payroll)`,
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ส่งไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'ลองอีกครั้ง',
+      });
+    }
+  };
 
   const handleUpdateStatus = async (newStatus: PayrollRunStatus) => {
     if (!firestore || !run || !runRef || !currentUser) return;
@@ -137,9 +156,10 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
     };
 
     if (newStatus === 'HR_REVIEW') {
-      updateData.submittedForReviewBy = currentUser.displayName;
-      updateData.submittedForReviewAt = Date.now();
+      await handleSubmitForReview();
+      return;
     }
+
     if (newStatus === 'HR_APPROVED') {
       updateData.managerApprovedBy = currentUser.displayName;
       updateData.managerApprovedAt = Date.now();

@@ -22,9 +22,10 @@ interface WorkerMedicalTabProps {
   firestore: Firestore | null;
   medicals: WorkerMedicalRecord[] | null;
   medicalsQuery: CollectionReference | null;
+  canEdit?: boolean;
 }
 
-export function WorkerMedicalTab({ workerId, firestore, medicals, medicalsQuery }: WorkerMedicalTabProps) {
+export function WorkerMedicalTab({ workerId, firestore, medicals, medicalsQuery, canEdit = false }: WorkerMedicalTabProps) {
   const { toast } = useToast();
   const [isAddMedicalOpen, setIsAddMedicalOpen] = useState(false);
   const [newMedicalType, setNewMedicalType] = useState('General Health Exam');
@@ -42,6 +43,7 @@ export function WorkerMedicalTab({ workerId, firestore, medicals, medicalsQuery 
           </CardTitle>
           <CardDescription>ข้อมูลความพร้อมทางร่างกายตามเกณฑ์มาตรฐานงาน Offshore</CardDescription>
         </div>
+        {canEdit ? (
         <Dialog open={isAddMedicalOpen} onOpenChange={setIsAddMedicalOpen}>
           <DialogTrigger asChild>
             <Button
@@ -115,6 +117,7 @@ export function WorkerMedicalTab({ workerId, firestore, medicals, medicalsQuery 
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        ) : null}
       </CardHeader>
       <CardContent className="p-0">
         <Table>
@@ -141,12 +144,16 @@ export function WorkerMedicalTab({ workerId, firestore, medicals, medicalsQuery 
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right pr-6">
+                  {canEdit ? (
                   <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => {
                     if (!firestore) return;
                     if (confirm('ลบรายการ?')) deleteDocumentNonBlocking(doc(firestore, 'workers', workerId, 'medical_records', m.id));
                   }}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
                 </TableCell>
               </TableRow>
             ))}

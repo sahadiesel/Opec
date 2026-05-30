@@ -269,8 +269,8 @@ export default function HrApprovalCenterPage() {
                 <span>อนุมัติ Payroll งวดจ่าย (Worker / Office)</span>
               </CardTitle>
               <CardDescription className="text-sm leading-relaxed">
-                ศูนย์อนุมัติงวดจ่ายตาม batch — ลูกจ้างที่ส่งขอแล้วเป็นสถานะ{' '}
-                <span className="font-medium text-foreground">รอผู้จัดการอนุมัติ</span> (รหัส HR_REVIEWED)
+                ศูนย์อนุมัติงวดจ่าย — ลูกจ้าง: สถานะ <span className="font-medium text-foreground">HR_REVIEWED</span> ·
+                ออฟฟิศ: สถานะ <span className="font-medium text-foreground">HR_REVIEW</span> = รอผู้จัดการอนุมัติ
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2">

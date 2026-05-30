@@ -12,6 +12,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 function PayrollApprovalInner() {
   const searchParams = useSearchParams();
   const initialBatchId = searchParams.get('batch') || undefined;
+  const initialOfficeRunId = searchParams.get('run') || undefined;
   const { currentUser, isLoading: userLoading } = useAppUser();
   const canViewApprovalPage =
     currentUser &&
@@ -44,7 +45,11 @@ function PayrollApprovalInner() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div id="pending" className="scroll-mt-24">
-        <PayrollApprovalCenterD6 currentUser={currentUser} initialWorkerBatchId={initialBatchId} />
+        <PayrollApprovalCenterD6
+          currentUser={currentUser}
+          initialWorkerBatchId={initialBatchId}
+          initialOfficeRunId={initialOfficeRunId}
+        />
       </div>
     </AppShell>
   );

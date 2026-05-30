@@ -165,7 +165,7 @@ export default function OperationsDashboardPage() {
           type: 'อนุมัติเงินเดือนพนักงาน',
           label: `${r.payrollRunNo || r.id} · งวด ${r.payrollMonth || '—'}`,
           status: 'รอผู้จัดการ',
-          link: `/office-payroll/${r.id}`,
+          link: `/hr/payroll-approval?run=${encodeURIComponent(r.id)}`,
           priority: 'high',
           icon: Coins,
         });

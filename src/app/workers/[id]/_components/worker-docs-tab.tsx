@@ -22,9 +22,10 @@ interface WorkerDocsTabProps {
   workerDocs: WorkerDocument[] | null;
   docsQuery: CollectionReference | null;
   workerDocCatalog: WorkerDocumentCatalogItem[] | null;
+  canEdit?: boolean;
 }
 
-export function WorkerDocsTab({ workerId, firestore, workerDocs, docsQuery, workerDocCatalog }: WorkerDocsTabProps) {
+export function WorkerDocsTab({ workerId, firestore, workerDocs, docsQuery, workerDocCatalog, canEdit = false }: WorkerDocsTabProps) {
   const { toast } = useToast();
   const [isAddDocOpen, setIsAddDocOpen] = useState(false);
   const [newDocTemplateId, setNewDocTemplateId] = useState('');
@@ -93,6 +94,7 @@ export function WorkerDocsTab({ workerId, firestore, workerDocs, docsQuery, work
           </CardTitle>
           <CardDescription>จัดเก็บสำเนาบัตรประชาชน พาสปอร์ต ทะเบียนบ้าน หรือสัญญาจ้างงาน</CardDescription>
         </div>
+        {canEdit ? (
         <Dialog open={isAddDocOpen} onOpenChange={setIsAddDocOpen}>
           <DialogTrigger asChild>
             <Button className="bg-primary font-bold shadow-md" onClick={() => { setEditingDocId(null); setNewDocTemplateId(''); setNewDocNo(''); setNewDocIssueDate(''); setNewDocExpiryDate(''); }}>
@@ -127,6 +129,7 @@ export function WorkerDocsTab({ workerId, firestore, workerDocs, docsQuery, work
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        ) : null}
       </CardHeader>
       <CardContent className="p-0">
         <Table>
@@ -145,12 +148,16 @@ export function WorkerDocsTab({ workerId, firestore, workerDocs, docsQuery, work
                 <TableCell className="font-mono text-xs">{d.documentNo}</TableCell>
                 <TableCell className="text-xs">{d.expiryDate > 0 ? formatOptionalDateThaiBE(d.expiryDate, '-') : '-'}</TableCell>
                 <TableCell className="text-right pr-6">
+                  {canEdit ? (
                   <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => {
                     if (!firestore) return;
                     if (confirm('ลบรายการ?')) deleteDocumentNonBlocking(doc(firestore, 'workers', workerId, 'documents', d.id));
                   }}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
                 </TableCell>
               </TableRow>
             ))}

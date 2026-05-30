@@ -14,7 +14,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { canView } from '@/lib/permissions';
 import { usePermissions } from '@/hooks/use-permissions';
-import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
+import { canSubmitOfficeRunForManagerReview } from '@/lib/permission-core';
 import { useToast } from '@/hooks/use-toast';
 import { formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
 import { submitOfficeRunForManagerReview } from '@/lib/payroll/office-submit-hr-review';
@@ -79,7 +79,7 @@ export default function OfficePayrollMonthPage({ params }: { params: Promise<{ y
   const { check } = usePermissions(currentUser);
   const canEditOffice = useMemo(() => check('office_payroll', 'edit'), [check, currentUser]);
   const canOfficerSend = useMemo(
-    () => Boolean(currentUser && canEditOffice && (isSystemAdmin(currentUser) || isPayrollOfficer(currentUser))),
+    () => Boolean(currentUser && canEditOffice && canSubmitOfficeRunForManagerReview(currentUser)),
     [currentUser, canEditOffice]
   );
 

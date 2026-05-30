@@ -23,9 +23,10 @@ interface WorkerCertsTabProps {
   certs: WorkerCertificate[] | null;
   certsQuery: CollectionReference | null;
   workerDocCatalog: WorkerDocumentCatalogItem[] | null;
+  canEdit?: boolean;
 }
 
-export function WorkerCertsTab({ workerId, firestore, certs, certsQuery, workerDocCatalog }: WorkerCertsTabProps) {
+export function WorkerCertsTab({ workerId, firestore, certs, certsQuery, workerDocCatalog, canEdit = false }: WorkerCertsTabProps) {
   const { toast } = useToast();
   const [isAddCertOpen, setIsAddCertOpen] = useState(false);
   const [newCertTemplateId, setNewCertTemplateId] = useState('');
@@ -102,6 +103,7 @@ export function WorkerCertsTab({ workerId, firestore, certs, certsQuery, workerD
           </CardTitle>
           <CardDescription>จัดเก็บใบเซอร์บังคับ (BOSIET, etc.) และติดตามวันหมดอายุ</CardDescription>
         </div>
+        {canEdit ? (
         <Dialog open={isAddCertOpen} onOpenChange={setIsAddCertOpen}>
           <DialogTrigger asChild>
             <Button
@@ -156,6 +158,7 @@ export function WorkerCertsTab({ workerId, firestore, certs, certsQuery, workerD
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        ) : null}
       </CardHeader>
       <CardContent className="p-0">
         <Table>
@@ -182,6 +185,7 @@ export function WorkerCertsTab({ workerId, firestore, certs, certsQuery, workerD
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right pr-6">
+                  {canEdit ? (
                   <Button
                     variant="ghost"
                     size="icon"
@@ -195,6 +199,9 @@ export function WorkerCertsTab({ workerId, firestore, certs, certsQuery, workerD
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
                 </TableCell>
               </TableRow>
             ))}

@@ -233,8 +233,12 @@ function WorkerDetailContent({ id }: { id: string }) {
     return workLogRows.reduce((sum, row) => sum + Number(row.totalHours || 0), 0);
   }, [workLogRows]);
 
-  const { payroll } = usePermissions(currentUser);
-  const canEditWorker = useMatrixGuards ? canAccess(currentUser, 'workers', 'edit') : payroll('worker', 'edit');
+  const { check, payroll } = usePermissions(currentUser);
+  const canEditWorker = useMatrixGuards
+    ? canAccess(currentUser, 'workers', 'edit')
+    : check('workers', 'edit') || payroll('worker', 'edit');
+  const canToggleWorkerReadiness =
+    check('workers', 'edit') || check('workers', 'approve') || payroll('worker', 'edit') || payroll('worker', 'approve');
   const canViewLaborCost = useMemo(() => canViewWorkerLaborCostFromUser(currentUser), [currentUser]);
   const canEditLaborCost = useMemo(
     () => canEditWorkerLaborCostFromUser(currentUser) && canEditWorker,
@@ -353,11 +357,11 @@ function WorkerDetailContent({ id }: { id: string }) {
   };
 
   const handleReadinessManualHoldChange = (hold: boolean) => {
-    if (!canEditWorker || !workerRef) {
+    if (!canToggleWorkerReadiness || !workerRef) {
       toast({
         variant: 'destructive',
         title: 'ไม่มีสิทธิ์แก้ไข',
-        description: 'เฉพาะผู้มีสิทธิ์แก้ทะเบียนคนงานเท่านั้น',
+        description: 'เฉพาะผู้มีสิทธิ์แก้ทะเบียนคนงาน (Payroll/HR) เท่านั้น',
       });
       return;
     }
@@ -673,7 +677,7 @@ function WorkerDetailContent({ id }: { id: string }) {
               canViewLaborCost={canViewLaborCost}
               canEditLaborCost={canEditLaborCost}
               canViewBankPayrollProfile={canViewBankPayrollProfile}
-              canEditWorkerReadiness={canEditWorker}
+              canEditWorkerReadiness={canToggleWorkerReadiness}
               onReadinessManualHoldChange={handleReadinessManualHoldChange}
               canActivateWorkerLogin={canEditWorker}
               onActivateWorkerLogin={handleActivateWorkerLogin}
@@ -691,19 +695,46 @@ function WorkerDetailContent({ id }: { id: string }) {
           </TabsContent>
 
           <TabsContent value="certs" className="mt-6">
-            <WorkerCertsTab workerId={id} firestore={firestore} certs={certs} certsQuery={certsQuery as any} workerDocCatalog={workerDocCatalog} />
+            <WorkerCertsTab
+              workerId={id}
+              firestore={firestore}
+              certs={certs}
+              certsQuery={certsQuery as any}
+              workerDocCatalog={workerDocCatalog}
+              canEdit={canEditWorker}
+            />
           </TabsContent>
 
           <TabsContent value="medical" className="mt-6">
-            <WorkerMedicalTab workerId={id} firestore={firestore} medicals={medicals} medicalsQuery={medicalsQuery as any} />
+            <WorkerMedicalTab
+              workerId={id}
+              firestore={firestore}
+              medicals={medicals}
+              medicalsQuery={medicalsQuery as any}
+              canEdit={canEditWorker}
+            />
           </TabsContent>
 
           <TabsContent value="drug" className="mt-6">
-            <WorkerDrugTab workerId={id} firestore={firestore} drugTests={drugTests} drugTestsQuery={drugTestsQuery as any} panelSubstances={panelSubstances} />
+            <WorkerDrugTab
+              workerId={id}
+              firestore={firestore}
+              drugTests={drugTests}
+              drugTestsQuery={drugTestsQuery as any}
+              panelSubstances={panelSubstances}
+              canEdit={canEditWorker}
+            />
           </TabsContent>
 
           <TabsContent value="docs" className="mt-6">
-            <WorkerDocsTab workerId={id} firestore={firestore} workerDocs={workerDocs} docsQuery={docsQuery as any} workerDocCatalog={workerDocCatalog} />
+            <WorkerDocsTab
+              workerId={id}
+              firestore={firestore}
+              workerDocs={workerDocs}
+              docsQuery={docsQuery as any}
+              workerDocCatalog={workerDocCatalog}
+              canEdit={canEditWorker}
+            />
           </TabsContent>
 
           <TabsContent value="worklog" className="mt-6">

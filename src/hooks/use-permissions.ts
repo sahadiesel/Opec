@@ -33,7 +33,7 @@ export function usePermissions(user: User | null) {
       },
       /** Role × Resource × Action (payroll / timesheet / policy) — ใช้ซ่อนปุ่มและคู่กับ assert ใน service */
       payroll: (resource: PayrollMatrixResource, action: PayrollMatrixAction) =>
-        canPayrollPermission(user, resource, action),
+        canPayrollPermission(user, resource, action, profile),
     }),
     [user, profile, isLoading, error]
   );

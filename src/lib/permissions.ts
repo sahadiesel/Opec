@@ -55,7 +55,11 @@ import {
   type UserAccessContext,
 } from './permission-core';
 import { normalizePermissionProfileDocumentId } from './role-key-normalizer';
-import type { PayrollMatrixAction, PayrollMatrixResource } from './permission-payroll-matrix';
+import {
+  resolvePayrollMatrixDecision,
+  type PayrollMatrixAction,
+  type PayrollMatrixResource,
+} from './permission-payroll-matrix';
 import {
   ACCOUNTING_ONLY_MODULE_KEYS,
   ADMIN_ONLY_MODULE_KEYS,
@@ -343,6 +347,62 @@ export function getStoreOfficerModulePermission(moduleKey: ModuleKey): ModulePer
   return { ...NO_ACCESS };
 }
 
+/**
+ * สิทธิ์โมดูลสำหรับ `payroll_officer` — เน้น payroll + ทะเบียนลูกจ้าง (Master Data)
+ * สอดคล้องเมนู HR → ทะเบียน และ matrix `worker` resource
+ */
+export function getPayrollOfficerModulePermission(moduleKey: ModuleKey): ModulePermission {
+  if (moduleKey === 'overview_dashboard') {
+    return { ...READ_ONLY };
+  }
+  if (moduleKey === 'employee_self_profile') {
+    return { ...READ_ONLY, create: true, edit: true };
+  }
+  if (moduleKey === 'workers') {
+    return { ...OFFICER_ACCESS, approve: true };
+  }
+  if (moduleKey === 'worker_documents') {
+    return { ...OFFICER_ACCESS };
+  }
+  if (moduleKey === 'positions' || moduleKey === 'office_staff') {
+    return { ...READ_ONLY };
+  }
+  if (
+    moduleKey === 'worker_payroll' ||
+    moduleKey === 'payroll_runs' ||
+    moduleKey === 'payslips' ||
+    moduleKey === 'payment_export_batches'
+  ) {
+    return { view: true, create: true, edit: true, delete: false, approve: false };
+  }
+  if (moduleKey === 'office_payroll') {
+    return { view: true, create: true, edit: true, delete: false, approve: false };
+  }
+  if (moduleKey === 'timesheets' || moduleKey === 'hr_hub' || moduleKey === 'labor_cost_contract_terms') {
+    return { ...READ_ONLY };
+  }
+  if (
+    moduleKey === 'customers' ||
+    moduleKey === 'quotations' ||
+    moduleKey === 'main_contracts' ||
+    moduleKey === 'customer_pos' ||
+    moduleKey === 'sales_contract_terms' ||
+    moduleKey === 'rate_conditions' ||
+    moduleKey === 'profit_estimates' ||
+    moduleKey === 'draft_invoices' ||
+    moduleKey === 'waves' ||
+    moduleKey === 'assignments' ||
+    moduleKey === 'mobilization' ||
+    moduleKey === 'operations_petty_cash' ||
+    moduleKey === 'vendors' ||
+    moduleKey === 'purchases' ||
+    moduleKey === 'store_inventory'
+  ) {
+    return { ...NO_ACCESS };
+  }
+  return { ...NO_ACCESS };
+}
+
 /** สิทธิ์โมดูลสำหรับ `timekeeper` — เน้นลงเวลา + ดูทะเบียนประกอบ (ไม่มีคลัง/จัดซื้อ/manpower) */
 export function getTimekeeperModulePermission(moduleKey: ModuleKey): ModulePermission {
   if (moduleKey === 'overview_dashboard') {
@@ -567,6 +627,10 @@ export function getPermissions(
 
   if (isPrimaryHrOfficer(u) && HR_OFFICER_BLOCKED_MODULE_KEYS.has(moduleKey)) {
     return clonePermission(NO_ACCESS);
+  }
+
+  if (isPayrollOfficer(u)) {
+    return clonePermission(getPayrollOfficerModulePermission(moduleKey));
   }
 
   if (isTimekeeper(u)) {
@@ -925,12 +989,59 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
 
 export type { PayrollMatrixResource, PayrollMatrixAction };
 
+const PAYROLL_RESOURCE_MODULE: Partial<Record<PayrollMatrixResource, ModuleKey>> = {
+  worker: 'workers',
+  office_staff: 'office_staff',
+  timesheet: 'timesheets',
+  payroll_worker: 'worker_payroll',
+  payroll_office: 'office_payroll',
+  policy: 'hr_hub',
+  rate_term_cost: 'labor_cost_contract_terms',
+};
+
+function payrollMatrixActionToModuleField(action: PayrollMatrixAction): keyof ModulePermission | null {
+  switch (action) {
+    case 'view':
+    case 'export':
+      return 'view';
+    case 'create':
+    case 'create_batch':
+      return 'create';
+    case 'edit':
+    case 'edit_batch':
+    case 'submit':
+      return 'edit';
+    case 'approve':
+    case 'verify':
+    case 'lock':
+    case 'finance_approve':
+    case 'mark_paid':
+    case 'override':
+    case 'unlock':
+      return 'approve';
+    default:
+      return null;
+  }
+}
+
 export function canPayrollPermission(
   user: User | null,
-  _resource: PayrollMatrixResource,
-  _action: PayrollMatrixAction
+  resource: PayrollMatrixResource,
+  action: PayrollMatrixAction,
+  profile?: PermissionProfile | null
 ): boolean {
-  return isSimpleInternalEligible(normalizeCurrentUserPermissions(user));
+  const u = normalizeCurrentUserPermissions(user);
+  if (!u || !isActiveForApp(u)) return false;
+
+  const decision = resolvePayrollMatrixDecision(u, resource, action);
+  if (decision === 'allow') return true;
+  if (decision === 'deny') return false;
+
+  const moduleKey = PAYROLL_RESOURCE_MODULE[resource];
+  if (!moduleKey) return false;
+  const field = payrollMatrixActionToModuleField(action);
+  if (!field) return false;
+  return Boolean(getPermissions(u, moduleKey, profile)[field]);
 }
 
 export function assertPayrollPermission(

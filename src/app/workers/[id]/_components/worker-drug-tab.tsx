@@ -25,9 +25,10 @@ interface WorkerDrugTabProps {
   drugTests: WorkerDrugTest[] | null;
   drugTestsQuery: CollectionReference | null;
   panelSubstances: DrugTestPanelSubstance[];
+  canEdit?: boolean;
 }
 
-export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, panelSubstances }: WorkerDrugTabProps) {
+export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, panelSubstances, canEdit = false }: WorkerDrugTabProps) {
   const { toast } = useToast();
   const [drugEditSubstance, setDrugEditSubstance] = useState<DrugTestPanelSubstance | null>(null);
   const [drugFormDate, setDrugFormDate] = useState('');
@@ -99,9 +100,13 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
                       }>{resLabel}</Badge>
                     </TableCell>
                     <TableCell className="text-right pr-6">
+                      {canEdit ? (
                       <Button size="sm" variant="outline" className="font-bold" onClick={() => openDrugDialog(s)}>
                         <Plus className="h-3 w-3 mr-1" /> บันทึกผล
                       </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 );
@@ -131,12 +136,14 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
                       <Badge variant={d.result === 'negative' ? 'default' : 'destructive'}>{(d.result || '').toUpperCase()}</Badge>
                     </TableCell>
                     <TableCell className="text-right pr-6">
+                      {canEdit ? (
                       <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => {
                         if (!firestore) return;
                         if (confirm('ลบรายการ?')) deleteDocumentNonBlocking(doc(firestore, 'workers', workerId, 'drug_tests', d.id));
                       }}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 ))}

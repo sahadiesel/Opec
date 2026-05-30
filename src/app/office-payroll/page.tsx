@@ -53,9 +53,10 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { canView, canCreate, canPreparePayroll } from '@/lib/permissions';
-import { isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
+import { isSystemAdmin, canSubmitOfficeRunForManagerReview } from '@/lib/permission-core';
 import { usePermissions } from '@/hooks/use-permissions';
 import { submitOfficeRunForManagerReview } from '@/lib/payroll/office-submit-hr-review';
+import { officePayrollRunStatusLabelTh } from '@/lib/payroll/office-payroll-run-status-display';
 import {
   OFFICE_RUN_STATUSES_FOR_ACCOUNTING_PAYOUT,
   shouldFilterToAccountingPayoutQueue,
@@ -131,12 +132,7 @@ export default function OfficePayrollPage() {
   const { check } = usePermissions(currentUser);
   const canEditOfficePayroll = useMemo(() => check('office_payroll', 'edit'), [check, currentUser]);
   const canOfficerSendForReview = useMemo(
-    () =>
-      Boolean(
-        currentUser &&
-          canEditOfficePayroll &&
-          (isSystemAdmin(currentUser) || isPayrollOfficer(currentUser))
-      ),
+    () => Boolean(currentUser && canEditOfficePayroll && canSubmitOfficeRunForManagerReview(currentUser)),
     [currentUser, canEditOfficePayroll]
   );
 
@@ -482,17 +478,23 @@ export default function OfficePayrollPage() {
   };
 
   const getStatusBadge = (status: PayrollRunStatus) => {
+    const label = officePayrollRunStatusLabelTh(status);
     switch (status) {
-      case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
-      case 'CALCULATED': return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">CALCULATED</Badge>;
-      case 'HR_REVIEW': return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">HR REVIEW</Badge>;
-      case 'HR_APPROVED': return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">HR APPROVED</Badge>;
-      case 'FINANCE_APPROVED': return <Badge className="bg-green-600">FINANCE APPROVED</Badge>;
-      case 'LOCKED': return <Badge className="bg-primary text-primary-foreground"><Clock className="h-3 w-3 mr-1" /> LOCKED</Badge>;
-      case 'CANCELLED': return <Badge variant="secondary">CANCELLED</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
+      case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">{label}</Badge>;
+      case 'CALCULATED': return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">{label}</Badge>;
+      case 'HR_REVIEW': return <Badge className="bg-amber-600 hover:bg-amber-600">{label}</Badge>;
+      case 'HR_APPROVED': return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">{label}</Badge>;
+      case 'FINANCE_APPROVED': return <Badge className="bg-green-600">{label}</Badge>;
+      case 'LOCKED': return <Badge className="bg-primary text-primary-foreground"><Clock className="h-3 w-3 mr-1" /> {label}</Badge>;
+      case 'CANCELLED': return <Badge variant="secondary">{label}</Badge>;
+      default: return <Badge variant="outline">{label}</Badge>;
     }
   };
+
+  const calculatedRunsAwaitingSubmit = useMemo(
+    () => (displayRuns || []).filter((r) => r.status === 'CALCULATED'),
+    [displayRuns]
+  );
 
   if (userLoading || !currentUser) return null;
 
@@ -551,6 +553,20 @@ export default function OfficePayrollPage() {
             </AlertDescription>
           </Alert>
         </div>
+
+        {!accountingPayoutQueueOnly && canOfficerSendForReview && calculatedRunsAwaitingSubmit.length > 0 ? (
+          <Alert className="border-blue-300 bg-blue-50/90">
+            <Send className="h-4 w-4 text-blue-700" />
+            <AlertTitle className="font-bold">
+              มี {calculatedRunsAwaitingSubmit.length} งวดที่คำนวณแล้วแต่ยังไม่ส่งอนุมัติ
+            </AlertTitle>
+            <AlertDescription className="text-sm">
+              กดปุ่ม <strong>ส่งอนุมัติ</strong> ในแต่ละแถว (หรือจากหน้ารายละเอียดงวด) เพื่อส่งไป{' '}
+              <strong>ศูนย์อนุมัติ Payroll</strong> ให้ผู้จัดการปฏิบัติการอนุมัติ — สถานะจะเปลี่ยนเป็น{' '}
+              <span className="font-mono">HR_REVIEW</span>
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-3 flex-1">

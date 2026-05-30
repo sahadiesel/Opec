@@ -77,6 +77,21 @@ export function runPermissionLogicSuite(): ValidationSummary {
     'HR Officer should manage workers (create/edit, no delete) + HR hub / master data, no accounting finance'
   );
 
+  const payrollOfficer = createMockUser(['payroll_officer'], 'hr', 'officer');
+  const payrollWorkers = getPermissions(payrollOfficer, 'workers');
+  const payrollWorkerPayroll = getPermissions(payrollOfficer, 'worker_payroll');
+  assert(
+    'Payroll Officer worker registry',
+    payrollWorkers.view &&
+      payrollWorkers.create &&
+      payrollWorkers.edit &&
+      payrollWorkers.approve &&
+      !payrollWorkers.delete &&
+      payrollWorkerPayroll.view &&
+      payrollWorkerPayroll.edit,
+    'Payroll officer should edit worker registry (incl. ready/unready) and prepare payroll, not delete workers'
+  );
+
   const hybridUser = createMockUser(['operations_officer', 'hr_officer'], 'operations', 'officer');
   const accessToWorkers = getPermissions(hybridUser, 'workers');
   const accessToOps = getPermissions(hybridUser, 'waves');
