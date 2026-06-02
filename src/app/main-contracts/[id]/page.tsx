@@ -52,9 +52,12 @@ import {
 import type { CalendarHolidayEntry, OvertimeRuleKey, WeeklyRestPattern } from '@/lib/contract-position-rate-extras';
 import { ContractHolidayScheduleSection } from './_components/contract-holiday-schedule-section';
 import {
+  effectiveNormalWorkHoursOffshore,
+  effectiveNormalWorkHoursOnshore,
   effectiveSellOnshore,
   effectiveSellOffshore,
   legacySellRateMirror,
+  normalizeNormalWorkHoursFields,
 } from '@/lib/commercial/position-rate-sell';
 import {
   AlertDialog,
@@ -92,7 +95,9 @@ function createInitialNewRateForm(): Partial<PositionRate> {
     sellRate: 0,
     overtimeRuleKey: DEFAULT_OT_KEY,
     overtimeRule: `${DEFAULT_OT_LABEL.label} — ${DEFAULT_OT_LABEL.description}`,
-    normalWorkHours: 8,
+    normalWorkHoursOnshore: 8,
+    normalWorkHoursOffshore: 12,
+    normalWorkHours: 12,
     sellOtRules: { afterShift: 1.5, holiday: 1.0, publicHoliday: 1.0, sunday: 1.0, sundayOt: 1.5 },
     costOtRules: { afterShift: 1.5, holiday: 1.0, publicHoliday: 1.0, sunday: 1.0, sundayOt: 1.5 },
     sellSpecialDays: [],
@@ -636,7 +641,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       ...(onSell != null ? { sellRateOnshore: onSell } : {}),
       ...(offSell != null ? { sellRateOffshore: offSell } : {}),
       billingUnit: newRate.billingUnit || 'daily',
-      normalWorkHours: newRate.normalWorkHours || 8,
+      ...normalizeNormalWorkHoursFields(newRate),
       overtimeRuleKey: otKey,
       overtimeRule: newRate.overtimeRule?.trim() || (otOpt ? `${otOpt.label} — ${otOpt.description}` : otKey),
       sellOtRules: {
@@ -663,7 +668,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       afterSummary: JSON.stringify({
         positionId: newRate.positionId,
         sellRate: normalizedSellRate,
-        normalWorkHours: newRate.normalWorkHours || 8,
+        ...normalizeNormalWorkHoursFields(newRate),
       }),
     });
     setIsAddRateOpen(false);
@@ -1378,7 +1383,12 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                           </span>
                         </TableHead>
                       )}
-                      <TableHead>ชม.ปกติ</TableHead>
+                      <TableHead className="min-w-[5rem]">
+                        <span className="flex flex-col gap-0.5">
+                          <span>ชม.ปกติ</span>
+                          <span className="text-[10px] font-normal text-muted-foreground">Onshore · Offshore</span>
+                        </span>
+                      </TableHead>
                       <TableHead>หน่วย</TableHead>
                       <TableHead>สถานะ</TableHead>
                       {canModify && canMutatePositionRates && <TableHead className="text-right">จัดการ</TableHead>}
@@ -1529,7 +1539,12 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                               )}
                             </TableCell>
                           )}
-                          <TableCell>{r.normalWorkHours || 8} ชม.</TableCell>
+                          <TableCell className="align-top">
+                            <div className="flex flex-col gap-1.5 text-sm tabular-nums">
+                              <span>{effectiveNormalWorkHoursOnshore(r)} ชม.</span>
+                              <span>{effectiveNormalWorkHoursOffshore(r)} ชม.</span>
+                            </div>
+                          </TableCell>
                           <TableCell className="capitalize">{r.billingUnit}</TableCell>
                           <TableCell>
                             <Badge variant={r.active ? 'outline' : 'secondary'} className={r.active ? 'text-green-600 border-green-200' : ''}>

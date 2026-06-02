@@ -7,7 +7,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import type { PositionRate, Position, MainContract } from '@/lib/types';
 import type { OvertimeRuleKey } from '@/lib/contract-position-rate-extras';
 import { OVERTIME_RULE_OPTIONS, parseOvertimeRuleKeyFromSnapshot } from '@/lib/contract-position-rate-extras';
-import { effectiveSellOnshore, effectiveSellOffshore, legacySellRateMirror } from '@/lib/commercial/position-rate-sell';
+import {
+  effectiveNormalWorkHoursOffshore,
+  effectiveNormalWorkHoursOnshore,
+  effectiveSellOnshore,
+  effectiveSellOffshore,
+  legacySellRateMirror,
+  normalizeNormalWorkHoursFields,
+} from '@/lib/commercial/position-rate-sell';
 import { PositionRateFormFields } from './position-rate-form-fields';
 
 type RatePolicy = NonNullable<MainContract['rateMultiplierPolicy']>;
@@ -35,7 +42,9 @@ function rateToFormState(rate: PositionRate): Partial<PositionRate> {
     sellRateOnshore: effectiveSellOnshore(rate),
     sellRateOffshore: effectiveSellOffshore(rate),
     billingUnit: rate.billingUnit,
-    normalWorkHours: rate.normalWorkHours ?? 8,
+    normalWorkHoursOnshore: effectiveNormalWorkHoursOnshore(rate),
+    normalWorkHoursOffshore: effectiveNormalWorkHoursOffshore(rate),
+    normalWorkHours: rate.normalWorkHours,
     overtimeRuleKey: otKey,
     overtimeRule: opt ? `${opt.label} — ${opt.description}` : rate.overtimeRule,
     notes: rate.notes || '',
@@ -80,7 +89,7 @@ export function ContractEditRateDialog({
       positionId: rate.positionId,
       costBaseline: deleteField(),
       billingUnit: form.billingUnit || rate.billingUnit,
-      normalWorkHours: form.normalWorkHours || rate.normalWorkHours || 8,
+      ...normalizeNormalWorkHoursFields(form),
       overtimeRuleKey: otKey,
       overtimeRule: form.overtimeRule?.trim() || (otOpt ? `${otOpt.label} — ${otOpt.description}` : otKey),
       sellOtRules: {

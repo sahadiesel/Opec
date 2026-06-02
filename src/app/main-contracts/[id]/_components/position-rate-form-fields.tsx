@@ -8,7 +8,7 @@ import type { PositionRate, Position } from '@/lib/types';
 import type { OvertimeRuleKey } from '@/lib/contract-position-rate-extras';
 import { OVERTIME_RULE_OPTIONS } from '@/lib/contract-position-rate-extras';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
-import { legacySellRateMirror } from '@/lib/commercial/position-rate-sell';
+import { legacySellRateMirror, normalizeNormalWorkHoursFields } from '@/lib/commercial/position-rate-sell';
 
 export interface PositionRateFormFieldsProps {
   newRate: Partial<PositionRate>;
@@ -125,11 +125,18 @@ export function PositionRateFormFields({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="grid gap-2">
-          <Label>ชั่วโมงงานปกติ/วัน (Normal Hours)</Label>
+          <Label>ชม.ปกติ Onshore / วัน</Label>
           <Select
             disabled={isSupplementalContract}
-            onValueChange={(v) => setNewRate({ ...newRate, normalWorkHours: Number(v) as 8 | 12 })}
-            value={String(newRate.normalWorkHours || 8)}
+            onValueChange={(v) => {
+              const hours = Number(v) as 8 | 12;
+              setNewRate({
+                ...newRate,
+                normalWorkHoursOnshore: hours,
+                ...normalizeNormalWorkHoursFields({ ...newRate, normalWorkHoursOnshore: hours }),
+              });
+            }}
+            value={String(newRate.normalWorkHoursOnshore ?? 8)}
           >
             <SelectTrigger>
               <SelectValue />
@@ -140,6 +147,32 @@ export function PositionRateFormFields({
             </SelectContent>
           </Select>
         </div>
+        <div className="grid gap-2">
+          <Label>ชม.ปกติ Offshore / วัน</Label>
+          <Select
+            disabled={isSupplementalContract}
+            onValueChange={(v) => {
+              const hours = Number(v) as 8 | 12;
+              setNewRate({
+                ...newRate,
+                normalWorkHoursOffshore: hours,
+                ...normalizeNormalWorkHoursFields({ ...newRate, normalWorkHoursOffshore: hours }),
+              });
+            }}
+            value={String(newRate.normalWorkHoursOffshore ?? 12)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="8">8 ชั่วโมง</SelectItem>
+              <SelectItem value="12">12 ชั่วโมง</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="grid gap-2">
           <Label>หน่วยการคิดเงิน</Label>
           <Select onValueChange={(v) => setNewRate({ ...newRate, billingUnit: v as PositionRate['billingUnit'] })} value={newRate.billingUnit}>

@@ -840,7 +840,12 @@ export interface PositionRate {
   costWeeklyRestPattern?: 'none' | 'sat_sun' | 'sunday_only';
   sellCalendarHolidays?: { date: string; label: string }[];
   costCalendarHolidays?: { date: string; label: string }[];
+  /** @deprecated ใช้ normalWorkHoursOnshore / normalWorkHoursOffshore — คงไว้ให้เอกสารเก่าและ PO snapshot */
   normalWorkHours?: 8 | 12;
+  /** ชม.งานปกติ/วัน งาน Onshore (มาตรฐาน 8) */
+  normalWorkHoursOnshore?: 8 | 12;
+  /** ชม.งานปกติ/วัน งาน Offshore (มาตรฐาน 12) */
+  normalWorkHoursOffshore?: 8 | 12;
   sellOtRules?: {
     afterShift?: number;
     holiday?: number;

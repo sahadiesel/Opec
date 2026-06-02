@@ -1,5 +1,51 @@
 import type { JobMode, POLine, PositionRate } from '@/lib/types';
 
+export const DEFAULT_NORMAL_WORK_HOURS_ONSHORE = 8 as const;
+export const DEFAULT_NORMAL_WORK_HOURS_OFFSHORE = 12 as const;
+
+type NormalHoursDual = Pick<
+  PositionRate,
+  'normalWorkHours' | 'normalWorkHoursOnshore' | 'normalWorkHoursOffshore'
+>;
+
+/** ชม.ปกติ/วัน Onshore — default 8 */
+export function effectiveNormalWorkHoursOnshore(rate: Partial<NormalHoursDual>): 8 | 12 {
+  const on = Number(rate.normalWorkHoursOnshore);
+  if (on === 8 || on === 12) return on;
+  return DEFAULT_NORMAL_WORK_HOURS_ONSHORE;
+}
+
+/** ชม.ปกติ/วัน Offshore — explicit override else legacy single field else 12 */
+export function effectiveNormalWorkHoursOffshore(rate: Partial<NormalHoursDual>): 8 | 12 {
+  const off = Number(rate.normalWorkHoursOffshore);
+  if (off === 8 || off === 12) return off;
+  const legacy = rate.normalWorkHours;
+  if (legacy === 8 || legacy === 12) return legacy;
+  return DEFAULT_NORMAL_WORK_HOURS_OFFSHORE;
+}
+
+/** Legacy `normalWorkHours` — mirror offshore effective for older readers */
+export function legacyNormalWorkHoursMirror(rate: Partial<NormalHoursDual>): 8 | 12 {
+  return effectiveNormalWorkHoursOffshore(rate);
+}
+
+export function normalizeNormalWorkHoursFields(rate: Partial<NormalHoursDual>): {
+  normalWorkHoursOnshore: 8 | 12;
+  normalWorkHoursOffshore: 8 | 12;
+  normalWorkHours: 8 | 12;
+} {
+  const normalWorkHoursOnshore = effectiveNormalWorkHoursOnshore(rate);
+  const normalWorkHoursOffshore = effectiveNormalWorkHoursOffshore({
+    ...rate,
+    normalWorkHoursOnshore,
+  });
+  return {
+    normalWorkHoursOnshore,
+    normalWorkHoursOffshore,
+    normalWorkHours: legacyNormalWorkHoursMirror({ normalWorkHoursOnshore, normalWorkHoursOffshore }),
+  };
+}
+
 type SellDual = Pick<PositionRate, 'sellRate' | 'sellRateOnshore' | 'sellRateOffshore'>;
 
 /** Effective sell for ONshore — explicit override else legacy single `sellRate`. */

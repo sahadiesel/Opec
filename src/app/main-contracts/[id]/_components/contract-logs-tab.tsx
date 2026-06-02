@@ -41,7 +41,9 @@ const fieldLabels: Record<string, string> = {
   positionId: 'ตำแหน่งงาน',
   sellRate: 'ราคาขาย',
   costBaseline: 'ราคาต้นทุน',
-  normalWorkHours: 'ชั่วโมงงานปกติ',
+  normalWorkHours: 'ชั่วโมงงานปกติ (legacy)',
+  normalWorkHoursOnshore: 'ชม.ปกติ Onshore',
+  normalWorkHoursOffshore: 'ชม.ปกติ Offshore',
 };
 
 function formatDiffSummary(raw?: string) {
