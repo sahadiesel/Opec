@@ -512,12 +512,6 @@ export function SidebarNav({
           if (group.accountingStructured) {
             const filterNav = (item: NavItem) => {
               if (admin) return true;
-              const acctPayoutBase = item.href.split('?')[0];
-              if (
-                isSimpleAccounting(user) &&
-                (acctPayoutBase === '/accounting/worker-payroll' || acctPayoutBase === '/accounting/cash-advances-payout')
-              )
-                return true;
               const byMatrix = sidebarMatrixVisibility(user, item);
               if (byMatrix !== null) return byMatrix;
               return canView(user, item.key, profile);

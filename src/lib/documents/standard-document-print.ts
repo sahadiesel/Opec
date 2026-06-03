@@ -1672,10 +1672,10 @@ export function buildMoneyReceiptPrintHtml(params: {
   printedAtMs?: number;
   locale?: PrintDocumentLocale;
   /** ลำดับแผ่นพิมพ์ — ต้นฉบับ/สำเนา; ค่าเริ่มต้น ['original'] */
-  sheets?: DocumentPrintSheet[];
+  sheets?: TaxInvoicePrintSheet[];
 }): string {
   const { sheets, ...rest } = params;
-  const sheetList: DocumentPrintSheet[] = sheets?.length ? sheets : ['original'];
+  const sheetList: TaxInvoicePrintSheet[] = sheets?.length ? sheets : ['original'];
   return sheetList
     .map((sheetKind) => buildMoneyReceiptPrintHtmlSinglePage({ ...rest, sheetKind }))
     .join('');
@@ -1688,7 +1688,7 @@ function buildMoneyReceiptPrintHtmlSinglePage(params: {
   customer: Customer | null | undefined;
   printedAtMs?: number;
   locale?: PrintDocumentLocale;
-  sheetKind: DocumentPrintSheet;
+  sheetKind: TaxInvoicePrintSheet;
 }): string {
   const { company, receipt, taxInvoice, customer, printedAtMs } = params;
   const L = params.locale ?? 'th';
@@ -1709,7 +1709,7 @@ function buildMoneyReceiptPrintHtmlSinglePage(params: {
     company,
     documentTitleTh: 'ใบเสร็จรับเงิน',
     documentTitleEn: 'Receipt',
-    subtitleUnderTitle: documentSheetSubtitleForPrintLocale(params.sheetKind, L),
+    subtitleUnderTitle: taxInvoiceSheetSubtitleForPrintLocale(params.sheetKind, L),
     metaRows: [
       { line: `${printT(L, 'dateIssued')} ${issueStr}` },
       { line: `${printT(L, 'docNo')}: ${receipt.receiptNo}` },

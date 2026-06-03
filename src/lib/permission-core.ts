@@ -706,6 +706,14 @@ export function isAccountingGroupMember(user: User | null): boolean {
   return isSystemAdmin(user) || isDepartmentGroup(user, 'accounting');
 }
 
+export function isAccountingManager(user: User | null): boolean {
+  return getPrimaryLegacyRole(user) === 'accounting_manager';
+}
+
+export function isAccountingOfficer(user: User | null): boolean {
+  return getPrimaryLegacyRole(user) === 'accounting_officer';
+}
+
 /** Admin or operation access group (sales / ops scheduling / HR timesheets / waves). */
 export function isOperationGroupMember(user: User | null): boolean {
   return isSystemAdmin(user) || isDepartmentGroup(user, 'operations');

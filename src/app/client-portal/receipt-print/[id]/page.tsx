@@ -1,20 +1,51 @@
 'use client';
 
-import { use, useCallback } from 'react';
+import { use, useCallback, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Loader2, Printer, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import type { Customer, MoneyReceipt, TaxInvoice } from '@/lib/types';
 import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
 import { doc } from 'firebase/firestore';
 import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
-import { buildMoneyReceiptPrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
+  buildMoneyReceiptPrintHtml,
+  openStandardPrintWindow,
+  type TaxInvoicePrintSheet,
+} from '@/lib/documents/standard-document-print';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
+
+const RECEIPT_PRINT_PRESETS: Record<
+  'p1' | 'p2' | 'p3',
+  { sheets: TaxInvoicePrintSheet[]; label: string; labelEn: string }
+> = {
+  p1: {
+    sheets: ['original', 'copy'],
+    label: 'ต้นฉบับ 1 แผ่น + สำเนา 1 แผ่น',
+    labelEn: '1 original + 1 copy',
+  },
+  p2: {
+    sheets: ['original', 'copy', 'copy'],
+    label: 'ต้นฉบับ 1 แผ่น + สำเนา 2 แผ่น',
+    labelEn: '1 original + 2 copies',
+  },
+  p3: { sheets: ['copy'], label: 'สำเนา 1 แผ่น', labelEn: '1 copy' },
+};
 
 export default function ClientReceiptPrintPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -25,6 +56,8 @@ export default function ClientReceiptPrintPage({ params }: { params: Promise<{ i
   const { locale } = usePortalLocale();
   const en = locale === 'en';
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
+  const [printPresetOpen, setPrintPresetOpen] = useState(false);
+  const [receiptPrintPreset, setReceiptPrintPreset] = useState<'p1' | 'p2' | 'p3'>('p1');
 
   const ready = Boolean(firestore && currentUser && canAccessPortal);
 
@@ -57,30 +90,46 @@ export default function ClientReceiptPrintPage({ params }: { params: Promise<{ i
     addressLine2?: string;
   }>(companyProfileRef as any);
 
-  const handlePrint = useCallback(async () => {
-    if (!receipt || !taxInv) return;
-    const body = buildMoneyReceiptPrintHtml({
-      company: companyProfile ?? undefined,
-      receipt,
-      taxInvoice: taxInv,
-      customer: customer ?? undefined,
-      printedAtMs: Date.now(),
-      locale: printLocale,
-    });
-    if (
-      !(await openStandardPrintWindow({
-        windowTitle: receipt.receiptNo,
-        bodyInnerHtml: body,
-        htmlLang: printLocale,
-      }))
-    ) {
-      toast({
-        variant: 'destructive',
-        title: en ? 'Popup blocked' : 'เปิดหน้าต่างพิมพ์ไม่ได้',
-        description: en ? 'Allow popups for this site.' : 'กรุณาอนุญาตป๊อปอัป',
+  const executeReceiptPrint = useCallback(
+    async (sheets: TaxInvoicePrintSheet[]) => {
+      if (!receipt || !taxInv) return;
+      const body = buildMoneyReceiptPrintHtml({
+        company: companyProfile ?? undefined,
+        receipt,
+        taxInvoice: taxInv,
+        customer: customer ?? undefined,
+        printedAtMs: Date.now(),
+        locale: printLocale,
+        sheets,
       });
-    }
-  }, [receipt, taxInv, companyProfile, customer, printLocale, toast, en]);
+      if (
+        !(await openStandardPrintWindow({
+          windowTitle: receipt.receiptNo,
+          bodyInnerHtml: body,
+          htmlLang: printLocale,
+        }))
+      ) {
+        toast({
+          variant: 'destructive',
+          title: en ? 'Popup blocked' : 'เปิดหน้าต่างพิมพ์ไม่ได้',
+          description: en ? 'Allow popups for this site.' : 'กรุณาอนุญาตป๊อปอัป',
+        });
+      }
+    },
+    [receipt, taxInv, companyProfile, customer, printLocale, toast, en],
+  );
+
+  const handlePrint = useCallback(() => {
+    if (!receipt || !taxInv) return;
+    setReceiptPrintPreset('p1');
+    setPrintPresetOpen(true);
+  }, [receipt, taxInv]);
+
+  const handleConfirmPrint = useCallback(() => {
+    const preset = RECEIPT_PRINT_PRESETS[receiptPrintPreset];
+    void executeReceiptPrint(preset.sheets);
+    setPrintPresetOpen(false);
+  }, [receiptPrintPreset, executeReceiptPrint]);
 
   if (isUserLoading || userLoading || !currentUser) {
     return (
@@ -135,7 +184,7 @@ export default function ClientReceiptPrintPage({ params }: { params: Promise<{ i
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} showLabel />
-          <Button type="button" className="gap-2" onClick={() => handlePrint()}>
+          <Button type="button" className="gap-2" onClick={handlePrint}>
             <Printer className="h-4 w-4" />
             {en ? 'Print' : 'พิมพ์'}
           </Button>

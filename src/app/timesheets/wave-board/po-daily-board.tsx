@@ -227,6 +227,10 @@ export function PoDailyBoardCard({
   );
   /** assignment ที่มีเอกสาร daily_timesheets จริงในวันที่เลือก (ไม่ใช่แค่ placeholder บนจอ) */
   const [persistedAssignmentIds, setPersistedAssignmentIds] = useState<Set<string>>(() => new Set());
+  const [clearDayDialogOpen, setClearDayDialogOpen] = useState(false);
+  const [clearDayBusy, setClearDayBusy] = useState(false);
+  /** แถวที่ผู้ใช้ล้างวันนี้แล้ว — ไม่โหลดค่า default และไม่บันทึกทับ */
+  const [clearedRowIds, setClearedRowIds] = useState<Set<string>>(() => new Set());
 
   const monthYm = targetDate.slice(0, 7);
   const waveById = useMemo(() => new Map(waves.map((w) => [w.id, w])), [waves]);
@@ -284,6 +288,10 @@ export function PoDailyBoardCard({
     },
     [firestore, resolvedBundleIdForAuto, toast],
   );
+
+  useEffect(() => {
+    setClearedRowIds(new Set());
+  }, [targetDate, poIdsKey]);
 
   useEffect(() => {
     if (!finishJobModal) {
@@ -464,6 +472,7 @@ export function PoDailyBoardCard({
     const next: Record<string, Partial<DailyTimesheet>> = {};
     const persisted = new Set<string>();
     for (const asgn of assignmentRows) {
+      if (clearedRowIds.has(asgn.id)) continue;
       const dft = defaultHoursByAssignmentId.get(asgn.id) ?? 12;
       if (existing[asgn.id]) {
         persisted.add(asgn.id);
@@ -484,7 +493,7 @@ export function PoDailyBoardCard({
     }
     setPersistedAssignmentIds(persisted);
     setRosterData(next);
-  }, [firestore, targetDate, assignmentRows, poIds, defaultHoursByAssignmentId]);
+  }, [firestore, targetDate, assignmentRows, poIds, defaultHoursByAssignmentId, clearedRowIds]);
 
   useEffect(() => {
     void loadRoster();
@@ -628,20 +637,131 @@ export function PoDailyBoardCard({
     if (!firestore) return;
     const updated = { ...rosterData };
     const service = new TimesheetService(firestore);
-    for (const key of Object.keys(updated)) {
-      const asgn = assignmentRows.find((x) => x.id === key);
-      if (!asgn || !isYmdWithinAssignmentMobTimesheetWindow(asgn, targetDate.slice(0, 10))) continue;
+    const nextCleared = new Set(clearedRowIds);
+    for (const asgn of assignmentRows) {
+      if (!isYmdWithinAssignmentMobTimesheetWindow(asgn, targetDate.slice(0, 10))) continue;
       if (isHtmlDateAfterMobLocationEnd(asgn, targetDate)) continue;
-      const currentStatus = updated[key].status as DailyTimesheetStatus;
-      if (service.canEdit(currentStatus)) {
-        updated[key] = { ...updated[key], [field]: value };
-      }
+      const currentStatus = (updated[asgn.id]?.status ?? rosterData[asgn.id]?.status) as
+        | DailyTimesheetStatus
+        | undefined;
+      if (currentStatus && service.isFinalized(currentStatus)) continue;
+      if (!service.canEdit(currentStatus ?? 'DRAFT')) continue;
+      const dft = defaultHoursByAssignmentId.get(asgn.id) ?? 12;
+      const cur =
+        updated[asgn.id] ??
+        ({
+          workerId: asgn.workerId,
+          assignmentId: asgn.id,
+          date: targetDate,
+          eventType: 'work_day' as RateConditionEventType,
+          normalHours: dft,
+          ot15Hours: 0,
+          status: 'DRAFT' as DailyTimesheetStatus,
+        } satisfies Partial<DailyTimesheet>);
+      updated[asgn.id] = { ...cur, [field]: value };
+      nextCleared.delete(asgn.id);
     }
+    setClearedRowIds(nextCleared);
     setRosterData(updated);
     toast({
       title: 'Bulk apply',
       description: 'ใช้กับแถวที่วันที่เลือกอยู่ในช่วงมอบหมายและยังแก้ได้',
     });
+  };
+
+  const openClearDayDialog = () => {
+    if (anyMonthLocked) {
+      toast({
+        variant: 'destructive',
+        title: 'งวดนี้ปิดแล้ว',
+        description: 'งวด PO หรือ wave (ข้อมูลเก่า) ถูกล็อก / รออนุมัติ',
+      });
+      return;
+    }
+    if (!canEditTimesheets) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข timesheet' });
+      return;
+    }
+    if (!firestore) return;
+    setClearDayDialogOpen(true);
+  };
+
+  const confirmClearDay = async () => {
+    if (!firestore || !currentUser) return;
+    setClearDayBusy(true);
+    try {
+      const service = new TimesheetService(firestore);
+      const batch = writeBatch(firestore);
+      let deleted = 0;
+      let skipped = 0;
+      let clearedRows = 0;
+      const nextCleared = new Set(clearedRowIds);
+      const nextPersisted = new Set(persistedAssignmentIds);
+      const nextRoster: Record<string, Partial<DailyTimesheet>> = { ...rosterData };
+
+      for (const asgn of assignmentRows) {
+        if (!isYmdWithinAssignmentMobTimesheetWindow(asgn, targetDate.slice(0, 10))) continue;
+        if (isHtmlDateAfterMobLocationEnd(asgn, targetDate)) continue;
+
+        const currentStatus = rosterData[asgn.id]?.status as DailyTimesheetStatus | undefined;
+        if (currentStatus && service.isFinalized(currentStatus)) {
+          skipped += 1;
+          continue;
+        }
+        if (!service.canEdit(currentStatus ?? 'DRAFT')) {
+          skipped += 1;
+          continue;
+        }
+
+        const docId = service.getTimesheetId(asgn.workerId, asgn.id, targetDate);
+        const docRef = doc(firestore, 'daily_timesheets', docId);
+        const snap = await getDoc(docRef);
+        if (snap.exists()) {
+          const cur = snap.data() as DailyTimesheet;
+          if (service.isFinalized(cur.status)) {
+            skipped += 1;
+            continue;
+          }
+          batch.delete(docRef);
+          deleted += 1;
+        }
+
+        nextCleared.add(asgn.id);
+        nextPersisted.delete(asgn.id);
+        delete nextRoster[asgn.id];
+        clearedRows += 1;
+      }
+
+      if (clearedRows === 0 && deleted === 0) {
+        toast({ title: 'ไม่มีแถวที่ล้างได้', description: 'แถวถูกล็อกหรืออยู่นอกช่วงวันที่เลือก' });
+        setClearDayDialogOpen(false);
+        return;
+      }
+
+      if (deleted > 0) {
+        await batch.commit();
+      }
+
+      setClearedRowIds(nextCleared);
+      setPersistedAssignmentIds(nextPersisted);
+      setRosterData(nextRoster);
+      setClearDayDialogOpen(false);
+      toast({
+        title: 'ล้างข้อมูลวันนี้แล้ว',
+        description:
+          deleted > 0
+            ? `ลบ ${deleted} รายการจากระบบ${skipped > 0 ? ` · ข้าม ${skipped} แถวที่ล็อก` : ''}`
+            : `ล้าง ${clearedRows} แถวบนจอ (ยังไม่เคยบันทึกในระบบ)`,
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ล้างข้อมูลไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setClearDayBusy(false);
+    }
   };
 
   const handleSaveDraft = async () => {
@@ -1011,6 +1131,16 @@ export function PoDailyBoardCard({
             >
               4. Dmob
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="bg-white border-muted-foreground/30 text-muted-foreground hover:text-foreground"
+              disabled={anyMonthLocked || !canEditTimesheets}
+              onClick={openClearDayDialog}
+              title="ล้างข้อมูลทุกแถวของวันที่เลือก — บันทึกลงระบบทันที"
+            >
+              Clear
+            </Button>
             <div className="flex w-full min-w-0 flex-1 flex-col gap-3 border-t border-dashed border-muted-foreground/25 pt-3 sm:ml-auto sm:w-auto sm:flex-row sm:flex-wrap sm:items-end sm:justify-end sm:gap-3 sm:border-t-0 sm:pt-0 sm:pl-3 sm:border-l sm:border-muted-foreground/25">
               <div className="space-y-1.5 w-full min-w-[11rem] sm:w-auto shrink-0">
                 <Label className="text-[10px] font-black uppercase text-muted-foreground">วันที่</Label>
@@ -1114,7 +1244,8 @@ export function PoDailyBoardCard({
                   const rowLocked = scopeLocked || waveLocked;
                   const dft = defaultHoursByAssignmentId.get(asgn.id) ?? 12;
                   const raw = rosterData[asgn.id];
-                  const persisted = persistedAssignmentIds.has(asgn.id);
+                  const isRowCleared = clearedRowIds.has(asgn.id);
+                  const persisted = persistedAssignmentIds.has(asgn.id) && !isRowCleared;
                   const afterMobEnd = isHtmlDateAfterMobLocationEnd(asgn, targetDate);
                   const worker = workers?.find((x) => x.id === asgn.workerId);
                   const et = raw?.eventType ?? 'work_day';
@@ -1127,13 +1258,21 @@ export function PoDailyBoardCard({
                         remark: '',
                         status: undefined as DailyTimesheetStatus | undefined,
                       }
-                    : {
-                        ...raw,
-                        eventType: et,
-                        normalHours: et === 'unpaid_leave' ? 0 : (raw?.normalHours ?? dft),
-                        ot15Hours: raw?.ot15Hours ?? 0,
-                        remark: raw?.remark ?? '',
-                      };
+                    : isRowCleared
+                      ? {
+                          eventType: 'work_day' as RateConditionEventType,
+                          normalHours: 0,
+                          ot15Hours: 0,
+                          remark: '',
+                          status: undefined as DailyTimesheetStatus | undefined,
+                        }
+                      : {
+                          ...raw,
+                          eventType: et,
+                          normalHours: et === 'unpaid_leave' ? 0 : (raw?.normalHours ?? dft),
+                          ot15Hours: raw?.ot15Hours ?? 0,
+                          remark: raw?.remark ?? '',
+                        };
                   const tsService = new TimesheetService(firestore!);
                   const isLocked = tsService.isFinalized(row.status as DailyTimesheetStatus);
                   const dateInAssignment = isYmdWithinAssignmentMobTimesheetWindow(asgn, targetDate.slice(0, 10));
@@ -1207,13 +1346,19 @@ export function PoDailyBoardCard({
                         </span>
                       </TableCell>
                       <TableCell className="w-[148px] max-w-[160px] align-top py-4 shrink-0">
-                        {afterMobEnd ? (
+                        {afterMobEnd || isRowCleared ? (
                           <span className="text-xs text-muted-foreground">—</span>
                         ) : (
                           <Select
                             disabled={rowEditLocked}
                             value={row.eventType}
                             onValueChange={(v: RateConditionEventType) => {
+                              setClearedRowIds((prev) => {
+                                if (!prev.has(asgn.id)) return prev;
+                                const next = new Set(prev);
+                                next.delete(asgn.id);
+                                return next;
+                              });
                               setRosterData((prev) => {
                                 const cur = prev[asgn.id] ?? {
                                   workerId: asgn.workerId,
@@ -1245,7 +1390,7 @@ export function PoDailyBoardCard({
                         )}
                       </TableCell>
                       <TableCell>
-                        {afterMobEnd ? (
+                        {afterMobEnd || isRowCleared ? (
                           <span className="flex h-9 items-center justify-center text-xs text-muted-foreground">—</span>
                         ) : (
                           <Input
@@ -1255,6 +1400,12 @@ export function PoDailyBoardCard({
                             value={row.normalHours}
                             onChange={(e) => {
                               const v = parseInt(e.target.value, 10) || 0;
+                              setClearedRowIds((prev) => {
+                                if (!prev.has(asgn.id)) return prev;
+                                const next = new Set(prev);
+                                next.delete(asgn.id);
+                                return next;
+                              });
                               setRosterData((p) => ({
                                 ...p,
                                 [asgn.id]: { ...(p[asgn.id] || {}), normalHours: v },
@@ -1280,7 +1431,7 @@ export function PoDailyBoardCard({
                           >
                             {!dateInAssignment
                               ? '—'
-                              : afterMobEnd
+                              : afterMobEnd || isRowCleared
                                 ? '—'
                                 : waveBoardStatusCode(persisted, row.eventType)}
                           </span>
@@ -1349,12 +1500,32 @@ export function PoDailyBoardCard({
                             </span>
                           ) : null}
                           <Input
-                            disabled={rowEditLocked}
+                            disabled={rowEditLocked || isRowCleared}
                             className="h-8 text-[10px] text-right w-full min-w-0"
-                            value={row.remark}
-                            onChange={(e) =>
-                              setRosterData((p) => ({ ...p, [asgn.id]: { ...p[asgn.id], remark: e.target.value } }))
-                            }
+                            value={isRowCleared ? '' : row.remark}
+                            onChange={(e) => {
+                              setClearedRowIds((prev) => {
+                                if (!prev.has(asgn.id)) return prev;
+                                const next = new Set(prev);
+                                next.delete(asgn.id);
+                                return next;
+                              });
+                              setRosterData((p) => ({
+                                ...p,
+                                [asgn.id]: {
+                                  ...(p[asgn.id] ?? {
+                                    workerId: asgn.workerId,
+                                    assignmentId: asgn.id,
+                                    date: targetDate,
+                                    eventType: 'work_day' as RateConditionEventType,
+                                    normalHours: dft,
+                                    ot15Hours: 0,
+                                    status: 'DRAFT' as DailyTimesheetStatus,
+                                  }),
+                                  remark: e.target.value,
+                                },
+                              }));
+                            }}
                           />
                         </div>
                       </TableCell>
@@ -1389,6 +1560,32 @@ export function PoDailyBoardCard({
           </div>
         </CardFooter>
       </Card>
+      <AlertDialog
+        open={clearDayDialogOpen}
+        onOpenChange={(open) => {
+          if (!clearDayBusy) setClearDayDialogOpen(open);
+        }}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>ล้างข้อมูลวันนี้</AlertDialogTitle>
+            <AlertDialogDescription>
+              ต้องการล้างข้อมูลวันนี้ทั้งหมดให้ว่างใช่ไหม?
+              <span className="mt-2 block text-foreground/90">
+                วันที่ {formatYmdLocalThaiBE(targetDate)} · ทุกแถวที่แก้ได้ในตาราง — ระบบจะลบรายการที่บันทึกแล้วทันที
+                (ไม่ต้องกดบันทึก)
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={clearDayBusy}>ไม่ใช่</AlertDialogCancel>
+            <Button disabled={clearDayBusy} onClick={() => void confirmClearDay()}>
+              {clearDayBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              ใช่ ล้างทั้งหมด
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog
         open={stopFlow !== null}
         onOpenChange={(open) => {

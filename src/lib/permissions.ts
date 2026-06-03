@@ -25,6 +25,7 @@ import {
   isOperationsOfficer,
   isTimekeeper,
   isPayrollOfficer,
+  isAccountingOfficer,
   canRecordTaxInvoiceBillingCustomerApproval,
   canEditEmployeeCompensation,
   canSubmitAttendanceCorrectionRequest,
@@ -85,6 +86,7 @@ export {
   isOperationsOfficer,
   isTimekeeper,
   isPayrollOfficer,
+  isAccountingOfficer,
   canRecordTaxInvoiceBillingCustomerApproval,
   canEditEmployeeCompensation,
   canSubmitAttendanceCorrectionRequest,
@@ -405,6 +407,110 @@ export function getPayrollOfficerModulePermission(moduleKey: ModuleKey): ModuleP
   return { ...NO_ACCESS };
 }
 
+/** VCEA ไม่ลบ — manpower / invoice / store ของเจ้าหน้าที่บัญชี */
+const ACCOUNTING_OFFICER_OPS_ACCESS: ModulePermission = {
+  view: true,
+  create: true,
+  edit: true,
+  delete: false,
+  approve: true,
+};
+
+/** VCED — เอกสารและงานจ่ายบัญชีหลัก */
+const ACCOUNTING_OFFICER_DOC_ACCESS: ModulePermission = {
+  view: true,
+  create: true,
+  edit: true,
+  delete: true,
+  approve: false,
+};
+
+/** VC — commercial อ่าน+สร้าง (quotations / contracts / PO) */
+const ACCOUNTING_OFFICER_COMMERCIAL_READ_CREATE: ModulePermission = {
+  view: true,
+  create: true,
+  edit: false,
+  delete: false,
+  approve: false,
+};
+
+/**
+ * สิทธิ์โมดูลสำหรับ `accounting_officer` — สอดคล้องเมทริกซ์ `/system-admin/menu-permissions`
+ */
+export function getAccountingOfficerModulePermission(moduleKey: ModuleKey): ModulePermission {
+  if (moduleKey === 'overview_dashboard') {
+    return { ...FULL_ACCESS };
+  }
+  if (moduleKey === 'employee_self_profile') {
+    return { ...READ_ONLY, create: true, edit: true };
+  }
+
+  if (moduleKey === 'customers') {
+    return { view: true, create: true, edit: true, delete: true, approve: false };
+  }
+  if (moduleKey === 'quotations' || moduleKey === 'main_contracts' || moduleKey === 'customer_pos') {
+    return { ...ACCOUNTING_OFFICER_COMMERCIAL_READ_CREATE };
+  }
+
+  if (
+    moduleKey === 'waves' ||
+    moduleKey === 'assignments' ||
+    moduleKey === 'mobilization' ||
+    moduleKey === 'draft_invoices' ||
+    moduleKey === 'store_inventory' ||
+    moduleKey === 'vendors' ||
+    moduleKey === 'purchases'
+  ) {
+    return { ...ACCOUNTING_OFFICER_OPS_ACCESS };
+  }
+  if (moduleKey === 'operations_petty_cash') {
+    return { ...NO_ACCESS };
+  }
+
+  if (moduleKey === 'accounting_dashboard') {
+    return { ...FULL_ACCESS };
+  }
+  if (
+    moduleKey === 'tax_invoices' ||
+    moduleKey === 'receipts' ||
+    moduleKey === 'billing_notes' ||
+    moduleKey === 'accounts_receivable' ||
+    moduleKey === 'ap_bills' ||
+    moduleKey === 'accounts_payable' ||
+    moduleKey === 'withholding_tax_items' ||
+    moduleKey === 'office_payroll' ||
+    moduleKey === 'worker_payroll'
+  ) {
+    return { ...ACCOUNTING_OFFICER_DOC_ACCESS };
+  }
+  if (moduleKey === 'cash_advances') {
+    return { ...READ_ONLY };
+  }
+  if (moduleKey === 'cashbook' || moduleKey === 'bank_accounts' || moduleKey === 'executive_payroll') {
+    return { ...NO_ACCESS };
+  }
+
+  if (
+    moduleKey === 'hr_hub' ||
+    moduleKey === 'timesheets' ||
+    moduleKey === 'workers' ||
+    moduleKey === 'worker_documents' ||
+    moduleKey === 'office_staff' ||
+    moduleKey === 'positions' ||
+    moduleKey === 'labor_cost_contract_terms' ||
+    moduleKey === 'payroll_runs' ||
+    moduleKey === 'payslips' ||
+    moduleKey === 'payment_export_batches' ||
+    moduleKey === 'sales_contract_terms' ||
+    moduleKey === 'rate_conditions' ||
+    moduleKey === 'profit_estimates'
+  ) {
+    return { ...NO_ACCESS };
+  }
+
+  return { ...NO_ACCESS };
+}
+
 /** สิทธิ์โมดูลสำหรับ `timekeeper` — เน้นลงเวลา + ดูทะเบียนประกอบ (ไม่มีคลัง/จัดซื้อ/manpower) */
 export function getTimekeeperModulePermission(moduleKey: ModuleKey): ModulePermission {
   if (moduleKey === 'overview_dashboard') {
@@ -520,6 +626,11 @@ export function getPermissions(
   if (!MODULE_KEY_SET.has(moduleKey)) return clonePermission(NO_ACCESS);
 
   if (ADMIN_ONLY_MODULE_KEYS.has(moduleKey)) return clonePermission(NO_ACCESS);
+
+  /** เจ้าหน้าที่บัญชี — เมทริกซ์เฉพาะ (menu-permissions) ก่อน branch บัญชี/ภายในแบบเต็ม */
+  if (isAccountingOfficer(u)) {
+    return clonePermission(getAccountingOfficerModulePermission(moduleKey));
+  }
 
   /** พนักงาน/ลูกจ้างที่เปิดบัญชีจากทะเบียน (employee_self) — เฉพาะโปรไฟล์ตนเอง + เบิกล่วงหน้า */
   if (getEffectiveSimpleRole(u) === 'employee_self') {
@@ -800,7 +911,12 @@ export const canApprove = (user: User | null, moduleKey: string, profile?: Permi
 
 export function canSeeHrPillarUi(user: User | null, profile?: PermissionProfile | null): boolean {
   if (!user) return false;
-  return HR_PILLAR_UI_KEYS.some((k) => canView(user, k, profile));
+  /** worker_payroll / office_payroll ใช้ร่วมกับเมนูบัญชี — ไม่นับเป็น HR desk ของ accounting_officer */
+  const keys =
+    getPrimaryLegacyRole(user) === 'accounting_officer'
+      ? HR_PILLAR_UI_KEYS.filter((k) => k !== 'worker_payroll' && k !== 'office_payroll')
+      : HR_PILLAR_UI_KEYS;
+  return keys.some((k) => canView(user, k, profile));
 }
 
 export function canSeeSalesPillarUi(user: User | null, profile?: PermissionProfile | null): boolean {
@@ -941,7 +1057,13 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       department: 'accounting',
       level: 'officer',
       isActive: true,
-      permissions: accountingPerms,
+      permissions: SYSTEM_MODULES.reduce(
+        (acc, mod) => {
+          acc[mod.key] = clonePermission(getAccountingOfficerModulePermission(mod.key as ModuleKey));
+          return acc;
+        },
+        {} as Record<string, ModulePermission>,
+      ),
     },
     {
       profileKey: 'operations_officer',

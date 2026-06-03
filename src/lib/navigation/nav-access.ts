@@ -24,7 +24,7 @@ import {
   getPrimaryLegacyRole,
   isTimekeeper,
 } from '@/lib/permission-core';
-import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
+import { isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import { deriveBusinessRoleKey } from '@/lib/auth-mapping';
 import { getFlattenedHrNavItems, type HrNavItem } from '@/lib/navigation/hr-nav-items';
 
@@ -249,7 +249,6 @@ const SORTED_PREFIXES = [...MODULE_PREFIXES].sort((a, b) => b[0].length - a[0].l
 export function userMayAccessPath(user: User, profile: PermissionProfile | null, pathname: string): boolean {
   const p = (pathname.split('?')[0] || '/').trim() || '/';
   const admin = isSystemAdmin(user) || isSimpleAdmin(user);
-  const accounting = admin || isSimpleAccounting(user);
 
   if (admin) return true;
 
@@ -302,24 +301,29 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     return true;
   }
 
-  const accountingPrefixes = [
-    '/billing-notes',
-    '/tax-invoices',
-    '/receipts',
-    '/ap-bills',
-    '/accounts-receivable',
-    '/accounts-payable',
-    '/cashbook',
-    '/bank-accounts',
-    '/accounting/executive-payroll',
-    '/accounting/withholding-tax',
-    '/accounting/withholding-payroll',
-    '/accounting/withholding-vendor',
-    '/accounting/social-security-payroll',
-    '/accounting/dashboard',
-  ];
-  if (accountingPrefixes.some((pre) => p === pre || p.startsWith(`${pre}/`))) {
-    return accounting;
+  const accountingPathModules: Array<[string, ModuleKey]> = [
+    ['/billing-notes', 'billing_notes'],
+    ['/tax-invoices', 'tax_invoices'],
+    ['/receipts', 'receipts'],
+    ['/ap-bills', 'ap_bills'],
+    ['/accounts-receivable', 'accounts_receivable'],
+    ['/accounts-payable', 'accounts_payable'],
+    ['/cashbook', 'cashbook'],
+    ['/bank-accounts', 'bank_accounts'],
+    ['/accounting/executive-payroll', 'executive_payroll'],
+    ['/accounting/withholding-tax', 'withholding_tax_items'],
+    ['/accounting/withholding-payroll', 'withholding_tax_items'],
+    ['/accounting/withholding-vendor', 'withholding_tax_items'],
+    ['/accounting/social-security-payroll', 'withholding_tax_items'],
+    ['/accounting/dashboard', 'accounting_dashboard'],
+    ['/accounting/office-payroll', 'office_payroll'],
+    ['/accounting/worker-payroll', 'worker_payroll'],
+    ['/accounting/cash-advances-payout', 'cash_advances'],
+  ].sort((a, b) => b[0].length - a[0].length);
+  for (const [pre, key] of accountingPathModules) {
+    if (p === pre || p.startsWith(`${pre}/`)) {
+      return admin || canView(user, key, profile);
+    }
   }
 
   if (p === '/' || p === '') {
@@ -362,11 +366,11 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
   /** บัญชี: ดูรายการจ่ายลูกจ้าง (หลัง manager อนุมัติ batch) */
   if (
     !admin &&
-    isSimpleAccounting(user) &&
     (p === '/payroll/batches' ||
       p.startsWith('/payroll/batches/') ||
       p === '/accounting/worker-payroll' ||
-      p.startsWith('/accounting/worker-payroll/'))
+      p.startsWith('/accounting/worker-payroll/')) &&
+    canView(user, 'worker_payroll', profile)
   ) {
     return true;
   }
@@ -374,8 +378,8 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
   /** บัญชี: คิวจ่ายเบิกล่วงหน้าหลังผู้จัดการอนุมัติ */
   if (
     !admin &&
-    isSimpleAccounting(user) &&
-    (p === '/accounting/cash-advances-payout' || p.startsWith('/accounting/cash-advances-payout/'))
+    (p === '/accounting/cash-advances-payout' || p.startsWith('/accounting/cash-advances-payout/')) &&
+    canView(user, 'cash_advances', profile)
   ) {
     return true;
   }

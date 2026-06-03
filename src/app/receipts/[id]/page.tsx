@@ -1,10 +1,20 @@
 'use client';
 
-import { use, useCallback } from 'react';
+import { use, useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ArrowLeft, Loader2, Printer } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { doc } from 'firebase/firestore';
@@ -13,10 +23,23 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
-import { buildMoneyReceiptPrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
+  buildMoneyReceiptPrintHtml,
+  openStandardPrintWindow,
+  type TaxInvoicePrintSheet,
+} from '@/lib/documents/standard-document-print';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import Link from 'next/link';
+
+const RECEIPT_PRINT_PRESETS: Record<
+  'p1' | 'p2' | 'p3',
+  { sheets: TaxInvoicePrintSheet[]; label: string }
+> = {
+  p1: { sheets: ['original', 'copy'], label: 'ต้นฉบับ 1 แผ่น + สำเนา 1 แผ่น' },
+  p2: { sheets: ['original', 'copy', 'copy'], label: 'ต้นฉบับ 1 แผ่น + สำเนา 2 แผ่น' },
+  p3: { sheets: ['copy'], label: 'สำเนา 1 แผ่น' },
+};
 
 export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -25,6 +48,8 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
+  const [printPresetOpen, setPrintPresetOpen] = useState(false);
+  const [receiptPrintPreset, setReceiptPrintPreset] = useState<'p1' | 'p2' | 'p3'>('p1');
 
   const allowed = Boolean(currentUser && canView(currentUser, 'receipts'));
 
@@ -60,30 +85,46 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
     addressLine2?: string;
   }>(companyRef as any);
 
-  const handlePrint = useCallback(async () => {
-    if (!receipt || !taxInv) return;
-    const body = buildMoneyReceiptPrintHtml({
-      company: companyProfile ?? undefined,
-      receipt,
-      taxInvoice: taxInv,
-      customer: customer ?? undefined,
-      printedAtMs: Date.now(),
-      locale: printLocale,
-    });
-    if (
-      !(await openStandardPrintWindow({
-        windowTitle: receipt.receiptNo,
-        bodyInnerHtml: body,
-        htmlLang: printLocale,
-      }))
-    ) {
-      toast({
-        variant: 'destructive',
-        title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
-        description: 'กรุณาอนุญาตป๊อปอัป',
+  const executeReceiptPrint = useCallback(
+    async (sheets: TaxInvoicePrintSheet[]) => {
+      if (!receipt || !taxInv) return;
+      const body = buildMoneyReceiptPrintHtml({
+        company: companyProfile ?? undefined,
+        receipt,
+        taxInvoice: taxInv,
+        customer: customer ?? undefined,
+        printedAtMs: Date.now(),
+        locale: printLocale,
+        sheets,
       });
-    }
-  }, [receipt, taxInv, companyProfile, customer, printLocale, toast]);
+      if (
+        !(await openStandardPrintWindow({
+          windowTitle: receipt.receiptNo,
+          bodyInnerHtml: body,
+          htmlLang: printLocale,
+        }))
+      ) {
+        toast({
+          variant: 'destructive',
+          title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+          description: 'กรุณาอนุญาตป๊อปอัป',
+        });
+      }
+    },
+    [receipt, taxInv, companyProfile, customer, printLocale, toast],
+  );
+
+  const handlePrint = useCallback(() => {
+    if (!receipt || !taxInv) return;
+    setReceiptPrintPreset('p1');
+    setPrintPresetOpen(true);
+  }, [receipt, taxInv]);
+
+  const handleConfirmPrint = useCallback(() => {
+    const preset = RECEIPT_PRINT_PRESETS[receiptPrintPreset];
+    void executeReceiptPrint(preset.sheets);
+    setPrintPresetOpen(false);
+  }, [receiptPrintPreset, executeReceiptPrint]);
 
   if (userLoading || !currentUser) {
     return (
