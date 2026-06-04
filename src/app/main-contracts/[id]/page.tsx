@@ -1413,6 +1413,9 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                                   return (
                                     <>
                                       <div className="flex items-center gap-1">
+                                        <span className="text-[10px] font-semibold text-muted-foreground min-w-[3.75rem] shrink-0">
+                                          Onshore
+                                        </span>
                                         <span className="text-xs text-muted-foreground font-normal">{contract.currency}</span>
                                         <Input
                                           type="number"
@@ -1426,6 +1429,9 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                                         />
                                       </div>
                                       <div className="flex items-center gap-1">
+                                        <span className="text-[10px] font-semibold text-muted-foreground min-w-[3.75rem] shrink-0">
+                                          Offshore
+                                        </span>
                                         <span className="text-xs text-muted-foreground font-normal">{contract.currency}</span>
                                         <Input
                                           type="number"
@@ -1444,7 +1450,10 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                               </div>
                             ) : (
                               <div className="flex flex-col gap-1.5">
-                                <span>
+                                <span className="flex items-center gap-1">
+                                  <span className="text-[10px] font-semibold text-muted-foreground min-w-[3.75rem] shrink-0">
+                                    Onshore
+                                  </span>
                                   {effectiveSellOnshore(r) > 0 ? (
                                     <>
                                       <span className="text-xs text-muted-foreground font-normal">{contract.currency} </span>
@@ -1454,7 +1463,10 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                                     <span className="text-muted-foreground">—</span>
                                   )}
                                 </span>
-                                <span>
+                                <span className="flex items-center gap-1">
+                                  <span className="text-[10px] font-semibold text-muted-foreground min-w-[3.75rem] shrink-0">
+                                    Offshore
+                                  </span>
                                   {effectiveSellOffshore(r) > 0 ? (
                                     <>
                                       <span className="text-xs text-muted-foreground font-normal">{contract.currency} </span>
@@ -1479,6 +1491,9 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                                     return (
                                       <>
                                         <div className="flex items-center gap-1 text-amber-700 font-bold">
+                                          <span className="text-[10px] font-semibold text-muted-foreground min-w-[3.75rem] shrink-0">
+                                            Onshore
+                                          </span>
                                           <span className="text-xs text-muted-foreground font-normal">{contract.currency}</span>
                                           {canEditCostSide && firestore ? (
                                             <Input
@@ -1505,6 +1520,9 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                                           )}
                                         </div>
                                         <div className="flex items-center gap-1 text-amber-700 font-bold">
+                                          <span className="text-[10px] font-semibold text-muted-foreground min-w-[3.75rem] shrink-0">
+                                            Offshore
+                                          </span>
                                           <span className="text-xs text-muted-foreground font-normal">{contract.currency}</span>
                                           {canEditCostSide && firestore ? (
                                             <Input
@@ -1541,8 +1559,18 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                           )}
                           <TableCell className="align-top">
                             <div className="flex flex-col gap-1.5 text-sm tabular-nums">
-                              <span>{effectiveNormalWorkHoursOnshore(r)} ชม.</span>
-                              <span>{effectiveNormalWorkHoursOffshore(r)} ชม.</span>
+                              <span className="flex items-center gap-1">
+                                <span className="text-[10px] font-semibold text-muted-foreground min-w-[3.75rem] shrink-0">
+                                  Onshore
+                                </span>
+                                {effectiveNormalWorkHoursOnshore(r)} ชม.
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <span className="text-[10px] font-semibold text-muted-foreground min-w-[3.75rem] shrink-0">
+                                  Offshore
+                                </span>
+                                {effectiveNormalWorkHoursOffshore(r)} ชม.
+                              </span>
                             </div>
                           </TableCell>
                           <TableCell className="capitalize">{r.billingUnit}</TableCell>

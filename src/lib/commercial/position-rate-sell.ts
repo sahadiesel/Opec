@@ -84,3 +84,30 @@ export function sellSnapshotForWorkMode(line: Partial<LineSellSnap>, mode: JobMo
   if (mode === 'OFFSHORE') return offEff > 0 ? offEff : onEff;
   return onEff > 0 ? onEff : offEff;
 }
+
+export function jobModeSellLabel(mode: JobMode): 'Onshore' | 'Offshore' {
+  return mode === 'ONSHORE' ? 'Onshore' : 'Offshore';
+}
+
+/** Snapshot fields for a new/updated PO line — primary `sellRateSnapshot` follows PO work mode. */
+export function buildPoLineSellSnapshots(
+  rate: Partial<SellDual>,
+  poWorkMode: JobMode,
+): {
+  sellRateSnapshot: number;
+  sellRateSnapshotOnshore?: number;
+  sellRateSnapshotOffshore?: number;
+} {
+  const snapOn = effectiveSellOnshore(rate);
+  const snapOff = effectiveSellOffshore(rate);
+  const partial: Partial<LineSellSnap> = {
+    sellRateSnapshot: legacySellRateMirror(rate),
+  };
+  if (snapOn > 0) partial.sellRateSnapshotOnshore = snapOn;
+  if (snapOff > 0) partial.sellRateSnapshotOffshore = snapOff;
+  return {
+    sellRateSnapshot: sellSnapshotForWorkMode(partial, poWorkMode),
+    ...(snapOn > 0 ? { sellRateSnapshotOnshore: snapOn } : {}),
+    ...(snapOff > 0 ? { sellRateSnapshotOffshore: snapOff } : {}),
+  };
+}
