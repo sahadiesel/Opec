@@ -61,6 +61,7 @@ import {
   mobilizationsEligibleForWaveMonthGrid,
   resolveTimesheetForWaveMonthCell,
   sumWorkHoursForWaveMonthRow,
+  sumStandbyHoursForWaveMonthRow,
   timesheetWaveMonthCellDisplay,
   timesheetEventCellBadgeClasses,
 } from '@/lib/timesheet/wave-month-utils';
@@ -670,6 +671,34 @@ export default function WaveMonthTimesheetSummaryPage() {
     return m;
   }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments]);
 
+  /** รวมชม. standby ต่อแถว — สอดคล้องช่อง SB ในกริด */
+  const rowStandbyHoursMonthTotalByKey = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const tr of tableRows) {
+      const { wave, rw, rosterAssignment } = tr;
+      const key = `${wave.id}|${rw.workerId}|${rosterAssignment.id}`;
+      const alternateMobIds = mobAssignments
+        .filter((m) => m.waveId === wave.id && m.workerId === rw.workerId && m.id !== rosterAssignment.id)
+        .map((m) => m.id);
+      m.set(
+        key,
+        sumStandbyHoursForWaveMonthRow(
+          rosterAssignment,
+          wave.id,
+          rw.workerId,
+          rosterAssignment.id,
+          days,
+          sheetsByWaveWorker,
+          monthSheetsForOpenPos,
+          poTimesheetScopeId(rosterAssignment.poId),
+          alternateMobIds,
+          { onlyWithinMobWindow: true },
+        ),
+      );
+    }
+    return m;
+  }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments]);
+
   /**
    * คนละหนึ่งแถวในงวดเดือน: ถ้าพนักงานถูกดึงจากหลาย wave / หลาย mobilization ที่ชี้ชุดลงเวลาเดียวกัน
    * (หรือมีหลายเอกสาร daily ซ้ำความหมาย) — เลือกแถวเดียวตามคะแนนจับคู่กับข้อมูลจริง + wave ที่ยังเปิดอยู่
@@ -1164,7 +1193,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                       </p>
                       <p>
                         แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ ·{' '}
-                        <strong>รวมชม.</strong> = ชม.ทำงาน (ไม่รวม standby) เฉพาะวันที่อยู่ในช่วง mobilization ของแถว — จับคู่ timesheet กับช่องวัน
+                        <strong>รวมชม.</strong> = ชม.ทำงาน (W) และชม. Standby (SB) แยกคอลัมน์ — นับเฉพาะวันที่อยู่ในช่วง mobilization ของแถว
                         (วันที่อยู่นอกหน้าต่างอาจแสดง W พร้อมวงแหวนแต่ไม่รวมในยอดรวม)
                       </p>
                     </CardDescription>
@@ -1214,6 +1243,14 @@ export default function WaveMonthTimesheetSummaryPage() {
                             <br />
                             <span className="font-normal text-muted-foreground">(ทำงาน)</span>
                           </TableHead>
+                          <TableHead
+                            className="text-center font-bold min-w-[5.75rem] w-[5.75rem] shrink-0 text-[10px] leading-tight px-2"
+                            title="ชม. standby (SB) รวมในแถวนี้เฉพาะวันที่อยู่ในช่วง mobilization"
+                          >
+                            รวมชม.
+                            <br />
+                            <span className="font-normal text-muted-foreground">(Standby)</span>
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -1228,6 +1265,8 @@ export default function WaveMonthTimesheetSummaryPage() {
                             .map((m) => m.id);
                           const rowWorkerMonthWorkTotal =
                             rowWorkHoursMonthTotalByKey.get(`${wave.id}|${rw.workerId}|${rosterAssignment.id}`) ?? 0;
+                          const rowWorkerMonthStandbyTotal =
+                            rowStandbyHoursMonthTotalByKey.get(`${wave.id}|${rw.workerId}|${rosterAssignment.id}`) ?? 0;
                           const editableGrid =
                             canEditTs &&
                             !isMonthTimesheetRowLocked(
@@ -1342,6 +1381,12 @@ export default function WaveMonthTimesheetSummaryPage() {
                                 title="ชม.ทำงานรวมในแถวนี้ (ไม่รวม standby)"
                               >
                                 {rowWorkerMonthWorkTotal}
+                              </TableCell>
+                              <TableCell
+                                className="text-center font-bold tabular-nums text-xs min-w-[5.75rem] w-[5.75rem] shrink-0 px-2 py-1.5 text-sky-800"
+                                title="ชม. standby (SB) รวมในแถวนี้"
+                              >
+                                {rowWorkerMonthStandbyTotal}
                               </TableCell>
                             </TableRow>
                           );

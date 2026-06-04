@@ -38,6 +38,41 @@ export function deriveCostNormalHourlyRate(input: DeriveHourlyInput): number {
   );
 }
 
+/** ชม.ที่จ่าย standby — ใช้ normalHours บนใบงาน; ถ้าไม่มี ใช้ 8 ชม./unit × standbyUnits */
+export function resolveStandbyPaidHours(ts: Pick<DailyTimesheet, 'normalHours' | 'standbyUnits'>): number {
+  const nh = Number(ts.normalHours);
+  if (Number.isFinite(nh) && nh > 0) {
+    return Math.min(24, nh) * Math.max(1, Number(ts.standbyUnits ?? 1));
+  }
+  const units = Math.max(1, Number(ts.standbyUnits ?? 1));
+  return units * LEGAL_NORMAL_HOURS_PER_DAY;
+}
+
+export interface StandbyDayPackageCostInput {
+  timesheet: Pick<DailyTimesheet, 'normalHours' | 'standbyUnits'>;
+  costPackagePerDay: number;
+  statedHours: StatedPackageHours;
+  otAfterShiftMultiplier: number;
+  /** ตัวคูณ standby ฝั่งต้นทุน (สัญญา/HR Settings — ปกติ 0.5) */
+  standbyCostMultiplier: number;
+}
+
+/**
+ * Standby = ฐานชม.ปกติจากแพ็ก (8 ชม. + OT ในแพ็ก 12 ชม.) × ชม.standby × ตัวคูณ standby
+ * ไม่ใช่ครึ่งหนึ่งของแพ็กรายวันทั้งก้อน (ซึ่งรวมส่วน OT 4 ชม.ด้วย)
+ */
+export function computeStandbyDayCostFromPackage(input: StandbyDayPackageCostInput): number {
+  const hourlyNormal = deriveCostNormalHourlyRate({
+    costPackagePerDay: input.costPackagePerDay,
+    statedHours: input.statedHours,
+    otAfterShiftMultiplier: input.otAfterShiftMultiplier,
+  });
+  if (hourlyNormal <= 0) return 0;
+  const hours = resolveStandbyPaidHours(input.timesheet);
+  const mult = Math.max(0, input.standbyCostMultiplier);
+  return roundMoney(hourlyNormal * hours * mult);
+}
+
 /** ปฏิทิน + ตัวคูณวันหยุดสำหรับ payroll ลูกจ้าง — จาก HR Settings */
 export type PayrollRestDaySchedule = {
   weeklyRestPattern: 'none' | 'sat_sun' | 'sunday_only';

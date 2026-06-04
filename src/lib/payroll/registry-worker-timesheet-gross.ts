@@ -3,7 +3,7 @@
  * ไม่อาศัย labor_cost_contract_terms หรือ rate_conditions แบบ LABOR_COST_CONTRACT
  */
 import type { DailyTimesheet, MainContract, Position, Worker } from '@/lib/types';
-import { computeWorkDayCostFromPackage } from '@/lib/payroll/package-labor-cost';
+import { computeWorkDayCostFromPackage, computeStandbyDayCostFromPackage } from '@/lib/payroll/package-labor-cost';
 import { resolveBaseCostForPayrollTimesheet } from '@/lib/payroll/timesheet-labor-base-cost';
 import {
   type WorkerGlobalLaborContext,
@@ -48,7 +48,7 @@ function resolvePolicyFallbackCost(
   const p = policy ?? DEFAULT_REGISTRY_EVENT_MULTIPLIER_POLICY;
   switch (ts.eventType) {
     case 'standby_day':
-      return baseCost * Number(p.standby ?? 0.5) * Number(ts.standbyUnits ?? 1);
+      return 0;
     case 'mobilization_day':
       return baseCost * Number(p.mobilization ?? 1) * Number(ts.mobUnits ?? 1);
     case 'demobilization_day':
@@ -99,15 +99,32 @@ export function computeRegistryWorkerTimesheetGross(
   const policy = workerLaborCostPolicy(input.workerGlobalLabor);
   const payrollRestSchedule = workerGlobalLaborToPayrollRestSchedule(input.workerGlobalLabor);
 
+  const poLine = input.poLine;
+  const statedHours = poLine.normalWorkHoursSnapshot === 12 ? 12 : 8;
+  const costOt = poLine.costOtRulesSnapshot as { afterShift?: number } | undefined;
+  const otMult =
+    Number(costOt?.afterShift) ||
+    Number(policy.otAfterShift) ||
+    1.5;
+
+  if (ts.eventType === 'standby_day' && baseCost > 0) {
+    const gross = computeStandbyDayCostFromPackage({
+      timesheet: ts,
+      costPackagePerDay: baseCost,
+      statedHours,
+      otAfterShiftMultiplier: otMult,
+      standbyCostMultiplier: Number(policy.standby ?? 0.5),
+    });
+    return {
+      gross,
+      usedPackageLaborCost: true,
+      usedPolicyFallback: false,
+      fromPositionModel,
+    };
+  }
+
   const useWorkDayPackage = ts.eventType === 'work_day' && baseCost > 0;
   if (useWorkDayPackage) {
-    const poLine = input.poLine;
-    const statedHours = poLine.normalWorkHoursSnapshot === 12 ? 12 : 8;
-    const costOt = poLine.costOtRulesSnapshot as { afterShift?: number } | undefined;
-    const otMult =
-      Number(costOt?.afterShift) ||
-      Number(policy.otAfterShift) ||
-      1.5;
     const pkg = computeWorkDayCostFromPackage({
       timesheet: ts,
       costPackagePerDay: baseCost,

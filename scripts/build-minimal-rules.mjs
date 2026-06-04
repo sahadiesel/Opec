@@ -181,7 +181,11 @@ const EXTRA_BLOCKS = `
     match /vendor_bills/{id} { allow read: if isInternalUser(); }
     match /vendor_bills/{billId}/{document=**} { allow read: if isInternalUser(); }
     match /labor_cost_contract_terms/{id} { allow read: if isInternalUser(); }
-    match /office_staff/{id} { allow read: if isInternalUser(); }
+    match /office_staff/{id} {
+      allow read: if isInternalUser();
+      allow create, update: if isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer'];
+      allow delete: if isAdmin() || (isInternalUser() && userRole() == 'hr_manager');
+    }
     // Payroll subcollections: each batch/run has nested 'lines' read via collectionGroup
     match /{parent}/{batchId}/lines/{lineId} { allow read: if isInternalUser(); }
     // Document numbering / counters used by services across roles

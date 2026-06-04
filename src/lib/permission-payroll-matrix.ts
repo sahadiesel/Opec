@@ -110,7 +110,10 @@ export function resolvePayrollMatrixDecision(
       return 'deny';
     }
     if (resource === 'policy') return action === 'view' ? 'allow' : 'deny';
-    if (resource === 'worker' || resource === 'office_staff') return 'inherit';
+    if (resource === 'worker' || resource === 'office_staff') {
+      if (['view', 'create', 'edit'].includes(action)) return 'allow';
+      return 'deny';
+    }
     if (resource === 'rate_term_cost') return action === 'view' ? 'allow' : 'deny';
     return 'inherit';
   }
@@ -131,7 +134,10 @@ export function resolvePayrollMatrixDecision(
       return 'deny';
     }
     if (resource === 'policy') return action === 'view' ? 'allow' : 'deny';
-    if (resource === 'office_staff') return action === 'view' ? 'allow' : 'deny';
+    if (resource === 'office_staff') {
+      if (['view', 'create', 'edit'].includes(action)) return 'allow';
+      return 'deny';
+    }
     if (resource === 'worker') {
       if (['view', 'create', 'edit'].includes(action)) return 'allow';
       if (action === 'approve') return 'allow';

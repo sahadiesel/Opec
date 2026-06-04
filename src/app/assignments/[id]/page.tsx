@@ -152,7 +152,7 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
   const [poCeilingDraft, setPoCeilingDraft] = useState('');
   const [deploymentEditing, setDeploymentEditing] = useState(false);
   const [isSavingDeployment, setIsSavingDeployment] = useState(false);
-  const [isDemobilizing, setIsDemobilizing] = useState(false);
+  const [isUnassigning, setIsUnassigning] = useState(false);
 
   useEffect(() => {
     if (!assignment || deploymentEditing) return;
@@ -305,15 +305,15 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     }
   };
 
-  const handleDemobilize = async () => {
+  const handleUnassign = async () => {
     if (!firestore || !currentUser || !canEditAssignments || !assignment || isDeploymentReleased) return;
     if (
       !window.confirm(
-        'บันทึกจบงาน (DEMOBILIZED) — รายนี้จะหลุดโควต้าและพร้อมมอบหมาย PO/งานอื่น ต้องการดำเนินการ?'
+        'ยืนยัน Unassign — ถอนคนออกจาก PO นี้ รายการจะหลุดโควต้าและพร้อมมอบหมาย PO อื่น ต้องการดำเนินการ?'
       )
     )
       return;
-    setIsDemobilizing(true);
+    setIsUnassigning(true);
     try {
       await updateDoc(doc(firestore, 'mobilizations', id), {
         deploymentStatus: 'DEMOBILIZED',
@@ -325,14 +325,14 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
         updatedAt: Date.now(),
       });
       toast({
-        title: 'บันทึกจบงานแล้ว',
-        description: 'รายนี้ไม่นับโควต้า — พร้อมมอบหมายงานอื่น',
+        title: 'Unassign แล้ว',
+        description: 'ถอนออกจาก PO นี้แล้ว — ไม่นับโควต้า · พร้อมมอบหมาย PO อื่น (Mob/Demob ไป–กลับไซต์ยังอยู่ PO เดิม ใช้ที่ Wave Board)',
       });
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: message });
     } finally {
-      setIsDemobilizing(false);
+      setIsUnassigning(false);
     }
   };
 
@@ -642,10 +642,10 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                 <CardHeader>
                   <CardTitle className="text-lg flex items-center gap-2">
                     <Truck className="h-5 w-5 text-amber-700" />
-                    จบงาน (Demobilize) เพื่อ re-assign
+                    Unassign — ถอนออกจาก PO นี้
                   </CardTitle>
                   <CardDescription>
-                    ใช้เมื่อรายนี้ต้องหลุดโควต้า / ปลดพนักงานออกจาก mobilization ก่อนมอบหมาย PO หรือลูกค้าใหม่
+                    นำคนออกจากการมอบหมายใน PO นี้เพื่อไปลง PO อื่นได้ — ไม่ใช่ Mob/Demob (ไป–กลับไซต์ยังอยู่ PO เดิม · หลัง Demob กลับมารอ Mob รอบใหม่ได้ที่ Wave Board / Mobilization)
                   </CardDescription>
                 </CardHeader>
                 <CardFooter className="flex flex-col items-stretch gap-2 sm:flex-row sm:justify-end">
@@ -653,15 +653,15 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
                     type="button"
                     variant="secondary"
                     className="font-bold"
-                    onClick={handleDemobilize}
-                    disabled={isDemobilizing}
+                    onClick={handleUnassign}
+                    disabled={isUnassigning}
                   >
-                    {isDemobilizing ? (
+                    {isUnassigning ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     ) : (
                       <CheckCircle2 className="h-4 w-4 mr-2" />
                     )}
-                    บันทึกจบงาน (DEMOBILIZED)
+                    Unassign
                   </Button>
                 </CardFooter>
               </Card>

@@ -71,6 +71,20 @@ export function normalHoursCountedAsWork(
 }
 
 /**
+ * ชม.ที่นับเป็น standby ในสรุปรายเดือน — เฉพาะ standby_day
+ * (auto PO Active มักมี normalHours 8/12; แถวที่ normalHours=0 ใช้ standbyUnits × 8)
+ */
+export function standbyHoursCountedForWaveMonth(
+  ts: Pick<DailyTimesheet, 'eventType' | 'normalHours' | 'standbyUnits'> | undefined,
+): number {
+  if (!ts || ts.eventType !== 'standby_day') return 0;
+  const nh = Number(ts.normalHours);
+  if (Number.isFinite(nh) && nh > 0) return nh;
+  const units = Math.max(0, Number(ts.standbyUnits ?? 1));
+  return units > 0 ? units * 8 : 0;
+}
+
+/**
  * รวมชม.ทำงานในเดือนตามแถวตาราง — ใช้การจับคู่ timesheet เดียวกับช่องรายวัน (ไม่รวมซ้ำข้าม assignment/PO)
  * @param options.onlyWithinMobWindow — ถ้า true จะนับเฉพาะวันที่อยู่ในช่วง mobilization ตามฟิลด์บน assignment ของแถว
  *   (สอดคล้องการนับจากกริดเมื่อไม่นับวันที่อยู่นอกหน้าต่างแม้เซลล์แสดง W พร้อมวงแหวน)
@@ -118,6 +132,56 @@ export function sumWorkHoursForWaveMonthRow(
       alternateAssignmentIds,
     );
     sum += normalHoursCountedAsWork(ts);
+  }
+  return sum;
+}
+
+/**
+ * รวมชม. standby ในเดือนต่อแถว — จับคู่ timesheet เดียวกับช่องรายวัน (mirror sumWorkHoursForWaveMonthRow)
+ */
+export function sumStandbyHoursForWaveMonthRow(
+  assignment: Pick<
+    Assignment,
+    | 'poId'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'startDate'
+    | 'assignedDate'
+    | 'mobLocationEndDate'
+    | 'endDate'
+    | 'unassignedAt'
+  >,
+  waveId: string,
+  workerId: string,
+  rosterAssignmentId: string,
+  daysYmd: readonly string[],
+  sheetsByWaveWorker: Map<string, DailyTimesheet[]>,
+  flatMonthSheets: readonly DailyTimesheet[],
+  poScopeWaveId?: string | null,
+  alternateAssignmentIds?: readonly string[] | null,
+  options?: { onlyWithinMobWindow?: boolean },
+): number {
+  let sum = 0;
+  for (const d of daysYmd) {
+    if (
+      options?.onlyWithinMobWindow &&
+      assignment &&
+      !isYmdWithinAssignmentMobTimesheetWindow(assignment, d)
+    ) {
+      continue;
+    }
+    const ts = resolveTimesheetForWaveMonthCell(
+      waveId,
+      workerId,
+      d,
+      rosterAssignmentId,
+      sheetsByWaveWorker,
+      flatMonthSheets,
+      poScopeWaveId,
+      assignment,
+      alternateAssignmentIds,
+    );
+    sum += standbyHoursCountedForWaveMonth(ts);
   }
   return sum;
 }
