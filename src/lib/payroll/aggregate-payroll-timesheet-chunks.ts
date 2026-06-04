@@ -56,7 +56,12 @@ export function aggregateDailyTimesheetsPayrollChunk(
       ts.eventType === 'standby_day' ? Math.max(0, Number(ts.standbyUnits ?? 1)) : 1;
     eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + eventDelta;
     if (r.usedPackageLaborCost) {
-      earningsBreakdown.work_day_package = (earningsBreakdown.work_day_package || 0) + r.gross;
+      if (ts.eventType === 'standby_day') {
+        earningsBreakdown.standby_day_package =
+          (earningsBreakdown.standby_day_package || 0) + r.gross;
+      } else {
+        earningsBreakdown.work_day_package = (earningsBreakdown.work_day_package || 0) + r.gross;
+      }
     } else {
       earningsBreakdown[`${ts.eventType}_policy`] =
         (earningsBreakdown[`${ts.eventType}_policy`] || 0) + r.gross;

@@ -7,7 +7,8 @@ function round2(n: number): number {
 }
 
 /**
- * แยกยอด work_day แพ็กเป็นวันปกติ / วันหยุดตามสูตรเดียวกับ aggregate payroll — ผลรวมเท่ากับ work_day_package ของชุด timesheet เดียวกัน
+ * แยกยอด work_day แพ็กเป็นวันปกติ / วันหยุด — **ไม่รวม standby_day** (แยกเป็น standby_day_package ใน earnings)
+ * ผลรวม normal + holiday เท่ากับ earningsBreakdown.work_day_package ของชุด timesheet เดียวกัน
  */
 export function computeWorkDayPackagePayslipSplit(
   tsList: DailyTimesheet[],
@@ -19,6 +20,7 @@ export function computeWorkDayPackagePayslipSplit(
   let holidayAmount = 0;
 
   for (const ts of tsList) {
+    if (ts.eventType === 'standby_day') continue;
     const poLine = (deps.poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
     const wk = deps.workerById.get(ts.workerId);
     const linePos = ts.positionId ? deps.posById.get(ts.positionId) : undefined;

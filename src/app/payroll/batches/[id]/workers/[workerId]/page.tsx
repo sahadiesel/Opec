@@ -42,12 +42,13 @@ import { PayrollService } from '@/lib/services/payroll-service';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
-import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
+import { buildPayslipFromWorkerLine, buildWorkerPayslipIncomeLinesFromTimesheets } from '@/lib/payroll/payslip-model';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import {
   buildSingleTimesheetGrossContext,
   computeSingleTimesheetGrossLikeBatch,
+  type SingleTimesheetGrossContext,
 } from '@/lib/payroll/single-timesheet-gross';
 import {
   loadPayrollPoliciesFromFirestore,
@@ -61,6 +62,7 @@ import {
 import { THAI_PIT_STANDARD_MARGINAL_RATE_PERCENTS } from '@/lib/hr/pit-thailand';
 import { CASH_ADVANCE_PAYROLL_DEDUCTION_KEY } from '@/lib/payroll/cash-advance-recovery';
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
+import { loadWorkerPayableTimesheetsForPeriod } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
 import {
   Select,
   SelectContent,
@@ -144,6 +146,9 @@ function earningsTotalForEventType(line: PayrollBatchLine, eventType: string): n
   if (eventType === 'work_day') {
     n += Number((eb as { work_day_package?: number }).work_day_package) || 0;
   }
+  if (eventType === 'standby_day') {
+    n += Number((eb as { standby_day_package?: number }).standby_day_package) || 0;
+  }
   return n;
 }
 
@@ -213,6 +218,7 @@ export default function PayrollBatchWorkerLinePage({
   const [timesheets, setTimesheets] = useState<DailyTimesheet[]>([]);
   const [tsLoading, setTsLoading] = useState(true);
   const [grossByTsId, setGrossByTsId] = useState<Record<string, number>>({});
+  const [grossCtx, setGrossCtx] = useState<SingleTimesheetGrossContext | null>(null);
   const [grossByTsLoading, setGrossByTsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [recalcOpen, setRecalcOpen] = useState(false);
@@ -291,7 +297,14 @@ export default function PayrollBatchWorkerLinePage({
   }, [line]);
 
   useEffect(() => {
-    if (!firestore || !line?.sourceTimesheetIds?.length) {
+    if (!firestore || !line) {
+      setTimesheets([]);
+      setTsLoading(false);
+      return;
+    }
+    const periodStart = line.periodStartDate;
+    const periodEnd = line.periodEndDate;
+    if (!periodStart || !periodEnd) {
       setTimesheets([]);
       setTsLoading(false);
       return;
@@ -300,14 +313,25 @@ export default function PayrollBatchWorkerLinePage({
     setTsLoading(true);
     void (async () => {
       try {
-        const uniqueTids = [...new Set(line.sourceTimesheetIds.filter(Boolean))];
-        const snaps = await Promise.all(
-          uniqueTids.map((tid) => getDoc(doc(firestore, 'daily_timesheets', tid))),
+        let rows = await loadWorkerPayableTimesheetsForPeriod(
+          firestore,
+          workerId,
+          periodStart,
+          periodEnd,
+          { includePayrollLocked: true },
         );
-        const rows: DailyTimesheet[] = [];
-        for (const s of snaps) {
-          if (s.exists()) rows.push({ id: s.id, ...(s.data() as object) } as DailyTimesheet);
+
+        if (rows.length === 0 && line.sourceTimesheetIds?.length) {
+          const uniqueTids = [...new Set(line.sourceTimesheetIds.filter(Boolean))];
+          const snaps = await Promise.all(
+            uniqueTids.map((tid) => getDoc(doc(firestore, 'daily_timesheets', tid))),
+          );
+          rows = [];
+          for (const s of snaps) {
+            if (s.exists()) rows.push({ id: s.id, ...(s.data() as object) } as DailyTimesheet);
+          }
         }
+
         rows.sort((a, b) => a.date.localeCompare(b.date));
         if (!cancelled) setTimesheets(normalizeTimesheetsForPayrollLine(rows));
       } catch {
@@ -319,11 +343,12 @@ export default function PayrollBatchWorkerLinePage({
     return () => {
       cancelled = true;
     };
-  }, [firestore, line?.sourceTimesheetIds, line?.id]);
+  }, [firestore, line, workerId]);
 
   useEffect(() => {
     if (!firestore || timesheets.length === 0) {
       setGrossByTsId({});
+      setGrossCtx(null);
       setGrossByTsLoading(false);
       return;
     }
@@ -338,9 +363,15 @@ export default function PayrollBatchWorkerLinePage({
           const g = computeSingleTimesheetGrossLikeBatch(ts, ctx);
           if (g != null) map[ts.id] = g;
         }
-        if (!cancelled) setGrossByTsId(map);
+        if (!cancelled) {
+          setGrossByTsId(map);
+          setGrossCtx(ctx);
+        }
       } catch {
-        if (!cancelled) setGrossByTsId({});
+        if (!cancelled) {
+          setGrossByTsId({});
+          setGrossCtx(null);
+        }
       } finally {
         if (!cancelled) setGrossByTsLoading(false);
       }
@@ -615,7 +646,14 @@ export default function PayrollBatchWorkerLinePage({
   const slipModel = useMemo(() => {
     if (!line || !batch) return null;
     const pl = period?.label || batch.payrollPeriodId;
-    return buildPayslipFromWorkerLine(line, batch, pl, companyProfile ?? undefined);
+    const model = buildPayslipFromWorkerLine(line, batch, pl, companyProfile ?? undefined);
+    if (timesheets.length > 0 && grossCtx) {
+      const incomeLines = buildWorkerPayslipIncomeLinesFromTimesheets(line, timesheets, grossCtx);
+      if (incomeLines.length > 0) {
+        return { ...model, incomeLines };
+      }
+    }
+    return model;
   }, [
     line,
     batch,
@@ -623,6 +661,8 @@ export default function PayrollBatchWorkerLinePage({
     batch?.payrollPeriodId,
     companyProfile?.companyNameTh,
     companyProfile?.companyNameEn,
+    timesheets,
+    grossCtx,
   ]);
   const pitFromLine = Number(line?.deductionsBreakdown?.pit_withholding ?? 0);
 

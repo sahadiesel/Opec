@@ -26,7 +26,7 @@ export function dedupeDailyTimesheetsForPayroll(tsList: readonly DailyTimesheet[
   return out;
 }
 
-/** คะแนนเลือกใบงานที่ “นับจ่าย” เมื่อมีหลายแถวคน+วัน+PO เดียวกัน (Mob clearance + PO Active auto ฯลฯ) */
+/** คะแนนเลือกใบงานที่ “นับจ่าย” เมื่อมีหลายแถวคน+วัน (Mob clearance + PO Active auto ฯลฯ) */
 function payrollTimesheetDayScore(ts: DailyTimesheet): number {
   let s = 0;
   const nh = Math.max(0, Number(ts.normalHours) || 0);
@@ -37,10 +37,13 @@ function payrollTimesheetDayScore(ts: DailyTimesheet): number {
   if (ts.status === 'LOCKED') s += 800;
   if (ts.readyForPayroll === true) s += 400;
   if (String(ts.assignmentId || '').trim()) s += 200;
+  if (ts.poActiveAutoDaily === true) s += 700;
+  const rmk = String(ts.remark ?? '');
+  if (rmk.includes('Final clearance') && nh <= 0) s -= 3000;
   return s;
 }
 
-/** เลือกหนึ่งใบงานต่อวันต่อ PO — สอดคล้องการจับคู่เซลล์ wave-month (ไม่ double-count) */
+/** เลือกหนึ่งใบงานต่อคนต่อวัน — สอดคล้อง wave-month (ไม่ double-count) */
 export function pickPreferredDailyTimesheetForPayrollDay(
   candidates: readonly DailyTimesheet[],
 ): DailyTimesheet {
@@ -56,20 +59,22 @@ export function pickPreferredDailyTimesheetForPayrollDay(
 }
 
 /**
- * รวมใบงานซ้ำ **คน + วัน + PO** — เก็บหนึ่งแถว (แม้ assignment / ชม. / แหล่งบันทึกต่างกัน)
- * เช่น Mob Final clearance (standby 0 ชม.) + PO Active auto (standby 8 ชม.) วันเดียวกัน
+ * รวมใบงานซ้ำ **คน + วัน** — เก็บหนึ่งแถว (remob / Mob clearance + PO Active auto แม้ PO หรือ assignment ต่างกัน)
+ * สอดคล้อง `resolveTimesheetForWaveMonthCell` — ไม่ double-count ในคิด payroll
  */
 export function collapseDuplicateWorkerDayTimesheets(tsList: readonly DailyTimesheet[]): DailyTimesheet[] {
-  const byDayPo = new Map<string, DailyTimesheet[]>();
+  const byWorkerDate = new Map<string, DailyTimesheet[]>();
   for (const ts of tsList) {
     const wid = String(ts.workerId || '').trim();
     const d = String(ts.date || '').trim();
-    const po = String(ts.purchaseOrderId || '').trim() || '_unknown_po';
-    const k = `${wid}\0${d}\0${po}`;
-    if (!byDayPo.has(k)) byDayPo.set(k, []);
-    byDayPo.get(k)!.push(ts);
+    if (!wid || !d) continue;
+    const k = `${wid}\0${d}`;
+    if (!byWorkerDate.has(k)) byWorkerDate.set(k, []);
+    byWorkerDate.get(k)!.push(ts);
   }
-  const merged = [...byDayPo.values()].map((group) => pickPreferredDailyTimesheetForPayrollDay(group));
+  const merged = [...byWorkerDate.values()].map((group) =>
+    group.length <= 1 ? group[0] : pickPreferredDailyTimesheetForPayrollDay(group),
+  );
   return merged.sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
 }
 

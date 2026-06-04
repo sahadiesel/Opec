@@ -7,9 +7,12 @@ import type {
   PayrollLineD8Snapshot,
   PayrollRunStatus,
   PayslipWorkDaySplit,
+  DailyTimesheet,
 } from '@/lib/types';
 import { formatDateThaiBE, formatOfficePayrollRunPeriodLabelThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { leaveSummaryLabelTh } from '@/lib/payroll/office-payroll-period-deductions';
+import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
+import type { SingleTimesheetGrossContext } from '@/lib/payroll/single-timesheet-gross';
 
 export const PAYSLIP_DEFAULT_COMPANY_TH = 'โอพีอีซี ออปส์โฟลว์';
 export const PAYSLIP_DEFAULT_COMPANY_EN = 'OPEC OpsFlow';
@@ -260,6 +263,86 @@ export function buildWorkerPayslipIncomeLines(line: PayrollBatchLine): PayslipLi
       continue;
     }
     lines.push({ label: humanizeWorkerEarningsKey(k), amount: amt });
+  }
+
+  return lines;
+}
+
+/**
+ * สร้างบรรทัดรายได้จากใบงานรายวัน — แยก work_day / standby / วันหยุด ตามสูตร batch จริง
+ * ใช้บนหน้ารายละเอียดค่าจ้างเมื่อโหลด timesheets แล้ว (สลิป preview ตรงกับตารางรายวัน)
+ */
+export function buildWorkerPayslipIncomeLinesFromTimesheets(
+  line: PayrollBatchLine,
+  timesheets: readonly DailyTimesheet[],
+  ctx: SingleTimesheetGrossContext,
+): PayslipLineItem[] {
+  const allowanceItems = (line.hrLineAdjustments?.allowanceItems ?? []).filter(
+    (x) => (Number(x.amount) || 0) > 0,
+  );
+  const lines: PayslipLineItem[] = allowanceItems.map((it) => ({
+    label: it.label?.trim() || 'รายได้เพิ่ม (HR)',
+    amount: round2(Number(it.amount) || 0),
+  }));
+
+  let normalDays = 0;
+  let normalAmount = 0;
+  let holidayDays = 0;
+  let holidayAmount = 0;
+  let standbyDays = 0;
+  let standbyAmount = 0;
+  const policyAmounts: Record<string, number> = {};
+
+  for (const ts of timesheets) {
+    const poLine = (ctx.poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
+    const wk = ctx.workerById.get(ts.workerId);
+    const linePos = ts.positionId ? ctx.posById.get(ts.positionId) : undefined;
+    const r = computeRegistryWorkerTimesheetGross(ts, {
+      worker: wk,
+      linePosition: linePos,
+      poLine,
+      contractMap: ctx.contractMap,
+      workerGlobalLabor: ctx.workerGlobalLabor,
+    });
+    if (r.gross <= 0) continue;
+
+    if (ts.eventType === 'standby_day' && r.usedPackageLaborCost) {
+      standbyDays += Math.max(0, Number(ts.standbyUnits ?? 1));
+      standbyAmount += r.gross;
+      continue;
+    }
+    if (ts.eventType === 'work_day' && r.usedPackageLaborCost) {
+      if (r.workDayRestDay) {
+        holidayDays += 1;
+        holidayAmount += r.gross;
+      } else {
+        normalDays += 1;
+        normalAmount += r.gross;
+      }
+      continue;
+    }
+    const policyKey = `${ts.eventType}_policy`;
+    policyAmounts[policyKey] = (policyAmounts[policyKey] || 0) + r.gross;
+  }
+
+  const n = workDaySplitIncomeLine('ค่าแรงวันปกติ', normalDays, round2(normalAmount));
+  const h = workDaySplitIncomeLine('ค่าแรงวันหยุด', holidayDays, round2(holidayAmount));
+  if (n) lines.push(n);
+  if (h) lines.push(h);
+  if (standbyDays > 0 && standbyAmount > 0.005) {
+    lines.push(
+      standbyPayslipLine('', 'standby_day', round2(standbyAmount), { standby_day: standbyDays }),
+    );
+  }
+
+  for (const k of Object.keys(policyAmounts).sort((a, b) => a.localeCompare(b))) {
+    const amt = round2(policyAmounts[k]);
+    if (Math.abs(amt) < 0.005) continue;
+    if (isStandbyDayPolicyKey(k)) {
+      lines.push(standbyPayslipLine('', k, amt, line.eventBreakdown));
+    } else {
+      lines.push({ label: humanizeWorkerEarningsKey(k), amount: amt });
+    }
   }
 
   return lines;
