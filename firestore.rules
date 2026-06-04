@@ -79,6 +79,8 @@ service cloud.firestore {
     function rs9() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
     function rs10() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
     function rs11() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    /** positions + subcollections (PPE/tools) — ops officer แก้ได้ตาม Master Data */
+    function rs11pos() { return rs11() || (isInternalUser() && userRole() == 'operations_officer'); }
     function rs12() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
     function rs13() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']); }
     function rs14() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'operations_manager', 'accounting_manager', 'accounting_officer', 'employee_self']); }
@@ -270,14 +272,14 @@ service cloud.firestore {
     }
     match /positions/{id} {
       allow read:   if rs10();
-      allow create: if rs11();
-      allow update: if rs11() || rs11();
+      allow create: if rs11pos();
+      allow update: if rs11pos();
       allow delete: if rs11();
     }
     match /positions/{positionId}/{document=**} {
       allow read:   if rs10();
-      allow create: if rs11();
-      allow update: if rs11() || rs11();
+      allow create: if rs11pos();
+      allow update: if rs11pos();
       allow delete: if rs11();
     }
     match /office_staff/{id} {

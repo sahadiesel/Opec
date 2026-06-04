@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
@@ -11,13 +11,21 @@ import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatOptionalDateThaiBE, formatDateThaiBE } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Plus, Trash2, AlertCircle } from 'lucide-react';
-import { doc, type Firestore, type CollectionReference } from 'firebase/firestore';
-import { addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { Plus, Trash2, AlertCircle, Camera, Loader2, X } from 'lucide-react';
+import { addDoc, doc, type Firestore, type CollectionReference } from 'firebase/firestore';
+import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
-import { getLatestDrugTestBySubstance, displayLocation } from '@/lib/drug-test-panel';
+import { useFirebaseApp } from '@/firebase';
+import { displayLocation, sortDrugTestsNewestFirst } from '@/lib/drug-test-panel';
+import { uploadWorkerDrugTestPhoto } from '@/lib/storage/worker-drug-test-photos';
 import Link from 'next/link';
-import type { WorkerDrugTest, DrugTestPanelSubstance, DrugTestLocationType, DrugTestResult } from '@/lib/types';
+import type {
+  WorkerDrugTest,
+  DrugTestPanelSubstance,
+  DrugTestLocationType,
+  DrugTestResult,
+  WaveMonthTimesheetPhotoAttachment,
+} from '@/lib/types';
 
 interface WorkerDrugTabProps {
   workerId: string;
@@ -30,84 +38,220 @@ interface WorkerDrugTabProps {
 
 export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, panelSubstances, canEdit = false }: WorkerDrugTabProps) {
   const { toast } = useToast();
-  const [drugEditSubstance, setDrugEditSubstance] = useState<DrugTestPanelSubstance | null>(null);
+  const firebaseApp = useFirebaseApp();
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
+  const [drugDialogOpen, setDrugDialogOpen] = useState(false);
+  const [drugFormSubstanceKey, setDrugFormSubstanceKey] = useState('');
   const [drugFormDate, setDrugFormDate] = useState('');
   const [drugFormLocType, setDrugFormLocType] = useState<DrugTestLocationType>('OPEC');
   const [drugFormLocOther, setDrugFormLocOther] = useState('');
   const [drugFormResult, setDrugFormResult] = useState<DrugTestResult>('none');
+  const [drugFormFile, setDrugFormFile] = useState<File | null>(null);
+  const [drugFormPreviewUrl, setDrugFormPreviewUrl] = useState<string | null>(null);
+  const [drugSaving, setDrugSaving] = useState(false);
 
-  const latestBySubstance = useMemo(() => getLatestDrugTestBySubstance(drugTests || []), [drugTests]);
+  const sortedRecords = useMemo(() => sortDrugTestsNewestFirst(drugTests || []), [drugTests]);
 
-  const openDrugDialog = (s: DrugTestPanelSubstance) => {
-    setDrugEditSubstance(s);
-    const latest = latestBySubstance.get(s.id);
-    if (latest) {
-      setDrugFormDate(latest.testDate != null && latest.testDate > 0 ? timestampToHtmlDateValue(latest.testDate) : '');
-      setDrugFormLocType(latest.testLocationType || (latest.laboratory ? 'OTHER' : 'OPEC'));
-      setDrugFormLocOther(latest.testLocationOther || (latest.testLocationType !== 'OPEC' && latest.laboratory ? latest.laboratory : '') || '');
-      const r = latest.result;
-      setDrugFormResult(r === 'positive' || r === 'negative' ? r : 'none');
-    } else {
-      setDrugFormDate('');
-      setDrugFormLocType('OPEC');
-      setDrugFormLocOther('');
-      setDrugFormResult('none');
+  const substanceLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of panelSubstances) map.set(s.id, s.label);
+    return map;
+  }, [panelSubstances]);
+
+  const clearPhotoPreview = () => {
+    if (drugFormPreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(drugFormPreviewUrl);
+    }
+    setDrugFormPreviewUrl(null);
+    setDrugFormFile(null);
+    if (photoInputRef.current) photoInputRef.current.value = '';
+  };
+
+  const resetDrugForm = () => {
+    clearPhotoPreview();
+    setDrugFormSubstanceKey(panelSubstances[0]?.id || '');
+    setDrugFormDate('');
+    setDrugFormLocType('OPEC');
+    setDrugFormLocOther('');
+    setDrugFormResult('none');
+  };
+
+  useEffect(() => {
+    if (!drugDialogOpen) {
+      clearPhotoPreview();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only when dialog closes
+  }, [drugDialogOpen]);
+
+  const openAddDrugDialog = () => {
+    resetDrugForm();
+    setDrugDialogOpen(true);
+  };
+
+  const onPhotoPick = (file: File | null) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast({ variant: 'destructive', title: 'รองรับเฉพาะรูปภาพ', description: 'เลือกไฟล์ JPEG, PNG หรือ WebP' });
+      return;
+    }
+    if (drugFormPreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(drugFormPreviewUrl);
+    }
+    setDrugFormFile(file);
+    setDrugFormPreviewUrl(URL.createObjectURL(file));
+  };
+
+  const handleSaveDrug = async () => {
+    if (!drugTestsQuery || !firestore) return;
+    const substance = panelSubstances.find((s) => s.id === drugFormSubstanceKey);
+    if (!substance) {
+      toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'เลือกอุปกรณ์การตรวจ' });
+      return;
+    }
+    if (drugFormResult !== 'none' && !drugFormDate.trim()) {
+      toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'ถ้ามีผลตรวจแล้ว ต้องระบุวันที่ตรวจ' });
+      return;
+    }
+    if (drugFormLocType === 'OTHER' && !drugFormLocOther.trim()) {
+      toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'เลือกอื่นๆ ต้องระบุสถานที่' });
+      return;
+    }
+
+    setDrugSaving(true);
+    try {
+      let attachment: WaveMonthTimesheetPhotoAttachment | undefined;
+      if (drugFormFile) {
+        attachment = await uploadWorkerDrugTestPhoto(firebaseApp, workerId, substance.id, drugFormFile);
+      }
+
+      const payload: Record<string, unknown> = {
+        substanceKey: substance.id,
+        substanceLabelSnapshot: substance.label,
+        testDate: drugFormResult === 'none' || !drugFormDate.trim() ? null : new Date(drugFormDate).getTime(),
+        testLocationType: drugFormLocType,
+        testLocationOther: drugFormLocType === 'OTHER' ? drugFormLocOther.trim() : '',
+        result: drugFormResult,
+        createdAt: Date.now(),
+      };
+      if (attachment) payload.attachment = attachment;
+
+      await addDoc(drugTestsQuery, payload);
+      setDrugDialogOpen(false);
+      toast({ title: 'บันทึกแล้ว' });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: message });
+    } finally {
+      setDrugSaving(false);
     }
   };
+
+  const equipmentLabel = (row: WorkerDrugTest) =>
+    row.substanceLabelSnapshot || substanceLabelById.get(row.substanceKey || '') || row.substanceKey || '—';
 
   return (
     <Card>
       <CardHeader className="border-b bg-primary/5 pb-4">
-        <CardTitle className="text-lg flex items-center gap-2 text-primary">
-          <AlertCircle className="h-5 w-5" /> ผลตรวจสารเสพติด
-        </CardTitle>
-        <CardDescription>รายการสารตรวจมาจากการตั้งค่าในเมนูจัดการระบบ — ไม่มีวันหมดอายุในระบบ</CardDescription>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-lg flex items-center gap-2 text-primary">
+              <AlertCircle className="h-5 w-5" /> ผลตรวจสารเสพติด
+            </CardTitle>
+            <CardDescription className="mt-1">
+              รายการอุปกรณ์การตรวจมาจากการตั้งค่าในเมนูจัดการระบบ — บันทึกล่าสุดอยู่บนสุด
+            </CardDescription>
+          </div>
+          {canEdit && panelSubstances.length > 0 && (
+            <Button size="sm" className="font-bold shrink-0" onClick={openAddDrugDialog}>
+              <Plus className="h-4 w-4 mr-1" /> เพิ่มการตรวจ
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="p-0 pt-4 space-y-6">
         {panelSubstances.length === 0 ? (
           <p className="px-6 text-sm text-muted-foreground">
-            ยังไม่มีรายการสาร — ผู้ดูแลระบบสามารถตั้งค่าได้ที่{' '}
-            <Link href="/system-admin/drug-test-panel" className="text-primary font-bold underline">ตั้งค่าแผงตรวจสารเสพติด</Link>
+            ยังไม่มีรายการอุปกรณ์ — ผู้ดูแลระบบสามารถตั้งค่าได้ที่{' '}
+            <Link href="/system-admin/drug-test-panel" className="text-primary font-bold underline">
+              ตั้งค่าแผงตรวจสารเสพติด
+            </Link>
+          </p>
+        ) : sortedRecords.length === 0 ? (
+          <p className="px-6 pb-4 text-sm text-muted-foreground">
+            ยังไม่มีผลตรวจ — กด «เพิ่มการตรวจ» เพื่อบันทึกครั้งแรก
           </p>
         ) : (
           <Table>
             <TableHeader className="bg-muted/50">
               <TableRow>
-                <TableHead className="pl-6 font-bold">ชื่อสารที่ตรวจ</TableHead>
+                <TableHead className="pl-6 font-bold">อุปกรณ์การตรวจ</TableHead>
                 <TableHead className="font-bold">วันที่ตรวจ</TableHead>
                 <TableHead className="font-bold">สถานที่ตรวจ</TableHead>
                 <TableHead className="font-bold">ผลตรวจ</TableHead>
-                <TableHead className="text-right pr-6">บันทึก</TableHead>
+                <TableHead className="font-bold text-center">เอกสารแนบ</TableHead>
+                {canEdit ? <TableHead className="text-right pr-6 font-bold">จัดการ</TableHead> : null}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {panelSubstances.map((s) => {
-                const latest = latestBySubstance.get(s.id);
-                const res = latest?.result;
+              {sortedRecords.map((row) => {
+                const res = row.result;
                 const resLabel = res === 'negative' ? 'NEGATIVE' : res === 'positive' ? 'POSITIVE' : 'NONE';
+                const thumbUrl = row.attachment?.downloadUrl;
                 return (
-                  <TableRow key={s.id}>
-                    <TableCell className="pl-6 font-bold text-primary">{s.label}</TableCell>
+                  <TableRow key={row.id}>
+                    <TableCell className="pl-6 font-bold text-primary">{equipmentLabel(row)}</TableCell>
                     <TableCell className="text-sm">
-                      {latest?.testDate != null && latest.testDate > 0 ? formatDateThaiBE(latest.testDate) : '—'}
+                      {row.testDate != null && row.testDate > 0 ? formatDateThaiBE(row.testDate) : '—'}
                     </TableCell>
-                    <TableCell className="text-sm">{latest ? displayLocation(latest) : '—'}</TableCell>
+                    <TableCell className="text-sm">{displayLocation(row)}</TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={
-                        res === 'negative' ? 'bg-green-600 text-white border-green-600'
-                          : res === 'positive' ? 'bg-destructive text-destructive-foreground'
-                            : 'bg-slate-100 text-slate-600'
-                      }>{resLabel}</Badge>
+                      <Badge
+                        variant="outline"
+                        className={
+                          res === 'negative'
+                            ? 'bg-green-600 text-white border-green-600'
+                            : res === 'positive'
+                              ? 'bg-destructive text-destructive-foreground'
+                              : 'bg-slate-100 text-slate-600'
+                        }
+                      >
+                        {resLabel}
+                      </Badge>
                     </TableCell>
-                    <TableCell className="text-right pr-6">
-                      {canEdit ? (
-                      <Button size="sm" variant="outline" className="font-bold" onClick={() => openDrugDialog(s)}>
-                        <Plus className="h-3 w-3 mr-1" /> บันทึกผล
-                      </Button>
+                    <TableCell className="text-center">
+                      {thumbUrl ? (
+                        <a
+                          href={thumbUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block rounded border overflow-hidden hover:opacity-90"
+                          title="เปิดรูปแนบ"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={thumbUrl} alt="" className="h-10 w-10 object-cover" />
+                        </a>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
                     </TableCell>
+                    {canEdit ? (
+                      <TableCell className="text-right pr-6">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive h-8 w-8"
+                          title="ลบรายการ"
+                          onClick={() => {
+                            if (!firestore) return;
+                            if (confirm('ลบรายการผลตรวจนี้?'))
+                              deleteDocumentNonBlocking(doc(firestore, 'workers', workerId, 'drug_tests', row.id));
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    ) : null}
                   </TableRow>
                 );
               })}
@@ -128,46 +272,80 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(drugTests || []).filter((d) => !d.substanceKey).map((d) => (
-                  <TableRow key={d.id}>
-                    <TableCell className="pl-6">{d.testDate != null && d.testDate > 0 ? formatOptionalDateThaiBE(d.testDate, '—') : '—'}</TableCell>
-                    <TableCell className="text-xs">{d.laboratory || '—'}</TableCell>
-                    <TableCell>
-                      <Badge variant={d.result === 'negative' ? 'default' : 'destructive'}>{(d.result || '').toUpperCase()}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right pr-6">
-                      {canEdit ? (
-                      <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => {
-                        if (!firestore) return;
-                        if (confirm('ลบรายการ?')) deleteDocumentNonBlocking(doc(firestore, 'workers', workerId, 'drug_tests', d.id));
-                      }}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                      ) : null}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {(drugTests || [])
+                  .filter((d) => !d.substanceKey)
+                  .map((d) => (
+                    <TableRow key={d.id}>
+                      <TableCell className="pl-6">
+                        {d.testDate != null && d.testDate > 0 ? formatOptionalDateThaiBE(d.testDate, '—') : '—'}
+                      </TableCell>
+                      <TableCell className="text-xs">{d.laboratory || '—'}</TableCell>
+                      <TableCell>
+                        <Badge variant={d.result === 'negative' ? 'default' : 'destructive'}>
+                          {(d.result || '').toUpperCase()}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right pr-6">
+                        {canEdit ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive h-8 w-8"
+                            onClick={() => {
+                              if (!firestore) return;
+                              if (confirm('ลบรายการ?'))
+                                deleteDocumentNonBlocking(doc(firestore, 'workers', workerId, 'drug_tests', d.id));
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                      </TableCell>
+                    </TableRow>
+                  ))}
               </TableBody>
             </Table>
           </div>
         )}
 
-        <Dialog open={drugEditSubstance != null} onOpenChange={(o) => !o && setDrugEditSubstance(null)}>
+        <Dialog open={drugDialogOpen} onOpenChange={setDrugDialogOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>บันทึกผลตรวจ: {drugEditSubstance?.label}</DialogTitle>
+              <DialogTitle>บันทึกผลตรวจ</DialogTitle>
               <DialogDescription>ผลเริ่มต้น NONE = ยังไม่ได้ตรวจ — สถานที่เริ่มต้น OPEC</DialogDescription>
             </DialogHeader>
             <div className="space-y-3 py-2">
               <div className="space-y-2">
+                <Label>อุปกรณ์การตรวจ</Label>
+                <Select value={drugFormSubstanceKey} onValueChange={setDrugFormSubstanceKey}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="เลือกอุปกรณ์" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {panelSubstances.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
                 <Label>วันที่ตรวจ</Label>
-                <DatePickerThaiBE className="h-10" value={htmlDateValueToTimestampMs(drugFormDate)} onChange={(ms) => setDrugFormDate(timestampToHtmlDateValue(ms))} disabled={drugFormResult === 'none'} />
+                <DatePickerThaiBE
+                  className="h-10"
+                  value={htmlDateValueToTimestampMs(drugFormDate)}
+                  onChange={(ms) => setDrugFormDate(timestampToHtmlDateValue(ms))}
+                  disabled={drugFormResult === 'none'}
+                />
                 <p className="text-[10px] text-muted-foreground">ถ้าเลือกผลเป็น NONE ไม่บังคับวันที่</p>
               </div>
               <div className="space-y-2">
                 <Label>สถานที่ตรวจ</Label>
                 <Select value={drugFormLocType} onValueChange={(v) => setDrugFormLocType(v as DrugTestLocationType)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="OPEC">OPEC</SelectItem>
                     <SelectItem value="OTHER">อื่นๆ</SelectItem>
@@ -180,7 +358,9 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
               <div className="space-y-2">
                 <Label>ผลตรวจ</Label>
                 <Select value={drugFormResult} onValueChange={(v) => setDrugFormResult(v as DrugTestResult)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">NONE (ไม่ได้ตรวจ)</SelectItem>
                     <SelectItem value="negative">NEGATIVE</SelectItem>
@@ -188,30 +368,42 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-2 rounded-lg border border-dashed border-primary/30 bg-primary/5 p-3">
+                <Label className="flex items-center gap-2">
+                  <Camera className="h-4 w-4" /> แนบรูปถ่าย
+                </Label>
+                <p className="text-[10px] text-muted-foreground">ถ่ายจากกล้องหรือเลือกไฟล์ — ระบบบีบอัดไม่เกิน 500 KB</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    ref={photoInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="max-w-[14rem] text-xs"
+                    onChange={(e) => onPhotoPick(e.target.files?.[0] ?? null)}
+                  />
+                  {drugFormPreviewUrl && (
+                    <Button type="button" variant="ghost" size="sm" className="h-8 text-destructive" onClick={clearPhotoPreview}>
+                      <X className="h-3 w-3 mr-1" /> ลบรูป
+                    </Button>
+                  )}
+                </div>
+                {drugFormPreviewUrl && (
+                  <a href={drugFormPreviewUrl} target="_blank" rel="noopener noreferrer" className="inline-block">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={drugFormPreviewUrl} alt="ตัวอย่างรูปแนบ" className="h-20 w-20 rounded border object-cover" />
+                  </a>
+                )}
+              </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setDrugEditSubstance(null)}>ยกเลิก</Button>
-              <Button onClick={() => {
-                if (!drugTestsQuery || !drugEditSubstance) return;
-                if (drugFormResult !== 'none' && !drugFormDate.trim()) {
-                  toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'ถ้ามีผลตรวจแล้ว ต้องระบุวันที่ตรวจ' });
-                  return;
-                }
-                if (drugFormLocType === 'OTHER' && !drugFormLocOther.trim()) {
-                  toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'เลือกอื่นๆ ต้องระบุสถานที่' });
-                  return;
-                }
-                addDocumentNonBlocking(drugTestsQuery, {
-                  substanceKey: drugEditSubstance.id,
-                  substanceLabelSnapshot: drugEditSubstance.label,
-                  testDate: drugFormResult === 'none' || !drugFormDate.trim() ? null : new Date(drugFormDate).getTime(),
-                  testLocationType: drugFormLocType,
-                  testLocationOther: drugFormLocType === 'OTHER' ? drugFormLocOther.trim() : '',
-                  result: drugFormResult,
-                });
-                setDrugEditSubstance(null);
-                toast({ title: 'บันทึกแล้ว' });
-              }}>บันทึก</Button>
+              <Button variant="outline" onClick={() => setDrugDialogOpen(false)} disabled={drugSaving}>
+                ยกเลิก
+              </Button>
+              <Button onClick={() => void handleSaveDrug()} disabled={drugSaving}>
+                {drugSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                บันทึก
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

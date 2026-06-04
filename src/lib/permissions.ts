@@ -317,7 +317,8 @@ export function getOperationsOfficerModulePermission(moduleKey: ModuleKey): Modu
     return { ...READ_ONLY };
   }
   if (moduleKey === 'positions') {
-    return { ...READ_ONLY };
+    /** ทะเบียน Master Data รวม positions — สอดคล้องเมนู workers (PPE/เครื่องมือต่อตำแหน่ง) */
+    return { ...FULL_ACCESS, delete: false };
   }
   if (moduleKey === 'store_inventory') {
     return { ...FULL_ACCESS };

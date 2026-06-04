@@ -11,9 +11,13 @@ import {
   type Firestore,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore';
-import type { Assignment, PayrollPeriod, PayrollPeriodStatus, WaveMonthTimesheetReview } from '@/lib/types';
+import type { Assignment, DailyTimesheet, PayrollPeriod, WaveMonthTimesheetReview } from '@/lib/types';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
+import {
+  filterTimesheetsForWorkerPayroll,
+  loadAssignmentsForTimesheets,
+} from '@/lib/payroll/filter-timesheets-for-worker-payroll';
 
 const FIRESTORE_BATCH_LIMIT = 400;
 
@@ -45,6 +49,8 @@ export function resolveWaveMonthPeriodBounds(review: WaveMonthTimesheetReview): 
  *
  * รวมใบงานที่บันทึกจากกระดาน PO (`daily_timesheets.waveId` = `po_ts_scope_<poId>`) สำหรับคนที่อยู่ใน mobilization
  * ของ wave นี้ — เดิมจับเฉพาะ `waveId` = รหัส Wave จริง จึงไม่ตั้ง ready ให้ใบงาน PO scope ทำให้ Payroll นับคนไม่ครบทั้งที่ตารางสรุปเดือนแสดงครบ
+ *
+ * กรองเฉพาะวันที่อยู่ในช่วง mobilization และไม่รวม unpaid_leave — สอดคล้องคอลัมน์รวมชม. ใน wave-month
  */
 export async function markTimesheetsReadyForPayrollAfterMonthApproval(
   db: Firestore,
@@ -52,12 +58,15 @@ export async function markTimesheetsReadyForPayrollAfterMonthApproval(
 ): Promise<{ updated: number }> {
   const { start, end } = resolveWaveMonthPeriodBounds(review);
 
-  const refsById = new Map<string, DocumentReference>();
+  const pending = new Map<string, { ref: DocumentReference; data: DailyTimesheet }>();
 
   const consider = (d: QueryDocumentSnapshot) => {
     const data = d.data();
     if (data.status === 'LOCKED') return;
-    refsById.set(d.id, d.ref);
+    pending.set(d.id, {
+      ref: d.ref,
+      data: { id: d.id, ...(data as object) } as DailyTimesheet,
+    });
   };
 
   const snapWave = await getDocs(
@@ -109,11 +118,17 @@ export async function markTimesheetsReadyForPayrollAfterMonthApproval(
     }
   }
 
+  const assignmentById = await loadAssignmentsForTimesheets(
+    db,
+    [...pending.values()].map((p) => p.data),
+  );
+
   let batch = writeBatch(db);
   let n = 0;
   let updated = 0;
 
-  for (const ref of refsById.values()) {
+  for (const { ref, data } of pending.values()) {
+    if (!filterTimesheetsForWorkerPayroll([data], assignmentById).length) continue;
     batch.update(ref, {
       readyForPayroll: true,
       readyForBilling: true,
@@ -170,7 +185,7 @@ export async function ensureOpenPayrollPeriodForWaveMonthReview(
   };
 
   /** หลังอนุมัติ Wave เดือน — รอบลูกจ้างถือว่าพร้อมเข้าขั้นตอน payroll (ไม่ใช่แค่รับข้อมูลทั่วไป) */
-  const approvedReadyStatus: PayrollPeriodStatus = 'PROCESSING';
+  const approvedReadyStatus = 'PROCESSING' as const;
 
   if (!snap.exists()) {
     await setDoc(ref, { ...base, status: approvedReadyStatus });

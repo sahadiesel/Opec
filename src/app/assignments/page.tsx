@@ -777,6 +777,7 @@ function AssignmentsPageContent() {
           toolsIssued: 'missing',
           overlapClear: 'pass',
           clientApproved: 'missing',
+          drugTestValid: 'missing',
         },
         ...(notes.trim() ? { notes: notes.trim() } : {}),
         createdAt: nowTs,

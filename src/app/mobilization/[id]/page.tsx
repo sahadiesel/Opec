@@ -52,6 +52,7 @@ import {
   ChecklistItemStatus,
   Wave,
   WorkerCertificate,
+  WorkerDrugTest,
   DeploymentStatus,
   PurchaseOrder,
   MainContract,
@@ -103,6 +104,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { computeMobDrugTestChecklistStatus, resolveMobReferenceDateYmd } from '@/lib/drug-test-panel';
 
 export default function MobilizationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -154,6 +156,18 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   const workerCertsQuery = useMemoFirebase(() => (firestore && assignment ? collection(firestore, 'workers', assignment.workerId, 'certificates') : null), [firestore, assignment?.workerId]);
   const { data: workerCerts } = useCollection<WorkerCertificate>(workerCertsQuery as any);
+
+  const workerDrugTestsQuery = useMemoFirebase(
+    () => (firestore && assignment ? collection(firestore, 'workers', assignment.workerId, 'drug_tests') : null),
+    [firestore, assignment?.workerId],
+  );
+  const { data: workerDrugTests } = useCollection<WorkerDrugTest>(workerDrugTestsQuery as any);
+
+  const drugTestChecklistStatus = useMemo((): ChecklistItemStatus => {
+    if (!assignment) return 'missing';
+    const mobYmd = resolveMobReferenceDateYmd(assignment);
+    return computeMobDrugTestChecklistStatus(workerDrugTests || [], mobYmd);
+  }, [assignment, workerDrugTests]);
 
   const posRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'positions', assignment.positionId) : null), [firestore, assignment?.positionId]);
   const { data: position } = useDoc<Position>(posRef as any);
@@ -805,6 +819,18 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           <TableCell className="text-right p-2">
                             <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="เปิดทะเบียน — ใบเซอร์">
                               <Link href={workerManageHref('certs')}>
+                                <ChevronRight className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>{getChecklistIcon(drugTestChecklistStatus)}</TableCell>
+                          <TableCell className="font-medium text-sm">ผลตรวจสารเสพติด (Drug test)</TableCell>
+                          <TableCell className="text-left capitalize text-xs">{drugTestChecklistStatus}</TableCell>
+                          <TableCell className="text-right p-2">
+                            <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="เปิดทะเบียน — สารเสพติด">
+                              <Link href={workerManageHref('drug')}>
                                 <ChevronRight className="h-4 w-4" />
                               </Link>
                             </Button>

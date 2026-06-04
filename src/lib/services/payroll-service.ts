@@ -97,6 +97,8 @@ import {
   fetchWorkerCashAdvancesPendingSalaryRecovery,
 } from '@/lib/payroll/cash-advance-recovery';
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
+import { filterTimesheetsForWorkerPayrollAsync, loadWorkerPayableTimesheetsForPeriod } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
+import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
 
 function round2Payroll(n: number): number {
   return Math.round(n * 100) / 100;
@@ -203,6 +205,8 @@ export class PayrollService {
     if (filters?.workModeScope && filters.workModeScope !== 'mixed') {
       timesheets = timesheets.filter((ts) => ts.workMode.toLowerCase() === filters.workModeScope);
     }
+
+    timesheets = await filterTimesheetsForWorkerPayrollAsync(this.db, timesheets);
 
     const poIds = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
 
@@ -346,8 +350,10 @@ export class PayrollService {
       timesheets = timesheets.filter(ts => ts.workMode.toLowerCase() === filters.workModeScope);
     }
 
+    timesheets = await filterTimesheetsForWorkerPayrollAsync(this.db, timesheets);
+
     if (timesheets.length === 0) {
-      throw new Error('ไม่พบใบงานรายวันที่พร้อมจ่าย (readyForPayroll) ในรอบนี้');
+      throw new Error('ไม่พบใบงานรายวันที่พร้อมจ่าย (readyForPayroll) ในรอบนี้ — หรือทุกวันอยู่นอกช่วง mobilization');
     }
 
     const contractMap = new Map<string, MainContract>();
@@ -1144,13 +1150,38 @@ export class PayrollService {
     const rawIds = [...new Set((line.sourceTimesheetIds ?? []).filter(Boolean))];
     if (rawIds.length === 0) throw new Error('ไม่มี sourceTimesheetIds — ไม่สามารถคำนวณใหม่ได้');
 
-    const loaded: DailyTimesheet[] = [];
-    for (const tid of rawIds) {
-      const s = await getDoc(doc(this.db, 'daily_timesheets', tid));
-      if (!s.exists()) continue;
-      loaded.push({ id: s.id, ...(s.data() as object) } as DailyTimesheet);
+    const periodStart = period.startDate || line.periodStartDate;
+    const periodEnd = period.endDate || periodFromLineEnd;
+    if (!periodStart || !periodEnd) {
+      throw new Error('ไม่พบช่วงวันที่งวด — ไม่สามารถคำนวณใหม่ได้');
     }
-    if (loaded.length === 0) throw new Error('โหลดใบงานรายวันไม่ได้ — เอกสารอาจถูกลบ');
+
+    let loaded = await loadWorkerPayableTimesheetsForPeriod(
+      this.db,
+      workerId,
+      periodStart,
+      periodEnd,
+      { includePayrollLocked: true },
+    );
+
+    if (loaded.length === 0 && rawIds.length > 0) {
+      const fallback: DailyTimesheet[] = [];
+      for (const tid of rawIds) {
+        const s = await getDoc(doc(this.db, 'daily_timesheets', tid));
+        if (!s.exists()) continue;
+        const ts = { id: s.id, ...(s.data() as object) } as DailyTimesheet;
+        const d = String(ts.date || '').slice(0, 10);
+        if (d < periodStart || d > periodEnd) continue;
+        fallback.push(ts);
+      }
+      loaded = await filterTimesheetsForWorkerPayrollAsync(this.db, fallback);
+    }
+
+    if (loaded.length === 0) {
+      throw new Error(
+        'ไม่พบใบงานที่จ่ายได้ในงวดนี้ (อาจอยู่นอกช่วง mobilization หรือเป็น unpaid_leave — สอดคล้องตารางสรุปรายเดือน)',
+      );
+    }
 
     const workerTs = normalizeTimesheetsForPayrollLine(loaded);
     for (const ts of workerTs) {
@@ -1270,9 +1301,9 @@ export class PayrollService {
         const cid = (po?.customerId || '').trim() || undefined;
         return {
           purchaseOrderId: poId,
-          customerId: cid,
-          poCodeSnapshot: po?.poCode,
-          customerNameSnapshot: cid ? customerNameById.get(cid) : undefined,
+          customerId: cid ?? null,
+          poCodeSnapshot: po?.poCode ?? null,
+          customerNameSnapshot: cid ? customerNameById.get(cid) ?? null : null,
           grossAmount: round2Payroll(chunk.gross),
           eventBreakdown: { ...chunk.eventBreakdown },
           earningsBreakdown: { ...chunk.earningsBreakdown },
@@ -1412,9 +1443,9 @@ export class PayrollService {
       pitWithholdingOverride:
         mode === 'manual_baht' ? (Number.isFinite(Number(pitOv)) ? Math.max(0, Number(pitOv)) : null) : null,
       pitWithholdingOverrideMaxMarginalRatePercent: storeMr,
-      notes: trimmedNotes || undefined,
+      notes: trimmedNotes ? trimmedNotes : null,
       updatedAt: Date.now(),
-      updatedBy: user.displayName || user.email || user.id,
+      updatedBy: user.displayName || user.email || user.id || 'system',
     };
 
     const wkLine = workerById.get(workerId);
@@ -1466,7 +1497,7 @@ export class PayrollService {
       patch.payslipWorkDaySplit = computeWorkDayPackagePayslipSplit(workerTs, aggDeps);
     }
 
-    await updateDoc(lineRef, patch as DocumentData);
+    await updateDoc(lineRef, stripUndefinedForFirestore(patch) as DocumentData);
 
     await this.recalculateBatchTotalsFromLines(batchId, user);
 
@@ -1626,16 +1657,16 @@ export class PayrollService {
       pitWithholdingOverrideMaxMarginalRatePercent: storeMr,
       notes: trimmedNotes ? trimmedNotes : null,
       updatedAt: Date.now(),
-      updatedBy: user.displayName || user.email || user.id,
+      updatedBy: user.displayName || user.email || user.id || 'system',
     };
 
-    await updateDoc(lineRef, {
+    await updateDoc(lineRef, stripUndefinedForFirestore({
       deductionsBreakdown: deductions,
       netAmount,
       d8Snapshot,
       hrLineAdjustments,
       updatedAt: Date.now(),
-    });
+    }) as DocumentData);
 
     await this.recalculateBatchTotalsFromLines(batchId, user);
 

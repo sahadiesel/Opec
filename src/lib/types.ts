@@ -1092,6 +1092,8 @@ export interface Assignment {
     toolsIssued: ChecklistItemStatus;
     overlapClear: ChecklistItemStatus;
     clientApproved: ChecklistItemStatus;
+    /** ผลตรวจสารเสพติด — negative ภายใน 7 วันก่อน mob (คำนวณสดจาก drug_tests) */
+    drugTestValid?: ChecklistItemStatus;
   };
   clientComments?: string;
   notes?: string;
@@ -2289,6 +2291,10 @@ export interface WorkerDrugTest {
   expiryDate?: number;
   /** @deprecated ใช้ testLocationType / testLocationOther */
   laboratory?: string;
+  /** รูปถ่าย/แนบผลตรวจ (thumbnail ในตาราง) */
+  attachment?: WaveMonthTimesheetPhotoAttachment;
+  /** เวลาบันทึกเอกสาร — ใช้เรียงลำดับล่าสุด */
+  createdAt?: number;
   _path?: string;
 }
 

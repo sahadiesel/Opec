@@ -1,19 +1,5 @@
 import type { DailyTimesheet } from '@/lib/types';
 
-/** ลายเดียวกันสำหรับตัดสินว่าเป็น “ซ้ำวัน” จากการสร้างเอกสารคู่ขนาน */
-function timesheetPayrollFingerprint(ts: DailyTimesheet): string {
-  return [
-    String(ts.eventType || ''),
-    String(ts.normalHours ?? ''),
-    String(ts.ot15Hours ?? 0),
-    String(ts.ot20Hours ?? 0),
-    String(ts.ot30Hours ?? 0),
-    String(ts.workMode || ''),
-    String(ts.purchaseOrderId || '').trim(),
-    String(ts.poLineId || '').trim(),
-  ].join('|');
-}
-
 /**
  * ตัดแถวซ้ำก่อนคิด payroll / แสดงตารางรายวัน
  * — id ซ้ำใน sourceTimesheetIds หรือเอกสารซ้ำคนละ id แต่ worker + assignment + date เดียวกัน
@@ -40,35 +26,50 @@ export function dedupeDailyTimesheetsForPayroll(tsList: readonly DailyTimesheet[
   return out;
 }
 
+/** คะแนนเลือกใบงานที่ “นับจ่าย” เมื่อมีหลายแถวคน+วัน+PO เดียวกัน (Mob clearance + PO Active auto ฯลฯ) */
+function payrollTimesheetDayScore(ts: DailyTimesheet): number {
+  let s = 0;
+  const nh = Math.max(0, Number(ts.normalHours) || 0);
+  if (nh > 0) s += 5000 + nh * 10;
+  if (ts.eventType === 'work_day') s += 3000;
+  else if (ts.eventType === 'standby_day') s += 1500;
+  else if (ts.eventType === 'off_day_worked' || ts.eventType === 'public_holiday_worked') s += 2500;
+  if (ts.status === 'LOCKED') s += 800;
+  if (ts.readyForPayroll === true) s += 400;
+  if (String(ts.assignmentId || '').trim()) s += 200;
+  return s;
+}
+
+/** เลือกหนึ่งใบงานต่อวันต่อ PO — สอดคล้องการจับคู่เซลล์ wave-month (ไม่ double-count) */
+export function pickPreferredDailyTimesheetForPayrollDay(
+  candidates: readonly DailyTimesheet[],
+): DailyTimesheet {
+  if (candidates.length <= 1) return candidates[0];
+  return [...candidates].sort((a, b) => {
+    const scoreDiff = payrollTimesheetDayScore(b) - payrollTimesheetDayScore(a);
+    if (scoreDiff !== 0) return scoreDiff;
+    const updB = Number(b.updatedAt) || 0;
+    const updA = Number(a.updatedAt) || 0;
+    if (updB !== updA) return updB - updA;
+    return String(b.id).localeCompare(String(a.id));
+  })[0];
+}
+
 /**
- * รวมใบงานที่เป็นคนละเอกสารแต่ **วันเดียวกัน + ลายการทำงานเดียวกัน**
- * (เช่น assignmentId ต่างกันเพราะสร้างซ้ำ / merge mob ไม่ครบ) — เก็บหนึ่งแถว โดยเลือกใบที่มี assignmentId ชัดก่อน
+ * รวมใบงานซ้ำ **คน + วัน + PO** — เก็บหนึ่งแถว (แม้ assignment / ชม. / แหล่งบันทึกต่างกัน)
+ * เช่น Mob Final clearance (standby 0 ชม.) + PO Active auto (standby 8 ชม.) วันเดียวกัน
  */
 export function collapseDuplicateWorkerDayTimesheets(tsList: readonly DailyTimesheet[]): DailyTimesheet[] {
-  const byDay = new Map<string, DailyTimesheet[]>();
+  const byDayPo = new Map<string, DailyTimesheet[]>();
   for (const ts of tsList) {
     const wid = String(ts.workerId || '').trim();
     const d = String(ts.date || '').trim();
-    const k = `${wid}\0${d}`;
-    if (!byDay.has(k)) byDay.set(k, []);
-    byDay.get(k)!.push(ts);
+    const po = String(ts.purchaseOrderId || '').trim() || '_unknown_po';
+    const k = `${wid}\0${d}\0${po}`;
+    if (!byDayPo.has(k)) byDayPo.set(k, []);
+    byDayPo.get(k)!.push(ts);
   }
-  const merged: DailyTimesheet[] = [];
-  for (const group of byDay.values()) {
-    if (group.length === 1) {
-      merged.push(group[0]);
-      continue;
-    }
-    const sorted = [...group].sort((a, b) => String(a.id).localeCompare(String(b.id)));
-    const fp = timesheetPayrollFingerprint(sorted[0]);
-    const allSame = sorted.every((t) => timesheetPayrollFingerprint(t) === fp);
-    if (allSame) {
-      const withAsgn = sorted.filter((t) => String(t.assignmentId || '').trim());
-      merged.push(withAsgn.length ? withAsgn[0] : sorted[0]);
-    } else {
-      merged.push(...sorted);
-    }
-  }
+  const merged = [...byDayPo.values()].map((group) => pickPreferredDailyTimesheetForPayrollDay(group));
   return merged.sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
 }
 

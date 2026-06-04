@@ -550,7 +550,7 @@ export default function PayrollBatchWorkerLinePage({
         pitAutoSalaryBaseBaht:
           workerPitMode === 'auto_salary_base' ? Math.max(0, Number(pitAutoSalaryBase) || 0) : null,
         pitWithholdingOverrideMaxMarginalRatePercent: marg,
-        notes: adjNotes.trim() ? adjNotes.trim() : undefined,
+        notes: adjNotes.trim() ? adjNotes.trim() : null,
       });
       toast({
         title: 'บันทึกการปรับยอดแล้ว',
