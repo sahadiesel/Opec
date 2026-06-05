@@ -39,7 +39,6 @@ import {
 } from 'firebase/firestore';
 import type {
   Customer,
-  MonthlyTimesheetPhotoBundle,
   PoLocationMonthTimesheet,
   PoMonthTimesheetPhotoBundle,
   PoMonthTimesheetReview,
@@ -80,9 +79,10 @@ import {
 } from '@/lib/storage/po-month-timesheet-photos';
 import {
   deleteMonthlyTimesheetPhotoFile,
+  listMonthlyTimesheetPhotoAttachmentsFromStorage,
+  MAX_MONTHLY_TIMESHEET_ATTACHMENTS,
   uploadMonthlyTimesheetPhoto,
 } from '@/lib/storage/monthly-timesheet-photos';
-import { useDoc } from '@/firebase/firestore/use-doc';
 import {
   FileText,
   ImagePlus,
@@ -161,6 +161,8 @@ export type TimesheetPoMonthPanelProps = {
   embedded?: boolean;
   /** เดือนที่สอดคล้องกับตารางสรุปรายเดือน (เมื่อ embedded) */
   linkedMonthYm?: string;
+  /** ชุด PO Active (ลูกค้า+โหมด) — ฝังใน wave-month ให้สอดคล้องตารางสรุป */
+  linkedPoActiveBundleId?: string | null;
   onLinkedMonthYmChange?: (ym: string) => void;
   /** wave-month: อัปเดตสถานะปุ่มลัด (ปิดงวด Payroll / ส่งอนุมัติ TS / แนบ) */
   onEmbeddedToolbarSnapshot?: (s: TimesheetPoMonthToolbarSnapshot | null) => void;
@@ -178,6 +180,7 @@ export type TimesheetPoMonthToolbarSnapshot = {
   monthlyAttachUploading: boolean;
   monthlyTimesheetNo: string | null;
   monthlyAttachments: WaveMonthTimesheetPhotoAttachment[];
+  monthlyAttachmentsLoading: boolean;
   busyPoId: string | null;
 };
 
@@ -195,6 +198,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
     {
       embedded = false,
       linkedMonthYm,
+      linkedPoActiveBundleId,
       onLinkedMonthYmChange,
       onEmbeddedToolbarSnapshot,
     },
@@ -212,7 +216,8 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
 
   const monthFromUrl = (searchParams.get('month') || '').trim();
   const highlightPo = (searchParams.get('highlightPo') || '').trim();
-  const poActiveBundleIdRaw = (searchParams.get('poActiveBundleId') || '').trim() || null;
+  const poActiveBundleIdRaw =
+    (linkedPoActiveBundleId ?? (searchParams.get('poActiveBundleId') || '').trim() || null) || null;
   const filterPoActiveBundleId = poActiveBundleIdRaw ? normalizePoActiveBundleId(poActiveBundleIdRaw) : null;
   const locationKeyRaw = (searchParams.get('locationKey') || '').trim();
   /** คีย์ตรงกับ `PoLocationMonthTimesheet.locationKey` (รวม `__default__`) */
@@ -243,6 +248,8 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
   const [periodEndByPo, setPeriodEndByPo] = useState<Record<string, string>>({});
   const [uploadingPhotoPoId, setUploadingPhotoPoId] = useState<string | null>(null);
   const [uploadingMonthlyPhoto, setUploadingMonthlyPhoto] = useState(false);
+  const [monthlyStorageAttachments, setMonthlyStorageAttachments] = useState<WaveMonthTimesheetPhotoAttachment[]>([]);
+  const [monthlyStorageLoading, setMonthlyStorageLoading] = useState(false);
   const [submittingPoId, setSubmittingPoId] = useState<string | null>(null);
   const [payrollSyncBusy, setPayrollSyncBusy] = useState(false);
   const [portalParityBusy, setPortalParityBusy] = useState(false);
@@ -331,14 +338,26 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
   );
   const { data: photoBundleRows } = useCollection<PoMonthTimesheetPhotoBundle>(photoBundlesQuery as any);
 
-  const monthlyPhotoBundleDocRef = useMemoFirebase(
-    () =>
-      firestore && canViewTs && /^\d{4}-\d{2}$/.test(monthYm)
-        ? doc(firestore, 'monthly_timesheet_photo_bundles', monthYm)
-        : null,
-    [firestore, canViewTs, monthYm],
-  );
-  const { data: monthlyPhotoBundleDoc } = useDoc<MonthlyTimesheetPhotoBundle>(monthlyPhotoBundleDocRef);
+  const refreshMonthlyStorageAttachments = useCallback(async () => {
+    if (!firebaseApp || !canViewTs || !/^\d{4}-\d{2}$/.test(monthYm)) {
+      setMonthlyStorageAttachments([]);
+      return;
+    }
+    setMonthlyStorageLoading(true);
+    try {
+      const list = await listMonthlyTimesheetPhotoAttachmentsFromStorage(firebaseApp, monthYm);
+      setMonthlyStorageAttachments(list.slice(-MAX_MONTHLY_TIMESHEET_ATTACHMENTS));
+    } catch (e: unknown) {
+      console.error('[monthly-ts-photos] list from storage', e);
+      setMonthlyStorageAttachments([]);
+    } finally {
+      setMonthlyStorageLoading(false);
+    }
+  }, [firebaseApp, canViewTs, monthYm]);
+
+  useEffect(() => {
+    void refreshMonthlyStorageAttachments();
+  }, [refreshMonthlyStorageAttachments]);
 
   const locShellsQuery = useMemoFirebase(
     () =>
@@ -616,11 +635,8 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
           base.reviewedByName = deleteField();
           base.reviewNote = deleteField();
           let atts: NonNullable<PoMonthTimesheetReview['timesheetPhotoAttachments']> = [];
-          const monthlyBundleRef = doc(firestore, 'monthly_timesheet_photo_bundles', monthYm);
-          const monthlySnap = await getDoc(monthlyBundleRef);
-          if (monthlySnap.exists()) {
-            const md = monthlySnap.data() as MonthlyTimesheetPhotoBundle;
-            atts = Array.isArray(md.attachments) ? [...md.attachments] : [];
+          if (firebaseApp) {
+            atts = await listMonthlyTimesheetPhotoAttachmentsFromStorage(firebaseApp, monthYm);
           }
           const bundleRef = doc(firestore, 'po_month_timesheet_photo_bundles', id);
           const bundleSnap = await getDoc(bundleRef);
@@ -691,7 +707,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
         setSubmittingPoId(null);
       }
     },
-    [firestore, currentUser, canEditTs, monthYm, getPeriodBounds, relatedWaveIdsFor, toast],
+    [firestore, currentUser, canEditTs, monthYm, getPeriodBounds, relatedWaveIdsFor, toast, firebaseApp],
   );
 
   const adminUnlockPoMonthReview = useCallback(
@@ -897,32 +913,19 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
 
   const appendMonthlyPhoto = useCallback(
     async (file: File) => {
-      if (!firebaseApp || !firestore || !/^\d{4}-\d{2}$/.test(monthYm)) return;
-      const prevLen = monthlyPhotoBundleDoc?.attachments?.length ?? 0;
-      if (prevLen >= MAX_PO_MONTH_ATTACHMENTS) {
+      if (!firebaseApp || !/^\d{4}-\d{2}$/.test(monthYm)) return;
+      if (monthlyStorageAttachments.length >= MAX_MONTHLY_TIMESHEET_ATTACHMENTS) {
         toast({
           variant: 'destructive',
           title: 'เต็มจำนวนแนบ',
-          description: `แนบได้สูงสุด ${MAX_PO_MONTH_ATTACHMENTS} ไฟล์ — ลบบางรายก่อนเพิ่ม`,
+          description: `แนบได้สูงสุด ${MAX_MONTHLY_TIMESHEET_ATTACHMENTS} ไฟล์ — ลบบางรายก่อนเพิ่ม`,
         });
         return;
       }
       setUploadingMonthlyPhoto(true);
       try {
-        const att = await uploadMonthlyTimesheetPhoto(firebaseApp, monthYm, file);
-        const bundleRef = doc(firestore, 'monthly_timesheet_photo_bundles', monthYm);
-        const snap = await getDoc(bundleRef);
-        const prev = snap.exists() ? ((snap.data() as MonthlyTimesheetPhotoBundle).attachments ?? []) : [];
-        await setDoc(
-          bundleRef,
-          {
-            id: monthYm,
-            yearMonth: monthYm,
-            attachments: [...prev, att],
-            updatedAt: Date.now(),
-          } as Record<string, unknown>,
-          { merge: true },
-        );
+        await uploadMonthlyTimesheetPhoto(firebaseApp, monthYm, file);
+        await refreshMonthlyStorageAttachments();
         toast({
           title: 'แนบไฟล์แล้ว',
           description: 'ผูกกับเอกสาร timesheet รายเดือน (เลข TS-) — ใช้ตรวจกับตารางสรุปรายเดือน',
@@ -937,21 +940,16 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
         setUploadingMonthlyPhoto(false);
       }
     },
-    [firebaseApp, firestore, monthYm, toast],
+    [firebaseApp, monthYm, monthlyStorageAttachments.length, refreshMonthlyStorageAttachments, toast],
   );
 
   const removeMonthlyPhoto = useCallback(
     async (attId: string, storagePath: string) => {
-      if (!firebaseApp || !firestore || !/^\d{4}-\d{2}$/.test(monthYm)) return;
+      if (!firebaseApp || !/^\d{4}-\d{2}$/.test(monthYm)) return;
       setUploadingMonthlyPhoto(true);
       try {
         await deleteMonthlyTimesheetPhotoFile(firebaseApp, storagePath);
-        const bundleRef = doc(firestore, 'monthly_timesheet_photo_bundles', monthYm);
-        const snap = await getDoc(bundleRef);
-        if (!snap.exists()) return;
-        const bd = snap.data() as MonthlyTimesheetPhotoBundle;
-        const next = (bd.attachments ?? []).filter((a) => a.id !== attId);
-        await setDoc(bundleRef, { attachments: next, updatedAt: Date.now() }, { merge: true });
+        await refreshMonthlyStorageAttachments();
         toast({ title: 'ลบไฟล์แล้ว' });
       } catch (e: unknown) {
         toast({
@@ -963,7 +961,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
         setUploadingMonthlyPhoto(false);
       }
     },
-    [firebaseApp, firestore, monthYm, toast],
+    [firebaseApp, monthYm, refreshMonthlyStorageAttachments, toast],
   );
 
   useImperativeHandle(
@@ -1063,7 +1061,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
       return;
     }
     const poOptions = posRows.map((p) => ({ id: p.id, code: p.poCode ?? p.id }));
-    const monthlyAttachments = monthlyPhotoBundleDoc?.attachments ?? [];
+    const monthlyAttachments = monthlyStorageAttachments;
     const attachDisabled = monthlyAttachReadonly || !canEditTs || uploadingMonthlyPhoto;
 
     if (!toolbarTargetPo) {
@@ -1079,6 +1077,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
         monthlyAttachUploading: uploadingMonthlyPhoto,
         monthlyTimesheetNo,
         monthlyAttachments,
+        monthlyAttachmentsLoading: monthlyStorageLoading,
         busyPoId: submittingPoId,
       });
       return;
@@ -1108,6 +1107,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
       monthlyAttachUploading: uploadingMonthlyPhoto,
       monthlyTimesheetNo,
       monthlyAttachments,
+      monthlyAttachmentsLoading: monthlyStorageLoading,
       busyPoId: submittingPoId,
     });
   }, [
@@ -1120,7 +1120,8 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
     uploadingMonthlyPhoto,
     monthlyAttachReadonly,
     monthlyTimesheetNo,
-    monthlyPhotoBundleDoc,
+    monthlyStorageAttachments,
+    monthlyStorageLoading,
     currentUser,
     onEmbeddedToolbarSnapshot,
   ]);

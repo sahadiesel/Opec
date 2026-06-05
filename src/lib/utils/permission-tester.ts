@@ -64,6 +64,7 @@ export function runPermissionLogicSuite(): ValidationSummary {
 
   const hrOfficer = createMockUser(['hr_officer'], 'hr', 'officer');
   const hrWorkers = getPermissions(hrOfficer, 'workers');
+  const hrOfficeStaff = getPermissions(hrOfficer, 'office_staff');
   const hrTimesheets = getPermissions(hrOfficer, 'timesheets');
   const hrHub = getPermissions(hrOfficer, 'hr_hub');
   const hrAccessToAccounting = getPermissions(hrOfficer, 'billing_notes');
@@ -73,13 +74,14 @@ export function runPermissionLogicSuite(): ValidationSummary {
       hrWorkers.create &&
       hrWorkers.edit &&
       !hrWorkers.delete &&
+      !hrOfficeStaff.view &&
       hrTimesheets.view &&
       hrTimesheets.create &&
       hrTimesheets.edit &&
       !hrTimesheets.approve &&
       hrHub.view &&
       !hrAccessToAccounting.view,
-    'HR Officer should manage workers + timesheets (incl. attach), HR hub / master data, no accounting finance'
+    'HR Officer should manage workers + timesheets (incl. attach), HR hub / master data, no office staff registry or accounting finance'
   );
 
   const payrollOfficer = createMockUser(['payroll_officer'], 'hr', 'officer');

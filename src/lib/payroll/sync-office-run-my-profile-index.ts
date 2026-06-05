@@ -7,7 +7,9 @@ import {
 import type { OfficePayrollLine, OfficeStaff, OfficeStaffPayrollLineRef } from '@/lib/types';
 import {
   buildOfficeStaffSelfPayrollLineIndex,
+  normalizeOfficeStaffPayrollLineRef,
   officeStaffSelfPayrollLineIndexRef,
+  sanitizeOfficeStaffPayrollLineRefs,
 } from '@/lib/payroll/self-payroll-line-index';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
 
@@ -22,6 +24,7 @@ export async function syncOfficeRunMyProfileIndex(
   runId: string,
   lines: OfficePayrollLine[],
   runCollection: OfficeStaffPayrollLineRef['runCollection'] = 'office_payroll_runs',
+  runPayrollMonth?: string,
 ): Promise<{ synced: number; skipped: number }> {
   let synced = 0;
   let skipped = 0;
@@ -36,6 +39,8 @@ export async function syncOfficeRunMyProfileIndex(
     batch = writeBatch(firestore);
     ops = 0;
   };
+
+  const monthFallback = (runPayrollMonth || '').trim() || undefined;
 
   for (const line of lines) {
     if (!line.staffId?.trim() || !line.id) {
@@ -55,11 +60,12 @@ export async function syncOfficeRunMyProfileIndex(
       continue;
     }
 
+    const linePayrollMonth = (line.payrollMonth || monthFallback || '').trim() || undefined;
     const fullLine: OfficePayrollLine = {
       ...line,
       id: line.id,
       officePayrollRunId: line.officePayrollRunId || runId,
-      payrollMonth: line.payrollMonth,
+      payrollMonth: linePayrollMonth,
       subjectLinkedUserId: linked,
     };
 
@@ -75,13 +81,16 @@ export async function syncOfficeRunMyProfileIndex(
     );
     ops++;
 
-    const ref: OfficeStaffPayrollLineRef = {
-      runCollection,
-      runId,
-      lineId: line.id,
-      payrollMonth: fullLine.payrollMonth,
-      updatedAt: fullLine.updatedAt || Date.now(),
-    };
+    const ref = normalizeOfficeStaffPayrollLineRef(
+      {
+        runCollection,
+        runId,
+        lineId: line.id,
+        payrollMonth: linePayrollMonth,
+        updatedAt: fullLine.updatedAt || Date.now(),
+      },
+      monthFallback,
+    );
     const prev = refsByStaff.get(line.staffId) ?? [];
     refsByStaff.set(
       line.staffId,
@@ -95,16 +104,14 @@ export async function syncOfficeRunMyProfileIndex(
   for (const [staffId, newRefs] of refsByStaff) {
     const staffSnap = await getDoc(doc(firestore, 'office_staff', staffId));
     const existing = (staffSnap.data() as OfficeStaff | undefined)?.payrollLineRefs ?? [];
-    const merged = [...newRefs];
-    for (const r of existing) {
-      if (!merged.some((m) => m.runId === r.runId && m.lineId === r.lineId)) {
-        merged.push(r);
-      }
-    }
+    const merged = sanitizeOfficeStaffPayrollLineRefs([
+      ...newRefs,
+      ...existing.filter((r) => !newRefs.some((m) => m.runId === r.runId && m.lineId === r.lineId)),
+    ]);
     merged.sort((a, b) => b.updatedAt - a.updatedAt);
     batch.set(
       doc(firestore, 'office_staff', staffId),
-      { payrollLineRefs: merged.slice(0, 120) },
+      stripUndefinedForFirestore({ payrollLineRefs: merged.slice(0, 120) }),
       { merge: true },
     );
     ops++;

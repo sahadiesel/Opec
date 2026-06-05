@@ -129,7 +129,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
     if (!firestore || !canMutate || !lines?.length || autoMyProfileSyncDone.current) return;
     if (!isLocked && !officeRunNeedsMyProfileIndexSync(lines)) return;
     autoMyProfileSyncDone.current = true;
-    void syncOfficeRunMyProfileIndex(firestore, id, lines).then(({ synced, skipped }) => {
+    void syncOfficeRunMyProfileIndex(firestore, id, lines, 'office_payroll_runs', run?.payrollMonth).then(({ synced, skipped }) => {
       if (synced > 0) {
         toast({
           title: 'อัปเดต My Profile แล้ว',
@@ -137,13 +137,19 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
         });
       }
     });
-  }, [firestore, canMutate, lines, id, isLocked, toast]);
+  }, [firestore, canMutate, lines, id, isLocked, toast, run?.payrollMonth]);
 
   const handleSyncMyProfileIndex = async () => {
     if (!firestore || !lines?.length) return;
     setMyProfileSyncBusy(true);
     try {
-      const { synced, skipped } = await syncOfficeRunMyProfileIndex(firestore, id, lines);
+      const { synced, skipped } = await syncOfficeRunMyProfileIndex(
+        firestore,
+        id,
+        lines,
+        'office_payroll_runs',
+        run?.payrollMonth,
+      );
       toast({
         title: synced > 0 ? 'อัปเดต My Profile แล้ว' : 'ไม่มีรายการที่ sync',
         description:

@@ -9,7 +9,10 @@ import { OFFICE_RUN_STATUSES_WITH_SAVED_LINES } from '@/lib/payroll/office-month
 import {
   buildOfficeStaffSelfPayrollLineIndex,
   buildWorkerSelfPayrollLineIndex,
+  normalizeOfficeStaffPayrollLineRef,
+  sanitizeOfficeStaffPayrollLineRefs,
 } from '@/lib/payroll/self-payroll-line-index';
+import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
 
 const OFFICE_RUN_COLLECTIONS = new Set(['office_payroll_runs', 'executive_payroll_runs']);
 
@@ -58,6 +61,20 @@ function resolveLineRunMeta(lineDoc: QueryDocumentSnapshot): {
   return { runCollection, runId: runRef.id };
 }
 
+async function payrollMonthForRun(
+  db: Firestore,
+  runCollection: string,
+  runId: string,
+  cache: Map<string, string | undefined>,
+): Promise<string | undefined> {
+  const key = `${runCollection}/${runId}`;
+  if (cache.has(key)) return cache.get(key);
+  const runSnap = await db.collection(runCollection).doc(runId).get();
+  const pm = (runSnap.data() as { payrollMonth?: string } | undefined)?.payrollMonth?.trim() || undefined;
+  cache.set(key, pm);
+  return pm;
+}
+
 export async function fetchOfficeStaffPayrollLinesAdmin(
   db: Firestore,
   staffId: string,
@@ -67,6 +84,7 @@ export async function fetchOfficeStaffPayrollLinesAdmin(
   const snap = await db.collectionGroup('lines').where('staffId', '==', staffId).get();
   const out: OfficePayrollLine[] = [];
   const refs: OfficeStaffPayrollLineRef[] = [];
+  const runMonthCache = new Map<string, string | undefined>();
 
   for (const lineDoc of snap.docs) {
     const meta = resolveLineRunMeta(lineDoc);
@@ -79,14 +97,18 @@ export async function fetchOfficeStaffPayrollLinesAdmin(
     }
 
     const raw = lineDoc.data() as Record<string, unknown>;
+    const runPayrollMonth = await payrollMonthForRun(db, meta.runCollection, meta.runId, runMonthCache);
+    const linePayrollMonth =
+      (typeof raw.payrollMonth === 'string' ? raw.payrollMonth.trim() : '') || runPayrollMonth || undefined;
     const line = {
       id: lineDoc.id,
       officePayrollRunId: meta.runId,
+      payrollMonth: linePayrollMonth,
       ...(raw as object),
     } as OfficePayrollLine;
 
     if (!raw.subjectLinkedUserId) {
-      await lineDoc.ref.update({ subjectLinkedUserId: linkedUserId });
+      await lineDoc.ref.update(stripUndefinedForFirestore({ subjectLinkedUserId: linkedUserId }));
     }
 
     await db
@@ -96,19 +118,24 @@ export async function fetchOfficeStaffPayrollLinesAdmin(
       .doc(lineDoc.id)
       .set(buildOfficeStaffSelfPayrollLineIndex(line));
 
-    refs.push({
-      runCollection: meta.runCollection as OfficeStaffPayrollLineRef['runCollection'],
-      runId: meta.runId,
-      lineId: lineDoc.id,
-      payrollMonth: line.payrollMonth,
-      updatedAt: line.updatedAt || Date.now(),
-    });
+    refs.push(
+      normalizeOfficeStaffPayrollLineRef(
+        {
+          runCollection: meta.runCollection as OfficeStaffPayrollLineRef['runCollection'],
+          runId: meta.runId,
+          lineId: lineDoc.id,
+          payrollMonth: linePayrollMonth,
+          updatedAt: line.updatedAt || Date.now(),
+        },
+        runPayrollMonth,
+      ),
+    );
     out.push(line);
   }
 
   refs.sort((a, b) => b.updatedAt - a.updatedAt);
   await db.collection('office_staff').doc(staffId).set(
-    { payrollLineRefs: refs.slice(0, maxLines) },
+    stripUndefinedForFirestore({ payrollLineRefs: sanitizeOfficeStaffPayrollLineRefs(refs).slice(0, maxLines) }),
     { merge: true },
   );
 

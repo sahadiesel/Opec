@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -20,11 +21,13 @@ import {
   Trash2,
   Unlock,
   Waves,
+  Layers,
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import type {
   Assignment,
+  Customer,
   DailyTimesheet,
   DailyTimesheetStatus,
   PoMonthTimesheetReview,
@@ -90,6 +93,7 @@ import {
   type TimesheetPoMonthToolbarSnapshot,
 } from '@/components/timesheet/timesheet-po-month-panel';
 import { isSystemAdmin } from '@/lib/permission-core';
+import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 
 function ymNow(): string {
   const d = new Date();
@@ -151,6 +155,7 @@ type CellEditContext = {
 };
 
 export default function WaveMonthTimesheetSummaryPage() {
+  const router = useRouter();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -165,6 +170,8 @@ export default function WaveMonthTimesheetSummaryPage() {
   );
 
   const [monthYm, setMonthYm] = useState(ymNow);
+  const [bundleFilterId, setBundleFilterId] = useState<string | null>(null);
+  const [urlHighlightPo, setUrlHighlightPo] = useState('');
   const [mobAssignments, setMobAssignments] = useState<Assignment[]>([]);
   const [mobLoading, setMobLoading] = useState(false);
   const [extraWaves, setExtraWaves] = useState<Wave[]>([]);
@@ -201,7 +208,27 @@ export default function WaveMonthTimesheetSummaryPage() {
     const p = new URLSearchParams(window.location.search);
     const m = p.get('month');
     if (m && /^\d{4}-\d{2}$/.test(m)) setMonthYm(m);
+    const b = (p.get('poActiveBundleId') || '').trim();
+    setBundleFilterId(b ? normalizePoActiveBundleId(b) : null);
+    setUrlHighlightPo((p.get('highlightPo') || '').trim());
   }, []);
+
+  const replaceWaveMonthQuery = useCallback(
+    (mutate: (p: URLSearchParams) => void) => {
+      const p = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+      mutate(p);
+      if (!p.get('month') || !/^\d{4}-\d{2}$/.test(p.get('month')!)) {
+        p.set('month', monthYm);
+      }
+      router.replace(`/timesheets/wave-month?${p.toString()}`);
+      const nextMonth = p.get('month')!;
+      if (/^\d{4}-\d{2}$/.test(nextMonth)) setMonthYm(nextMonth);
+      const b = (p.get('poActiveBundleId') || '').trim();
+      setBundleFilterId(b ? normalizePoActiveBundleId(b) : null);
+      setUrlHighlightPo((p.get('highlightPo') || '').trim());
+    },
+    [router, monthYm],
+  );
 
   const poQuery = useMemoFirebase(
     () =>
@@ -212,16 +239,82 @@ export default function WaveMonthTimesheetSummaryPage() {
   );
   const { data: pos, isLoading: posLoading } = useCollection<PurchaseOrder>(poQuery as any);
 
+  const customersQuery = useMemoFirebase(
+    () => (firestore && canViewTs ? collection(firestore, 'customers') : null),
+    [firestore, canViewTs],
+  );
+  const { data: customers } = useCollection<Customer>(customersQuery as any);
+
+  const openPoIdSet = useMemo(() => new Set((pos ?? []).map((p) => p.id)), [pos]);
+
+  const customerNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of customers ?? []) m.set(c.id, c.name);
+    return m;
+  }, [customers]);
+
+  const poById = useMemo(() => new Map((pos ?? []).map((p) => [p.id, p])), [pos]);
+
+  const bundleOptions = useMemo(() => {
+    const m = new Map<string, { key: string; customerId: string; poCodes: string[]; workMode?: string }>();
+    for (const p of pos ?? []) {
+      const key = resolvePoActiveBundleKeyForPo(p);
+      const ex = m.get(key) ?? {
+        key,
+        customerId: (p.customerId || '').trim(),
+        poCodes: [],
+        workMode: p.poWorkMode,
+      };
+      ex.poCodes.push(p.poCode ?? p.id);
+      m.set(key, ex);
+    }
+    return [...m.values()].sort((a, b) => {
+      const ca = customerNameById.get(a.customerId) ?? a.customerId;
+      const cb = customerNameById.get(b.customerId) ?? b.customerId;
+      return ca.localeCompare(cb, 'th') || a.key.localeCompare(b.key);
+    });
+  }, [pos, customerNameById]);
+
+  const effectiveBundleId = useMemo(() => {
+    if (bundleFilterId) return bundleFilterId;
+    if (urlHighlightPo && poById.has(urlHighlightPo)) {
+      return resolvePoActiveBundleKeyForPo(poById.get(urlHighlightPo)!);
+    }
+    if (bundleOptions.length === 1) return bundleOptions[0]!.key;
+    return null;
+  }, [bundleFilterId, urlHighlightPo, poById, bundleOptions]);
+
+  const scopedPoIdSet = useMemo(() => {
+    if (!effectiveBundleId) {
+      if (bundleOptions.length > 1) return new Set<string>();
+      return openPoIdSet;
+    }
+    const s = new Set<string>();
+    for (const p of pos ?? []) {
+      if (resolvePoActiveBundleKeyForPo(p) === effectiveBundleId) s.add(p.id);
+    }
+    return s;
+  }, [effectiveBundleId, bundleOptions.length, pos, openPoIdSet]);
+
+  const activeBundleLabel = useMemo(() => {
+    if (!effectiveBundleId) return null;
+    const opt = bundleOptions.find((b) => b.key === effectiveBundleId);
+    if (!opt) return effectiveBundleId;
+    const name = customerNameById.get(opt.customerId) ?? opt.customerId;
+    const mode = opt.workMode === 'ONSHORE' ? 'Onshore' : opt.workMode === 'OFFSHORE' ? 'Offshore' : '';
+    return `${name}${mode ? ` · ${mode}` : ''} (PO: ${opt.poCodes.join(', ')})`;
+  }, [effectiveBundleId, bundleOptions, customerNameById]);
+
+  const needsBundlePick = bundleOptions.length > 1 && !effectiveBundleId;
+
   const waveQuery = useMemoFirebase(() => {
     if (!firestore || !canViewTs) return null;
     return query(collection(firestore, 'waves'), where('status', 'in', OPEN_WAVE_STATUSES_FOR_TIMESHEET));
   }, [firestore, canViewTs]);
   const { data: allOpenWaves, isLoading: wavesLoading } = useCollection<Wave>(waveQuery as any);
 
-  const openPoIdSet = useMemo(() => new Set((pos ?? []).map((p) => p.id)), [pos]);
-
   const sortedWaves = useMemo(() => {
-    const list = (allOpenWaves ?? []).filter((w) => openPoIdSet.has(w.poId));
+    const list = (allOpenWaves ?? []).filter((w) => scopedPoIdSet.has(w.poId));
     const poById = new Map((pos ?? []).map((p) => [p.id, p]));
     return [...list].sort((a, b) => {
       const pa = poById.get(a.poId)?.poCode ?? '';
@@ -229,7 +322,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       if (pa !== pb) return pa.localeCompare(pb, 'th');
       return (a.waveCode || '').localeCompare(b.waveCode || '', 'th');
     });
-  }, [allOpenWaves, openPoIdSet, pos]);
+  }, [allOpenWaves, scopedPoIdSet, pos]);
 
   const sortedWaveIdSet = useMemo(() => new Set(sortedWaves.map((w) => w.id)), [sortedWaves]);
 
@@ -275,9 +368,9 @@ export default function WaveMonthTimesheetSummaryPage() {
 
   /** สอดคล้อง Wave Board (โหลดตาม PO): รวมรายการที่ wave ปิดแล้วแต่ยังอยู่ใน PO ที่เปิด */
   const monthSheetsForOpenPos = useMemo(() => {
-    if (!allMonthSheetsRaw?.length || openPoIdSet.size === 0) return [];
-    return allMonthSheetsRaw.filter((t) => openPoIdSet.has(t.purchaseOrderId));
-  }, [allMonthSheetsRaw, openPoIdSet]);
+    if (!allMonthSheetsRaw?.length || scopedPoIdSet.size === 0) return [];
+    return allMonthSheetsRaw.filter((t) => scopedPoIdSet.has(t.purchaseOrderId));
+  }, [allMonthSheetsRaw, scopedPoIdSet]);
 
   const reviewsQuery = useMemoFirebase(
     () =>
@@ -451,7 +544,7 @@ export default function WaveMonthTimesheetSummaryPage() {
   }, [firestore, currentUser, monthReviewRows, toast]);
 
   useEffect(() => {
-    const poIdsList = [...openPoIdSet];
+    const poIdsList = [...scopedPoIdSet];
     if (!firestore || !canViewTs || poIdsList.length === 0) {
       setMobAssignments([]);
       setMobLoading(false);
@@ -488,7 +581,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     return () => {
       cancelled = true;
     };
-  }, [firestore, canViewTs, openPoIdSet]);
+  }, [firestore, canViewTs, scopedPoIdSet]);
 
   const workersQuery = useMemoFirebase(
     () => (firestore && canViewTs ? collection(firestore, 'workers') : null),
@@ -508,8 +601,6 @@ export default function WaveMonthTimesheetSummaryPage() {
     }
     return m;
   }, [positionsCatalog]);
-
-  const poById = useMemo(() => new Map((pos ?? []).map((p) => [p.id, p])), [pos]);
 
   const waveIdsWithEligibleMobInMonth = useMemo(() => {
     const s = new Set<string>();
@@ -985,8 +1076,14 @@ export default function WaveMonthTimesheetSummaryPage() {
               ) : (
                 <span className="font-mono text-foreground font-semibold">{monthlyTimesheetNo ?? '—'}</span>
               )}{' '}
-              · ตารางรวมคนที่มีช่วง mobilization ทับเดือนที่เลือก — กดเซลล์เพื่อแก้รายวัน
+              · ตารางสรุปแยกตาม<strong className="text-foreground">ชุด PO Active (ลูกค้า + สัญญา)</strong> — ราคาวางบิล/payroll ไม่รวมข้ามลูกค้า
             </p>
+            {activeBundleLabel ? (
+              <p className="text-sm mt-2 flex flex-wrap items-center gap-2">
+                <Layers className="h-4 w-4 text-primary shrink-0" />
+                <span className="font-semibold text-foreground">{activeBundleLabel}</span>
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" asChild>
@@ -1014,6 +1111,7 @@ export default function WaveMonthTimesheetSummaryPage() {
           <p className="text-center text-muted-foreground py-12">กำลังโหลด…</p>
         ) : (
           <div className="space-y-6">
+            {!needsBundlePick ? (
             <Alert className="border-amber-200/80 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20">
               <div className="space-y-3">
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between xl:gap-4">
@@ -1167,6 +1265,11 @@ export default function WaveMonthTimesheetSummaryPage() {
                         </div>
                       ))}
                     </div>
+                  ) : poToolbarSnapshot?.monthlyAttachmentsLoading ? (
+                    <div className="flex items-center gap-2 border-t border-orange-300/40 pt-2 dark:border-orange-800/40">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                      <p className="text-xs text-muted-foreground">กำลังโหลดไฟล์แนบ…</p>
+                    </div>
                   ) : (
                     <p className="text-xs text-muted-foreground border-t border-orange-300/40 pt-2 dark:border-orange-800/40">
                       ยังไม่มีไฟล์แนบคู่เอกสาร TS ในเดือนนี้
@@ -1175,7 +1278,52 @@ export default function WaveMonthTimesheetSummaryPage() {
                 </div>
               </div>
             </Alert>
-            {displayWaves.length === 0 ? (
+            ) : null}
+            {needsBundlePick ? (
+              <Card className="border-dashed border-primary/40">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Layers className="h-5 w-5 text-primary" />
+                    เลือกลูกค้า / ชุด PO Active
+                  </CardTitle>
+                  <CardDescription>
+                    มีหลายสัญญาในงวดนี้ — ตารางสรุปและปิดงวด payroll แยกตามลูกค้า (ราคาสัญญาไม่รวมกัน) เลือกชุดที่ต้องการทำงาน
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex flex-col gap-2 max-w-md">
+                    <Label>ชุด PO Active</Label>
+                    <Select
+                      value=""
+                      onValueChange={(key) => {
+                        replaceWaveMonthQuery((p) => {
+                          p.set('poActiveBundleId', key);
+                        });
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="เลือกลูกค้า / ชุดสัญญา…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {bundleOptions.map((b) => {
+                          const name = customerNameById.get(b.customerId) ?? b.customerId;
+                          const mode = b.workMode === 'ONSHORE' ? 'Onshore' : b.workMode === 'OFFSHORE' ? 'Offshore' : '';
+                          return (
+                            <SelectItem key={b.key} value={b.key}>
+                              {name}
+                              {mode ? ` · ${mode}` : ''} — PO {b.poCodes.join(', ')}
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href="/timesheets">กลับศูนย์ลงเวลา (เลือกจากการ์ดลูกค้า)</Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : displayWaves.length === 0 ? (
               <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
                 ไม่มี Wave ที่เกี่ยวข้องในเดือนนี้ — ไม่มี mobilization ที่พร้อมลงเวลาและทับเดือนที่เลือกสำหรับ PO ที่เปิดอยู่
               </p>
@@ -1186,10 +1334,13 @@ export default function WaveMonthTimesheetSummaryPage() {
                   <div className="min-w-0 flex-1 space-y-1">
                     <CardTitle className="text-base">สรุปลงเวลารายเดือน</CardTitle>
                     <CardDescription className="space-y-2">
+                      {activeBundleLabel ? (
+                        <p className="font-medium text-foreground">{activeBundleLabel}</p>
+                      ) : null}
                       <p>
                         เลขที่เอกสาร {monthlyTimesheetNo ? <span className="font-mono text-foreground">{monthlyTimesheetNo}</span> : '—'}{' '}
                         · พบ {sortedWaves.length} Wave สถานะเปิด · แสดงในตาราง {displayWaves.length} Wave
-                        {pos != null ? ` · ${pos.length} PO (pending/active)` : ''}
+                        {pos != null ? ` · ${scopedPoIdSet.size} PO ในชุดนี้` : ''}
                       </p>
                       <p>
                         แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ ·{' '}
@@ -1198,22 +1349,51 @@ export default function WaveMonthTimesheetSummaryPage() {
                       </p>
                     </CardDescription>
                   </div>
-                  <div className="flex flex-col gap-1.5 shrink-0 w-full max-w-[220px]">
+                  <div className="flex flex-col gap-2 shrink-0 w-full max-w-[280px]">
+                    {bundleOptions.length > 1 ? (
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold uppercase text-muted-foreground">ลูกค้า / ชุด PO Active</Label>
+                        <Select
+                          value={effectiveBundleId ?? ''}
+                          onValueChange={(key) => {
+                            replaceWaveMonthQuery((p) => {
+                              p.set('poActiveBundleId', key);
+                            });
+                          }}
+                        >
+                          <SelectTrigger className="h-10">
+                            <SelectValue placeholder="เลือกชุดสัญญา…" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {bundleOptions.map((b) => {
+                              const name = customerNameById.get(b.customerId) ?? b.customerId;
+                              const mode = b.workMode === 'ONSHORE' ? 'Onshore' : b.workMode === 'OFFSHORE' ? 'Offshore' : '';
+                              return (
+                                <SelectItem key={b.key} value={b.key}>
+                                  {name}
+                                  {mode ? ` · ${mode}` : ''}
+                                </SelectItem>
+                              );
+                            })}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
+                    <div className="flex flex-col gap-1.5">
                     <Label className="text-xs font-semibold uppercase text-muted-foreground">เดือน (ปี-เดือน)</Label>
                     <Input
                       type="month"
                       value={monthYm}
                       onChange={(e) => {
                         const v = e.target.value;
-                        setMonthYm(v);
-                        if (typeof window !== 'undefined' && /^\d{4}-\d{2}$/.test(v)) {
-                          const p = new URLSearchParams(window.location.search);
+                        if (!/^\d{4}-\d{2}$/.test(v)) return;
+                        replaceWaveMonthQuery((p) => {
                           p.set('month', v);
-                          window.history.replaceState(null, '', `${window.location.pathname}?${p.toString()}`);
-                        }
+                        });
                       }}
                       className="h-10 font-mono"
                     />
+                    </div>
                   </div>
                 </div>
               </CardHeader>
@@ -1411,6 +1591,7 @@ export default function WaveMonthTimesheetSummaryPage() {
               </CardContent>
             </Card>
             )}
+            {!needsBundlePick ? (
             <Suspense
               fallback={<p className="text-center text-muted-foreground text-sm py-6 border border-dashed rounded-lg">กำลังโหลดเอกสาร PO+เดือน…</p>}
             >
@@ -1418,17 +1599,16 @@ export default function WaveMonthTimesheetSummaryPage() {
                 ref={poMonthPanelRef}
                 embedded
                 linkedMonthYm={monthYm}
+                linkedPoActiveBundleId={effectiveBundleId}
                 onEmbeddedToolbarSnapshot={setPoToolbarSnapshot}
                 onLinkedMonthYmChange={(ym) => {
-                  setMonthYm(ym);
-                  if (typeof window !== 'undefined' && /^\d{4}-\d{2}$/.test(ym)) {
-                    const p = new URLSearchParams(window.location.search);
+                  replaceWaveMonthQuery((p) => {
                     p.set('month', ym);
-                    window.history.replaceState(null, '', `${window.location.pathname}?${p.toString()}`);
-                  }
+                  });
                 }}
               />
             </Suspense>
+            ) : null}
           </div>
         )}
       </div>

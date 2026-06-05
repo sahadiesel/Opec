@@ -1,5 +1,5 @@
 import { doc, type Firestore } from 'firebase/firestore';
-import type { OfficePayrollLine, PayrollBatchLine } from '@/lib/types';
+import type { OfficePayrollLine, PayrollBatchLine, OfficeStaffPayrollLineRef } from '@/lib/types';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
 
 export type OfficeStaffSelfPayrollLineIndex = {
@@ -24,6 +24,28 @@ export function officeStaffSelfPayrollLineIndexRef(firestore: Firestore, staffId
 
 export function workerSelfPayrollLineIndexRef(firestore: Firestore, workerId: string, lineId: string) {
   return doc(firestore, 'workers', workerId, 'self_payroll_lines', lineId);
+}
+
+/** ลบ undefined ใน ref ก่อนเขียน Firestore — payrollMonth ใช้จาก line/run ถ้ามี */
+export function normalizeOfficeStaffPayrollLineRef(
+  ref: Partial<OfficeStaffPayrollLineRef> & Pick<OfficeStaffPayrollLineRef, 'runId' | 'lineId'>,
+  payrollMonthFallback?: string | null,
+): OfficeStaffPayrollLineRef {
+  const payrollMonth = (ref.payrollMonth || payrollMonthFallback || '').trim() || undefined;
+  return stripUndefinedForFirestore({
+    runCollection:
+      ref.runCollection === 'executive_payroll_runs' ? 'executive_payroll_runs' : 'office_payroll_runs',
+    runId: ref.runId,
+    lineId: ref.lineId,
+    payrollMonth,
+    updatedAt: typeof ref.updatedAt === 'number' && Number.isFinite(ref.updatedAt) ? ref.updatedAt : Date.now(),
+  }) as OfficeStaffPayrollLineRef;
+}
+
+export function sanitizeOfficeStaffPayrollLineRefs(
+  refs: readonly OfficeStaffPayrollLineRef[],
+): OfficeStaffPayrollLineRef[] {
+  return refs.map((r) => normalizeOfficeStaffPayrollLineRef(r, r.payrollMonth));
 }
 
 export function buildOfficeStaffSelfPayrollLineIndex(line: OfficePayrollLine): OfficeStaffSelfPayrollLineIndex {

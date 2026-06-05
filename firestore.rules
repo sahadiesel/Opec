@@ -324,6 +324,24 @@ service cloud.firestore {
       allow update: if rs13() || rs13();
       allow delete: if rs13();
     }
+    match /monthly_timesheet_photo_bundles/{id} {
+      allow read:   if rs12();
+      allow create: if rs13();
+      allow update: if rs13() || rs13();
+      allow delete: if rs13();
+    }
+    match /po_month_timesheet_photo_bundles/{id} {
+      allow read:   if rs12();
+      allow create: if rs13();
+      allow update: if rs13() || rs13();
+      allow delete: if rs13();
+    }
+    match /wave_month_timesheet_photo_bundles/{id} {
+      allow read:   if rs12();
+      allow create: if rs13();
+      allow update: if rs13() || rs13();
+      allow delete: if rs13();
+    }
     match /payroll_runs/{id} {
       allow read, write: if rs0();
     }
@@ -584,6 +602,36 @@ service cloud.firestore {
     match /system/drug_test_panel {
       allow read: if isInternalUser();
       allow write: if isAdmin();
+    }
+    // My Profile — พนักงานทุก role อ่านปฏิทินวันหยุด/นโยบาย + index สลิปของตนเอง
+    match /payroll_policies/{id} {
+      allow read: if isInternalUser();
+    }
+    match /office_staff/{staffId}/self_payroll_lines/{lineId} {
+      allow read: if isInternalUser()
+        || (
+          isSignedIn()
+          && exists(/databases/$(database)/documents/office_staff/$(staffId))
+          && get(/databases/$(database)/documents/office_staff/$(staffId)).data.linkedUserId == request.auth.uid
+        );
+      allow write: if rs0() || rs14();
+    }
+    match /workers/{workerId}/self_payroll_lines/{lineId} {
+      allow read: if isInternalUser()
+        || (
+          isSignedIn()
+          && exists(/databases/$(database)/documents/workers/$(workerId))
+          && get(/databases/$(database)/documents/workers/$(workerId)).data.linkedUserId == request.auth.uid
+        );
+      allow write: if rs0() || rs14();
+    }
+    match /office_payroll_runs/{runId}/lines/{lineId} {
+      allow read: if isInternalUser()
+        || (isSignedIn() && resource.data.subjectLinkedUserId == request.auth.uid);
+    }
+    match /executive_payroll_runs/{runId}/lines/{lineId} {
+      allow read: if isInternalUser()
+        || (isSignedIn() && resource.data.subjectLinkedUserId == request.auth.uid);
     }
     // ===== Broad READ fallback for internal staff =====
     // Matrix gates above narrow write access by role, but every internal
