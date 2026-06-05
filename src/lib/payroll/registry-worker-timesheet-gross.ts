@@ -1,10 +1,15 @@
 /**
  * คำนวณ gross รายใบ timesheet ฝั่ง worker payroll — ยึดฐานจากตำแหน่ง/ลูกจ้าง (ทะเบียน) เท่านั้น
  * ไม่อาศัย labor_cost_contract_terms หรือ rate_conditions แบบ LABOR_COST_CONTRACT
+ *
+ * คนเดียวหลายสัญญาในเดือนเดียว: แต่ละใบใช้ contractId / PO ของตัวเอง → อัตราตามสัญญานั้น
  */
-import type { DailyTimesheet, MainContract, Position, Worker } from '@/lib/types';
-import { computeWorkDayCostFromPackage, computeStandbyDayCostFromPackage } from '@/lib/payroll/package-labor-cost';
-import { resolveBaseCostForPayrollTimesheet } from '@/lib/payroll/timesheet-labor-base-cost';
+import type { DailyTimesheet, JobMode, MainContract, Position, Worker } from '@/lib/types';
+import { computeWorkDayCostFromPackage, computeStandbyDayCostFromPackage, isPayrollCostStandbyPackageEvent } from '@/lib/payroll/package-labor-cost';
+import {
+  resolveBaseCostForPayrollTimesheet,
+  resolveEffectivePayrollContractId,
+} from '@/lib/payroll/timesheet-labor-base-cost';
 import {
   type WorkerGlobalLaborContext,
   workerGlobalLaborToPayrollRestSchedule,
@@ -50,7 +55,7 @@ function resolvePolicyFallbackCost(
     case 'standby_day':
       return 0;
     case 'mobilization_day':
-      return baseCost * Number(p.mobilization ?? 1) * Number(ts.mobUnits ?? 1);
+      return 0;
     case 'demobilization_day':
       return baseCost * Number(p.demobilization ?? 1) * Number(ts.demobUnits ?? 1);
     case 'travel_day':
@@ -85,16 +90,23 @@ export function computeRegistryWorkerTimesheetGross(
     linePosition: Position | null | undefined;
     poLine: Record<string, unknown>;
     contractMap: Map<string, MainContract>;
+    /** PO id → contractId — fallback เมื่อ daily ไม่มี contractId */
+    poContractById?: Map<string, string>;
+    /** PO id → poWorkMode — ใช้แทน workMode บน daily เมื่อ PO กำหนด offshore/onshore */
+    poWorkModeByPoId?: Map<string, JobMode>;
     workerGlobalLabor: WorkerGlobalLaborContext;
   },
 ): RegistryWorkerTimesheetGrossResult {
-  const mainContract = ts.contractId ? input.contractMap.get(ts.contractId) : undefined;
+  const payrollContractId = resolveEffectivePayrollContractId(ts, input.poContractById);
+  const mainContract = payrollContractId ? input.contractMap.get(payrollContractId) : undefined;
   const { baseCost, fromPositionModel } = resolveBaseCostForPayrollTimesheet({
     worker: input.worker,
     linePosition: input.linePosition,
     poLine: input.poLine,
     timesheet: ts,
     mainContract,
+    poContractById: input.poContractById,
+    poWorkModeByPoId: input.poWorkModeByPoId,
   });
   const policy = workerLaborCostPolicy(input.workerGlobalLabor);
   const payrollRestSchedule = workerGlobalLaborToPayrollRestSchedule(input.workerGlobalLabor);
@@ -107,7 +119,7 @@ export function computeRegistryWorkerTimesheetGross(
     Number(policy.otAfterShift) ||
     1.5;
 
-  if (ts.eventType === 'standby_day' && baseCost > 0) {
+  if (isPayrollCostStandbyPackageEvent(ts.eventType) && baseCost > 0) {
     const gross = computeStandbyDayCostFromPackage({
       timesheet: ts,
       costPackagePerDay: baseCost,

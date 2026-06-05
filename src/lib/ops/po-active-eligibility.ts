@@ -42,14 +42,39 @@ export function buildEligibleMainContractIdSet(contracts: MainContract[] | null 
   );
 }
 
-/** PO สายสัญญา — อยู่ในสัญญาที่ eligible หรืออยู่ใน po_active_bundles ที่ซิงก์แล้ว */
+/** Customer PO สายสัญญา — มี contractId (ไม่รวม quotation / PO ลอย / WOT) */
+export function isContractBasedPurchaseOrder(
+  po: Pick<PurchaseOrder, 'poType' | 'contractId' | 'status' | 'quotationId'>,
+): boolean {
+  if ((po.poType || 'contract') === 'quotation') return false;
+  if ((po.quotationId || '').trim()) return false;
+  return (
+    !!(po.contractId || '').trim() &&
+    isPurchaseOrderActiveForPoActiveWorkflow(po.status)
+  );
+}
+
+export function filterContractBasedPurchaseOrders(
+  list: PurchaseOrder[] | null | undefined,
+): PurchaseOrder[] {
+  return (list ?? []).filter(isContractBasedPurchaseOrder);
+}
+
+/** PO สายสัญญาที่ผูกสัญญาหลัก eligible — เกณฑ์เดียวกับคิวโควต้า / Timesheet hub */
+export function filterPoActiveWorkflowPurchaseOrders(
+  list: PurchaseOrder[] | null | undefined,
+  eligibleContractIds: Set<string>,
+): PurchaseOrder[] {
+  return (list ?? []).filter((po) =>
+    isContractPurchaseOrderEligibleForPoActiveBundle(po, eligibleContractIds),
+  );
+}
+
+/** PO สายสัญญา — ผูกสัญญาหลักที่ยัง eligible สำหรับมอบหมาย / PO Active */
 export function isContractPurchaseOrderEligibleForPoActiveBundle(
   po: PurchaseOrder,
   eligibleContractIds: Set<string>,
-  bundlePoIds: Set<string>,
 ): boolean {
-  if ((po.poType || 'contract') !== 'contract') return false;
-  if (!isPurchaseOrderActiveForPoActiveWorkflow(po.status)) return false;
-  if (bundlePoIds.has(po.id)) return true;
-  return Boolean(po.contractId && eligibleContractIds.has(po.contractId));
+  if (!isContractBasedPurchaseOrder(po)) return false;
+  return eligibleContractIds.has((po.contractId || '').trim());
 }

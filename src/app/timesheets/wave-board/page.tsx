@@ -17,6 +17,7 @@ import Link from 'next/link';
 import { OPEN_WAVE_STATUSES_FOR_TIMESHEET } from '@/lib/constants/timesheet-wave';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import { isContractBasedPurchaseOrder } from '@/lib/ops/po-active-eligibility';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permissions';
@@ -32,9 +33,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-function isContractBasedPurchaseOrder(p: PurchaseOrder): boolean {
-  return (p.poType || 'contract') === 'contract' && !!(p.contractId || '').trim();
-}
 
 async function hasDailyTimesheetsForPoDate(db: Firestore, date: string, poIds: string[]): Promise<boolean> {
   for (const poId of poIds) {

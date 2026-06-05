@@ -158,6 +158,14 @@
       ]
     },
     {
+      "collectionGroup": "daily_timesheets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assignmentId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "tax_invoices",
       "queryScope": "COLLECTION",
       "fields": [

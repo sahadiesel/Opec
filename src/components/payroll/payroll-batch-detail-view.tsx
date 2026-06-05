@@ -26,8 +26,8 @@ import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile'
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
 import { canPreviewWorkerPayrollWht } from '@/lib/payroll/payroll-worker-wht-permissions';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection, getDoc, query, where } from 'firebase/firestore';
-import { BankAccount, PayrollBatch, PayrollBatchLine, User, PayrollPeriod, Worker } from '@/lib/types';
+import { doc, collection, query, where } from 'firebase/firestore';
+import { BankAccount, PayrollBatch, PayrollBatchLine, User, PayrollPeriod } from '@/lib/types';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -54,7 +54,10 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { usePermissions } from '@/hooks/use-permissions';
 import { PayrollService } from '@/lib/services/payroll-service';
 import { syncBankCurrentBalanceIfDrift } from '@/lib/services/bank-balance-reconcile';
-import { buildWorkerPayrollBankVerificationCsv } from '@/lib/payroll/worker-payroll-bank-csv';
+import {
+  buildWorkerPayrollBankVerificationCsv,
+  loadWorkerPayrollBankCsvSources,
+} from '@/lib/payroll/worker-payroll-bank-csv';
 import { useToast } from '@/hooks/use-toast';
 import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
 import {
@@ -103,9 +106,7 @@ export function PayrollBatchDetailView({
   const { payroll: payrollPerm } = usePermissions(currentUser);
   const firestore = useFirestore();
   const useMatrixGuards = isMatrixControlledRole(currentUser);
-  const [workersById, setWorkersById] = useState<Map<string, Pick<Worker, 'contactPhone' | 'thaiNationalId'>>>(
-    () => new Map()
-  );
+  const [bankCsvBusy, setBankCsvBusy] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmPaidOpen, setConfirmPaidOpen] = useState(false);
   const [confirmLineIds, setConfirmLineIds] = useState<Set<string>>(() => new Set());
@@ -246,46 +247,33 @@ export function PayrollBatchDetailView({
       : batch.payoutBankAccountId;
   }, [batch, activeBanks]);
 
-  useEffect(() => {
-    if (!firestore || !lines?.length) {
-      setWorkersById(new Map());
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      const ids = [...new Set(lines.map((l) => l.workerId))];
-      const m = new Map<string, Pick<Worker, 'contactPhone' | 'thaiNationalId'>>();
-      await Promise.all(
-        ids.map(async (wid) => {
-          try {
-            const s = await getDoc(doc(firestore, 'workers', wid));
-            if (!s.exists()) return;
-            const d = s.data() as Worker;
-            m.set(wid, { contactPhone: d.contactPhone, thaiNationalId: d.thaiNationalId });
-          } catch {
-            /* ignore row */
-          }
-        })
+  const handleDownloadBankCsv = useCallback(async () => {
+    if (!batch || !linesSorted.length || !firestore) return;
+    setBankCsvBusy(true);
+    try {
+      const sources = await loadWorkerPayrollBankCsvSources(
+        firestore,
+        linesSorted.map((l) => l.workerId),
       );
-      if (!cancelled) setWorkersById(m);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [firestore, lines]);
-
-  const handleDownloadBankCsv = useCallback(() => {
-    if (!batch || !linesSorted.length) return;
-    const csv = buildWorkerPayrollBankVerificationCsv(batch, linesSorted, workersById);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `payroll-bank-check_${batch.id}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast({ title: 'ดาวน์โหลด CSV', description: 'ไฟล์ตรวจโอน (ชื่อ เบอร์ ปชช. เลขบัญชี ยอด)' });
-  }, [batch, linesSorted, workersById, toast]);
+      const csv = buildWorkerPayrollBankVerificationCsv(batch, linesSorted, sources);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `payroll-bank-check_${batch.id}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: 'ดาวน์โหลด CSV', description: 'ไฟล์ตรวจโอน (ชื่อ เบอร์ ปชช. เลขบัญชี ยอด)' });
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'ดาวน์โหลด CSV ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBankCsvBusy(false);
+    }
+  }, [batch, linesSorted, firestore, toast]);
 
   const handleOfficerSubmitForPayout = useCallback(async () => {
     if (!firestore || !batch || !currentUser) return;
@@ -615,8 +603,15 @@ export function PayrollBatchDetailView({
               )}
               <div className="flex flex-wrap items-center gap-2">
                 {canBankCheckCsv && linesSorted.length > 0 && (
-                  <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleDownloadBankCsv}>
-                    <FileSpreadsheet className="h-4 w-4" />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    disabled={bankCsvBusy}
+                    onClick={() => void handleDownloadBankCsv()}
+                  >
+                    {bankCsvBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
                     ดาวน์โหลด CSV ตรวจโอน (ชื่อ เบอร์ ปชช. เลขบัญชี ยอด)
                   </Button>
                 )}

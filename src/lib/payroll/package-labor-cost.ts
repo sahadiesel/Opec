@@ -38,14 +38,25 @@ export function deriveCostNormalHourlyRate(input: DeriveHourlyInput): number {
   );
 }
 
-/** ชม.ที่จ่าย standby — ใช้ normalHours บนใบงาน; ถ้าไม่มี ใช้ 8 ชม./unit × standbyUnits */
-export function resolveStandbyPaidHours(ts: Pick<DailyTimesheet, 'normalHours' | 'standbyUnits'>): number {
+/** ฝั่งจ่าย (payroll cost): mobilization คิดแพ็กเดียวกับ standby — billing แยกตาม rate ขาย */
+export function isPayrollCostStandbyPackageEvent(
+  eventType: DailyTimesheet['eventType'],
+): boolean {
+  return eventType === 'standby_day' || eventType === 'mobilization_day';
+}
+
+/** ชม.ที่จ่าย standby — ใช้ normalHours บนใบงาน; ถ้าไม่มี ใช้ชม.ในแพ็ก PO (12 หรือ 8) × standbyUnits */
+export function resolveStandbyPaidHours(
+  ts: Pick<DailyTimesheet, 'normalHours' | 'standbyUnits'>,
+  statedPackageHours: StatedPackageHours = 8,
+): number {
   const nh = Number(ts.normalHours);
   if (Number.isFinite(nh) && nh > 0) {
     return Math.min(24, nh) * Math.max(1, Number(ts.standbyUnits ?? 1));
   }
   const units = Math.max(1, Number(ts.standbyUnits ?? 1));
-  return units * LEGAL_NORMAL_HOURS_PER_DAY;
+  const defaultDayHours = statedPackageHours === 12 ? 12 : LEGAL_NORMAL_HOURS_PER_DAY;
+  return units * defaultDayHours;
 }
 
 export interface StandbyDayPackageCostInput {
@@ -58,19 +69,17 @@ export interface StandbyDayPackageCostInput {
 }
 
 /**
- * Standby = ฐานชม.ปกติจากแพ็ก (8 ชม. + OT ในแพ็ก 12 ชม.) × ชม.standby × ตัวคูณ standby
- * ไม่ใช่ครึ่งหนึ่งของแพ็กรายวันทั้งก้อน (ซึ่งรวมส่วน OT 4 ชม.ด้วย)
+ * Standby / mobilization (ฝั่งจ่าย) = แพ็กต้นทุนรายวัน × สัดส่วนชม.ที่ลง / ชม.ในแพ็ก × ตัวคูณ standby
+ * ตัวอย่าง แพ็ก 12 ชม. ฿1,700 × standby 0.5 × 12/12 = ฿850 (ไม่ใช้ฐานชม.แยก 8+4×OT ที่ทำให้ได้ ~฿728)
  */
 export function computeStandbyDayCostFromPackage(input: StandbyDayPackageCostInput): number {
-  const hourlyNormal = deriveCostNormalHourlyRate({
-    costPackagePerDay: input.costPackagePerDay,
-    statedHours: input.statedHours,
-    otAfterShiftMultiplier: input.otAfterShiftMultiplier,
-  });
-  if (hourlyNormal <= 0) return 0;
-  const hours = resolveStandbyPaidHours(input.timesheet);
+  const pkg = Math.max(0, input.costPackagePerDay);
+  if (pkg <= 0) return 0;
+  const stated = input.statedHours === 12 ? 12 : 8;
+  const hours = resolveStandbyPaidHours(input.timesheet, input.statedHours);
   const mult = Math.max(0, input.standbyCostMultiplier);
-  return roundMoney(hourlyNormal * hours * mult);
+  const fraction = Math.min(1, hours / stated);
+  return roundMoney(pkg * fraction * mult);
 }
 
 /** ปฏิทิน + ตัวคูณวันหยุดสำหรับ payroll ลูกจ้าง — จาก HR Settings */

@@ -32,6 +32,7 @@ import {
   parseCanonicalPoActiveBundleRouteKey,
   resolvePoActiveBundleKeyForPo,
 } from '@/lib/ops/po-active-bundle';
+import { isContractBasedPurchaseOrder } from '@/lib/ops/po-active-eligibility';
 export default function PoActiveBundleDetailPage({
   params,
 }: {
@@ -89,11 +90,23 @@ export default function PoActiveBundleDetailPage({
   const { data: customerActivePos } = useCollection<PurchaseOrder>(activePosQuery as any);
 
   const poIdsSet = useMemo(() => {
-    if (bundle?.poIds?.length) return new Set(bundle.poIds);
-    if (!parsedRoute || !normalizedBundleId) return new Set<string>();
     const list = customerActivePos ?? [];
+    const contractOnly = (id: string) => {
+      const p = list.find((x) => x.id === id);
+      return p != null && isContractBasedPurchaseOrder(p);
+    };
+
+    if (bundle?.poIds?.length) {
+      return new Set(bundle.poIds.filter(contractOnly));
+    }
+    if (!parsedRoute || !normalizedBundleId) return new Set<string>();
     return new Set(
-      list.filter((p) => resolvePoActiveBundleKeyForPo(p) === normalizedBundleId).map((p) => p.id),
+      list
+        .filter(
+          (p) =>
+            resolvePoActiveBundleKeyForPo(p) === normalizedBundleId && isContractBasedPurchaseOrder(p),
+        )
+        .map((p) => p.id),
     );
   }, [bundle?.poIds, parsedRoute, normalizedBundleId, customerActivePos]);
 

@@ -1,5 +1,6 @@
 import type { Assignment, DailyTimesheet, POLine, PurchaseOrder } from '@/lib/types';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
+import { resolveWorkModeForPoContext } from '@/lib/ops/po-active-bundle';
 import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 
 export function minYmd(a: string, b: string): string {
@@ -169,7 +170,7 @@ export function buildPoActiveAutoDailyRowPayload(p: PoActiveAutoDailyRowParams):
     customerId: po.customerId,
     siteId,
     positionId: a.positionId,
-    workMode: a.workMode,
+    workMode: resolveWorkModeForPoContext(po, a.workMode),
     eventType: 'work_day',
     shiftType: 'DAY',
     normalHours: nh,

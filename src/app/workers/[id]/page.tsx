@@ -370,7 +370,7 @@ function WorkerDetailContent({ id }: { id: string }) {
       updatedAt: Date.now(),
     });
     toast({
-      title: hold ? 'ตั้งเป็นไม่พร้อม (Unready)' : 'ตั้งเป็นพร้อม (Ready)',
+      title: hold ? 'ตั้งเป็นไม่พร้อม (Not Ready)' : 'ตั้งเป็นพร้อม (Ready)',
       description: hold
         ? 'คนงานจะไม่ปรากฏในรายการมอบหมายจนกว่าจะเปิดสวิตช์พร้อมอีกครั้ง'
         : 'ระบบใช้เกณฑ์เอกสารและความพร้อมตามที่คำนวณได้',
@@ -682,6 +682,7 @@ function WorkerDetailContent({ id }: { id: string }) {
               canActivateWorkerLogin={canEditWorker}
               onActivateWorkerLogin={handleActivateWorkerLogin}
               activateWorkerLoginBusy={activateLoginBusy}
+              openMobilizations={workerMobilizations}
             />
           </TabsContent>
 

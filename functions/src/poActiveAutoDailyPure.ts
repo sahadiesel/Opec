@@ -213,7 +213,13 @@ export function buildPoActiveAutoDailyRowPayload(p: {
   const contractId = (a.contractId || po.contractId || '').trim();
   const siteId = effectiveWaveIdForPoActiveAuto(a) || '';
   const nh = normalHoursFromPoLine(line);
-  const workMode: JobMode = a.workMode === 'ONSHORE' || a.workMode === 'OFFSHORE' ? a.workMode : 'OFFSHORE';
+  const poMode = po.poWorkMode;
+  const workMode: JobMode =
+    poMode === 'ONSHORE' || poMode === 'OFFSHORE'
+      ? poMode
+      : a.workMode === 'ONSHORE' || a.workMode === 'OFFSHORE'
+        ? a.workMode
+        : 'OFFSHORE';
 
   return {
     workerId: a.workerId,

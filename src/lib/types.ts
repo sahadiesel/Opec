@@ -1041,6 +1041,8 @@ export interface Assignment {
   mobReadyToTravelByUserId?: string;
   /** Final clearance ขั้น 2 — วัน standby (YYYY-MM-DD, Asia/Bangkok) */
   mobStandbyDate?: string;
+  /** ประเภทวันที่บันทึกขั้น 2 — standby_day (SB) หรือ mobilization_day (MO) */
+  mobStandbyDayEventType?: 'standby_day' | 'mobilization_day';
   mobStandbyRecordedAt?: number;
   mobStandbyRecordedByUserId?: string;
   /** Final clearance ขั้น 3 — วันเริ่มนับ working / auto รายวัน */

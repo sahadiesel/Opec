@@ -66,6 +66,69 @@ service cloud.firestore {
     function portalOwnsResourceCustomerId() {
       return portalCustomerIdOk() && resource.data.customerId == userData().customerId;
     }
+    /** Client portal: daily row owned via denormalized customerId, PO, wave, or mobilization link */
+    function portalDailyTimesheetPoReadOk() {
+      return 'purchaseOrderId' in resource.data
+        && resource.data.purchaseOrderId is string
+        && resource.data.purchaseOrderId.size() > 0
+        && exists(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId))
+        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.purchaseOrderId)).data.customerId == userData().customerId;
+    }
+    function portalDailyTimesheetWaveReadOk() {
+      return 'waveId' in resource.data
+        && resource.data.waveId is string
+        && resource.data.waveId.size() > 0
+        && !resource.data.waveId.matches('^po_ts_scope_.*')
+        && exists(/databases/$(database)/documents/waves/$(resource.data.waveId))
+        && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.customerId == userData().customerId;
+    }
+    function portalDailyTimesheetMobReadOk() {
+      return 'assignmentId' in resource.data
+        && resource.data.assignmentId is string
+        && resource.data.assignmentId.size() > 0
+        && exists(/databases/$(database)/documents/mobilizations/$(resource.data.assignmentId))
+        && get(/databases/$(database)/documents/mobilizations/$(resource.data.assignmentId)).data.customerId == userData().customerId;
+    }
+    function portalDailyTimesheetReadOk() {
+      return isClientPortalUser()
+        && userRole() in ['client_user']
+        && portalCustomerIdOk()
+        && (
+          ('customerId' in resource.data && resource.data.customerId == userData().customerId)
+          || portalDailyTimesheetPoReadOk()
+          || portalDailyTimesheetWaveReadOk()
+          || portalDailyTimesheetMobReadOk()
+        );
+    }
+    /** Client portal: billing / tax / receipt docs scoped by customerId on the resource */
+    function portalAccountingDocReadOk() {
+      return isClientPortalUser()
+        && userRole() in ['client_user']
+        && portalOwnsResourceCustomerId();
+    }
+    function portalAccountingDocWriteOk() {
+      return portalAccountingDocReadOk();
+    }
+    function portalCustomerRootReadOk(customerId) {
+      return isClientPortalUser()
+        && userRole() in ['client_user']
+        && portalCustomerIdOk()
+        && customerId == userData().customerId;
+    }
+    function portalBillingNoteOwned(billingNoteId) {
+      return isClientPortalUser()
+        && userRole() in ['client_user']
+        && portalCustomerIdOk()
+        && exists(/databases/$(database)/documents/billing_notes/$(billingNoteId))
+        && get(/databases/$(database)/documents/billing_notes/$(billingNoteId)).data.customerId == userData().customerId;
+    }
+    function portalTaxInvoiceOwned(taxInvoiceId) {
+      return isClientPortalUser()
+        && userRole() in ['client_user']
+        && portalCustomerIdOk()
+        && exists(/databases/$(database)/documents/tax_invoices/$(taxInvoiceId))
+        && get(/databases/$(database)/documents/tax_invoices/$(taxInvoiceId)).data.customerId == userData().customerId;
+    }
     // ===== Matrix role sets (deduped) =====
     function rs0() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
     function rs1() { return (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
@@ -151,7 +214,8 @@ service cloud.firestore {
     // =====================================================================
     // ===== Commercial - Match blocks =====
     match /customers/{id} {
-      allow read, write: if rs0();
+      allow read: if rs0() || portalCustomerRootReadOk(id);
+      allow write: if rs0();
     }
     match /quotations/{id} {
       allow read:   if rs1();
@@ -212,7 +276,8 @@ service cloud.firestore {
     }
     // ===== Operations - Match blocks =====
     match /waves/{id} {
-      allow read, write: if rs2();
+      allow read: if rs2() || (isClientPortalUser() && userRole() in ['client_user'] && portalOwnsResourceCustomerId());
+      allow write: if rs2();
     }
     match /worker_wave_acceptances/{id} {
       allow read, write: if rs2();
@@ -221,7 +286,8 @@ service cloud.firestore {
       allow read, write: if rs2();
     }
     match /mobilizations/{id} {
-      allow read, write: if rs2();
+      allow read: if rs2() || (isClientPortalUser() && userRole() in ['client_user'] && portalOwnsResourceCustomerId());
+      allow write: if rs2();
     }
     match /mobilizations/{mobId}/fulfillment_lines/{lineId} {
       allow read, write: if rs2();
@@ -271,7 +337,7 @@ service cloud.firestore {
       allow delete: if rs0();
     }
     match /positions/{id} {
-      allow read:   if rs10();
+      allow read:   if rs10() || (isClientPortalUser() && userRole() in ['client_user']);
       allow create: if rs11pos();
       allow update: if rs11pos();
       allow delete: if rs11();
@@ -402,28 +468,32 @@ service cloud.firestore {
     // ===== Accounting - Match blocks =====
     // [accounting_dashboard] - :  Firestore path ( collection  -  UI )
     match /billing_notes/{id} {
-      allow read, write: if rs19();
+      allow read: if rs19() || portalAccountingDocReadOk();
+      allow write: if rs19();
     }
     match /billing_notes/{billingNoteId}/lines/{lineId} {
-      allow read, write: if rs19();
+      allow read: if rs19() || portalBillingNoteOwned(billingNoteId);
+      allow write: if rs19();
     }
     match /billing_notes/{billingNoteId}/{document=**} {
-      allow read, write: if rs19();
+      allow read: if rs19() || portalBillingNoteOwned(billingNoteId);
+      allow write: if rs19();
     }
     match /tax_invoices/{id} {
-      allow read:   if rs6();
+      allow read:   if rs6() || portalAccountingDocReadOk();
       allow create: if rs19();
-      allow update: if rs6() || rs19();
+      allow update: if rs6() || rs19() || portalAccountingDocWriteOk();
       allow delete: if rs19();
     }
     match /tax_invoices/{taxInvoiceId}/{document=**} {
-      allow read:   if rs6();
+      allow read:   if rs6() || portalTaxInvoiceOwned(taxInvoiceId);
       allow create: if rs19();
-      allow update: if rs6() || rs19();
+      allow update: if rs6() || rs19() || portalTaxInvoiceOwned(taxInvoiceId);
       allow delete: if rs19();
     }
     match /receipts/{id} {
-      allow read, write: if rs19();
+      allow read: if rs19() || portalAccountingDocReadOk();
+      allow write: if rs19();
     }
     match /ap_bills/{id} {
       allow read, write: if rs19();
@@ -479,12 +549,14 @@ service cloud.firestore {
     //    generated gate  path 
     // PRESERVED-PATH (simplified fallback): commercial_invoices/{id}
     match /commercial_invoices/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if isInternalUser() || portalAccountingDocReadOk();
+      allow write: if isInternalUser() || portalAccountingDocWriteOk();
     }
     //    generated gate  path 
     // PRESERVED-PATH (simplified fallback): daily_timesheets/{id}
     match /daily_timesheets/{id} {
-      allow read, write: if isInternalUser();
+      allow read: if isInternalUser() || portalDailyTimesheetReadOk();
+      allow write: if isInternalUser();
     }
     //    generated gate  path 
     // PRESERVED-PATH (simplified fallback): attendance_correction_requests/{id}
@@ -664,9 +736,9 @@ service cloud.firestore {
     match /rate_conditions/{id} { allow read: if isInternalUser(); }
     match /profit_estimates/{id} { allow read: if isInternalUser(); }
     match /sales_contract_terms/{id} { allow read: if isInternalUser(); }
-    match /tax_invoices/{id} { allow read: if isInternalUser(); }
-    match /billing_notes/{id} { allow read: if isInternalUser(); }
-    match /receipts/{id} { allow read: if isInternalUser(); }
+    match /tax_invoices/{id} { allow read: if isInternalUser() || portalAccountingDocReadOk(); }
+    match /billing_notes/{id} { allow read: if isInternalUser() || portalAccountingDocReadOk(); }
+    match /receipts/{id} { allow read: if isInternalUser() || portalAccountingDocReadOk(); }
     match /ap_bills/{id} { allow read: if isInternalUser(); }
     match /accounts_receivable/{id} { allow read: if isInternalUser(); }
     match /accounts_payable/{id} { allow read: if isInternalUser(); }

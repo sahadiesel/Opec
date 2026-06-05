@@ -12,6 +12,8 @@ import type {
 import { formatDateThaiBE, formatOfficePayrollRunPeriodLabelThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { leaveSummaryLabelTh } from '@/lib/payroll/office-payroll-period-deductions';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
+import { resolvePoLineForPayrollTimesheet } from '@/lib/payroll/timesheet-labor-base-cost';
+import { isPayrollCostStandbyPackageEvent } from '@/lib/payroll/package-labor-cost';
 import type { SingleTimesheetGrossContext } from '@/lib/payroll/single-timesheet-gross';
 
 export const PAYSLIP_DEFAULT_COMPANY_TH = 'โอพีอีซี ออปส์โฟลว์';
@@ -294,7 +296,7 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
   const policyAmounts: Record<string, number> = {};
 
   for (const ts of timesheets) {
-    const poLine = (ctx.poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
+    const poLine = resolvePoLineForPayrollTimesheet(ts, ctx.poLineMaps);
     const wk = ctx.workerById.get(ts.workerId);
     const linePos = ts.positionId ? ctx.posById.get(ts.positionId) : undefined;
     const r = computeRegistryWorkerTimesheetGross(ts, {
@@ -302,11 +304,13 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
       linePosition: linePos,
       poLine,
       contractMap: ctx.contractMap,
+      poContractById: ctx.poContractById,
+      poWorkModeByPoId: ctx.poWorkModeByPoId,
       workerGlobalLabor: ctx.workerGlobalLabor,
     });
     if (r.gross <= 0) continue;
 
-    if (ts.eventType === 'standby_day' && r.usedPackageLaborCost) {
+    if (isPayrollCostStandbyPackageEvent(ts.eventType) && r.usedPackageLaborCost) {
       standbyDays += Math.max(0, Number(ts.standbyUnits ?? 1));
       standbyAmount += r.gross;
       continue;

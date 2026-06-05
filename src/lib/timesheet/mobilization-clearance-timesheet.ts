@@ -14,7 +14,7 @@ import type {
 } from '@/lib/types';
 import { TimesheetService } from '@/lib/services/timesheet-service';
 import { poMonthTimesheetReviewDocId } from '@/lib/timesheet/po-month-timesheet-bridge';
-import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import { resolvePoActiveBundleKeyForPo, resolveWorkModeForPoContext } from '@/lib/ops/po-active-bundle';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { eachYmdInRange, normalHoursFromPoLine } from '@/lib/timesheet/po-active-auto-daily-build';
 import { addDaysToYmd, shouldAutoFillPrefixWorkDaysBeforeStandby } from '@/lib/ops/mobilization-final-clearance';
@@ -47,7 +47,7 @@ export async function isPoMonthTimesheetEditingBlocked(
   };
 }
 
-export type MobClearanceTimesheetKind = 'standby_day' | 'work_day';
+export type MobClearanceTimesheetKind = 'standby_day' | 'mobilization_day' | 'work_day';
 
 function buildBasePayload(
   a: Assignment,
@@ -78,7 +78,7 @@ function buildBasePayload(
     poActiveBundleId: bundleId,
     customerId: po.customerId,
     positionId: a.positionId,
-    workMode: a.workMode,
+    workMode: resolveWorkModeForPoContext(po, a.workMode),
     eventType,
     shiftType: 'DAY',
     normalHours,
@@ -94,7 +94,9 @@ function buildBasePayload(
       remarkOverride ??
       (eventType === 'standby_day'
         ? 'Mob — Final clearance · Standby'
-        : 'Mob — Final clearance · เริ่มวันทำงาน'),
+        : eventType === 'mobilization_day'
+          ? 'Mob — Final clearance · Mobilization'
+          : 'Mob — Final clearance · เริ่มวันทำงาน'),
     ...(mobCycleId ? { mobCycleId } : {}),
     ...(mobLocationKey ? { mobLocationKey } : {}),
   };
@@ -132,8 +134,13 @@ export async function upsertMobClearanceDailyTimesheet(
   const docId = service.getTimesheetId(a.workerId, a.id, dateYmd);
   const existingSnap = await getDoc(doc(db, 'daily_timesheets', docId));
 
-  const eventType: RateConditionEventType = kind === 'standby_day' ? 'standby_day' : 'work_day';
-  const normalHours = kind === 'standby_day' ? 0 : normalHoursFromPoLine(line);
+  const eventType: RateConditionEventType =
+    kind === 'standby_day'
+      ? 'standby_day'
+      : kind === 'mobilization_day'
+        ? 'mobilization_day'
+        : 'work_day';
+  const normalHours = kind === 'work_day' ? normalHoursFromPoLine(line) : 0;
 
   if (existingSnap.exists()) {
     const cur = { id: existingSnap.id, ...(existingSnap.data() as object) } as DailyTimesheet;

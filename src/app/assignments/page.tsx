@@ -107,6 +107,7 @@ import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-
 import {
   buildEligibleMainContractIdSet,
   filterPurchaseOrdersForPoActiveWorkflow,
+  isContractPurchaseOrderEligibleForPoActiveBundle,
   PO_ACTIVE_MAIN_CONTRACT_STATUS_IN,
 } from '@/lib/ops/po-active-eligibility';
 import { buildPoActiveBundleRows, PoAssignmentBundleLandingPanel } from '@/components/ops/po-quota-queue';
@@ -271,17 +272,20 @@ function AssignmentsPageContent() {
   const showAssignmentBundleLanding =
     isAuthorized && !filterPoId && !filterPoActiveBundleId && !showAllAssignmentsLegacy;
 
-  const landingContractsQuery = useMemoFirebase(() => {
-    if (!firestore || !showAssignmentBundleLanding) return null;
+  const activeContractsQuery = useMemoFirebase(() => {
+    if (!firestore || !isAuthorized) return null;
     return query(
       collection(firestore, 'main_contracts'),
       where('status', 'in', [...PO_ACTIVE_MAIN_CONTRACT_STATUS_IN]),
     );
-  }, [firestore, showAssignmentBundleLanding]);
+  }, [firestore, isAuthorized]);
 
-  const { data: landingActiveContracts, isLoading: landingContractsLoading } = useCollection<MainContract>(
-    landingContractsQuery as any,
+  const { data: activeContractsForWorkflow, isLoading: activeContractsLoading } = useCollection<MainContract>(
+    activeContractsQuery as any,
   );
+
+  const landingActiveContracts = showAssignmentBundleLanding ? activeContractsForWorkflow : undefined;
+  const landingContractsLoading = showAssignmentBundleLanding && activeContractsLoading;
 
   const landingCustomersQuery = useMemoFirebase(() => {
     if (!firestore || !showAssignmentBundleLanding) return null;
@@ -292,10 +296,12 @@ function AssignmentsPageContent() {
     landingCustomersQuery as any,
   );
 
-  const landingMainContractIdSet = useMemo(
-    () => buildEligibleMainContractIdSet(landingActiveContracts),
-    [landingActiveContracts],
+  const workflowMainContractIdSet = useMemo(
+    () => buildEligibleMainContractIdSet(activeContractsForWorkflow),
+    [activeContractsForWorkflow],
   );
+
+  const landingMainContractIdSet = workflowMainContractIdSet;
 
   const activePOsForLanding = useMemo(
     () => filterPurchaseOrdersForPoActiveWorkflow(allPOs),
@@ -310,7 +316,7 @@ function AssignmentsPageContent() {
         assignments ?? undefined,
         allWaves ?? undefined,
         landingMainContractIdSet,
-        landingActiveContracts !== undefined,
+        activeContractsForWorkflow !== undefined && !activeContractsLoading,
         'assignment-landing',
       ),
     [
@@ -319,7 +325,8 @@ function AssignmentsPageContent() {
       assignments,
       allWaves,
       landingMainContractIdSet,
-      landingActiveContracts,
+      activeContractsForWorkflow,
+      activeContractsLoading,
     ],
   );
 
@@ -327,13 +334,12 @@ function AssignmentsPageContent() {
     showAssignmentBundleLanding &&
     (landingContractsLoading || landingCustomersLoading || isAssignmentsLoading || isPOLinesLoading);
 
-  const contractActivePOs = useMemo(
-    () =>
-      filterPurchaseOrdersForPoActiveWorkflow(allPOs).filter(
-        (p) => (p.poType || 'contract') === 'contract',
-      ),
-    [allPOs],
-  );
+  const contractActivePOs = useMemo(() => {
+    if (activeContractsLoading || !activeContractsForWorkflow) return [];
+    return (allPOs ?? []).filter((po) =>
+      isContractPurchaseOrderEligibleForPoActiveBundle(po, workflowMainContractIdSet),
+    );
+  }, [allPOs, activeContractsForWorkflow, activeContractsLoading, workflowMainContractIdSet]);
 
   /** ขอบเขต PO สำหรับหน้านี้ — กรองตามชุด PO Active เมื่อ URL มี poActiveBundleId (รวม PO ที่ยังไม่ sync ฟิลด์บนเอกสาร) */
   const contractActivePOsForScope = useMemo(() => {
@@ -698,7 +704,7 @@ function AssignmentsPageContent() {
 
     const targetPositionId = (poLine.positionId || '').trim();
     const position = allPositions?.find((p) => (p.id || '').trim() === targetPositionId);
-    const rawJobMode = (position?.jobMode ?? po.poWorkMode ?? 'OFFSHORE').toString().toUpperCase();
+    const rawJobMode = (po.poWorkMode ?? position?.jobMode ?? 'OFFSHORE').toString().toUpperCase();
     const resolvedWorkMode: JobMode = rawJobMode === 'ONSHORE' ? 'ONSHORE' : 'OFFSHORE';
 
     // 4. Position Suitability Check

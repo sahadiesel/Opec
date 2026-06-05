@@ -1,4 +1,23 @@
-import type { Assignment } from '@/lib/types';
+import type { Assignment, RateConditionEventType } from '@/lib/types';
+
+export type MobStandbyMobDayChoice = Extract<RateConditionEventType, 'standby_day' | 'mobilization_day'>;
+
+/** รหัสแสดงบนกระดานลงเวลา — สอดคล้อง po-daily-board (`SB` / `MO`) */
+export function mobStandbyMobDayStatusCode(
+  eventType: MobStandbyMobDayChoice | string | undefined | null,
+): 'SB' | 'MO' | null {
+  if (eventType === 'standby_day') return 'SB';
+  if (eventType === 'mobilization_day') return 'MO';
+  return null;
+}
+
+export function mobStandbyMobDayChoiceLabel(
+  eventType: MobStandbyMobDayChoice | string | undefined | null,
+): string {
+  if (eventType === 'standby_day') return 'Standby';
+  if (eventType === 'mobilization_day') return 'วันเดินทาง';
+  return '—';
+}
 
 /** วันที่ปฏิทินในเขต Asia/Bangkok (เก็บเป็น yyyy-mm-dd) */
 export function thailandTodayYmd(): string {

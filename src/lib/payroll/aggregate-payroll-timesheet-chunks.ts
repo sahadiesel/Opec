@@ -1,6 +1,11 @@
-import type { DailyTimesheet, MainContract, Position, Worker } from '@/lib/types';
+import type { DailyTimesheet, JobMode, MainContract, Position, Worker } from '@/lib/types';
 import type { WorkerGlobalLaborContext } from '@/lib/payroll/worker-global-labor-policy';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
+import {
+  type PayrollPoLineMaps,
+  resolvePoLineForPayrollTimesheet,
+} from '@/lib/payroll/timesheet-labor-base-cost';
+import { isPayrollCostStandbyPackageEvent } from '@/lib/payroll/package-labor-cost';
 
 export type PayrollTimesheetAggChunk = {
   gross: number;
@@ -12,7 +17,9 @@ export type PayrollTimesheetAggChunk = {
 };
 
 export type PayrollTimesheetAggDeps = {
-  poLineById: Map<string, unknown>;
+  poLineMaps: PayrollPoLineMaps;
+  poContractById?: Map<string, string>;
+  poWorkModeByPoId?: Map<string, JobMode>;
   workerById: Map<string, Worker>;
   posById: Map<string, Position>;
   contractMap: Map<string, MainContract>;
@@ -32,7 +39,7 @@ export function aggregateDailyTimesheetsPayrollChunk(
   let anyOpecPositionLaborBase = false;
 
   for (const ts of tsList) {
-    const poLine = (deps.poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
+    const poLine = resolvePoLineForPayrollTimesheet(ts, deps.poLineMaps);
     const wk = deps.workerById.get(ts.workerId);
     const linePos = ts.positionId ? deps.posById.get(ts.positionId) : undefined;
     const r = computeRegistryWorkerTimesheetGross(ts, {
@@ -40,6 +47,8 @@ export function aggregateDailyTimesheetsPayrollChunk(
       linePosition: linePos,
       poLine,
       contractMap: deps.contractMap,
+      poContractById: deps.poContractById,
+      poWorkModeByPoId: deps.poWorkModeByPoId,
       workerGlobalLabor: deps.workerGlobalLabor,
     });
     if (r.fromPositionModel) {
@@ -53,10 +62,12 @@ export function aggregateDailyTimesheetsPayrollChunk(
     }
     gross += r.gross;
     const eventDelta =
-      ts.eventType === 'standby_day' ? Math.max(0, Number(ts.standbyUnits ?? 1)) : 1;
+      isPayrollCostStandbyPackageEvent(ts.eventType)
+        ? Math.max(0, Number(ts.standbyUnits ?? 1))
+        : 1;
     eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + eventDelta;
     if (r.usedPackageLaborCost) {
-      if (ts.eventType === 'standby_day') {
+      if (isPayrollCostStandbyPackageEvent(ts.eventType)) {
         earningsBreakdown.standby_day_package =
           (earningsBreakdown.standby_day_package || 0) + r.gross;
       } else {

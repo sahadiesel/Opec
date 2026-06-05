@@ -2,6 +2,7 @@ import type { Assignment, POLine, PositionRate, Wave } from '@/lib/types';
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import { addDaysToYmd } from '@/lib/ops/mobilization-final-clearance';
+import { assignmentHasUnassignedAtSet, assignmentReleasedFromPoLineQuota } from '@/lib/ops/po-fulfillment-read-model';
 
 /** ชั่วโมงทำงานต่อวันตามมาตรฐานสัญญาที่ใช้ใน Wave Board (ลงเวลาเท่านั้น — OT คิดแยกใน payroll / billing) */
 export const DEFAULT_CONTRACT_DAILY_HOURS = 12;
@@ -147,17 +148,80 @@ export function isAssignmentDraftAwaitingFirstMobOnly(
 }
 
 /**
+ * ยังไม่เคยผ่านขั้น mobilization บนไซต์ (Standby / เริ่มงาน / จบไซต์ / พร้อมเดินทาง)
+ * — ใช้กรองคนที่ Unassign ก่อน mob ออกจากตารางสรุปรายเดือน
+ */
+export function assignmentNeverHadMobilizationSiteWork(
+  a: Pick<
+    Assignment,
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'mobLocationEndDate'
+    | 'mobReadyToTravelAt'
+    | 'mobStandbyRecordedAt'
+    | 'mobWorkingStartedAt'
+    | 'deploymentStatus'
+  >,
+): boolean {
+  const sb = (a.mobStandbyDate || '').trim().slice(0, 10);
+  const ws = (a.mobWorkingStartDate || '').trim().slice(0, 10);
+  const end = (a.mobLocationEndDate || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(sb)) return false;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ws)) return false;
+  if (end.length > 0) return false;
+  if (typeof a.mobReadyToTravelAt === 'number' && a.mobReadyToTravelAt > 0) return false;
+  if (typeof a.mobStandbyRecordedAt === 'number' && a.mobStandbyRecordedAt > 0) return false;
+  if (typeof a.mobWorkingStartedAt === 'number' && a.mobWorkingStartedAt > 0) return false;
+  const ds = a.deploymentStatus;
+  if (ds === 'MOBILIZING' || ds === 'ACTIVE' || ds === 'READY_TO_MOB') return false;
+  return true;
+}
+
+/**
  * ถอนมอบหมายแล้วแต่ยังไม่เคยขึ้นไซต์ — ไม่มีประวัติลงเวลาให้แสดง (คนละเรื่องกับถอนหลังทำงานแล้ว)
+ * Unassign จาก Mobilization ตั้ง deploymentStatus = CLOSED + unassignedAt
  */
 export function assignmentUnassignedNeverHadSiteWork(
-  a: Pick<Assignment, 'unassignedAt' | 'deploymentStatus' | 'mobCycleNumber' | 'mobLocationEndDate'>,
+  a: Pick<
+    Assignment,
+    | 'unassignedAt'
+    | 'deploymentStatus'
+    | 'mobCycleNumber'
+    | 'mobLocationEndDate'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'mobReadyToTravelAt'
+    | 'mobStandbyRecordedAt'
+    | 'mobWorkingStartedAt'
+  >,
 ): boolean {
-  if (!(typeof a.unassignedAt === 'number' && a.unassignedAt > 0)) return false;
-  if (a.deploymentStatus !== 'DRAFT') return false;
+  if (!assignmentHasUnassignedAtSet(a)) return false;
+  const ds = a.deploymentStatus;
+  if (ds !== 'DRAFT' && ds !== 'CLOSED') return false;
+  if (!assignmentNeverHadMobilizationSiteWork(a)) return false;
   const cycle =
     typeof a.mobCycleNumber === 'number' && Number.isFinite(a.mobCycleNumber) ? a.mobCycleNumber : 1;
-  const ended = !!(a.mobLocationEndDate && String(a.mobLocationEndDate).trim());
-  return cycle <= 1 && !ended;
+  return cycle <= 1;
+}
+
+/**
+ * ปิดรายการ / Unassign / Demob แล้วแต่ไม่เคย mobilize จริง — ไม่ควรขึ้นกระดานลงเวลา
+ * ครอบคลุม Unassign จากหน้า Assignments ที่ตั้งแค่ DEMOBILIZED (ไม่มี unassignedAt)
+ */
+export function assignmentEndedWithoutEverMobilizingOnSite(
+  a: Pick<
+    Assignment,
+    | 'unassignedAt'
+    | 'deploymentStatus'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'mobLocationEndDate'
+    | 'mobReadyToTravelAt'
+    | 'mobStandbyRecordedAt'
+    | 'mobWorkingStartedAt'
+  >,
+): boolean {
+  return assignmentReleasedFromPoLineQuota(a) && assignmentNeverHadMobilizationSiteWork(a);
 }
 
 /**
@@ -181,9 +245,19 @@ export function assignmentExcludedFromPoDailyBoardOnDate(
 export function assignmentIncludedInWaveTimesheetRoster(
   a: Pick<
     Assignment,
-    'deploymentStatus' | 'readinessStatus' | 'mobCycleNumber' | 'mobLocationEndDate' | 'unassignedAt'
+    | 'deploymentStatus'
+    | 'readinessStatus'
+    | 'mobCycleNumber'
+    | 'mobLocationEndDate'
+    | 'unassignedAt'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'mobReadyToTravelAt'
+    | 'mobStandbyRecordedAt'
+    | 'mobWorkingStartedAt'
   >,
 ): boolean {
+  if (assignmentEndedWithoutEverMobilizingOnSite(a)) return false;
   if (assignmentUnassignedNeverHadSiteWork(a)) return false;
   if (isAssignmentDraftAwaitingFirstMobOnly(a)) return false;
   if (a.deploymentStatus === 'DRAFT') return true;

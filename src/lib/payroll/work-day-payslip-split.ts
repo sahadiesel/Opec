@@ -1,6 +1,7 @@
 import type { DailyTimesheet, PayslipWorkDaySplit } from '@/lib/types';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
 import type { PayrollTimesheetAggDeps } from '@/lib/payroll/aggregate-payroll-timesheet-chunks';
+import { resolvePoLineForPayrollTimesheet } from '@/lib/payroll/timesheet-labor-base-cost';
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -21,7 +22,7 @@ export function computeWorkDayPackagePayslipSplit(
 
   for (const ts of tsList) {
     if (ts.eventType === 'standby_day') continue;
-    const poLine = (deps.poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
+    const poLine = resolvePoLineForPayrollTimesheet(ts, deps.poLineMaps);
     const wk = deps.workerById.get(ts.workerId);
     const linePos = ts.positionId ? deps.posById.get(ts.positionId) : undefined;
     const r = computeRegistryWorkerTimesheetGross(ts, {

@@ -11,6 +11,7 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import type { JobMode, PoActiveBundle, PurchaseOrder } from '@/lib/types';
+import { isContractBasedPurchaseOrder } from '@/lib/ops/po-active-eligibility';
 
 export function poActiveBundleDocId(customerId: string, workMode: JobMode): string {
   return `${customerId}__${workMode}`;
@@ -49,6 +50,22 @@ export function parseCanonicalPoActiveBundleRouteKey(
   return { customerId, workMode: modeRaw as JobMode };
 }
 
+/**
+ * โหมด On/Off ที่ใช้กับ PO — อ้าง `poWorkMode` บน PO ก่อน (ไม่ใช้ jobMode ตำแหน่ง)
+ * fallback: แยกจาก poActiveBundleId → assignment/timesheet → OFFSHORE
+ */
+export function resolveWorkModeForPoContext(
+  po: Pick<PurchaseOrder, 'poWorkMode' | 'poActiveBundleId'>,
+  fallback?: JobMode | null,
+): JobMode {
+  const wm = po.poWorkMode;
+  if (wm === 'ONSHORE' || wm === 'OFFSHORE') return wm;
+  const parsed = parseCanonicalPoActiveBundleRouteKey((po.poActiveBundleId || '').trim());
+  if (parsed?.workMode) return parsed.workMode;
+  if (fallback === 'ONSHORE' || fallback === 'OFFSHORE') return fallback;
+  return 'OFFSHORE';
+}
+
 /** คีย์ชุด PO Active สำหรับจัดกลุ่ม UI — ใช้ฟิลด์บน PO ถ้ามี ไม่เช่นนั้นคำนวณแบบเดียวกับเอกสาร `po_active_bundles` */
 export function resolvePoActiveBundleKeyForPo(po: PurchaseOrder): string {
   const bid = (po.poActiveBundleId || '').trim();
@@ -79,13 +96,7 @@ export async function rebuildAllPoActiveBundlesForCustomer(
   const idsByMode = new Map<JobMode, string[]>();
   for (const m of modes) {
     const ids = all
-      .filter(
-        (p) =>
-          p.status === 'active' &&
-          (p.poType || 'contract') === 'contract' &&
-          !!(p.contractId || '').trim() &&
-          (p.poWorkMode ?? 'OFFSHORE') === m,
-      )
+      .filter((p) => isContractBasedPurchaseOrder(p) && (p.poWorkMode ?? 'OFFSHORE') === m)
       .map((p) => p.id);
     idsByMode.set(m, [...new Set(ids)]);
   }
@@ -106,10 +117,7 @@ export async function rebuildAllPoActiveBundlesForCustomer(
   }
 
   for (const p of all) {
-    const eligible =
-      p.status === 'active' &&
-      (p.poType || 'contract') === 'contract' &&
-      !!(p.contractId || '').trim();
+    const eligible = isContractBasedPurchaseOrder(p);
     const pref = doc(db, 'purchase_orders', p.id);
     if (!eligible) {
       if (p.poActiveBundleId) {

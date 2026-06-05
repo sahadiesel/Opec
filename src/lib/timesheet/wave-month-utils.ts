@@ -2,10 +2,12 @@ import type { Assignment, DailyTimesheet, RateConditionEventType, WaveMonthTimes
 import {
   assignmentIncludedInWaveTimesheetRoster,
   assignmentHasAnyMobTimesheetDayInCalendarMonth,
+  assignmentEndedWithoutEverMobilizingOnSite,
   isHtmlDateAfterMobLocationEnd,
   isYmdWithinAssignmentMobTimesheetWindow,
 } from '@/lib/constants/timesheet-ui';
 import { assignmentOverlapsYearMonthForPoDailyBoard } from '@/lib/ops/timesheet-hub-po-month';
+import { assignmentReleasedFromPoLineQuota } from '@/lib/ops/po-fulfillment-read-model';
 import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 
 /** คืน yyyy-mm-dd สำหรับวันสุดท้ายของเดือน yyyy-mm */
@@ -71,13 +73,13 @@ export function normalHoursCountedAsWork(
 }
 
 /**
- * ชม.ที่นับเป็น standby ในสรุปรายเดือน — เฉพาะ standby_day
+ * ชม.ที่นับเป็น standby ในสรุปรายเดือน — standby_day และ mobilization_day (วันเดินทาง)
  * (auto PO Active มักมี normalHours 8/12; แถวที่ normalHours=0 ใช้ standbyUnits × 8)
  */
 export function standbyHoursCountedForWaveMonth(
   ts: Pick<DailyTimesheet, 'eventType' | 'normalHours' | 'standbyUnits'> | undefined,
 ): number {
-  if (!ts || ts.eventType !== 'standby_day') return 0;
+  if (!ts || (ts.eventType !== 'standby_day' && ts.eventType !== 'mobilization_day')) return 0;
   const nh = Number(ts.normalHours);
   if (Number.isFinite(nh) && nh > 0) return nh;
   const units = Math.max(0, Number(ts.standbyUnits ?? 1));
@@ -319,6 +321,11 @@ export function mobilizationsEligibleForWaveMonthGrid(
     const rowInMonth = assignmentHasTimesheetRowInCalendarMonth(m, monthYm, monthTimesheets);
     /** มีแถวจริงในเดือนแล้ว — แสดงได้แม้ฟิลด์ช่วง mob / DEMOBILIZED ทำให้ overlap เทียบปฏิทินเป็น false (สอดคล้อง wave-month ภายในเมื่อมีข้อมูลลงเวลา) */
     if (rowInMonth) return true;
+    /** ปิด/Unassign ก่อน mob — ไม่แสดงแถวว่างแม้ช่วงมอบหมายทับเดือน */
+    if (assignmentEndedWithoutEverMobilizingOnSite(m)) return false;
+    if (assignmentReleasedFromPoLineQuota(m)) {
+      return assignmentHasAnyMobTimesheetDayInCalendarMonth(m, monthYm);
+    }
     return (
       assignmentOverlapsYearMonthForPoDailyBoard(m, monthYm) &&
       assignmentHasAnyMobTimesheetDayInCalendarMonth(m, monthYm)

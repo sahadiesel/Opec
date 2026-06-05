@@ -20,17 +20,34 @@ export function bangkokYmdFromUtcMs(ms: number): string {
   return `${y}-${m}-${d}`;
 }
 
+/** แปลงข้อความเวลา HH:mm ที่ผู้ใช้พิมพ์ — รองรับ `08:30`, `08.30`, `0830` */
+export function normalizeBangkokHmInput(hm: string): string | null {
+  let s = (hm || '').trim();
+  if (!s) return null;
+  s = s.replace(/[.．]/g, ':');
+  if (/^\d{3,4}$/.test(s)) {
+    const padded = s.padStart(4, '0');
+    s = `${padded.slice(0, 2)}:${padded.slice(2)}`;
+  }
+  const m = /^(\d{1,2}):(\d{1,2})$/.exec(s);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
 /** Epoch ms at given Bangkok local wall time (interpret `ymd` + `hh:mm` in +07). */
 export function utcMsFromBangkokYmdAndHm(ymd: string, hm: string): number | null {
-  const hmTrim = (hm || '').trim();
-  const mHm = /^(\d{1,2}):(\d{2})$/.exec(hmTrim);
+  const normalized = normalizeBangkokHmInput(hm);
+  if (!normalized) return null;
+  const mHm = /^(\d{2}):(\d{2})$/.exec(normalized);
   if (!mHm) return null;
-  let hh = Number(mHm[1]);
+  const hh = Number(mHm[1]);
   const mm = Number(mHm[2]);
-  if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
   const ymdTrim = ymd.trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(ymdTrim)) return null;
-  const isoLocal = `${ymdTrim}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
+  const isoLocal = `${ymdTrim}T${normalized}:00`;
   const d = new Date(`${isoLocal}+07:00`);
   const t = d.getTime();
   return Number.isFinite(t) ? t : null;

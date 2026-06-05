@@ -50,6 +50,7 @@ import {
   computeSingleTimesheetGrossLikeBatch,
   type SingleTimesheetGrossContext,
 } from '@/lib/payroll/single-timesheet-gross';
+import { resolveEffectivePayrollJobMode } from '@/lib/payroll/timesheet-labor-base-cost';
 import {
   loadPayrollPoliciesFromFirestore,
   resolvePayrollPoliciesForDate,
@@ -859,7 +860,9 @@ export default function PayrollBatchWorkerLinePage({
                         </TableCell>
                         <TableCell className="text-sm">
                           <div>{ts.eventType}</div>
-                          <div className="text-[10px] uppercase text-muted-foreground mt-0.5">{ts.workMode}</div>
+                          <div className="text-[10px] uppercase text-muted-foreground mt-0.5">
+                            {resolveEffectivePayrollJobMode(ts, grossCtx?.poWorkModeByPoId)}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right">{ts.normalHours ?? 0}</TableCell>
                         <TableCell className="text-right text-xs text-muted-foreground">{otBits || '—'}</TableCell>

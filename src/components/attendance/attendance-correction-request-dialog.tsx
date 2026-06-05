@@ -80,10 +80,10 @@ export function AttendanceCorrectionRequestDialog({
       return;
     }
 
-    const proposedInAtMs = inHm.trim() ? utcMsFromBangkokYmdAndHm(workDateYmd, inHm.trim()) : null;
-    const proposedOutAtMs = outHm.trim() ? utcMsFromBangkokYmdAndHm(workDateYmd, outHm.trim()) : null;
+    const inTrim = inHm.trim();
+    const outTrim = outHm.trim();
 
-    if (proposedInAtMs == null && proposedOutAtMs == null) {
+    if (!inTrim && !outTrim) {
       toast({
         variant: 'destructive',
         title: 'ไม่มีเวลาที่ขอแก้',
@@ -92,8 +92,11 @@ export function AttendanceCorrectionRequestDialog({
       return;
     }
 
-    if ((inHm.trim() && proposedInAtMs == null) || (outHm.trim() && proposedOutAtMs == null)) {
-      toast({ variant: 'destructive', title: 'รูปแบบเวลาไม่ถูกต้อง', description: 'ใช้รูปแบบ HH:mm เช่น 08:30' });
+    const proposedInAtMs = inTrim ? utcMsFromBangkokYmdAndHm(workDateYmd, inTrim) : null;
+    const proposedOutAtMs = outTrim ? utcMsFromBangkokYmdAndHm(workDateYmd, outTrim) : null;
+
+    if ((inTrim && proposedInAtMs == null) || (outTrim && proposedOutAtMs == null)) {
+      toast({ variant: 'destructive', title: 'รูปแบบเวลาไม่ถูกต้อง', description: 'ใช้รูปแบบ HH:mm เช่น 08:30 หรือ 08.30' });
       return;
     }
 

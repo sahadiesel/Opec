@@ -44,6 +44,8 @@ import {
   DialogFooter
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PayrollService, type PayrollPreflightResult } from '@/lib/services/payroll-service';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -202,6 +204,7 @@ function PayrollBatchesPageContent() {
   const [targetPeriodId, setTargetPeriodId] = useState('');
   const [workModeFilter, setWorkModeScope] = useState<'onshore' | 'offshore' | 'mixed'>('mixed');
   const [preflight, setPreflight] = useState<PayrollPreflightResult | null>(null);
+  const [selectedWorkerIds, setSelectedWorkerIds] = useState<Set<string>>(() => new Set());
   const [deleteTarget, setDeleteTarget] = useState<PayrollBatch | null>(null);
   const [regenTarget, setRegenTarget] = useState<PayrollBatch | null>(null);
   const [adminBusy, setAdminBusy] = useState(false);
@@ -222,11 +225,14 @@ function PayrollBatchesPageContent() {
     if (!firestore || !targetPeriodId) return;
     setIsChecking(true);
     setPreflight(null);
+    setSelectedWorkerIds(new Set());
     try {
       await ensureWorkerPeriodDocument();
       const service = new PayrollService(firestore);
       const result = await service.preflightPayrollCheck(targetPeriodId, { workModeScope: workModeFilter });
       setPreflight(result);
+      setSelectedWorkerIds(new Set(result.eligibleWorkers.map((w) => w.workerId)));
+      setIsGenerateOpen(true);
       if (result.missingApprovedMonthlyTimesheet) {
         toast({
           variant: 'destructive',
@@ -260,15 +266,27 @@ function PayrollBatchesPageContent() {
       return;
     }
     if (!firestore || !currentUser || !targetPeriodId) return;
+    if (selectedWorkerIds.size === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่ได้เลือกรายชื่อ',
+        description: 'เลือกอย่างน้อย 1 คนงานที่ต้องจ่ายในรอบนี้',
+      });
+      return;
+    }
     
     setIsGenerating(true);
     try {
       await ensureWorkerPeriodDocument();
       const service = new PayrollService(firestore);
-      const batchId = await service.generatePayrollBatch(targetPeriodId, currentUser, { workModeScope: workModeFilter });
+      const batchId = await service.generatePayrollBatch(targetPeriodId, currentUser, {
+        workModeScope: workModeFilter,
+        workerIds: [...selectedWorkerIds],
+      });
       
       setIsGenerateOpen(false);
       setPreflight(null);
+      setSelectedWorkerIds(new Set());
       toast({ title: "สร้าง Payroll Batch สำเร็จ", description: "ข้อมูลกำลังถูกประมวลผล" });
       router.push(`/payroll/batches/${batchId}`);
     } catch (e: any) {
@@ -408,7 +426,8 @@ function PayrollBatchesPageContent() {
                 <Calculator className="h-5 w-5" /> สร้างรายการจ่ายใหม่ (Generate Batch)
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-w-lg max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto px-6 pt-6 pb-4">
               <DialogHeader>
                 <DialogTitle>ประมวลผล Payroll Batch ใหม่</DialogTitle>
                 <DialogDescription>
@@ -420,7 +439,14 @@ function PayrollBatchesPageContent() {
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
                   <Label className="font-bold">เลือกรอบบัญชี (Select Period)</Label>
-                  <Select onValueChange={setTargetPeriodId} value={targetPeriodId}>
+                  <Select
+                    onValueChange={(v) => {
+                      setTargetPeriodId(v);
+                      setPreflight(null);
+                      setSelectedWorkerIds(new Set());
+                    }}
+                    value={targetPeriodId}
+                  >
                     <SelectTrigger className="h-11"><SelectValue placeholder="เลือกรอบเดือนที่ต้องการจ่าย..." /></SelectTrigger>
                     <SelectContent>
                       {selectablePeriods.map((p) => (
@@ -439,7 +465,14 @@ function PayrollBatchesPageContent() {
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold">ขอบเขตงาน (Scope)</Label>
-                  <Select onValueChange={(v: any) => setWorkModeScope(v)} value={workModeFilter}>
+                  <Select
+                    onValueChange={(v: 'onshore' | 'offshore' | 'mixed') => {
+                      setWorkModeScope(v);
+                      setPreflight(null);
+                      setSelectedWorkerIds(new Set());
+                    }}
+                    value={workModeFilter}
+                  >
                     <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="mixed">ทั้งหมด (All modes)</SelectItem>
@@ -449,6 +482,83 @@ function PayrollBatchesPageContent() {
                   </Select>
                 </div>
               </div>
+              {preflight && !preflight.missingApprovedMonthlyTimesheet && preflight.eligibleWorkers.length > 0 && (
+                <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label className="font-bold mb-0">
+                      เลือกคนงานที่จ่ายในรอบนี้ ({selectedWorkerIds.size}/{preflight.eligibleWorkers.length} คน)
+                    </Label>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        onClick={() =>
+                          setSelectedWorkerIds(new Set(preflight.eligibleWorkers.map((w) => w.workerId)))
+                        }
+                      >
+                        เลือกทั้งหมด
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        onClick={() => setSelectedWorkerIds(new Set())}
+                      >
+                        ไม่เลือก
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    คนที่ไม่เลือกยังจ่ายได้ในรอบถัดไป (ใบงานยังไม่ถูกล็อก) — เหมือนงวดออฟฟิศที่แบ่งจ่ายหลายครั้งในเดือนเดียว
+                  </p>
+                  <ScrollArea className="h-[180px] rounded-md border bg-background p-2">
+                    <div className="space-y-2 pr-2">
+                      {preflight.eligibleWorkers.map((w) => (
+                        <label
+                          key={w.workerId}
+                          className={`flex items-start gap-3 rounded-md border px-2 py-1.5 cursor-pointer hover:bg-muted/50 ${
+                            w.hasZeroGross ? 'border-amber-300 bg-amber-50/40' : 'border-transparent'
+                          }`}
+                        >
+                          <Checkbox
+                            checked={selectedWorkerIds.has(w.workerId)}
+                            onCheckedChange={(checked) => {
+                              setSelectedWorkerIds((prev) => {
+                                const next = new Set(prev);
+                                if (checked === true) next.add(w.workerId);
+                                else next.delete(w.workerId);
+                                return next;
+                              });
+                            }}
+                            className="mt-0.5"
+                          />
+                          <span className="text-sm leading-tight min-w-0 flex-1">
+                            <span className="font-semibold">{w.workerName}</span>
+                            <span className="text-muted-foreground text-xs block">
+                              {w.timesheetCount} ใบงาน
+                              {w.hasZeroGross ? ' · ⚠ อาจได้ค่าจ้าง 0' : ''}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </div>
+              )}
+
+              {preflight && !preflight.missingApprovedMonthlyTimesheet && preflight.eligibleWorkers.length === 0 && (
+                <Alert className="bg-muted/50 border-muted-foreground/20">
+                  <Info className="h-5 w-5" />
+                  <AlertTitle className="font-bold">ไม่มีคนงานพร้อมจ่ายในรอบนี้</AlertTitle>
+                  <AlertDescription className="text-xs">
+                    ใบงานอาจถูกล็อกจาก batch ก่อนหน้าแล้ว — ลองเลือกเดือนอื่นหรือตรวจว่ายังมี daily ที่ readyForPayroll และ status ไม่ใช่ LOCKED
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {preflight?.missingApprovedMonthlyTimesheet && (
                 <Alert variant="destructive" className="border-red-300 bg-red-50 text-red-950">
                   <AlertTriangle className="h-5 w-5" />
@@ -499,7 +609,8 @@ function PayrollBatchesPageContent() {
                   <AlertTitle className="font-bold">ตรวจสอบผ่าน</AlertTitle>
                   <AlertDescription className="text-xs space-y-2">
                     <p>
-                      พร้อมประมวลผล {preflight.totalWorkers} คน / {preflight.totalTimesheets} ใบงาน — ฐานค่าแรงจากทะเบียน (ลูกจ้าง/ตำแหน่ง) ครอบคลุม
+                      พร้อมประมวลผล {preflight.totalWorkers} คน / {preflight.totalTimesheets} ใบงาน — เลือกจ่าย{' '}
+                      {selectedWorkerIds.size} คนในรอบนี้ · กดปุ่ม <strong>เริ่มการประมวลผล</strong> ด้านล่าง
                     </p>
                     <p className="text-green-800/90 border-t border-green-200 pt-2">
                       <span className="font-semibold">หมายเหตุ:</span> จำนวน &quot;คน&quot; คือลูกจ้างไม่ซ้ำที่มีอย่างน้อยหนึ่งใบงานในรอบนี้ที่ตั้งพร้อมจ่ายแล้ว (และยังไม่ถูกล็อกจาก Batch เก่า)
@@ -509,35 +620,76 @@ function PayrollBatchesPageContent() {
                 </Alert>
               )}
 
-              <DialogFooter className="flex-col gap-2 sm:flex-col">
+              </div>
+
+              <DialogFooter className="shrink-0 flex-col gap-2 sm:flex-col border-t bg-background px-6 py-4">
                 {!preflight ? (
                   <Button onClick={handlePreflight} variant="outline" className="w-full font-bold h-12" disabled={isChecking || !targetPeriodId}>
                     {isChecking ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Search className="h-4 w-4 mr-2" />}
                     ตรวจสอบก่อนประมวลผล (Pre-check)
                   </Button>
                 ) : (
-                  <Button
-                    onClick={handleGenerate}
-                    className="w-full bg-primary font-bold h-12"
-                    disabled={
-                      isGenerating ||
-                      !targetPeriodId ||
-                      preflight.missingApprovedMonthlyTimesheet
-                    }
-                  >
-                    {isGenerating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <TrendingUp className="h-4 w-4 mr-2" />}
-                    {preflight.missingApprovedMonthlyTimesheet
-                      ? 'รอปิดงวด PO+เดือนก่อน'
-                      : preflight.hasWarnings
-                        ? 'ยืนยันสร้าง Batch (มีคนงานได้ 0)'
-                        : 'เริ่มการประมวลผล (Start Processing)'}
-                  </Button>
+                  <>
+                    <Button
+                      onClick={handleGenerate}
+                      className="w-full bg-primary font-bold h-12"
+                      disabled={
+                        isGenerating ||
+                        !targetPeriodId ||
+                        preflight.missingApprovedMonthlyTimesheet ||
+                        selectedWorkerIds.size === 0 ||
+                        preflight.eligibleWorkers.length === 0
+                      }
+                    >
+                      {isGenerating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <TrendingUp className="h-4 w-4 mr-2" />}
+                      {preflight.missingApprovedMonthlyTimesheet
+                        ? 'รอปิดงวด PO+เดือนก่อน'
+                        : preflight.eligibleWorkers.length === 0
+                          ? 'ไม่มีคนพร้อมจ่าย'
+                          : selectedWorkerIds.size === 0
+                            ? 'เลือกคนงานก่อน'
+                            : preflight.hasWarnings
+                              ? `ยืนยันสร้าง Batch (${selectedWorkerIds.size} คน · มีคนงานได้ 0)`
+                              : `เริ่มการประมวลผล (${selectedWorkerIds.size} คน)`}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="w-full h-9 text-muted-foreground"
+                      disabled={isGenerating || isChecking}
+                      onClick={() => {
+                        setPreflight(null);
+                        setSelectedWorkerIds(new Set());
+                      }}
+                    >
+                      ตรวจสอบใหม่
+                    </Button>
+                  </>
                 )}
               </DialogFooter>
             </DialogContent>
           </Dialog>
           )}
         </div>
+
+        {preflight &&
+          !isGenerateOpen &&
+          !preflight.missingApprovedMonthlyTimesheet &&
+          preflight.eligibleWorkers.length > 0 && (
+            <Alert className="border-green-300 bg-green-50/90 text-green-950 shadow-sm">
+              <CheckCircle2 className="h-5 w-5 text-green-600" />
+              <AlertTitle className="font-bold">พร้อมสร้าง Payroll Batch</AlertTitle>
+              <AlertDescription className="text-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-1">
+                <span>
+                  ตรวจสอบผ่าน {preflight.totalWorkers} คน / {preflight.totalTimesheets} ใบงาน — เลือกไว้{' '}
+                  {selectedWorkerIds.size} คน
+                </span>
+                <Button type="button" className="shrink-0 font-bold" onClick={() => setIsGenerateOpen(true)}>
+                  เปิดหน้าต่างสร้าง Batch
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
 
         <PageGuidance
           title="นโยบายการเบิกจ่าย (Disbursement Policy)"

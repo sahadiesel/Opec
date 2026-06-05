@@ -316,8 +316,10 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     setIsUnassigning(true);
     try {
       await updateDoc(doc(firestore, 'mobilizations', id), {
-        deploymentStatus: 'DEMOBILIZED',
+        deploymentStatus: 'CLOSED',
         mobilizationStatus: 'DEMOBILIZED',
+        unassignedAt: Date.now(),
+        unassignedByUserId: currentUser.id,
         updatedAt: Date.now(),
       });
       await updateDoc(doc(firestore, 'workers', assignment.workerId), {

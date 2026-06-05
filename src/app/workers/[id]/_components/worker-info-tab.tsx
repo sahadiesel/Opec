@@ -11,11 +11,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { CreditCard, HeartPulse, User, Phone, History, AlertTriangle, Wallet, Mail, CheckCircle2 } from 'lucide-react';
-import type { Worker, Position } from '@/lib/types';
+import type { Worker, Position, Assignment } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
 import { resolveWorkerLaborBaseRate } from '@/lib/payroll/labor-cost-model';
 import { useActiveBankNameCatalog, useActiveSsoHospitalCatalog } from '@/hooks/use-hrm-name-catalogs';
+import { displayWorkerRegistryJobStatus, workerRegistryJobStatusBadgeProps } from '@/lib/ops/worker-effective-job-status';
 
 interface WorkerInfoTabProps {
   worker: Worker;
@@ -35,6 +36,8 @@ interface WorkerInfoTabProps {
   canActivateWorkerLogin?: boolean;
   onActivateWorkerLogin?: () => void | Promise<void>;
   activateWorkerLoginBusy?: boolean;
+  /** mobilization ที่เปิดอยู่ — ใช้คำนวณสถานะงานที่แสดง */
+  openMobilizations?: Assignment[] | null;
 }
 
 function numIn(v: number | undefined) {
@@ -65,9 +68,13 @@ export function WorkerInfoTab({
   canActivateWorkerLogin = false,
   onActivateWorkerLogin,
   activateWorkerLoginBusy = false,
+  openMobilizations,
 }: WorkerInfoTabProps) {
   const activeBankCatalog = useActiveBankNameCatalog();
   const activeHospitalCatalog = useActiveSsoHospitalCatalog();
+
+  const displayJobStatus = displayWorkerRegistryJobStatus(worker, openMobilizations ?? undefined);
+  const jobBadge = workerRegistryJobStatusBadgeProps(displayJobStatus);
 
   const positionsSorted = useMemo(
     () => sortPositionsByDisplayName(allPositions ?? []),
@@ -125,7 +132,7 @@ export function WorkerInfoTab({
                   <span
                     className={`text-xs font-semibold whitespace-nowrap ${readinessOnHold ? 'text-amber-900' : 'text-muted-foreground'}`}
                   >
-                    ไม่พร้อม (Unready)
+                    ไม่พร้อม (Not Ready)
                   </span>
                   <Switch
                     checked={!readinessOnHold}
@@ -521,7 +528,9 @@ export function WorkerInfoTab({
             </div>
             <div className="flex justify-between border-t pt-2 mt-2">
               <span className="text-muted-foreground">สถานะงาน (Job Status):</span>
-              <Badge variant="outline" className="text-[9px] uppercase font-bold">{worker.workerStatus}</Badge>
+              <Badge variant={jobBadge.variant} className={`text-[9px] uppercase font-bold ${jobBadge.className}`}>
+                {jobBadge.label}
+              </Badge>
             </div>
           </CardContent>
         </Card>

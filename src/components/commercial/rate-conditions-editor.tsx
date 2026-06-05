@@ -87,7 +87,7 @@ const EVENT_TYPE_LABELS: Record<RateConditionEventType, string> = {
   public_holiday_worked: 'ทำงานวันหยุดนักขัตฤกษ์',
   travel_day: 'วันเดินทาง (Travel Day)',
   standby_day: 'วันแสตนบาย (Standby)',
-  mobilization_day: 'วันเตรียมตัวส่งตัว (Mob Day)',
+  mobilization_day: 'วันเดินทาง',
   demobilization_day: 'วันเดินทางกลับ (De-mob)',
   training_day: 'วันอบรม (Training)',
   sick_leave_paid: 'ลาป่วย (Paid Sick Leave)',

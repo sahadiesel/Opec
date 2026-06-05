@@ -92,7 +92,7 @@ const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
   { label: 'วันเดินทาง (Travel)', value: 'travel_day' },
   { label: 'สแตนด์บาย (Standby)', value: 'standby_day' },
-  { label: 'เตรียมส่งตัว (Mob)', value: 'mobilization_day' },
+  { label: 'วันเดินทาง', value: 'mobilization_day' },
   { label: 'วันเดินทางกลับ (Demob)', value: 'demobilization_day' },
   { label: 'ไม่จ่ายค่าแรง (Unpaid)', value: 'unpaid_leave' },
 ];

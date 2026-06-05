@@ -1,29 +1,58 @@
 'use client';
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Info } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Info } from 'lucide-react';
 
 interface PageGuidanceProps {
   title?: string;
   tips: string[];
+  /** ปุ่มมุมขวา — กดแล้วเปิด Popover (ไม่แสดงรายละเอียดในหน้าโดยตรง) */
+  compact?: boolean;
+}
+
+function GuidanceTipsList({ tips }: { tips: string[] }) {
+  return (
+    <div className="text-sm space-y-1.5">
+      {tips.map((tip, i) => (
+        <p key={i} className="flex items-start gap-2">
+          <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-blue-400 shrink-0" />
+          <span>{tip}</span>
+        </p>
+      ))}
+    </div>
+  );
 }
 
 /**
  * Reusable component for providing operational guidance and tips on pages.
  * Supports Thai-first bilingual content and follows the system's professional style.
  */
-export function PageGuidance({ title = "คำแนะนำการใช้งาน (Usage Tips)", tips }: PageGuidanceProps) {
+export function PageGuidance({ title = 'คำแนะนำการใช้งาน (Usage Tips)', tips, compact = false }: PageGuidanceProps) {
+  if (compact) {
+    return (
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button type="button" variant="outline" size="sm" className="gap-1.5 shrink-0">
+            <Info className="h-4 w-4 text-blue-600" />
+            {title}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-[min(28rem,92vw)] max-h-[min(70vh,32rem)] overflow-y-auto p-4">
+          <p className="font-bold text-base text-foreground mb-2">{title}</p>
+          <GuidanceTipsList tips={tips} />
+        </PopoverContent>
+      </Popover>
+    );
+  }
+
   return (
     <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
       <Info className="h-5 w-5 text-blue-600" />
       <AlertTitle className="font-bold text-lg">{title}</AlertTitle>
       <AlertDescription className="text-sm space-y-1 mt-1.5">
-        {tips.map((tip, i) => (
-          <p key={i} className="flex items-start gap-2">
-            <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-blue-400 shrink-0" />
-            <span>{tip}</span>
-          </p>
-        ))}
+        <GuidanceTipsList tips={tips} />
       </AlertDescription>
     </Alert>
   );

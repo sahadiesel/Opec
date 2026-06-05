@@ -78,6 +78,15 @@ import {
 } from '@/lib/payroll/labor-cost-model';
 import {
   loadWorkersAndPositionsForPayroll,
+  loadPayrollPoLineMaps,
+  loadPayrollPoContractIdMap,
+  collectPayrollContractIds,
+  buildPoContractIdMapFromPurchaseOrders,
+  buildPoWorkModeMapFromPurchaseOrders,
+  loadPayrollPoWorkModeMap,
+  resolvePoLineForPayrollTimesheet,
+  resolveEffectivePayrollContractId,
+  resolveEffectivePayrollJobMode,
   timesheetToLaborWorkMode,
 } from '@/lib/payroll/timesheet-labor-base-cost';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
@@ -121,9 +130,20 @@ export interface PayrollPreflightZeroWorker {
   reasons: string[];
 }
 
+/** คนงานที่มีใบงานพร้อมจ่ายในรอบนี้ (ยังไม่ถูกล็อกจาก batch เก่า) */
+export interface PayrollPreflightEligibleWorker {
+  workerId: string;
+  workerName: string;
+  timesheetCount: number;
+  /** true = ทุกใบงานในรอบนี้คำนวณ gross ได้ 0 */
+  hasZeroGross: boolean;
+}
+
 export interface PayrollPreflightResult {
   totalWorkers: number;
   totalTimesheets: number;
+  /** รายชื่อเลือกจ่ายได้ — สร้าง batch หลายรอบในเดือนเดียวได้ (ที่เหลือรอรอบถัดไป) */
+  eligibleWorkers: PayrollPreflightEligibleWorker[];
   zeroGrossWorkers: PayrollPreflightZeroWorker[];
   /** ฐานค่าแรง/ตำแหน่ง — คนใดคนหนึ่งได้ gross 0 */
   hasWarnings: boolean;
@@ -202,16 +222,27 @@ export class PayrollService {
       .map((d) => ({ ...d.data(), id: d.id } as DailyTimesheet))
       .filter((ts) => ts.status !== 'LOCKED');
 
-    if (filters?.workModeScope && filters.workModeScope !== 'mixed') {
-      timesheets = timesheets.filter((ts) => ts.workMode.toLowerCase() === filters.workModeScope);
-    }
-
     timesheets = await filterTimesheetsForWorkerPayrollAsync(this.db, timesheets);
+
+    const poIdsForScope = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
+    const poWorkModeByPoId = await loadPayrollPoWorkModeMap(this.db, poIdsForScope);
+
+    if (filters?.workModeScope && filters.workModeScope !== 'mixed') {
+      timesheets = timesheets.filter(
+        (ts) =>
+          resolveEffectivePayrollJobMode(ts, poWorkModeByPoId).toLowerCase() === filters.workModeScope,
+      );
+    }
 
     const poIds = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
 
+    const [poLineMaps, poContractById] = await Promise.all([
+      loadPayrollPoLineMaps(this.db, poIds),
+      loadPayrollPoContractIdMap(this.db, poIds),
+    ]);
+
     const contractMap = new Map<string, MainContract>();
-    const contractIds = Array.from(new Set(timesheets.map((ts) => ts.contractId).filter(Boolean)));
+    const contractIds = collectPayrollContractIds(timesheets, poContractById);
     await Promise.all(
       contractIds.map(async (cid) => {
         const contractSnap = await getDoc(doc(this.db, 'main_contracts', cid));
@@ -238,16 +269,6 @@ export class PayrollService {
       }),
     );
 
-    const poLineById = new Map<string, Record<string, unknown>>();
-    await Promise.all(
-      poIds.map(async (poId) => {
-        const linesSnap = await getDocs(collection(this.db, 'purchase_orders', poId, 'po_lines'));
-        linesSnap.docs.forEach((lineDoc) =>
-          poLineById.set(lineDoc.id, lineDoc.data() as Record<string, unknown>),
-        );
-      }),
-    );
-
     const { workerById: preflightWorkerById, posById: preflightPosById } = await loadWorkersAndPositionsForPayroll(
       this.db,
       timesheets,
@@ -262,6 +283,7 @@ export class PayrollService {
     });
 
     const zeroGrossWorkers: PayrollPreflightZeroWorker[] = [];
+    const eligibleWorkers: PayrollPreflightEligibleWorker[] = [];
 
     for (const workerId in workerTsMap) {
       const workerTs = workerTsMap[workerId];
@@ -269,7 +291,7 @@ export class PayrollService {
       const missingReasons = new Set<string>();
 
       for (const ts of workerTs) {
-        const poLine = (poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
+        const poLine = resolvePoLineForPayrollTimesheet(ts, poLineMaps);
         const wk = preflightWorkerById.get(ts.workerId);
         const linePos = ts.positionId ? preflightPosById.get(ts.positionId) : undefined;
         const r = computeRegistryWorkerTimesheetGross(ts, {
@@ -277,13 +299,21 @@ export class PayrollService {
           linePosition: linePos,
           poLine,
           contractMap,
+          poContractById,
+          poWorkModeByPoId,
           workerGlobalLabor,
         });
         if (r.gross > 0) {
           hasAnyRate = true;
         } else {
+          const payrollContractId = resolveEffectivePayrollContractId(ts, poContractById);
+          const contractLabel =
+            (payrollContractId && contractMap.get(payrollContractId)?.contractNumber) ||
+            payrollContractId ||
+            ts.purchaseOrderId ||
+            '?';
           missingReasons.add(
-            `${ts.date} ${ts.eventType}: ฐานค่าแรงหรือตัวคูณได้ 0 (ตรวจตำแหน่ง/กำหนดรายคนลูกจ้าง และ HR ตั้งค่าตัวคูณ/ปฏิทิน)`,
+            `${ts.date} ${ts.eventType} [${contractLabel}]: ฐานค่าแรงหรือตัวคูณได้ 0 (ตรวจอัตราต้นทุนตามสัญญา/ตำแหน่ง และ HR ตั้งค่าตัวคูณ/ปฏิทิน)`,
           );
         }
       }
@@ -296,11 +326,21 @@ export class PayrollService {
           reasons: Array.from(missingReasons),
         });
       }
+
+      eligibleWorkers.push({
+        workerId,
+        workerName: workerTs[0].workerNameSnapshot,
+        timesheetCount: workerTs.length,
+        hasZeroGross: !hasAnyRate,
+      });
     }
 
+    eligibleWorkers.sort((a, b) => a.workerName.localeCompare(b.workerName, 'th'));
+
     return {
-      totalWorkers: Object.keys(workerTsMap).length,
+      totalWorkers: eligibleWorkers.length,
       totalTimesheets: timesheets.length,
+      eligibleWorkers,
       zeroGrossWorkers,
       hasWarnings: zeroGrossWorkers.length > 0,
       missingApprovedMonthlyTimesheet: monthlyGate.missingApprovedMonthlyTimesheet,
@@ -311,7 +351,7 @@ export class PayrollService {
   async generatePayrollBatch(
     periodId: string, 
     user: User, 
-    filters?: { workModeScope?: 'onshore' | 'offshore' | 'mixed' }
+    filters?: { workModeScope?: 'onshore' | 'offshore' | 'mixed'; workerIds?: string[] },
   ): Promise<string> {
     if (!canPreparePayroll(user)) {
       throw new Error('Permission denied: prepare payroll');
@@ -346,25 +386,54 @@ export class PayrollService {
       .map(d => ({ ...d.data(), id: d.id } as DailyTimesheet))
       .filter(ts => ts.status !== 'LOCKED');
 
-    if (filters?.workModeScope && filters.workModeScope !== 'mixed') {
-      timesheets = timesheets.filter(ts => ts.workMode.toLowerCase() === filters.workModeScope);
-    }
-
     timesheets = await filterTimesheetsForWorkerPayrollAsync(this.db, timesheets);
 
-    if (timesheets.length === 0) {
-      throw new Error('ไม่พบใบงานรายวันที่พร้อมจ่าย (readyForPayroll) ในรอบนี้ — หรือทุกวันอยู่นอกช่วง mobilization');
+    if (filters?.workerIds?.length) {
+      const allow = new Set(filters.workerIds.map((id) => id.trim()).filter(Boolean));
+      timesheets = timesheets.filter((ts) => allow.has(ts.workerId));
     }
 
+    const poIds = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
+
+    const poById = new Map<string, PurchaseOrder>();
+    await Promise.all(
+      poIds.map(async (poId) => {
+        const poSnap = await getDoc(doc(this.db, 'purchase_orders', poId));
+        if (poSnap.exists()) {
+          poById.set(poId, { ...(poSnap.data() as PurchaseOrder), id: poSnap.id });
+        }
+      }),
+    );
+
+    const poWorkModeByPoId = buildPoWorkModeMapFromPurchaseOrders(poById.values());
+
+    if (filters?.workModeScope && filters.workModeScope !== 'mixed') {
+      timesheets = timesheets.filter(
+        (ts) =>
+          resolveEffectivePayrollJobMode(ts, poWorkModeByPoId).toLowerCase() === filters.workModeScope,
+      );
+    }
+
+    if (timesheets.length === 0) {
+      throw new Error(
+        filters?.workerIds?.length
+          ? 'ไม่พบใบงานของคนงานที่เลือกในรอบนี้ — อาจถูกล็อกจาก batch ก่อนหน้าแล้ว'
+          : 'ไม่พบใบงานรายวันที่พร้อมจ่าย (readyForPayroll) ในรอบนี้ — หรือทุกวันอยู่นอกช่วง mobilization',
+      );
+    }
+
+    const poContractById = buildPoContractIdMapFromPurchaseOrders(poById.values());
+    const [poLineMaps] = await Promise.all([loadPayrollPoLineMaps(this.db, poIds)]);
+
     const contractMap = new Map<string, MainContract>();
-    const contractIds = Array.from(new Set(timesheets.map((ts) => ts.contractId).filter(Boolean)));
+    const contractIds = collectPayrollContractIds(timesheets, poContractById);
     await Promise.all(
       contractIds.map(async (contractId) => {
         const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
         if (contractSnap.exists()) {
           contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
         }
-      })
+      }),
     );
     const inheritIds = Array.from(new Set(
       Array.from(contractMap.values())
@@ -378,25 +447,6 @@ export class PayrollService {
         const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
         if (contractSnap.exists()) {
           contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
-        }
-      })
-    );
-
-    const poLineById = new Map<string, unknown>();
-    const poIds = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
-    await Promise.all(
-      poIds.map(async (poId) => {
-        const linesSnap = await getDocs(collection(this.db, 'purchase_orders', poId, 'po_lines'));
-        linesSnap.docs.forEach((lineDoc) => poLineById.set(lineDoc.id, lineDoc.data()));
-      }),
-    );
-
-    const poById = new Map<string, PurchaseOrder>();
-    await Promise.all(
-      poIds.map(async (poId) => {
-        const poSnap = await getDoc(doc(this.db, 'purchase_orders', poId));
-        if (poSnap.exists()) {
-          poById.set(poId, { ...(poSnap.data() as PurchaseOrder), id: poSnap.id });
         }
       }),
     );
@@ -450,7 +500,9 @@ export class PayrollService {
       const ppSnapshot = ppSnap.empty ? { paymentMethod: 'CASH' as any } : ppSnap.docs[0].data();
 
       const aggDeps = {
-        poLineById,
+        poLineMaps,
+        poContractById,
+        poWorkModeByPoId,
         workerById,
         posById,
         contractMap,
@@ -546,7 +598,7 @@ export class PayrollService {
 
       const wkLine = workerById.get(workerId);
       const posLine = wkLine?.currentPositionId ? posById.get(wkLine.currentPositionId) : null;
-      const firstWm = timesheetToLaborWorkMode(workerTs[0]);
+      const firstWm = timesheetToLaborWorkMode(workerTs[0], poWorkModeByPoId);
       const snapRes = wkLine
         ? resolveWorkerLaborBaseRate(
             {
@@ -585,7 +637,7 @@ export class PayrollService {
         grossAmount: workerGross,
         netAmount: lineNetAmount,
         d8Snapshot: d8Line.snapshot,
-        laborCostResolutionSnapshot,
+        ...(laborCostResolutionSnapshot ? { laborCostResolutionSnapshot } : {}),
         exportStatus: 'pending',
         ...(incomeSegments
           ? { incomeSegments }
@@ -1190,8 +1242,24 @@ export class PayrollService {
       }
     }
 
+    const poIds = Array.from(new Set(workerTs.map((ts) => ts.purchaseOrderId).filter(Boolean)));
+
+    const poById = new Map<string, PurchaseOrder>();
+    await Promise.all(
+      poIds.map(async (poId) => {
+        const poSnap = await getDoc(doc(this.db, 'purchase_orders', poId));
+        if (poSnap.exists()) {
+          poById.set(poId, { ...(poSnap.data() as PurchaseOrder), id: poSnap.id });
+        }
+      }),
+    );
+
+    const poContractById = buildPoContractIdMapFromPurchaseOrders(poById.values());
+    const poWorkModeByPoId = buildPoWorkModeMapFromPurchaseOrders(poById.values());
+    const poLineMaps = await loadPayrollPoLineMaps(this.db, poIds);
+
     const contractMap = new Map<string, MainContract>();
-    const contractIds = Array.from(new Set(workerTs.map((ts) => ts.contractId).filter(Boolean)));
+    const contractIds = collectPayrollContractIds(workerTs, poContractById);
     await Promise.all(
       contractIds.map(async (contractId) => {
         const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
@@ -1214,25 +1282,6 @@ export class PayrollService {
         const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
         if (contractSnap.exists()) {
           contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
-        }
-      }),
-    );
-
-    const poLineById = new Map<string, unknown>();
-    const poIds = Array.from(new Set(workerTs.map((ts) => ts.purchaseOrderId).filter(Boolean)));
-    await Promise.all(
-      poIds.map(async (poId) => {
-        const linesSnap = await getDocs(collection(this.db, 'purchase_orders', poId, 'po_lines'));
-        linesSnap.docs.forEach((lineDoc) => poLineById.set(lineDoc.id, lineDoc.data()));
-      }),
-    );
-
-    const poById = new Map<string, PurchaseOrder>();
-    await Promise.all(
-      poIds.map(async (poId) => {
-        const poSnap = await getDoc(doc(this.db, 'purchase_orders', poId));
-        if (poSnap.exists()) {
-          poById.set(poId, { ...(poSnap.data() as PurchaseOrder), id: poSnap.id });
         }
       }),
     );
@@ -1262,7 +1311,9 @@ export class PayrollService {
     const ppSnapshot = ppSnap.empty ? { paymentMethod: 'CASH' as const } : ppSnap.docs[0].data();
 
     const aggDeps = {
-      poLineById,
+      poLineMaps,
+      poContractById,
+      poWorkModeByPoId,
       workerById,
       posById,
       contractMap,
@@ -1450,7 +1501,7 @@ export class PayrollService {
 
     const wkLine = workerById.get(workerId);
     const posLine = wkLine?.currentPositionId ? posById.get(wkLine.currentPositionId) : null;
-    const firstWm = timesheetToLaborWorkMode(workerTs[0]);
+    const firstWm = timesheetToLaborWorkMode(workerTs[0], poWorkModeByPoId);
     const snapRes = wkLine
       ? resolveWorkerLaborBaseRate(
           {

@@ -46,10 +46,12 @@ export function isDailyTimesheetInPayrollMobWindow(
  * - ไม่รวม unpaid_leave (กริดแสดง «-» และไม่นับชม.)
  */
 export function isDailyTimesheetPayableForWorkerPayroll(
-  ts: Pick<DailyTimesheet, 'date' | 'assignmentId' | 'eventType'>,
+  ts: Pick<DailyTimesheet, 'date' | 'assignmentId' | 'eventType' | 'readyForPayroll'>,
   assignmentById: Map<string, Assignment>,
 ): boolean {
   if (ts.eventType === 'unpaid_leave') return false;
+  /** ปิดงวด PO+เดือนแล้วตั้ง readyForPayroll แล้ว — ใช้เป็นฐานจ่าย ไม่ตัดซ้ำด้วย mob window */
+  if (ts.readyForPayroll === true) return true;
   return isDailyTimesheetInPayrollMobWindow(ts, assignmentById);
 }
 

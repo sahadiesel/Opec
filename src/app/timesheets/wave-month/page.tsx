@@ -21,7 +21,7 @@ import {
   Trash2,
   Unlock,
   Waves,
-  Layers,
+  RefreshCw,
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
@@ -30,6 +30,7 @@ import type {
   Customer,
   DailyTimesheet,
   DailyTimesheetStatus,
+  MainContract,
   PoMonthTimesheetReview,
   Position,
   PurchaseOrder,
@@ -86,7 +87,6 @@ import {
   ensureOpenPayrollPeriodForWaveMonthReview,
   markTimesheetsReadyForPayrollAfterMonthApproval,
 } from '@/lib/timesheet/wave-month-payroll-bridge';
-import { ensureMonthlyTimesheetDocument } from '@/lib/timesheet/ensure-monthly-timesheet-document';
 import {
   TimesheetPoMonthPanel,
   type TimesheetPoMonthPanelHandle,
@@ -94,6 +94,11 @@ import {
 } from '@/components/timesheet/timesheet-po-month-panel';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import {
+  buildEligibleMainContractIdSet,
+  filterPoActiveWorkflowPurchaseOrders,
+  PO_ACTIVE_MAIN_CONTRACT_STATUS_IN,
+} from '@/lib/ops/po-active-eligibility';
 
 function ymNow(): string {
   const d = new Date();
@@ -113,7 +118,7 @@ const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
   { label: 'วันเดินทาง (Travel)', value: 'travel_day' },
   { label: 'สแตนด์บาย (Standby)', value: 'standby_day' },
-  { label: 'เตรียมส่งตัว (Mob)', value: 'mobilization_day' },
+  { label: 'วันเดินทาง', value: 'mobilization_day' },
   { label: 'วันเดินทางกลับ (Demob)', value: 'demobilization_day' },
   { label: 'ลาป่วย (ได้รับค่าจ้าง)', value: 'sick_leave_paid' },
   { label: 'ส่งกลับ/กลับก่อนกำหนด (Early return)', value: 'early_return' },
@@ -185,9 +190,23 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [cellSaveAwaitingConfirm, setCellSaveAwaitingConfirm] = useState(false);
   const payrollAutoHealRef = useRef<Set<string>>(new Set());
   const poMonthPanelRef = useRef<TimesheetPoMonthPanelHandle>(null);
-  const [poToolbarSnapshot, setPoToolbarSnapshot] = useState<TimesheetPoMonthToolbarSnapshot | null>(null);
-  const [monthlyTimesheetNo, setMonthlyTimesheetNo] = useState<string | null>(null);
-  const [monthlyDocLoading, setMonthlyDocLoading] = useState(false);
+  const [poToolbarSnapshots, setPoToolbarSnapshots] = useState<TimesheetPoMonthToolbarSnapshot[]>([]);
+
+  const onEmbeddedToolbarSnapshot = useCallback((snapshots: TimesheetPoMonthToolbarSnapshot[]) => {
+    setPoToolbarSnapshots(snapshots);
+  }, []);
+
+  const displayToolbarSnapshots = useMemo(() => {
+    if (poToolbarSnapshots.length <= 1) return poToolbarSnapshots;
+    const bundleSnap = poToolbarSnapshots.find((s) => s.isBundle);
+    if (bundleSnap) return [bundleSnap];
+    const seen = new Set<string>();
+    return poToolbarSnapshots.filter((s) => {
+      if (seen.has(s.poId)) return false;
+      seen.add(s.poId);
+      return true;
+    });
+  }, [poToolbarSnapshots]);
 
   useEffect(() => {
     payrollAutoHealRef.current.clear();
@@ -220,6 +239,9 @@ export default function WaveMonthTimesheetSummaryPage() {
       if (!p.get('month') || !/^\d{4}-\d{2}$/.test(p.get('month')!)) {
         p.set('month', monthYm);
       }
+      if (bundleFilterId && !p.get('poActiveBundleId')) {
+        p.set('poActiveBundleId', bundleFilterId);
+      }
       router.replace(`/timesheets/wave-month?${p.toString()}`);
       const nextMonth = p.get('month')!;
       if (/^\d{4}-\d{2}$/.test(nextMonth)) setMonthYm(nextMonth);
@@ -227,7 +249,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       setBundleFilterId(b ? normalizePoActiveBundleId(b) : null);
       setUrlHighlightPo((p.get('highlightPo') || '').trim());
     },
-    [router, monthYm],
+    [router, monthYm, bundleFilterId],
   );
 
   const poQuery = useMemoFirebase(
@@ -239,13 +261,28 @@ export default function WaveMonthTimesheetSummaryPage() {
   );
   const { data: pos, isLoading: posLoading } = useCollection<PurchaseOrder>(poQuery as any);
 
+  const contractsQuery = useMemoFirebase(() => {
+    if (!firestore || !canViewTs) return null;
+    return query(
+      collection(firestore, 'main_contracts'),
+      where('status', 'in', [...PO_ACTIVE_MAIN_CONTRACT_STATUS_IN]),
+    );
+  }, [firestore, canViewTs]);
+  const { data: activeContracts, isLoading: contractsLoading } = useCollection<MainContract>(contractsQuery as any);
+
+  const poActiveWorkflowPos = useMemo(() => {
+    if (contractsLoading || activeContracts === undefined) return [];
+    const eligible = buildEligibleMainContractIdSet(activeContracts);
+    return filterPoActiveWorkflowPurchaseOrders(pos, eligible);
+  }, [pos, activeContracts, contractsLoading]);
+
   const customersQuery = useMemoFirebase(
     () => (firestore && canViewTs ? collection(firestore, 'customers') : null),
     [firestore, canViewTs],
   );
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
-  const openPoIdSet = useMemo(() => new Set((pos ?? []).map((p) => p.id)), [pos]);
+  const openPoIdSet = useMemo(() => new Set(poActiveWorkflowPos.map((p) => p.id)), [poActiveWorkflowPos]);
 
   const customerNameById = useMemo(() => {
     const m = new Map<string, string>();
@@ -253,11 +290,11 @@ export default function WaveMonthTimesheetSummaryPage() {
     return m;
   }, [customers]);
 
-  const poById = useMemo(() => new Map((pos ?? []).map((p) => [p.id, p])), [pos]);
+  const poById = useMemo(() => new Map(poActiveWorkflowPos.map((p) => [p.id, p])), [poActiveWorkflowPos]);
 
   const bundleOptions = useMemo(() => {
     const m = new Map<string, { key: string; customerId: string; poCodes: string[]; workMode?: string }>();
-    for (const p of pos ?? []) {
+    for (const p of poActiveWorkflowPos) {
       const key = resolvePoActiveBundleKeyForPo(p);
       const ex = m.get(key) ?? {
         key,
@@ -273,14 +310,15 @@ export default function WaveMonthTimesheetSummaryPage() {
       const cb = customerNameById.get(b.customerId) ?? b.customerId;
       return ca.localeCompare(cb, 'th') || a.key.localeCompare(b.key);
     });
-  }, [pos, customerNameById]);
+  }, [poActiveWorkflowPos, customerNameById]);
 
   const effectiveBundleId = useMemo(() => {
     if (bundleFilterId) return bundleFilterId;
+    if (bundleOptions.length === 1) return bundleOptions[0]!.key;
+    if (bundleOptions.length > 1) return null;
     if (urlHighlightPo && poById.has(urlHighlightPo)) {
       return resolvePoActiveBundleKeyForPo(poById.get(urlHighlightPo)!);
     }
-    if (bundleOptions.length === 1) return bundleOptions[0]!.key;
     return null;
   }, [bundleFilterId, urlHighlightPo, poById, bundleOptions]);
 
@@ -290,11 +328,13 @@ export default function WaveMonthTimesheetSummaryPage() {
       return openPoIdSet;
     }
     const s = new Set<string>();
-    for (const p of pos ?? []) {
+    for (const p of poActiveWorkflowPos) {
       if (resolvePoActiveBundleKeyForPo(p) === effectiveBundleId) s.add(p.id);
     }
     return s;
-  }, [effectiveBundleId, bundleOptions.length, pos, openPoIdSet]);
+  }, [effectiveBundleId, bundleOptions.length, poActiveWorkflowPos, openPoIdSet]);
+
+  const scopedPoIdsList = useMemo(() => [...scopedPoIdSet].sort(), [scopedPoIdSet]);
 
   const activeBundleLabel = useMemo(() => {
     if (!effectiveBundleId) return null;
@@ -497,26 +537,6 @@ export default function WaveMonthTimesheetSummaryPage() {
       window.removeEventListener('focus', onVis);
     };
   }, [canEditTs, firestore, runWaveMonthPoActiveAutoHeal]);
-
-  useEffect(() => {
-    if (!firestore || !currentUser || !monthYm || !canViewTs) return;
-    setMonthlyDocLoading(true);
-    let c = true;
-    void (async () => {
-      try {
-        const no = await ensureMonthlyTimesheetDocument(firestore, monthYm, currentUser);
-        if (c && no) setMonthlyTimesheetNo(no);
-      } catch (e) {
-        console.error('[wave-month] monthly timesheet doc', e);
-        if (c) setMonthlyTimesheetNo(null);
-      } finally {
-        if (c) setMonthlyDocLoading(false);
-      }
-    })();
-    return () => {
-      c = false;
-    };
-  }, [firestore, currentUser, monthYm, canViewTs]);
 
   useEffect(() => {
     if (!firestore || !currentUser || !monthReviewRows?.length) return;
@@ -1031,7 +1051,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     allWorkers,
   ]);
 
-  const loading = tsLoadingSoft || mobLoading || posLoading || wavesLoading;
+  const loading = tsLoadingSoft || mobLoading || posLoading || contractsLoading || wavesLoading;
 
   useEffect(() => {
     if (typeof window === 'undefined' || loading) return;
@@ -1070,335 +1090,326 @@ export default function WaveMonthTimesheetSummaryPage() {
               เอกสาร timesheet รายเดือน
             </h1>
             <p className="text-muted-foreground mt-1 max-w-3xl text-sm lg:text-base">
-              เลขที่เอกสาร:{' '}
-              {monthlyDocLoading ? (
-                <span className="font-mono">…</span>
-              ) : (
-                <span className="font-mono text-foreground font-semibold">{monthlyTimesheetNo ?? '—'}</span>
-              )}{' '}
-              · ตารางสรุปแยกตาม<strong className="text-foreground">ชุด PO Active (ลูกค้า + สัญญา)</strong> — ราคาวางบิล/payroll ไม่รวมข้ามลูกค้า
+              ตารางสรุปแยกตาม<strong className="text-foreground">ชุด PO Active (ลูกค้า + สัญญา)</strong> — ปิดงวด Payroll และแนบไฟล์<strong className="text-foreground">รวมทั้งชุด PO</strong> ในสัญญาเดียวกัน (ไม่รวมข้ามสัญญา)
             </p>
-            {activeBundleLabel ? (
-              <p className="text-sm mt-2 flex flex-wrap items-center gap-2">
-                <Layers className="h-4 w-4 text-primary shrink-0" />
-                <span className="font-semibold text-foreground">{activeBundleLabel}</span>
-              </p>
-            ) : null}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <PageGuidance
+              compact
+              title="คีย์การใช้งาน"
+              tips={[
+                'ปิดงวดสร้าง Payroll / ส่งอนุมัติ Timesheet / แนบรูป—PDF: การ์ดรวมต่อชุด PO Active ด้านบนตาราง — สถานะและไฟล์แนบไม่รวมข้ามสัญญา',
+                'เลือกลูกค้า/ชุด PO Active และเดือนที่ตัวกรองด้านขวา — แนบรูป/PDF คู่ชุด PO+เดือนนั้น (สูงสุด 4 ไฟล์ต่อ PO · รวมแสดงในการ์ดเดียว)',
+                'รหัสประเภทวัน: ดู tooltip; สี/ขอบตามสถานะ (ดูท้ายตาราง)',
+                'ตัวอักษรในเซลล์ = ประเภทวัน (W/SB/…) · « - » = ว่างหรือไม่จ่าย · คอลัมน์รวม = ชม.ทำงานสะสมในเดือน',
+                'เซลล์จับคู่กับบันทึกรายวัน — รวมข้อมูลจาก Wave Board ที่เก็บ waveId แบบ PO scope (`po_ts_scope_…`) ให้ตรงกับแถว wave จริง',
+                'จบงาน (ปิด mobilization / Demob): ใช้ปุ่ม «หยุด» แล้วเลือก «หยุดแบบจบงาน» บน Wave Board — หน้านี้เป็นตารางสรุปรายเดือนเท่านั้น',
+                'คนที่จบงานแล้วและรอ Mob รอบใหม่: ถ้าไม่มีวันใดในเดือนที่เลือกอยู่ในช่วง mobilization (ยังไม่ SB/ขึ้นไซต์) จะไม่แสดงชื่อในเดือนนั้นจนกว่าจะมีขั้นตอน Mob ใหม่',
+                'ช่วง Standby / เริ่มงาน: สรุปรายเดือนใช้ทั้งวัน Standby และวันเริ่มทำงานจาก Mobilization — คนสถานะ MOBILIZING ที่ความพร้อม READY ขึ้นตารางเมื่อช่วงมอบหมายทับเดือนนั้น (ยังไม่ ACTIVE จะยังไม่มี work_day อัตโนมัติ — ต้องผ่านขั้น Mobilization)',
+                'ลงเวลาอัตโนมัติ ACTIVE (PO Active): Scheduler เติมวันนี้ (~00:10 ไทย) + ซิงก์เมื่อเปิด Wave Board — ช่วงหยุดแบบ standby เป็น SB อัตโนมัติตามช่วงที่ตั้ง · ปุ่มหยุดแบบจบงานจะหยุดซิงก์ตามวันสิ้นสุด',
+              ]}
+            />
             <Button variant="outline" size="sm" asChild>
               <Link href="/timesheets/wave-board">ไป Wave Board</Link>
             </Button>
           </div>
         </div>
 
-        <PageGuidance
-          title="คีย์การใช้งาน"
-          tips={[
-            'ปิดงวดสร้าง Payroll / ส่งอนุมัติ Timesheet / แนบรูป—PDF: ใช้แถบเหนือตาราง — เลขหลักอ้างอิง TS- (ไม่ใช้รหัส PO เป็นชื่อเอกสารหลัก) — ไม่อ้างอิง Wave',
-            'เลือกเดือนที่หัวการ์ด «สรุปลงเวลารายเดือน» — ระบบออกเลขเอกสาร (TS-…) ต่อเดือนอัตโนมัติ; แนบรูปคู่เลข TS- (ไม่ผูก PO)',
-            'รหัสประเภทวัน: ดู tooltip; สี/ขอบตามสถานะ (ดูท้ายตาราง)',
-            'ตัวอักษรในเซลล์ = ประเภทวัน (W/SB/…) · « - » = ว่างหรือไม่จ่าย · คอลัมน์รวม = ชม.ทำงานสะสมในเดือน',
-            'เซลล์จับคู่กับบันทึกรายวัน — รวมข้อมูลจาก Wave Board ที่เก็บ waveId แบบ PO scope (`po_ts_scope_…`) ให้ตรงกับแถว wave จริง',
-            'จบงาน (ปิด mobilization / Demob): ใช้ปุ่ม «หยุด» แล้วเลือก «หยุดแบบจบงาน» บน Wave Board — หน้านี้เป็นตารางสรุปรายเดือนเท่านั้น',
-            'คนที่จบงานแล้วและรอ Mob รอบใหม่: ถ้าไม่มีวันใดในเดือนที่เลือกอยู่ในช่วง mobilization (ยังไม่ SB/ขึ้นไซต์) จะไม่แสดงชื่อในเดือนนั้นจนกว่าจะมีขั้นตอน Mob ใหม่',
-            'ช่วง Standby / เริ่มงาน: สรุปรายเดือนใช้ทั้งวัน Standby และวันเริ่มทำงานจาก Mobilization — คนสถานะ MOBILIZING ที่ความพร้อม READY ขึ้นตารางเมื่อช่วงมอบหมายทับเดือนนั้น (ยังไม่ ACTIVE จะยังไม่มี work_day อัตโนมัติ — ต้องผ่านขั้น Mobilization)',
-            'ลงเวลาอัตโนมัติ ACTIVE (PO Active): Scheduler เติมวันนี้ (~00:10 ไทย) + ซิงก์เมื่อเปิด Wave Board — ช่วงหยุดแบบ standby เป็น SB อัตโนมัติตามช่วงที่ตั้ง · ปุ่มหยุดแบบจบงานจะหยุดซิงก์ตามวันสิ้นสุด',
-          ]}
-        />
+        {!needsBundlePick ? (
+          <Suspense fallback={null}>
+            <TimesheetPoMonthPanel
+              ref={poMonthPanelRef}
+              embedded
+              linkedMonthYm={monthYm}
+              linkedPoActiveBundleId={effectiveBundleId}
+              linkedScopedPoIds={scopedPoIdsList}
+              onEmbeddedToolbarSnapshot={onEmbeddedToolbarSnapshot}
+              onLinkedMonthYmChange={(ym) => {
+                replaceWaveMonthQuery((p) => {
+                  p.set('month', ym);
+                });
+              }}
+            />
+          </Suspense>
+        ) : null}
+
+        <div className="print:hidden grid grid-cols-1 gap-4 lg:grid-cols-5 lg:items-stretch">
+          <div className="lg:col-span-3 min-w-0 flex flex-col">
+            {!needsBundlePick ? (
+              <>
+                {displayToolbarSnapshots.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4 border border-dashed rounded-lg flex-1">
+                    {scopedPoIdsList.length > 0
+                      ? 'กำลังโหลด PO สำหรับปิดงวด / แนบไฟล์…'
+                      : 'ยังไม่มี PO ในงวดนี้สำหรับปิดงวด / แนบไฟล์'}
+                  </p>
+                ) : (
+                  displayToolbarSnapshots.map((snap) => (
+                    <Alert
+                      key={snap.poId}
+                      className="border-amber-200/80 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20 flex-1"
+                    >
+                      <div className="space-y-3">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-3">
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <AlertTitle className="flex flex-wrap items-center gap-2 text-sm">
+                              {snap.isBundle ? (
+                                <>
+                                  <span className="font-semibold">ชุด PO Active</span>
+                                  <span className="font-mono">{snap.poCodesLabel ?? snap.poCode}</span>
+                                </>
+                              ) : (
+                                <span className="font-mono">{snap.poCode}</span>
+                              )}
+                              <span className="text-xs font-normal text-muted-foreground">· งวด {monthYm}</span>
+                            </AlertTitle>
+                            {snap.projectName ? (
+                              <p className="text-sm text-muted-foreground">{snap.projectName}</p>
+                            ) : null}
+                            <p className="text-xs">
+                              สถานะ:{' '}
+                              <span className="font-semibold text-foreground">{snap.reviewStatusLabel}</span>
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2 shrink-0 justify-end">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              className="gap-1"
+                              disabled={snap.lockDisabled}
+                              onClick={() => poMonthPanelRef.current?.lockPeriod(snap.poId)}
+                            >
+                              <Lock className="h-3.5 w-3.5" />
+                              ปิดงวดสร้าง Payroll
+                            </Button>
+                            {!snap.sendHidden ? (
+                              <Button
+                                size="sm"
+                                className="gap-1"
+                                disabled={snap.sendDisabled}
+                                onClick={() => poMonthPanelRef.current?.openSubmitDialog(snap.poId)}
+                              >
+                                <Send className="h-3.5 w-3.5" />
+                                ส่งอนุมัติ Timesheet
+                              </Button>
+                            ) : null}
+                            {currentUser && isSystemAdmin(currentUser) && !snap.unlockHidden ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1 border-destructive/40 text-destructive hover:bg-destructive/10"
+                                disabled={snap.unlockDisabled}
+                                onClick={() => poMonthPanelRef.current?.openUnlockDialog(snap.poId)}
+                              >
+                                <Unlock className="h-3.5 w-3.5" />
+                                ปลดล็อก (Admin)
+                              </Button>
+                            ) : null}
+                            {!snap.payrollSyncHidden ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="gap-1 border-emerald-600/40 text-emerald-800 dark:text-emerald-200"
+                                disabled={snap.payrollSyncDisabled}
+                                onClick={() => poMonthPanelRef.current?.syncPayrollReadyForPo(snap.poId)}
+                              >
+                                {snap.payrollSyncBusy ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="h-3.5 w-3.5" />
+                                )}
+                                ซิงก์พร้อมจ่าย
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border-2 border-orange-400/80 bg-orange-50/50 dark:bg-orange-950/25 dark:border-orange-700/70 px-3 py-3 space-y-3">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                            <div className="space-y-0.5 min-w-0">
+                              <p className="text-xs font-semibold text-orange-950 dark:text-orange-100">
+                                แนบไฟล์ timesheet
+                                {snap.isBundle ? (
+                                  <> — ชุด PO Active ({snap.poCodesLabel ?? snap.poCode})</>
+                                ) : (
+                                  <> — {snap.poCode}</>
+                                )}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                งวด <span className="font-mono text-foreground">{monthYm}</span>
+                                {snap.isBundle ? ' · รวมทั้งชุด PO Active' : ' · ต่อ PO'}
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="gap-1 bg-background"
+                                disabled={snap.attachDisabled}
+                                onClick={() => poMonthPanelRef.current?.openAttachPicker(snap.poId)}
+                              >
+                                {snap.attachUploading ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <ImagePlus className="h-3.5 w-3.5" />
+                                )}
+                                แนบรูป / PDF
+                              </Button>
+                              <span className="text-xs text-muted-foreground">
+                                สูงสุด 4 ไฟล์
+                              </span>
+                            </div>
+                          </div>
+                          {snap.attachments.length > 0 ? (
+                            <div className="flex flex-wrap gap-2 pt-1 border-t border-orange-300/50 dark:border-orange-800/50">
+                              {snap.attachments.map((att) => (
+                                <div key={att.id} className="relative">
+                                  {isWaveMonthAttachmentPdf(att) ? (
+                                    <a
+                                      href={att.downloadUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex h-16 w-16 flex-col items-center justify-center rounded border bg-background text-[9px] hover:bg-muted"
+                                    >
+                                      <FileText className="h-6 w-6 text-primary" />
+                                      <span>PDF</span>
+                                    </a>
+                                  ) : (
+                                    <a href={att.downloadUrl} target="_blank" rel="noopener noreferrer" className="block">
+                                      <img
+                                        src={att.downloadUrl}
+                                        alt={att.fileName}
+                                        className="h-16 w-16 rounded border object-cover bg-background"
+                                      />
+                                    </a>
+                                  )}
+                                  {!snap.attachDisabled ? (
+                                    <button
+                                      type="button"
+                                      className="absolute -right-1 -top-1 rounded-full bg-destructive p-0.5 text-destructive-foreground shadow"
+                                      aria-label="ลบ"
+                                      disabled={snap.attachUploading}
+                                      onClick={() =>
+                                        poMonthPanelRef.current?.removePoAttachment(
+                                          snap.isBundle ? (att.sourcePoId ?? snap.anchorPoId ?? snap.poId) : snap.poId,
+                                          att.id,
+                                          att.storagePath,
+                                        )
+                                      }
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground border-t border-orange-300/40 pt-2 dark:border-orange-800/40">
+                              {snap.isBundle ? 'ยังไม่มีไฟล์แนบสำหรับชุด PO Active นี้' : 'ยังไม่มีไฟล์แนบสำหรับ PO นี้'}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </Alert>
+                  ))
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground py-6 px-4 border border-dashed rounded-lg flex-1">
+                เลือก<strong className="text-foreground">ลูกค้า / ชุด PO Active</strong> จากตัวกรองด้านขวาเพื่อดูตารางสรุปและปิดงวด payroll
+              </p>
+            )}
+          </div>
+          <div className="lg:col-span-2 min-w-0 flex flex-col">
+            <div className="rounded-lg border bg-muted/30 px-4 py-3 space-y-3 flex-1 flex flex-col justify-center">
+              {bundleOptions.length > 0 ? (
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold uppercase text-muted-foreground">
+                    ลูกค้า / ชุด PO Active
+                  </Label>
+                  <Select
+                    value={effectiveBundleId ?? ''}
+                    onValueChange={(key) => {
+                      replaceWaveMonthQuery((p) => {
+                        p.set('poActiveBundleId', key);
+                        p.delete('highlightPo');
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="h-10 bg-background">
+                      <SelectValue placeholder="เลือกลูกค้า / ชุดสัญญา…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {bundleOptions.map((b) => {
+                        const name = customerNameById.get(b.customerId) ?? b.customerId;
+                        const mode =
+                          b.workMode === 'ONSHORE' ? 'Onshore' : b.workMode === 'OFFSHORE' ? 'Offshore' : '';
+                        return (
+                          <SelectItem key={b.key} value={b.key}>
+                            {name}
+                            {mode ? ` · ${mode}` : ''}
+                            {b.poCodes.length ? ` — PO ${b.poCodes.join(', ')}` : ''}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold uppercase text-muted-foreground">เดือน (ปี-เดือน)</Label>
+                <Input
+                  type="month"
+                  value={monthYm}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!/^\d{4}-\d{2}$/.test(v)) return;
+                    replaceWaveMonthQuery((p) => {
+                      p.set('month', v);
+                      if (effectiveBundleId) {
+                        p.set('poActiveBundleId', effectiveBundleId);
+                      }
+                    });
+                  }}
+                  className="h-10 font-mono bg-background"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
 
         {loading ? (
           <p className="text-center text-muted-foreground py-12">กำลังโหลด…</p>
         ) : (
           <div className="space-y-6">
             {!needsBundlePick ? (
-            <Alert className="border-amber-200/80 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20">
-              <div className="space-y-3">
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between xl:gap-4">
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <AlertTitle>ปิดงวดสร้าง Payroll · ส่งอนุมัติ Timesheet · แนบไฟล์</AlertTitle>
-                    <AlertDescription className="text-sm space-y-2">
-                      <p>
-                        <strong className="text-foreground">ปิดงวดสร้าง Payroll</strong> = ปิดงวดเดือนเพื่อตั้งพร้อมจ่ายลูกจ้าง{' '}
-                        <span className="text-foreground">โดยไม่ต้องรอผู้จัดการอนุมัติ timesheet</span>
-                        · <strong className="text-foreground">ส่งอนุมัติ Timesheet</strong> = ส่งคิวผู้จัดการ (มี popup ติ๊กยืนยัน + แนบรูป) เพื่อใช้เป็นฐานออก Invoice ตาม SB/W ใน timesheet
-                        · แนบรูป/PDF ใช้คู่<strong className="text-foreground">เลขเอกสาร TS-</strong> ในกรอบส้ม — เลือก PO ด้านขวาใช้กำหนด<strong className="text-foreground">ช่วงปิดงวดต่อ PO</strong>เท่านั้น
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        ตารางสรุป = ลงเวลารายวัน · การ์ด PO ใต้ตารางใช้แก้วันสุดท้ายของงวดต่อ PO
-                      </p>
-                    </AlertDescription>
-                  </div>
-                  <div className="flex flex-col gap-2 shrink-0 items-stretch sm:items-end">
-                    <div className="flex flex-wrap gap-2 justify-end">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="gap-1"
-                        disabled={!poToolbarSnapshot || poToolbarSnapshot.lockDisabled}
-                        onClick={() => poMonthPanelRef.current?.lockPeriod()}
-                      >
-                        <Lock className="h-3.5 w-3.5" />
-                        ปิดงวดสร้าง Payroll
-                      </Button>
-                      {!poToolbarSnapshot?.sendHidden ? (
-                        <Button
-                          size="sm"
-                          className="gap-1"
-                          disabled={!poToolbarSnapshot || poToolbarSnapshot.sendDisabled}
-                          onClick={() => poMonthPanelRef.current?.openSubmitDialog()}
-                        >
-                          <Send className="h-3.5 w-3.5" />
-                          ส่งอนุมัติ Timesheet
-                        </Button>
-                      ) : null}
-                      {currentUser && isSystemAdmin(currentUser) && poToolbarSnapshot && !poToolbarSnapshot.unlockHidden ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="gap-1 border-destructive/40 text-destructive hover:bg-destructive/10"
-                          disabled={poToolbarSnapshot.unlockDisabled}
-                          onClick={() => poMonthPanelRef.current?.openUnlockDialog()}
-                        >
-                          <Unlock className="h-3.5 w-3.5" />
-                          ปลดล็อก (Admin)
-                        </Button>
-                      ) : null}
-                    </div>
-                    {poToolbarSnapshot && poToolbarSnapshot.poOptions.length > 1 ? (
-                      <div className="flex flex-col gap-1 w-full max-w-[240px] sm:ml-auto">
-                        <Label className="text-[10px] uppercase text-muted-foreground">เลือก PO (ช่วงปิดงวด)</Label>
-                        <Select
-                          value={poToolbarSnapshot.selectedPoId ?? ''}
-                          onValueChange={(id) => poMonthPanelRef.current?.selectToolbarPo(id)}
-                        >
-                          <SelectTrigger className="h-9 bg-background">
-                            <SelectValue placeholder="เลือก PO" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {poToolbarSnapshot.poOptions.map((o) => (
-                              <SelectItem key={o.id} value={o.id}>
-                                <span className="font-mono text-xs">{o.code}</span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    ) : poToolbarSnapshot?.selectedPoId ? (
-                      <p className="text-xs text-muted-foreground text-right sm:text-right">
-                        PO ล็อก/ส่งตรวจ:{' '}
-                        <span className="font-mono font-semibold text-foreground">
-                          {poToolbarSnapshot.poOptions.find((o) => o.id === poToolbarSnapshot.selectedPoId)?.code ?? '—'}
-                        </span>
-                      </p>
-                    ) : (
-                      <p className="text-xs text-muted-foreground text-right">ยังไม่มี PO ในงวดนี้สำหรับล็อก/ส่งตรวจ</p>
-                    )}
-                  </div>
-                </div>
-                <div className="rounded-lg border-2 border-orange-400/80 bg-orange-50/50 dark:bg-orange-950/25 dark:border-orange-700/70 px-3 py-3 space-y-3">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                    <div className="space-y-0.5 min-w-0">
-                      <p className="text-xs font-semibold text-orange-950 dark:text-orange-100">แนบไฟล์คู่เอกสาร timesheet รายเดือน</p>
-                      <p className="text-sm text-muted-foreground">
-                        เลขที่เอกสาร{' '}
-                        <span className="font-mono font-bold text-foreground">
-                          {poToolbarSnapshot?.monthlyTimesheetNo ?? monthlyTimesheetNo ?? '—'}
-                        </span>
-                        <span className="text-muted-foreground"> · งวด </span>
-                        <span className="font-mono text-foreground">{monthYm}</span>
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="gap-1 bg-background"
-                        disabled={!poToolbarSnapshot || poToolbarSnapshot.attachDisabled}
-                        onClick={() => poMonthPanelRef.current?.openAttachPicker()}
-                      >
-                        {poToolbarSnapshot?.monthlyAttachUploading ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <ImagePlus className="h-3.5 w-3.5" />
-                        )}
-                        แนบรูป / PDF
-                      </Button>
-                      <span className="text-xs text-muted-foreground max-w-[18rem]">
-                        สูงสุด 4 ไฟล์ · รูป: ~500 KB — PDF: 10 MB · ผูกกับ TS- ไม่ผูก PO
-                      </span>
-                    </div>
-                  </div>
-                  {poToolbarSnapshot && poToolbarSnapshot.monthlyAttachments.length > 0 ? (
-                    <div className="flex flex-wrap gap-2 pt-1 border-t border-orange-300/50 dark:border-orange-800/50">
-                      {poToolbarSnapshot.monthlyAttachments.map((att) => (
-                        <div key={att.id} className="relative">
-                          {isWaveMonthAttachmentPdf(att) ? (
-                            <a
-                              href={att.downloadUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex h-16 w-16 flex-col items-center justify-center rounded border bg-background text-[9px] hover:bg-muted"
-                            >
-                              <FileText className="h-6 w-6 text-primary" />
-                              <span>PDF</span>
-                            </a>
-                          ) : (
-                            <a href={att.downloadUrl} target="_blank" rel="noopener noreferrer" className="block">
-                              <img src={att.downloadUrl} alt={att.fileName} className="h-16 w-16 rounded border object-cover bg-background" />
-                            </a>
-                          )}
-                          {!poToolbarSnapshot.attachDisabled ? (
-                            <button
-                              type="button"
-                              className="absolute -right-1 -top-1 rounded-full bg-destructive p-0.5 text-destructive-foreground shadow"
-                              aria-label="ลบ"
-                              disabled={poToolbarSnapshot.monthlyAttachUploading}
-                              onClick={() =>
-                                poMonthPanelRef.current?.removeMonthlyAttachment(att.id, att.storagePath)
-                              }
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  ) : poToolbarSnapshot?.monthlyAttachmentsLoading ? (
-                    <div className="flex items-center gap-2 border-t border-orange-300/40 pt-2 dark:border-orange-800/40">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                      <p className="text-xs text-muted-foreground">กำลังโหลดไฟล์แนบ…</p>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground border-t border-orange-300/40 pt-2 dark:border-orange-800/40">
-                      ยังไม่มีไฟล์แนบคู่เอกสาร TS ในเดือนนี้
-                    </p>
-                  )}
-                </div>
-              </div>
-            </Alert>
-            ) : null}
-            {needsBundlePick ? (
-              <Card className="border-dashed border-primary/40">
-                <CardHeader>
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Layers className="h-5 w-5 text-primary" />
-                    เลือกลูกค้า / ชุด PO Active
-                  </CardTitle>
-                  <CardDescription>
-                    มีหลายสัญญาในงวดนี้ — ตารางสรุปและปิดงวด payroll แยกตามลูกค้า (ราคาสัญญาไม่รวมกัน) เลือกชุดที่ต้องการทำงาน
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex flex-col gap-2 max-w-md">
-                    <Label>ชุด PO Active</Label>
-                    <Select
-                      value=""
-                      onValueChange={(key) => {
-                        replaceWaveMonthQuery((p) => {
-                          p.set('poActiveBundleId', key);
-                        });
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="เลือกลูกค้า / ชุดสัญญา…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {bundleOptions.map((b) => {
-                          const name = customerNameById.get(b.customerId) ?? b.customerId;
-                          const mode = b.workMode === 'ONSHORE' ? 'Onshore' : b.workMode === 'OFFSHORE' ? 'Offshore' : '';
-                          return (
-                            <SelectItem key={b.key} value={b.key}>
-                              {name}
-                              {mode ? ` · ${mode}` : ''} — PO {b.poCodes.join(', ')}
-                            </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href="/timesheets">กลับศูนย์ลงเวลา (เลือกจากการ์ดลูกค้า)</Link>
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : displayWaves.length === 0 ? (
-              <p className="text-center text-muted-foreground py-12 border border-dashed rounded-lg">
-                ไม่มี Wave ที่เกี่ยวข้องในเดือนนี้ — ไม่มี mobilization ที่พร้อมลงเวลาและทับเดือนที่เลือกสำหรับ PO ที่เปิดอยู่
-              </p>
-            ) : (
             <Card id="wave-month-timesheet-grid">
               <CardHeader className="space-y-4">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0 flex-1 space-y-1">
-                    <CardTitle className="text-base">สรุปลงเวลารายเดือน</CardTitle>
-                    <CardDescription className="space-y-2">
-                      {activeBundleLabel ? (
-                        <p className="font-medium text-foreground">{activeBundleLabel}</p>
-                      ) : null}
-                      <p>
-                        เลขที่เอกสาร {monthlyTimesheetNo ? <span className="font-mono text-foreground">{monthlyTimesheetNo}</span> : '—'}{' '}
-                        · พบ {sortedWaves.length} Wave สถานะเปิด · แสดงในตาราง {displayWaves.length} Wave
-                        {pos != null ? ` · ${scopedPoIdSet.size} PO ในชุดนี้` : ''}
-                      </p>
-                      <p>
-                        แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ ·{' '}
-                        <strong>รวมชม.</strong> = ชม.ทำงาน (W) และชม. Standby (SB) แยกคอลัมน์ — นับเฉพาะวันที่อยู่ในช่วง mobilization ของแถว
-                        (วันที่อยู่นอกหน้าต่างอาจแสดง W พร้อมวงแหวนแต่ไม่รวมในยอดรวม)
-                      </p>
-                    </CardDescription>
-                  </div>
-                  <div className="flex flex-col gap-2 shrink-0 w-full max-w-[280px]">
-                    {bundleOptions.length > 1 ? (
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold uppercase text-muted-foreground">ลูกค้า / ชุด PO Active</Label>
-                        <Select
-                          value={effectiveBundleId ?? ''}
-                          onValueChange={(key) => {
-                            replaceWaveMonthQuery((p) => {
-                              p.set('poActiveBundleId', key);
-                            });
-                          }}
-                        >
-                          <SelectTrigger className="h-10">
-                            <SelectValue placeholder="เลือกชุดสัญญา…" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {bundleOptions.map((b) => {
-                              const name = customerNameById.get(b.customerId) ?? b.customerId;
-                              const mode = b.workMode === 'ONSHORE' ? 'Onshore' : b.workMode === 'OFFSHORE' ? 'Offshore' : '';
-                              return (
-                                <SelectItem key={b.key} value={b.key}>
-                                  {name}
-                                  {mode ? ` · ${mode}` : ''}
-                                </SelectItem>
-                              );
-                            })}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <CardTitle className="text-base">สรุปลงเวลารายเดือน</CardTitle>
+                  <CardDescription className="space-y-2">
+                    {activeBundleLabel ? (
+                      <p className="font-medium text-foreground">{activeBundleLabel}</p>
                     ) : null}
-                    <div className="flex flex-col gap-1.5">
-                    <Label className="text-xs font-semibold uppercase text-muted-foreground">เดือน (ปี-เดือน)</Label>
-                    <Input
-                      type="month"
-                      value={monthYm}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (!/^\d{4}-\d{2}$/.test(v)) return;
-                        replaceWaveMonthQuery((p) => {
-                          p.set('month', v);
-                        });
-                      }}
-                      className="h-10 font-mono"
-                    />
-                    </div>
-                  </div>
+                    <p>
+                      พบ {sortedWaves.length} Wave สถานะเปิด · แสดงในตาราง {displayWaves.length} Wave
+                      {pos != null ? ` · ${scopedPoIdSet.size} PO ในชุดนี้` : ''}
+                      · ปิดงวด/แนบไฟล์รวมชุด PO Active ด้านบน
+                    </p>
+                    <p>
+                      แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ ·{' '}
+                      <strong>รวมชม.</strong> = ชม.ทำงาน (W) และชม. Standby (SB/MO) แยกคอลัมน์ — นับเฉพาะวันที่อยู่ในช่วง mobilization ของแถว
+                      (วันที่อยู่นอกหน้าต่างอาจแสดง W พร้อมวงแหวนแต่ไม่รวมในยอดรวม)
+                    </p>
+                  </CardDescription>
                 </div>
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">
-                {dedupedTableRows.length === 0 ? (
+                {displayWaves.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-12 px-4 border-t">
+                    ไม่มี Wave ที่เกี่ยวข้องในเดือนนี้ — ไม่มี mobilization ที่พร้อมลงเวลาและทับเดือนที่เลือกสำหรับ PO ที่เปิดอยู่
+                  </p>
+                ) : dedupedTableRows.length === 0 ? (
                   <p className="text-center text-muted-foreground py-10 px-4">
                     ยังไม่มีแถวในงวดนี้ — ไม่พบ mobilization ที่ผ่านเกณฑ์ลงเวลาและครอบคลุมเดือนนี้ (หรือยังไม่มี Wave ที่เกี่ยวข้อง)
                   </p>
@@ -1590,24 +1601,6 @@ export default function WaveMonthTimesheetSummaryPage() {
                 )}
               </CardContent>
             </Card>
-            )}
-            {!needsBundlePick ? (
-            <Suspense
-              fallback={<p className="text-center text-muted-foreground text-sm py-6 border border-dashed rounded-lg">กำลังโหลดเอกสาร PO+เดือน…</p>}
-            >
-              <TimesheetPoMonthPanel
-                ref={poMonthPanelRef}
-                embedded
-                linkedMonthYm={monthYm}
-                linkedPoActiveBundleId={effectiveBundleId}
-                onEmbeddedToolbarSnapshot={setPoToolbarSnapshot}
-                onLinkedMonthYmChange={(ym) => {
-                  replaceWaveMonthQuery((p) => {
-                    p.set('month', ym);
-                  });
-                }}
-              />
-            </Suspense>
             ) : null}
           </div>
         )}

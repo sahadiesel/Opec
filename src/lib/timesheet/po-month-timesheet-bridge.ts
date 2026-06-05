@@ -11,7 +11,7 @@ import {
   type DocumentReference,
   type Firestore,
 } from 'firebase/firestore';
-import type { PayrollPeriod, PayrollPeriodStatus, PoMonthTimesheetReview, PurchaseOrder } from '@/lib/types';
+import type { Assignment, PayrollPeriod, PayrollPeriodStatus, PoMonthTimesheetReview, PurchaseOrder } from '@/lib/types';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { purchaseOrderOverlapsYearMonth } from '@/lib/timesheet/po-location-month-shell';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
@@ -122,6 +122,79 @@ async function gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(
     }
   }
 
+  /** mobilization ใต้ PO — จับใบงานที่อ้าง assignment / wave จาก mob แม้ purchaseOrderId ยังว่าง */
+  const mobSnap = await getDocs(query(collection(db, 'mobilizations'), where('poId', '==', pid)));
+  const mobAssignmentIds: string[] = [];
+  const mobWaveIds = new Set<string>();
+  const mobWorkerIds = new Set<string>();
+  for (const d of mobSnap.docs) {
+    const a = d.data() as Assignment;
+    mobAssignmentIds.push(d.id);
+    const wid = String(a.waveId || '').trim();
+    if (wid) mobWaveIds.add(wid);
+    const workerId = String(a.workerId || '').trim();
+    if (workerId) mobWorkerIds.add(workerId);
+  }
+
+  const belongsToPoMob = (data: Record<string, unknown>): boolean => {
+    const tsPo = String(data.purchaseOrderId || '').trim();
+    if (tsPo && tsPo === pid) return true;
+    const aid = String(data.assignmentId || '').trim();
+    if (aid && mobAssignmentIds.includes(aid)) return true;
+    const wid = String(data.waveId || '').trim();
+    if (wid && (mobWaveIds.has(wid) || waveIdsUnderPo.includes(wid))) return true;
+    return false;
+  };
+
+  for (const wid of mobWaveIds) {
+    if (waveIdsUnderPo.includes(wid)) continue;
+    const snapByMobWave = await getDocs(
+      query(
+        collection(db, 'daily_timesheets'),
+        where('waveId', '==', wid),
+        where('date', '>=', monthFirst),
+        where('date', '<=', monthLast),
+      ),
+    );
+    for (const d of snapByMobWave.docs) {
+      const data = d.data();
+      if (data.status === 'LOCKED') continue;
+      const tsPo = String(data.purchaseOrderId || '').trim();
+      if (tsPo && tsPo !== pid) continue;
+      refsById.set(d.id, d.ref);
+    }
+  }
+
+  for (const assignChunk of chunkIds(mobAssignmentIds, FIRESTORE_IN_MAX)) {
+    if (assignChunk.length === 0) continue;
+    const snapByAssign = await getDocs(
+      query(collection(db, 'daily_timesheets'), where('assignmentId', 'in', assignChunk)),
+    );
+    for (const d of snapByAssign.docs) {
+      const data = d.data();
+      const dateYmd = String(data.date || '').slice(0, 10);
+      if (dateYmd < monthFirst || dateYmd > monthLast) continue;
+      if (data.status === 'LOCKED') continue;
+      refsById.set(d.id, d.ref);
+    }
+  }
+
+  /** คนงานใต้ mobilization PO นี้ — จับใบงานที่มี workerId แต่ purchaseOrderId/wave ยังไม่ครบ */
+  for (const workerChunk of chunkIds([...mobWorkerIds], FIRESTORE_IN_MAX)) {
+    if (workerChunk.length === 0) continue;
+    const snapByWorker = await getDocs(
+      query(collection(db, 'daily_timesheets'), where('workerId', 'in', workerChunk)),
+    );
+    for (const d of snapByWorker.docs) {
+      const data = d.data();
+      const dateYmd = String(data.date || '').slice(0, 10);
+      if (dateYmd < monthFirst || dateYmd > monthLast) continue;
+      if (data.status === 'LOCKED') continue;
+      if (!belongsToPoMob(data as Record<string, unknown>)) continue;
+      refsById.set(d.id, d.ref);
+    }
+  }
+
   return [...refsById.values()];
 }
 
@@ -205,8 +278,26 @@ const PO_MONTH_GATE_STATUSES: PoMonthTimesheetReview['status'][] = [
 ];
 
 /**
- * หลังมีอย่างน้อยหนึ่ง PO+เดือนที่ปิดงวดแล้วในเดือนปฏิทินนั้น — ตั้ง ready ให้ใบงานของ **ทุก PO active ที่ทับเดือนนั้น**
- * (ไม่บังคับให้ล็อกเอกสาร PO+เดือนทุกฉบับ — แก้เคสหลาย PO / หลายไซต์ที่ล็อกแค่ PO เดียวแล้วซิงก์ไม่ครบ)
+ * ตั้ง readyForPayroll ให้ใบงานของ PO+เดือนเดียว (หลังปิดงวด / ซิงก์ใหม่)
+ */
+export async function syncReadyPayrollFlagsForPoMonth(
+  db: Firestore,
+  poId: string,
+  yearMonth: string,
+): Promise<{ updated: number }> {
+  const ym = yearMonth.trim();
+  const pid = poId.trim();
+  if (!/^\d{4}-\d{2}$/.test(ym) || !pid) return { updated: 0 };
+  return markTimesheetsReadyForPayrollAfterPoMonthApproval(db, {
+    id: poMonthTimesheetReviewDocId(pid, ym),
+    poId: pid,
+    yearMonth: ym,
+  } as PoMonthTimesheetReview);
+}
+
+/**
+ * หลังมีอย่างน้อยหนึ่ง PO+เดือนที่ปิดงวดแล้วในเดือนปฏิทินนั้น — ตั้ง ready ให้ใบงานของ PO ที่ปิดงวดแล้วก่อน
+ * จากนั้นซิงก์ PO active/pending อื่นที่ทับเดือน (นโยบายเดิม)
  */
 export async function syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews(
   db: Firestore,
@@ -219,29 +310,44 @@ export async function syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReview
     query(collection(db, 'po_month_timesheet_reviews'), where('yearMonth', '==', ym), limit(80)),
   );
 
-  let gatedPoCount = 0;
+  const gatedPoIds = new Set<string>();
   for (const d of reviewSnap.docs) {
     const r = { id: d.id, ...(d.data() as object) } as PoMonthTimesheetReview;
     if (!PO_MONTH_GATE_STATUSES.includes(r.status)) continue;
-    gatedPoCount++;
+    const pid = (r.poId || '').trim();
+    if (pid) gatedPoIds.add(pid);
   }
 
+  const gatedPoCount = gatedPoIds.size;
   if (gatedPoCount === 0) {
     return { updated: 0, gatedPoCount: 0, syncedPoCount: 0 };
   }
 
-  const posSnap = await getDocs(query(collection(db, 'purchase_orders'), where('status', '==', 'active'), limit(200)));
-
   let updated = 0;
   let syncedPoCount = 0;
+  const syncedPoIds = new Set<string>();
+
+  for (const poId of gatedPoIds) {
+    const res = await syncReadyPayrollFlagsForPoMonth(db, poId, ym);
+    updated += res.updated;
+    syncedPoCount++;
+    syncedPoIds.add(poId);
+  }
+
+  const posSnap = await getDocs(
+    query(collection(db, 'purchase_orders'), where('status', 'in', ['pending', 'active']), limit(200)),
+  );
 
   for (const d of posSnap.docs) {
     const po = { id: d.id, ...(d.data() as object) } as PurchaseOrder;
+    if (syncedPoIds.has(po.id)) continue;
     if ((po.poType || 'contract') === 'quotation') continue;
     if (!purchaseOrderOverlapsYearMonth(po, ym)) continue;
 
-    const syntheticReview = { poId: po.id, yearMonth: ym } as PoMonthTimesheetReview;
-    const res = await markTimesheetsReadyForPayrollAfterPoMonthApproval(db, syntheticReview);
+    const res = await markTimesheetsReadyForPayrollAfterPoMonthApproval(db, {
+      poId: po.id,
+      yearMonth: ym,
+    } as PoMonthTimesheetReview);
     updated += res.updated;
     syncedPoCount++;
   }

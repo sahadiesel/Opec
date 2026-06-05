@@ -81,7 +81,10 @@ import {
   isFinalClearanceStep2Done,
   isFinalClearanceStep3Done,
   isMobUnassigned,
+  mobStandbyMobDayChoiceLabel,
+  mobStandbyMobDayStatusCode,
   thailandTodayYmd,
+  type MobStandbyMobDayChoice,
 } from '@/lib/ops/mobilization-final-clearance';
 import { isPoTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
@@ -105,6 +108,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { computeMobDrugTestChecklistStatus, resolveMobReferenceDateYmd } from '@/lib/drug-test-panel';
+import { formatPoLineSiteOptionLabel } from '@/lib/ops/po-line-display';
 
 export default function MobilizationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -128,6 +132,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   const [clearanceEditMode, setClearanceEditMode] = useState<0 | 2 | 3>(0);
   const [step2CascadeOpen, setStep2CascadeOpen] = useState(false);
   const [step1RevertOpen, setStep1RevertOpen] = useState(false);
+  const [standbyMobPickOpen, setStandbyMobPickOpen] = useState(false);
   const [locationLineIdDraft, setLocationLineIdDraft] = useState<string>('');
   const [locationCustomDraft, setLocationCustomDraft] = useState('');
   const [locationSaving, setLocationSaving] = useState(false);
@@ -189,6 +194,18 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     [firestore, assignment?.poId],
   );
   const { data: poLines } = useCollection<POLine>(poLinesQuery as any);
+
+  const positionsQuery = useMemoFirebase(
+    () => (firestore && poLines?.length ? collection(firestore, 'positions') : null),
+    [firestore, poLines?.length],
+  );
+  const { data: allPositions } = useCollection<Position>(positionsQuery as any);
+
+  const positionById = useMemo(() => {
+    const m = new Map<string, Position>();
+    for (const p of allPositions ?? []) m.set(p.id, p);
+    return m;
+  }, [allPositions]);
 
   const primaryPoLine = useMemo(() => {
     const lid = (assignment?.poLineId || '').trim();
@@ -362,11 +379,11 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     }
   };
 
-  const runFinalClearanceStep2 = async () => {
+  const runFinalClearanceStep2 = async (dayKind: MobStandbyMobDayChoice) => {
     if (!firestore || !assignment || !currentUser?.id || !po) return;
     const ymd = (standbyDateDraft || '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
-      toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวัน Standby (รูปแบบ yyyy-mm-dd)' });
+      toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวัน Standby / Mob (รูปแบบ yyyy-mm-dd)' });
       return;
     }
     const editing = clearanceEditMode === 2;
@@ -389,27 +406,34 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       return;
     }
     if (!canEditTimesheets) {
-      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'ต้องมีสิทธิ์แก้ไข Timesheets เพื่อบันทึก Standby ลงตารางรายวัน' });
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'ต้องมีสิทธิ์แก้ไข Timesheets เพื่อบันทึกลงตารางรายวัน' });
       return;
     }
+    setStandbyMobPickOpen(false);
     setClearanceSavingStep(2);
+    const statusCode = mobStandbyMobDayStatusCode(dayKind)!;
+    const kindLabel = mobStandbyMobDayChoiceLabel(dayKind);
     try {
       const prevStandby = (assignment.mobStandbyDate || '').trim();
-      if (editing && prevStandby && prevStandby !== ymd && /^\d{4}-\d{2}-\d{2}$/.test(prevStandby)) {
+      if (editing && prevStandby && /^\d{4}-\d{2}-\d{2}$/.test(prevStandby) && prevStandby !== ymd) {
         await deleteDraftMobFinalClearanceTimesheetsInRange(firestore, assignment.workerId, assignment.id, prevStandby, prevStandby);
+      }
+      if (editing && /^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+        await deleteDraftMobFinalClearanceTimesheetsInRange(firestore, assignment.workerId, assignment.id, ymd, ymd);
       }
       await upsertMobClearanceDailyTimesheet(firestore, currentUser as AppUser, {
         assignment,
         po,
         line,
         workerDisplayName: workerTimesheetName || assignment.workerId,
-        kind: 'standby_day',
+        kind: dayKind,
         dateYmd: ymd,
         bypassPoMonthLock: true,
       });
       const now = Date.now();
       patchMobilization({
         mobStandbyDate: ymd,
+        mobStandbyDayEventType: dayKind,
         mobStandbyRecordedAt: now,
         mobStandbyRecordedByUserId: currentUser.id,
         mobilizationStatus: 'MOBILIZING',
@@ -418,12 +442,12 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       setWorkingStartDateDraft((cur) => cur || addDaysToYmd(ymd, 1));
       setClearanceEditMode(0);
       toast({
-        title: editing ? 'แก้ไขวัน Standby แล้ว' : 'บันทึก Standby แล้ว',
-        description: `วันที่ ${ymd} — ลง timesheet เป็น standby แล้ว · ถัดไปเริ่มวันทำงาน`,
+        title: editing ? `แก้ไขวัน ${kindLabel} แล้ว` : `บันทึก ${kindLabel} (${statusCode}) แล้ว`,
+        description: `วันที่ ${ymd} — ลง timesheet เป็น ${statusCode} · ถัดไปเริ่มวันทำงาน`,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      toast({ variant: 'destructive', title: 'บันทึก Standby ไม่สำเร็จ', description: msg });
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: msg });
     } finally {
       setClearanceSavingStep(0);
     }
@@ -583,7 +607,13 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       return;
     }
     const line = poLines?.find((l) => l.id === lid);
-    const label = (line?.workLocation || '').trim() || lid;
+    const lineIdx = poLines?.findIndex((l) => l.id === lid) ?? -1;
+    const label = line
+      ? formatPoLineSiteOptionLabel(line, {
+          position: positionById.get(line.positionId),
+          lineIndex: lineIdx >= 0 ? lineIdx : undefined,
+        })
+      : lid;
     setLocationSaving(true);
     try {
       patchMobilization({
@@ -891,8 +921,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           <strong>ยืนยันพร้อมเดินทาง</strong> — บันทึกเวลาและผู้ยืนยัน (<span className="font-mono">READY_TO_MOB</span>)
                         </li>
                         <li>
-                          <strong>วัน Standby</strong> — เลือกวันที่ (ค่าเริ่มต้น = วันนี้ตาม{' '}
-                          <span className="font-mono">Asia/Bangkok</span>) → <span className="font-mono">MOBILIZING</span>
+                          <strong>วัน Standby / Mob</strong> — เลือกวันที่ แล้วกด Standby/Mob → เลือกประเภทวัน (
+                          <span className="font-mono">SB</span> หรือ <span className="font-mono">MO</span>) →{' '}
+                          <span className="font-mono">MOBILIZING</span>
                         </li>
                         <li>
                           <strong>เริ่มวันทำงาน</strong> — ค่าเริ่มต้น = วันรุ่งขึ้นหลัง Standby →{' '}
@@ -921,15 +952,10 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           <div className="space-y-2">
                             <Label className="text-xs font-semibold text-muted-foreground">จากบรรทัด PO</Label>
                             <Select
-                              value={
-                                locationCustomDraft.trim()
-                                  ? '_line_placeholder_'
-                                  : locationLineIdDraft || '_line_placeholder_'
-                              }
+                              value={locationLineIdDraft || '_line_placeholder_'}
                               onValueChange={(v) => {
                                 if (v === '_line_placeholder_') return;
                                 setLocationLineIdDraft(v);
-                                setLocationCustomDraft('');
                               }}
                               disabled={
                                 !canEditMobilization || isMobUnassigned(assignment) || isFinalClearanceStep1Done(assignment)
@@ -942,44 +968,62 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                 <SelectItem value="_line_placeholder_" disabled>
                                   — เลือกบรรทัด —
                                 </SelectItem>
-                                {(poLines ?? []).map((ln) => (
+                                {(poLines ?? []).map((ln, idx) => (
                                   <SelectItem key={ln.id} value={ln.id}>
-                                    {(ln.workLocation || '').trim() || ln.id}
+                                    {formatPoLineSiteOptionLabel(ln, {
+                                      position: positionById.get(ln.positionId),
+                                      lineIndex: idx,
+                                    })}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
+                            {locationCustomDraft.trim() ? (
+                              <p className="text-[11px] text-muted-foreground leading-snug">
+                                มีข้อความสถานที่ด้านขวา — กด «บันทึก» จะใช้ข้อความนั้นแทนบรรทัด PO ที่เลือก
+                              </p>
+                            ) : null}
                           </div>
                           <div className="space-y-2">
                             <Label className="text-xs font-semibold text-muted-foreground">
                               หรือระบุข้อความสถานที่ (ถ้ากรอกช่องนี้ จะใช้แทนการเลือกบรรทัด)
                             </Label>
-                            <Input
-                              className="h-11"
-                              value={locationCustomDraft}
-                              onChange={(e) => setLocationCustomDraft(e.target.value)}
-                              placeholder="เช่น Rig A /ฐานส่งตัว"
-                              disabled={
-                                !canEditMobilization || isMobUnassigned(assignment) || isFinalClearanceStep1Done(assignment)
-                              }
-                            />
+                            <div className="flex gap-2">
+                              <Input
+                                className="h-11 flex-1 min-w-0"
+                                value={locationCustomDraft}
+                                onChange={(e) => setLocationCustomDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    void saveMobLocation();
+                                  }
+                                }}
+                                placeholder="เช่น Rig A / ฐานส่งตัว"
+                                disabled={
+                                  !canEditMobilization ||
+                                  isMobUnassigned(assignment) ||
+                                  isFinalClearanceStep1Done(assignment)
+                                }
+                              />
+                              <Button
+                                type="button"
+                                className="h-11 shrink-0"
+                                disabled={
+                                  !canEditMobilization ||
+                                  isMobUnassigned(assignment) ||
+                                  isFinalClearanceStep1Done(assignment) ||
+                                  locationSaving ||
+                                  (!locationCustomDraft.trim() && !locationLineIdDraft.trim())
+                                }
+                                onClick={() => void saveMobLocation()}
+                              >
+                                {locationSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'บันทึก'}
+                              </Button>
+                            </div>
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            disabled={
-                              !canEditMobilization ||
-                              isMobUnassigned(assignment) ||
-                              isFinalClearanceStep1Done(assignment) ||
-                              locationSaving
-                            }
-                            onClick={() => void saveMobLocation()}
-                          >
-                            {locationSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                            บันทึกสถานที่
-                          </Button>
                           {(assignment.workLocation || '').trim() ? (
                             <span className="text-xs text-muted-foreground">
                               ปัจจุบัน: <strong>{assignment.workLocation}</strong>
@@ -989,8 +1033,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                               ยังไม่บันทึกสถานที่ — ขั้นที่ 1 จะไม่ให้กด
                             </span>
                           )}
-                          {(assignment.mobLocationKey || '').trim() ? (
-                            <span className="text-[10px] font-mono text-muted-foreground break-all">
+                          {(assignment.mobLocationKey || '').trim() &&
+                          !(assignment.workLocation || '').trim() ? (
+                            <span className="text-xs text-muted-foreground break-all">
                               ({assignment.mobLocationKey})
                             </span>
                           ) : null}
@@ -1086,7 +1131,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
                       <div className="flex flex-col gap-3 md:flex-row md:items-end md:flex-wrap">
                         <div className="space-y-2 flex-1 min-w-[220px]">
-                          <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 2 · วัน Standby</p>
+                          <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 2 · วัน Standby / Mob</p>
                           {assignment.poLineId && !primaryPoLine ? (
                             <p className="text-xs text-amber-800 dark:text-amber-200">กำลังโหลดบรรทัด PO…</p>
                           ) : null}
@@ -1104,17 +1149,29 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           {isFinalClearanceStep2Done(assignment) ? (
                             <p className="text-sm">
                               บันทึกแล้ว — วันที่ {assignment.mobStandbyDate} ·{' '}
+                              {mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ?? 'SB'} (
+                              {mobStandbyMobDayChoiceLabel(assignment.mobStandbyDayEventType ?? 'standby_day')}) ·{' '}
                               {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
                             </p>
                           ) : null}
                         </div>
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-end gap-2">
+                          <div
+                            className="h-11 min-w-[4.5rem] px-3 flex flex-col items-center justify-center rounded-md border-2 border-amber-400 bg-amber-50 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100 dark:border-amber-500"
+                            title="รหัสประเภทวันที่บันทึกใน timesheet"
+                          >
+                            <span className="text-[10px] font-medium leading-none text-muted-foreground">ประเภท</span>
+                            <span className="text-lg font-bold tracking-widest leading-tight">
+                              {mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ??
+                                (isFinalClearanceStep2Done(assignment) ? 'SB' : '—')}
+                            </span>
+                          </div>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <span className="inline-flex">
                                 <Button
                                   variant="outline"
-                                  className="border-blue-600 text-blue-700"
+                                  className="border-blue-600 text-blue-700 h-11"
                                   disabled={
                                     !canEditMobilization ||
                                     isMobUnassigned(assignment) ||
@@ -1123,25 +1180,25 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     (isFinalClearanceStep2Done(assignment) && clearanceEditMode !== 2) ||
                                     !step2SaveGate.ok
                                   }
-                                  onClick={() => void runFinalClearanceStep2()}
+                                  onClick={() => setStandbyMobPickOpen(true)}
                                 >
                                   {clearanceSavingStep === 2 ? (
                                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                                   ) : (
                                     <Truck className="h-4 w-4 mr-2" />
                                   )}
-                                  {clearanceEditMode === 2 ? 'บันทึกวัน Standby (แก้ไข)' : 'พร้อมเดินทาง (Standby)'}
+                                  {clearanceEditMode === 2 ? 'Standby/Mob (แก้ไข)' : 'Standby/Mob'}
                                 </Button>
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
                               {clearanceEditMode === 2
-                                ? 'บันทึกวัน Standby ใหม่ — งวด PO+เดือนล็อกแล้วยังบันทึกจาก Mob ได้'
+                                ? 'เลือก Standby (SB) หรือ Mobilization (MO) แล้วบันทึกใหม่'
                                 : isFinalClearanceStep2Done(assignment)
-                                  ? 'บันทึก Standby แล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่'
+                                  ? 'บันทึกแล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่หรือประเภท'
                                   : !step2SaveGate.ok
                                     ? step2SaveGate.message
-                                    : 'กดยืนยันวันที่ลูกจ้างพร้อมเดินทาง — วันนี้จะเป็นวันที่ได้รับค่าจ้าง Standby Day เลือกวันที่ได้ (ค่าเริ่มต้นเป็นวันนี้) · ระบบจะลง timesheet เป็น standby อัตโนมัติ'}
+                                    : 'เลือกวันที่ แล้วกด — ระบบจะถามว่าใช้วันนี้เป็น Standby (SB) หรือ Mobilization (MO)'}
                             </TooltipContent>
                           </Tooltip>
                           {isFinalClearanceStep2Done(assignment) && clearanceEditMode !== 2 ? (
@@ -1505,6 +1562,52 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
           </div>
         </div>
       </div>
+
+      <AlertDialog open={standbyMobPickOpen} onOpenChange={setStandbyMobPickOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Standby / วันเดินทาง</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  จะใช้วันที่{' '}
+                  <strong className="text-foreground">
+                    {standbyDateDraft ? formatDateThaiBE(standbyDateDraft) : '—'}
+                  </strong>{' '}
+                  เป็นวัน Standby หรือ วันเดินทาง?
+                </p>
+                <p className="text-xs">
+                  Standby บันทึกเป็น <span className="font-mono font-semibold">SB</span> · วันเดินทาง บันทึกเป็น{' '}
+                  <span className="font-mono font-semibold">MO</span> ใน timesheet รายวัน
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+            <AlertDialogCancel disabled={clearanceSavingStep === 2}>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-amber-600 hover:bg-amber-700"
+              disabled={clearanceSavingStep === 2}
+              onClick={(e) => {
+                e.preventDefault();
+                void runFinalClearanceStep2('standby_day');
+              }}
+            >
+              Standby (SB)
+            </AlertDialogAction>
+            <AlertDialogAction
+              className="bg-blue-600 hover:bg-blue-700"
+              disabled={clearanceSavingStep === 2}
+              onClick={(e) => {
+                e.preventDefault();
+                void runFinalClearanceStep2('mobilization_day');
+              }}
+            >
+              วันเดินทาง (MO)
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={step1RevertOpen} onOpenChange={setStep1RevertOpen}>
         <AlertDialogContent>

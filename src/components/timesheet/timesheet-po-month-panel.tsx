@@ -39,6 +39,7 @@ import {
 } from 'firebase/firestore';
 import type {
   Customer,
+  MainContract,
   PoLocationMonthTimesheet,
   PoMonthTimesheetPhotoBundle,
   PoMonthTimesheetReview,
@@ -52,9 +53,15 @@ import { canAccess, canView, isMatrixControlledRole, canEdit } from '@/lib/permi
 import { formatThaiYearMonthLabel } from '@/lib/ops/timesheet-hub-po-month';
 import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import {
+  buildEligibleMainContractIdSet,
+  filterPoActiveWorkflowPurchaseOrders,
+  PO_ACTIVE_MAIN_CONTRACT_STATUS_IN,
+} from '@/lib/ops/po-active-eligibility';
+import {
   clearReadyPayrollFlagsForPoCalendarMonth,
   ensureWorkerMonthlyPayrollPeriodForYearMonth,
   poMonthTimesheetReviewDocId,
+  syncReadyPayrollFlagsForPoMonth,
   syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews,
 } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { isSystemAdmin } from '@/lib/permission-core';
@@ -109,6 +116,14 @@ import { cn } from '@/lib/utils';
 
 const MAX_PO_MONTH_ATTACHMENTS = 4;
 
+/** คีย์เดียวสำหรับปิดงวด/แนบไฟล์รวมทั้งชุด PO Active (หลาย PO ใน bundle) */
+export const PO_ACTIVE_BUNDLE_TOOLBAR_ID = '__po_active_bundle__';
+
+export type TimesheetPoMonthToolbarAttachment = WaveMonthTimesheetPhotoAttachment & {
+  sourcePoId?: string;
+  sourcePoCode?: string;
+};
+
 function ymNow(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -156,6 +171,180 @@ function isAttachmentReadonly(r: PoMonthTimesheetReview | undefined): boolean {
   return r.status === 'pending_manager_review' || r.status === 'approved';
 }
 
+function poReviewStatusLabel(s: PoMonthTimesheetReview['status'] | null | undefined): string {
+  switch (s) {
+    case 'entry_locked':
+      return 'ปิดงวด Payroll แล้ว';
+    case 'pending_manager_review':
+      return 'รอผู้จัดการ';
+    case 'approved':
+      return 'อนุมัติแล้ว';
+    case 'rejected':
+      return 'ปฏิเสธ';
+    default:
+      return 'ยังไม่ปิดงวด';
+  }
+}
+
+function buildPoToolbarSnapshot(
+  po: PurchaseOrder,
+  r: PoMonthTimesheetReview | undefined,
+  bundle: PoMonthTimesheetPhotoBundle | undefined,
+  args: {
+    canEditTs: boolean;
+    submittingPoId: string | null;
+    uploadingPhotoPoId: string | null;
+    payrollSyncPoId: string | null;
+    currentUser: User | null;
+  },
+): TimesheetPoMonthToolbarSnapshot {
+  const photoReadOnly = isAttachmentReadonly(r);
+  const displayAtts = photoReadOnly ? r?.timesheetPhotoAttachments ?? [] : bundle?.attachments ?? [];
+  const lockDisabled =
+    !args.canEditTs ||
+    args.submittingPoId === po.id ||
+    (!!r && (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved'));
+  const canSendToManager = args.canEditTs && !!r && (r.status === 'entry_locked' || r.status === 'rejected');
+  const showUnlock =
+    !!args.currentUser &&
+    isSystemAdmin(args.currentUser) &&
+    !!r &&
+    (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved');
+  const canPayrollSync =
+    !!r &&
+    (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved');
+
+  return {
+    poId: po.id,
+    poCode: po.poCode ?? po.id,
+    projectName: po.projectName,
+    reviewStatus: r?.status ?? null,
+    reviewStatusLabel: poReviewStatusLabel(r?.status),
+    lockDisabled,
+    sendDisabled: args.submittingPoId === po.id || !canSendToManager,
+    sendHidden: !canSendToManager,
+    unlockHidden: !showUnlock,
+    unlockDisabled: args.submittingPoId === po.id,
+    attachDisabled: photoReadOnly || !args.canEditTs || args.uploadingPhotoPoId === po.id,
+    attachUploading: args.uploadingPhotoPoId === po.id,
+    attachments: displayAtts,
+    busyPoId: args.submittingPoId,
+    payrollSyncHidden: !canPayrollSync,
+    payrollSyncDisabled: !args.canEditTs || args.payrollSyncPoId === po.id,
+    payrollSyncBusy: args.payrollSyncPoId === po.id,
+  };
+}
+
+function mergedBundleAttachments(
+  posRows: PurchaseOrder[],
+  reviewByPoId: Map<string, PoMonthTimesheetReview>,
+  bundleByPoId: Map<string, PoMonthTimesheetPhotoBundle>,
+): TimesheetPoMonthToolbarAttachment[] {
+  const out: TimesheetPoMonthToolbarAttachment[] = [];
+  for (const po of posRows) {
+    const r = reviewByPoId.get(po.id);
+    const photoReadOnly = isAttachmentReadonly(r);
+    const atts = photoReadOnly ? r?.timesheetPhotoAttachments ?? [] : bundleByPoId.get(po.id)?.attachments ?? [];
+    for (const a of atts) {
+      out.push({ ...a, sourcePoId: po.id, sourcePoCode: po.poCode ?? po.id });
+    }
+  }
+  return out;
+}
+
+function buildBundlePoToolbarSnapshot(
+  posRows: PurchaseOrder[],
+  reviewByPoId: Map<string, PoMonthTimesheetReview>,
+  bundleByPoId: Map<string, PoMonthTimesheetPhotoBundle>,
+  args: {
+    canEditTs: boolean;
+    submittingPoId: string | null;
+    uploadingPhotoPoId: string | null;
+    payrollSyncPoId: string | null;
+    currentUser: User | null;
+  },
+): TimesheetPoMonthToolbarSnapshot {
+  const anchor = posRows[0]!;
+  const poCodesLabel = posRows.map((p) => p.poCode ?? p.id).join(', ');
+  const statuses = posRows.map((p) => reviewByPoId.get(p.id)?.status ?? null);
+  const allSameStatus = statuses.every((s) => s === statuses[0]);
+  const anyGated = statuses.some(
+    (s) => s === 'entry_locked' || s === 'pending_manager_review' || s === 'approved',
+  );
+  const allGated = statuses.every(
+    (s) => s === 'entry_locked' || s === 'pending_manager_review' || s === 'approved',
+  );
+  const reviewStatusLabel =
+    allSameStatus && statuses[0] != null
+      ? poReviewStatusLabel(statuses[0])
+      : anyGated
+        ? 'บาง PO ปิดงวดแล้ว'
+        : 'ยังไม่ปิดงวด';
+
+  const lockDisabled =
+    !args.canEditTs ||
+    !!args.submittingPoId ||
+    allGated ||
+    posRows.every((po) => {
+      const r = reviewByPoId.get(po.id);
+      return (
+        !!r &&
+        (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved')
+      );
+    });
+
+  const canSendToManager = posRows.some((po) => {
+    const r = reviewByPoId.get(po.id);
+    return args.canEditTs && !!r && (r.status === 'entry_locked' || r.status === 'rejected');
+  });
+
+  const showUnlock =
+    !!args.currentUser &&
+    isSystemAdmin(args.currentUser) &&
+    posRows.some((po) => {
+      const r = reviewByPoId.get(po.id);
+      return (
+        !!r &&
+        (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved')
+      );
+    });
+
+  const canPayrollSync = posRows.some((po) => {
+    const r = reviewByPoId.get(po.id);
+    return (
+      !!r &&
+      (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved')
+    );
+  });
+
+  const anchorR = reviewByPoId.get(anchor.id);
+  const anchorReadOnly = isAttachmentReadonly(anchorR);
+
+  return {
+    poId: PO_ACTIVE_BUNDLE_TOOLBAR_ID,
+    anchorPoId: anchor.id,
+    poIds: posRows.map((p) => p.id),
+    isBundle: true,
+    poCode: poCodesLabel,
+    poCodesLabel,
+    projectName: [...new Set(posRows.map((p) => (p.projectName || '').trim()).filter(Boolean))].join(' · ') || undefined,
+    reviewStatus: allSameStatus ? statuses[0] ?? null : null,
+    reviewStatusLabel,
+    lockDisabled,
+    sendDisabled: !!args.submittingPoId || !canSendToManager,
+    sendHidden: !canSendToManager,
+    unlockHidden: !showUnlock,
+    unlockDisabled: !!args.submittingPoId,
+    attachDisabled: anchorReadOnly || !args.canEditTs || args.uploadingPhotoPoId === anchor.id,
+    attachUploading: args.uploadingPhotoPoId === anchor.id,
+    attachments: mergedBundleAttachments(posRows, reviewByPoId, bundleByPoId),
+    busyPoId: args.submittingPoId,
+    payrollSyncHidden: !canPayrollSync,
+    payrollSyncDisabled: !args.canEditTs || !!args.payrollSyncPoId,
+    payrollSyncBusy: !!args.payrollSyncPoId,
+  };
+}
+
 export type TimesheetPoMonthPanelProps = {
   /** ฝังในหน้า wave-month — ไม่หุ้ม AppShell */
   embedded?: boolean;
@@ -163,34 +352,48 @@ export type TimesheetPoMonthPanelProps = {
   linkedMonthYm?: string;
   /** ชุด PO Active (ลูกค้า+โหมด) — ฝังใน wave-month ให้สอดคล้องตารางสรุป */
   linkedPoActiveBundleId?: string | null;
+  /** PO ในชุดที่ wave-month กำลังแสดง — ปิดงวด/แนบไฟล์ให้ตรงกริด (ไม่บังคับ wave เปิดทับเดือน) */
+  linkedScopedPoIds?: readonly string[];
   onLinkedMonthYmChange?: (ym: string) => void;
-  /** wave-month: อัปเดตสถานะปุ่มลัด (ปิดงวด Payroll / ส่งอนุมัติ TS / แนบ) */
-  onEmbeddedToolbarSnapshot?: (s: TimesheetPoMonthToolbarSnapshot | null) => void;
+  /** wave-month: อัปเดตสถานะปิดงวด/แนบ — หนึ่งรายการต่อ PO ในงวด */
+  onEmbeddedToolbarSnapshot?: (snapshots: TimesheetPoMonthToolbarSnapshot[]) => void;
 };
 
+/** สถานะปิดงวด/แนบไฟล์ต่อ PO+เดือน — wave-month แสดงหนึ่งการ์ดต่อ PO หรือหนึ่งการ์ดต่อชุด PO Active */
 export type TimesheetPoMonthToolbarSnapshot = {
-  selectedPoId: string | null;
-  poOptions: { id: string; code: string }[];
+  poId: string;
+  poCode: string;
+  projectName?: string;
+  reviewStatus: PoMonthTimesheetReview['status'] | null;
+  reviewStatusLabel: string;
   lockDisabled: boolean;
   sendDisabled: boolean;
   sendHidden: boolean;
   unlockHidden: boolean;
   unlockDisabled: boolean;
   attachDisabled: boolean;
-  monthlyAttachUploading: boolean;
-  monthlyTimesheetNo: string | null;
-  monthlyAttachments: WaveMonthTimesheetPhotoAttachment[];
-  monthlyAttachmentsLoading: boolean;
+  attachUploading: boolean;
+  attachments: TimesheetPoMonthToolbarAttachment[];
   busyPoId: string | null;
+  /** แสดงปุ่มซิงก์พร้อมจ่าย (หลังปิดงวดแล้วแต่ payroll ยังไม่เห็นคน) */
+  payrollSyncHidden: boolean;
+  payrollSyncDisabled: boolean;
+  payrollSyncBusy: boolean;
+  /** ชุด PO Active — การ์ดรวมหลาย PO */
+  isBundle?: boolean;
+  poIds?: string[];
+  poCodesLabel?: string;
+  /** PO หลักสำหรับแนบไฟล์รวม (เก็บที่เอกสาร PO แรกในชุด) */
+  anchorPoId?: string;
 };
 
 export type TimesheetPoMonthPanelHandle = {
-  lockPeriod: () => void;
-  openSubmitDialog: () => void;
-  openUnlockDialog: () => void;
-  openAttachPicker: () => void;
-  selectToolbarPo: (poId: string) => void;
-  removeMonthlyAttachment: (attId: string, storagePath: string) => void;
+  lockPeriod: (poId: string) => void;
+  openSubmitDialog: (poId: string) => void;
+  openUnlockDialog: (poId: string) => void;
+  openAttachPicker: (poId: string) => void;
+  removePoAttachment: (poId: string, attId: string, storagePath: string) => void;
+  syncPayrollReadyForPo: (poId: string) => void;
 };
 
 export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, TimesheetPoMonthPanelProps>(
@@ -199,6 +402,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
       embedded = false,
       linkedMonthYm,
       linkedPoActiveBundleId,
+      linkedScopedPoIds,
       onLinkedMonthYmChange,
       onEmbeddedToolbarSnapshot,
     },
@@ -217,7 +421,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
   const monthFromUrl = (searchParams.get('month') || '').trim();
   const highlightPo = (searchParams.get('highlightPo') || '').trim();
   const poActiveBundleIdRaw =
-    (linkedPoActiveBundleId ?? (searchParams.get('poActiveBundleId') || '').trim() || null) || null;
+    linkedPoActiveBundleId ?? ((searchParams.get('poActiveBundleId') || '').trim() || null);
   const filterPoActiveBundleId = poActiveBundleIdRaw ? normalizePoActiveBundleId(poActiveBundleIdRaw) : null;
   const locationKeyRaw = (searchParams.get('locationKey') || '').trim();
   /** คีย์ตรงกับ `PoLocationMonthTimesheet.locationKey` (รวม `__default__`) */
@@ -238,9 +442,12 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
       if (!m || !/^\d{4}-\d{2}$/.test(m)) {
         p.set('month', monthYm);
       }
+      if (embedded && linkedPoActiveBundleId) {
+        p.set('poActiveBundleId', linkedPoActiveBundleId);
+      }
       router.replace(`/timesheets/wave-month?${p.toString()}`);
     },
-    [router, searchParams, monthYm],
+    [router, searchParams, monthYm, embedded, linkedPoActiveBundleId],
   );
 
   const [monthlyTimesheetNo, setMonthlyTimesheetNo] = useState<string | null>(null);
@@ -252,11 +459,14 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
   const [monthlyStorageLoading, setMonthlyStorageLoading] = useState(false);
   const [submittingPoId, setSubmittingPoId] = useState<string | null>(null);
   const [payrollSyncBusy, setPayrollSyncBusy] = useState(false);
+  const [payrollSyncPoId, setPayrollSyncPoId] = useState<string | null>(null);
   const [portalParityBusy, setPortalParityBusy] = useState(false);
   const [submitDialogPo, setSubmitDialogPo] = useState<PurchaseOrder | null>(null);
+  const [submitDialogBundle, setSubmitDialogBundle] = useState(false);
   const [submitQ1, setSubmitQ1] = useState(false);
   const [submitQ2, setSubmitQ2] = useState(false);
   const [unlockConfirmPo, setUnlockConfirmPo] = useState<PurchaseOrder | null>(null);
+  const [unlockConfirmBundle, setUnlockConfirmBundle] = useState(false);
 
   useEffect(() => {
     if (embedded) return;
@@ -274,6 +484,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
     if (!submitDialogPo) {
       setSubmitQ1(false);
       setSubmitQ2(false);
+      setSubmitDialogBundle(false);
     }
   }, [submitDialogPo]);
 
@@ -300,11 +511,30 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
   const posQuery = useMemoFirebase(
     () =>
       firestore && canViewTs
-        ? query(collection(firestore, 'purchase_orders'), where('status', '==', 'active'), limit(200))
+        ? query(
+            collection(firestore, 'purchase_orders'),
+            where('status', 'in', embedded ? ['pending', 'active'] : ['active']),
+            limit(200),
+          )
         : null,
-    [firestore, canViewTs]
+    [firestore, canViewTs, embedded],
   );
   const { data: allPos, isLoading: posLoading } = useCollection<PurchaseOrder>(posQuery as any);
+
+  const contractsQuery = useMemoFirebase(() => {
+    if (!firestore || !canViewTs) return null;
+    return query(
+      collection(firestore, 'main_contracts'),
+      where('status', 'in', [...PO_ACTIVE_MAIN_CONTRACT_STATUS_IN]),
+    );
+  }, [firestore, canViewTs]);
+  const { data: activeContracts, isLoading: contractsLoading } = useCollection<MainContract>(contractsQuery as any);
+
+  const workflowPos = useMemo(() => {
+    if (contractsLoading || activeContracts === undefined) return [];
+    const eligible = buildEligibleMainContractIdSet(activeContracts);
+    return filterPoActiveWorkflowPurchaseOrders(allPos, eligible);
+  }, [allPos, activeContracts, contractsLoading]);
 
   const wavesQuery = useMemoFirebase(
     () => (firestore && canViewTs ? collection(firestore, 'waves') : null),
@@ -394,11 +624,11 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
 
   const bundlePoIdSet = useMemo(() => {
     if (!filterPoActiveBundleId) return null;
-    const ids = (allPos ?? [])
+    const ids = workflowPos
       .filter((p) => resolvePoActiveBundleKeyForPo(p) === filterPoActiveBundleId)
       .map((p) => p.id);
     return new Set(ids);
-  }, [filterPoActiveBundleId, allPos]);
+  }, [filterPoActiveBundleId, workflowPos]);
 
   /** หลังกรองชุด PO Active (เฟส 5) — ยังไม่กรองสถานที่ */
   const locShellsAfterBundle = useMemo(() => {
@@ -461,23 +691,18 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
   }, [filterLocationKey, locationFilterOptions]);
 
   useEffect(() => {
+    if (embedded) return;
     if (!filterLocationKey || locShellsLoading) return;
     if (locationFilterOptions.length === 0) return;
     if (locationFilterOptions.some(([k]) => k === filterLocationKey)) return;
     replaceWaveMonthQuery((p) => {
       p.delete('locationKey');
     });
-  }, [filterLocationKey, locationFilterOptions, locShellsLoading, replaceWaveMonthQuery]);
+  }, [embedded, filterLocationKey, locationFilterOptions, locShellsLoading, replaceWaveMonthQuery]);
 
   const contractPosForShellEnsure = useMemo(
-    () =>
-      (allPos ?? []).filter(
-        (p) =>
-          p.status === 'active' &&
-          (p.poType || 'contract') !== 'quotation' &&
-          purchaseOrderOverlapsYearMonth(p, monthYm),
-      ),
-    [allPos, monthYm],
+    () => workflowPos.filter((p) => purchaseOrderOverlapsYearMonth(p, monthYm)),
+    [workflowPos, monthYm],
   );
 
   useEffect(() => {
@@ -527,11 +752,35 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
   }, [monthRows]);
 
   const posWithWaves = useMemo(() => {
-    const list = (allPos ?? []).filter((po) => (allWaves ?? []).some((w) => w.poId === po.id));
+    const list = workflowPos.filter((po) => (allWaves ?? []).some((w) => w.poId === po.id));
     return list;
-  }, [allPos, allWaves]);
+  }, [workflowPos, allWaves]);
+
+  const linkedScopedPoIdSet = useMemo(() => {
+    if (!embedded || !linkedScopedPoIds?.length) return null;
+    return new Set(linkedScopedPoIds.filter(Boolean));
+  }, [embedded, linkedScopedPoIds]);
 
   const posRows = useMemo(() => {
+    /** wave-month ฝัง: ใช้ PO ในชุดเดียวกับตารางสรุป — mob/PO scope อาจมีข้อมูลโดยไม่มี wave เปิดทับเดือน */
+    if (embedded && linkedScopedPoIdSet?.size) {
+      const fromScope = workflowPos.filter(
+        (po) => linkedScopedPoIdSet.has(po.id) && purchaseOrderOverlapsYearMonth(po, monthYm),
+      );
+      fromScope.sort((a, b) => (a.poCode ?? a.id).localeCompare(b.poCode ?? b.id, 'th'));
+      const scoped =
+        poIdsMatchingLocationFilter === null
+          ? fromScope
+          : fromScope.filter((po) => poIdsMatchingLocationFilter.has(po.id));
+      if (scoped.length > 0) return scoped;
+      /** PO มีข้อมูลในกริดแต่ช่วงสัญญาในเอกสารไม่ทับเดือน — ยังให้ปิดงวดได้ */
+      const fallback = workflowPos.filter((po) => linkedScopedPoIdSet.has(po.id));
+      if (fallback.length > 0) {
+        fallback.sort((a, b) => (a.poCode ?? a.id).localeCompare(b.poCode ?? b.id, 'th'));
+        return fallback;
+      }
+    }
+
     const posRowsBase = posWithWaves
       .filter((po) => {
         const waveInMonth = (allWaves ?? []).some((w) => w.poId === po.id && waveTouchesMonth(w, monthYm));
@@ -546,6 +795,9 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
       ? posRowsBase
       : posRowsBase.filter((po) => poIdsMatchingLocationFilter.has(po.id));
   }, [
+    embedded,
+    linkedScopedPoIdSet,
+    workflowPos,
     posWithWaves,
     allWaves,
     monthYm,
@@ -554,6 +806,16 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
     filterPoActiveBundleId,
     bundlePoIdSet,
   ]);
+
+  /** หลาย PO ในชุด PO Active — ปิดงวด/แนบไฟล์รวมการ์ดเดียว */
+  const bundleToolbarMode = useMemo(() => {
+    if (embedded && linkedPoActiveBundleId && posRows.length > 0) return true;
+    if (posRows.length <= 1) return false;
+    if (embedded) return (linkedScopedPoIds?.length ?? 0) > 1;
+    return !!filterPoActiveBundleId;
+  }, [posRows.length, embedded, linkedPoActiveBundleId, linkedScopedPoIds, filterPoActiveBundleId]);
+
+  const anchorPo = useMemo(() => posRows[0] ?? null, [posRows]);
 
   const effectiveToolbarPoId = useMemo(() => {
     if (!embedded) return highlightPo || null;
@@ -567,7 +829,8 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
   );
 
   useEffect(() => {
-    if (!embedded || posRows.length === 0) return;
+    if (embedded) return;
+    if (posRows.length === 0) return;
     if (highlightPo && posRows.some((p) => p.id === highlightPo)) return;
     replaceWaveMonthQuery((p) => {
       p.set('highlightPo', posRows[0].id);
@@ -575,9 +838,14 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
   }, [embedded, posRows, highlightPo, replaceWaveMonthQuery]);
 
   const relatedWaveIdsFor = useCallback(
-    (poId: string) =>
-      (allWaves ?? []).filter((w) => w.poId === poId && waveTouchesMonth(w, monthYm)).map((w) => w.id),
-    [allWaves, monthYm]
+    (poId: string) => {
+      const inMonth = (allWaves ?? [])
+        .filter((w) => w.poId === poId && waveTouchesMonth(w, monthYm))
+        .map((w) => w.id);
+      if (inMonth.length > 0) return inMonth;
+      return (allWaves ?? []).filter((w) => w.poId === poId).map((w) => w.id);
+    },
+    [allWaves, monthYm],
   );
 
   const getPeriodBounds = useCallback(
@@ -591,14 +859,20 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
   );
 
   const writePoMonthReview = useCallback(
-    async (po: PurchaseOrder, status: PoMonthTimesheetReview['status']) => {
+    async (
+      po: PurchaseOrder,
+      status: PoMonthTimesheetReview['status'],
+      opts?: { silentOutcomeToast?: boolean },
+    ) => {
       if (!firestore || !currentUser || !canEditTs) return;
       const { periodStartDate, periodEndDate } = getPeriodBounds(po.id);
       if (periodEndDate < periodStartDate) {
         toast({ variant: 'destructive', title: 'ช่วงวันที่ไม่ถูกต้อง', description: 'วันสุดท้ายต้องไม่ก่อนวันต้นเดือน' });
         return;
       }
-      setSubmittingPoId(po.id);
+      if (!opts?.silentOutcomeToast) {
+        setSubmittingPoId(po.id);
+      }
       try {
         const id = poMonthTimesheetReviewDocId(po.id, monthYm);
         const now = Date.now();
@@ -634,27 +908,14 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
           base.reviewedByUserId = deleteField();
           base.reviewedByName = deleteField();
           base.reviewNote = deleteField();
-          let atts: NonNullable<PoMonthTimesheetReview['timesheetPhotoAttachments']> = [];
-          if (firebaseApp) {
-            atts = await listMonthlyTimesheetPhotoAttachmentsFromStorage(firebaseApp, monthYm);
-          }
           const bundleRef = doc(firestore, 'po_month_timesheet_photo_bundles', id);
           const bundleSnap = await getDoc(bundleRef);
-          if (bundleSnap.exists()) {
-            const bd = bundleSnap.data() as PoMonthTimesheetPhotoBundle;
-            const poAtts = Array.isArray(bd.attachments) ? bd.attachments : [];
-            const seen = new Set(atts.map((a) => a.id));
-            for (const a of poAtts) {
-              if (!seen.has(a.id)) {
-                atts.push(a);
-                seen.add(a.id);
-              }
-            }
-          }
-          base.timesheetPhotoAttachments = atts;
+          base.timesheetPhotoAttachments = bundleSnap.exists()
+            ? ((bundleSnap.data() as PoMonthTimesheetPhotoBundle).attachments ?? [])
+            : [];
         }
         await setDoc(ref, base, { merge: true });
-        if (status === 'entry_locked') {
+        if (status === 'entry_locked' && !opts?.silentOutcomeToast) {
           let readyCount = 0;
           let gatedDocs = 0;
           let syncedPos = 0;
@@ -673,9 +934,9 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
             description:
               readyCount > 0
                 ? `แก้รายวันไม่ได้ — ตั้งพร้อมจ่าย ${readyCount} ใบงาน — ครอบคลุม ${syncedPos} PO ที่ทับเดือน (เอกสารปิดงวดในเดือนนี้ ${gatedDocs} ฉบับ) · ไปทำ Payroll ได้ทันทีโดยไม่ต้องรอผู้จัดการอนุมัติ timesheet · กด «ส่งอนุมัติ Timesheet» เมื่อต้องการส่งคิวผู้จัดการเพื่อ Invoice`
-                : 'แก้รายวันไม่ได้เมื่อเอกสารถูกปิดงวด — หากยังไม่มีใบงานในช่วงงวดจะไม่มีรายการพร้อมจ่าย · กด «ส่งอนุมัติ Timesheet» เมื่อแนบครบและต้องการส่งผู้จัดการ',
+                : 'แก้รายวันไม่ได้เมื่อเอกสารถูกปิดงวด — หาก payroll ยังไม่เห็นคน ให้กด «ซิงก์พร้อมจ่าย» ที่การ์ด PO · กด «ส่งอนุมัติ Timesheet» เมื่อต้องการส่งผู้จัดการ',
           });
-        } else if (status === 'pending_manager_review') {
+        } else if (status === 'pending_manager_review' && !opts?.silentOutcomeToast) {
           let readyCountPm = 0;
           let gatedDocsPm = 0;
           let syncedPosPm = 0;
@@ -704,11 +965,95 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
           description: e instanceof Error ? e.message : String(e),
         });
       } finally {
-        setSubmittingPoId(null);
+        if (!opts?.silentOutcomeToast) {
+          setSubmittingPoId(null);
+        }
       }
     },
     [firestore, currentUser, canEditTs, monthYm, getPeriodBounds, relatedWaveIdsFor, toast, firebaseApp],
   );
+
+  const lockAllPosInBundle = useCallback(async () => {
+    if (!canEditTs || posRows.length === 0) return;
+    const toLock = posRows.filter((po) => {
+      const r = reviewByPoId.get(po.id);
+      return !(
+        r &&
+        (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved')
+      );
+    });
+    if (toLock.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ปิดงวดไม่ได้',
+        description: 'ทุก PO ในชุดนี้ปิดงวดแล้ว',
+      });
+      return;
+    }
+    setSubmittingPoId(PO_ACTIVE_BUNDLE_TOOLBAR_ID);
+    try {
+      for (const po of toLock) {
+        await writePoMonthReview(po, 'entry_locked', { silentOutcomeToast: true });
+      }
+      let readyCount = 0;
+      let gatedDocs = 0;
+      let syncedPos = 0;
+      if (firestore) {
+        try {
+          const sync = await syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews(firestore, monthYm);
+          readyCount = sync.updated;
+          gatedDocs = sync.gatedPoCount;
+          syncedPos = sync.syncedPoCount;
+          if (currentUser) {
+            const actorName = currentUser.displayName || currentUser.email || currentUser.id;
+            await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, monthYm, actorName);
+          }
+        } catch (e) {
+          console.error('[po-month] payroll bridge after bundle lock', e);
+        }
+      }
+      toast({
+        title: 'ปิดงวดชุด PO Active แล้ว',
+        description: `ปิดงวด ${toLock.length} PO (${toLock.map((p) => p.poCode).join(', ')}) · ${
+          readyCount > 0
+            ? `ตั้งพร้อมจ่าย ${readyCount} ใบงาน (ครอบคลุม ${syncedPos} PO · เอกสารปิดงวด ${gatedDocs} ฉบับ)`
+            : 'ตรวจ payroll อีกครั้งถ้ายังไม่เห็นคน'
+        }`,
+      });
+    } finally {
+      setSubmittingPoId(null);
+    }
+  }, [canEditTs, posRows, reviewByPoId, writePoMonthReview, firestore, monthYm, currentUser, toast]);
+
+  const submitAllPosInBundle = useCallback(async () => {
+    if (!canEditTs) return;
+    const toSubmit = posRows.filter((po) => {
+      const r = reviewByPoId.get(po.id);
+      return !!r && (r.status === 'entry_locked' || r.status === 'rejected');
+    });
+    if (toSubmit.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ส่งอนุมัติไม่ได้',
+        description: 'ต้องปิดงวดทุก PO ในชุดก่อน',
+      });
+      return;
+    }
+    setSubmittingPoId(PO_ACTIVE_BUNDLE_TOOLBAR_ID);
+    try {
+      for (const po of toSubmit) {
+        await writePoMonthReview(po, 'pending_manager_review', { silentOutcomeToast: true });
+      }
+      toast({
+        title: 'ส่งอนุมัติ Timesheet ชุด PO Active แล้ว',
+        description: `ส่ง ${toSubmit.length} PO (${toSubmit.map((p) => p.poCode).join(', ')}) — รอผู้จัดการที่เมนูอนุมัติ`,
+      });
+      setSubmitDialogPo(null);
+      setSubmitDialogBundle(false);
+    } finally {
+      setSubmittingPoId(null);
+    }
+  }, [canEditTs, posRows, reviewByPoId, writePoMonthReview, toast]);
 
   const adminUnlockPoMonthReview = useCallback(
     async (po: PurchaseOrder) => {
@@ -780,6 +1125,95 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
       }
     },
     [firestore, currentUser, monthYm, reviewByPoId, toast],
+  );
+
+  const unlockAllPosInBundle = useCallback(async () => {
+    if (!firestore || !currentUser || !isSystemAdmin(currentUser)) return;
+    const toUnlock = posRows.filter((po) => {
+      const r = reviewByPoId.get(po.id);
+      return (
+        !!r &&
+        (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved')
+      );
+    });
+    if (toUnlock.length === 0) return;
+    setSubmittingPoId(PO_ACTIVE_BUNDLE_TOOLBAR_ID);
+    let clearedTotal = 0;
+    try {
+      for (const po of toUnlock) {
+        const row = reviewByPoId.get(po.id);
+        if (!row) continue;
+        const id = poMonthTimesheetReviewDocId(po.id, monthYm);
+        const now = Date.now();
+        const ref = doc(firestore, 'po_month_timesheet_reviews', id);
+        await setDoc(
+          ref,
+          {
+            id,
+            poId: po.id,
+            yearMonth: monthYm,
+            status: 'rejected',
+            updatedAt: now,
+            submittedAt: now,
+            submittedByUserId: currentUser.id,
+            submittedByName: currentUser.displayName || currentUser.email || currentUser.id,
+            entryLockedAt: deleteField(),
+            entryLockedByUserId: deleteField(),
+            entryLockedByName: deleteField(),
+            reviewedAt: deleteField(),
+            reviewedByUserId: deleteField(),
+            reviewedByName: deleteField(),
+            reviewNote: deleteField(),
+            timesheetPhotoAttachments: deleteField(),
+          } as Record<string, unknown>,
+          { merge: true },
+        );
+        const cleared = await clearReadyPayrollFlagsForPoCalendarMonth(firestore, po.id, monthYm);
+        clearedTotal += cleared.updated;
+      }
+      toast({
+        title: 'ปลดล็อกชุด PO Active แล้ว (Admin)',
+        description: `ปลดล็อก ${toUnlock.length} PO (${toUnlock.map((p) => p.poCode).join(', ')}) · ล้างธง ${clearedTotal} รายการ`,
+      });
+      setUnlockConfirmPo(null);
+      setUnlockConfirmBundle(false);
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ปลดล็อกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setSubmittingPoId(null);
+    }
+  }, [firestore, currentUser, posRows, reviewByPoId, monthYm, toast]);
+
+  const runPayrollSyncForPo = useCallback(
+    async (poId: string) => {
+      if (!firestore || !currentUser || !canEditTs || !/^\d{4}-\d{2}$/.test(monthYm)) return;
+      setPayrollSyncPoId(poId);
+      try {
+        const { updated } = await syncReadyPayrollFlagsForPoMonth(firestore, poId, monthYm);
+        const actor = currentUser.displayName || currentUser.email || currentUser.id;
+        await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, monthYm, actor);
+        toast({
+          title: 'ซิงก์พร้อมจ่ายแล้ว',
+          description:
+            updated > 0
+              ? `ตั้ง readyForPayroll ให้ ${updated} ใบงานของ PO นี้ — ไปเมนู งวดจ่ายลูกจ้าง แล้ว Pre-check / สร้าง Batch`
+              : 'ไม่พบใบงานรายวันในเดือนนี้ให้ตั้งค่า — ตรวจว่ามีลงเวลาในตารางสรุปแล้ว',
+        });
+      } catch (e: unknown) {
+        toast({
+          variant: 'destructive',
+          title: 'ซิงก์ไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setPayrollSyncPoId(null);
+      }
+    },
+    [firestore, currentUser, canEditTs, monthYm, toast],
   );
 
   /** ล็อกงวดแล้วไม่ต้องกดซ้ำ — ใช้ปุ่มนี้ตั้ง readyForPayroll / รอบบัญชีใหม่ทั้งเดือน */
@@ -967,8 +1401,12 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
   useImperativeHandle(
     ref,
     () => ({
-      lockPeriod: () => {
-        const po = toolbarTargetPo;
+      lockPeriod: (poId: string) => {
+        if (poId === PO_ACTIVE_BUNDLE_TOOLBAR_ID || (bundleToolbarMode && poId === anchorPo?.id)) {
+          void lockAllPosInBundle();
+          return;
+        }
+        const po = posRows.find((p) => p.id === poId);
         if (!po) {
           toast({ variant: 'destructive', title: 'ไม่มี PO', description: 'ยังไม่มี PO ในงวดนี้' });
           return;
@@ -988,8 +1426,25 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
         }
         void writePoMonthReview(po, 'entry_locked');
       },
-      openSubmitDialog: () => {
-        const po = toolbarTargetPo;
+      openSubmitDialog: (poId: string) => {
+        if (poId === PO_ACTIVE_BUNDLE_TOOLBAR_ID || (bundleToolbarMode && poId === anchorPo?.id)) {
+          const canSendAny = posRows.some((p) => {
+            const r = reviewByPoId.get(p.id);
+            return canEditTs && !!r && (r.status === 'entry_locked' || r.status === 'rejected');
+          });
+          if (!canSendAny) {
+            toast({
+              variant: 'destructive',
+              title: 'ส่งอนุมัติ Timesheet ไม่ได้',
+              description: 'ต้องปิดงวดทุก PO ในชุดก่อน',
+            });
+            return;
+          }
+          setSubmitDialogBundle(true);
+          setSubmitDialogPo(anchorPo);
+          return;
+        }
+        const po = posRows.find((p) => p.id === poId);
         if (!po) {
           toast({ variant: 'destructive', title: 'ไม่มี PO', description: 'ยังไม่มี PO ในงวดนี้' });
           return;
@@ -1004,15 +1459,21 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
           });
           return;
         }
+        setSubmitDialogBundle(false);
         setSubmitDialogPo(po);
       },
-      openUnlockDialog: () => {
+      openUnlockDialog: (poId: string) => {
         if (!currentUser) return;
         if (!isSystemAdmin(currentUser)) {
           toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะ System Administrator เท่านั้น' });
           return;
         }
-        const po = toolbarTargetPo;
+        if (poId === PO_ACTIVE_BUNDLE_TOOLBAR_ID || (bundleToolbarMode && poId === anchorPo?.id)) {
+          setUnlockConfirmBundle(true);
+          setUnlockConfirmPo(anchorPo);
+          return;
+        }
+        const po = posRows.find((p) => p.id === poId);
         if (!po) {
           toast({ variant: 'destructive', title: 'ไม่มี PO', description: 'ยังไม่มี PO ในงวดนี้' });
           return;
@@ -1026,104 +1487,105 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
           });
           return;
         }
+        setUnlockConfirmBundle(false);
         setUnlockConfirmPo(po);
       },
-      openAttachPicker: () => {
+      openAttachPicker: (poId: string) => {
         if (!/^\d{4}-\d{2}$/.test(monthYm)) return;
-        document.getElementById(`monthly-ts-file-${monthYm}`)?.click();
+        const targetId =
+          poId === PO_ACTIVE_BUNDLE_TOOLBAR_ID || bundleToolbarMode ? anchorPo?.id ?? poId : poId;
+        document.getElementById(`pom-file-${targetId}`)?.click();
       },
-      selectToolbarPo: (poId: string) => {
-        replaceWaveMonthQuery((p) => {
-          p.set('highlightPo', poId);
-        });
+      removePoAttachment: (poId: string, attId: string, storagePath: string) => {
+        const po = posRows.find((p) => p.id === poId);
+        if (!po) return;
+        void removePhoto(po, attId, storagePath);
       },
-      removeMonthlyAttachment: (attId: string, storagePath: string) => {
-        void removeMonthlyPhoto(attId, storagePath);
+      syncPayrollReadyForPo: (poId: string) => {
+        if (poId === PO_ACTIVE_BUNDLE_TOOLBAR_ID || bundleToolbarMode) {
+          void runPayrollSyncForMonth();
+          return;
+        }
+        void runPayrollSyncForPo(poId);
       },
     }),
     [
-      toolbarTargetPo,
+      posRows,
+      bundleToolbarMode,
+      anchorPo,
+      lockAllPosInBundle,
       reviewByPoId,
       canEditTs,
       submittingPoId,
       toast,
       writePoMonthReview,
       currentUser,
-      replaceWaveMonthQuery,
       monthYm,
-      removeMonthlyPhoto,
+      removePhoto,
+      runPayrollSyncForPo,
+      runPayrollSyncForMonth,
     ],
   );
 
   useEffect(() => {
     if (!embedded) {
-      onEmbeddedToolbarSnapshot?.(null);
+      onEmbeddedToolbarSnapshot?.([]);
       return;
     }
-    const poOptions = posRows.map((p) => ({ id: p.id, code: p.poCode ?? p.id }));
-    const monthlyAttachments = monthlyStorageAttachments;
-    const attachDisabled = monthlyAttachReadonly || !canEditTs || uploadingMonthlyPhoto;
-
-    if (!toolbarTargetPo) {
-      onEmbeddedToolbarSnapshot?.({
-        selectedPoId: null,
-        poOptions,
-        lockDisabled: true,
-        sendDisabled: true,
-        sendHidden: true,
-        unlockHidden: true,
-        unlockDisabled: true,
-        attachDisabled,
-        monthlyAttachUploading: uploadingMonthlyPhoto,
-        monthlyTimesheetNo,
-        monthlyAttachments,
-        monthlyAttachmentsLoading: monthlyStorageLoading,
-        busyPoId: submittingPoId,
-      });
-      return;
-    }
-    const po = toolbarTargetPo;
-    const r = reviewByPoId.get(po.id);
-    const lockDisabled =
-      !canEditTs ||
-      submittingPoId === po.id ||
-      (!!r && (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved'));
-    const canSendToManager = canEditTs && !!r && (r.status === 'entry_locked' || r.status === 'rejected');
-    const showUnlock =
-      !!currentUser &&
-      isSystemAdmin(currentUser) &&
-      !!r &&
-      (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved');
-
-    onEmbeddedToolbarSnapshot?.({
-      selectedPoId: po.id,
-      poOptions,
-      lockDisabled,
-      sendDisabled: submittingPoId === po.id || !canSendToManager,
-      sendHidden: !canSendToManager,
-      unlockHidden: !showUnlock,
-      unlockDisabled: submittingPoId === po.id,
-      attachDisabled,
-      monthlyAttachUploading: uploadingMonthlyPhoto,
-      monthlyTimesheetNo,
-      monthlyAttachments,
-      monthlyAttachmentsLoading: monthlyStorageLoading,
-      busyPoId: submittingPoId,
-    });
+    const snapshots =
+      bundleToolbarMode && posRows.length > 0
+        ? [
+            buildBundlePoToolbarSnapshot(posRows, reviewByPoId, bundleByPoId, {
+              canEditTs,
+              submittingPoId,
+              uploadingPhotoPoId,
+              payrollSyncPoId,
+              currentUser,
+            }),
+          ]
+        : posRows.map((po) =>
+            buildPoToolbarSnapshot(po, reviewByPoId.get(po.id), bundleByPoId.get(po.id), {
+              canEditTs,
+              submittingPoId,
+              uploadingPhotoPoId,
+              payrollSyncPoId,
+              currentUser,
+            }),
+          );
+    onEmbeddedToolbarSnapshot?.(snapshots);
   }, [
     embedded,
-    toolbarTargetPo,
+    bundleToolbarMode,
     posRows,
     reviewByPoId,
+    bundleByPoId,
     canEditTs,
     submittingPoId,
-    uploadingMonthlyPhoto,
-    monthlyAttachReadonly,
-    monthlyTimesheetNo,
-    monthlyStorageAttachments,
-    monthlyStorageLoading,
+    uploadingPhotoPoId,
+    payrollSyncPoId,
     currentUser,
     onEmbeddedToolbarSnapshot,
+  ]);
+
+  const bundleToolbarSnap = useMemo(() => {
+    if (!bundleToolbarMode || posRows.length === 0) return null;
+    return buildBundlePoToolbarSnapshot(posRows, reviewByPoId, bundleByPoId, {
+      canEditTs,
+      submittingPoId,
+      uploadingPhotoPoId,
+      payrollSyncPoId,
+      currentUser,
+    });
+  }, [
+    bundleToolbarMode,
+    posRows,
+    reviewByPoId,
+    bundleByPoId,
+    canEditTs,
+    submittingPoId,
+    uploadingPhotoPoId,
+    payrollSyncPoId,
+    currentUser,
   ]);
 
   if (userLoading || !currentUser) return null;
@@ -1149,20 +1611,48 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
 
   const panelInner = (
     <>
-      {embedded && /^\d{4}-\d{2}$/.test(monthYm) ? (
-        <input
-          type="file"
-          accept="image/jpeg,image/png,image/webp,application/pdf"
-          className="hidden"
-          id={`monthly-ts-file-${monthYm}`}
-          disabled={monthlyAttachReadonly || !canEditTs || uploadingMonthlyPhoto}
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            e.target.value = '';
-            if (f) void appendMonthlyPhoto(f);
-          }}
-        />
-      ) : null}
+      {embedded && /^\d{4}-\d{2}$/.test(monthYm)
+        ? (bundleToolbarMode && anchorPo
+            ? (
+              <input
+                key={anchorPo.id}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                className="hidden"
+                id={`pom-file-${anchorPo.id}`}
+                disabled={
+                  isAttachmentReadonly(reviewByPoId.get(anchorPo.id)) ||
+                  !canEditTs ||
+                  uploadingPhotoPoId === anchorPo.id
+                }
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) void appendPhoto(anchorPo, f);
+                }}
+              />
+            )
+            : posRows.map((po) => {
+            const r = reviewByPoId.get(po.id);
+            const photoReadOnly = isAttachmentReadonly(r);
+            return (
+              <input
+                key={po.id}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                className="hidden"
+                id={`pom-file-${po.id}`}
+                disabled={photoReadOnly || !canEditTs || uploadingPhotoPoId === po.id}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = '';
+                  if (f) void appendPhoto(po, f);
+                }}
+              />
+            );
+          }))
+        : null}
+      {!embedded ? (
       <div id="timesheet-po-month-panel" className="mx-auto max-w-[1100px] space-y-6 py-6 px-4">
         <div className="hidden print:block border-b border-foreground/25 pb-4 mb-2 space-y-1 text-sm text-foreground">
           <div className="text-xl font-bold">Timesheet ราย PO+เดือน — สำหรับพิมพ์</div>
@@ -1455,18 +1945,30 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
           </Button>
         </div>
 
+        {!embedded ? (
         <Card className="print:shadow-none print:border print:break-inside-auto">
           <CardHeader className="print:py-2 space-y-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 space-y-1">
-                <CardTitle className="text-base">PO ที่เปิด wave ในงวดนี้ + เอกสาร</CardTitle>
+                <CardTitle className="text-base">
+                  {bundleToolbarMode ? 'ชุด PO Active + เอกสาร' : 'PO ที่เปิด wave ในงวดนี้ + เอกสาร'}
+                </CardTitle>
                 <CardDescription>
-                  เฉพาะ PO ที่มี wave และ (ช่วง wave ทับเดือนที่เลือก หรือเมื่อกรองสถานที่ — มีหัวงวดสถานที่ในเดือนนี้และ PO ทับเดือนปฏิทิน)
-                  {filterLocationKey ? (
-                    <span className="block mt-1 text-emerald-900 font-medium">
-                      กรองเฉพาะ PO ที่มีหัวงวดสถานที่นี้ในเดือนนี้ — เหลือ {posRows.length} การ์ด
-                    </span>
-                  ) : null}
+                  {bundleToolbarMode ? (
+                    <>
+                      ปิดงวด / แนบไฟล์รวมทั้งชุด — PO:{' '}
+                      <span className="font-mono">{posRows.map((p) => p.poCode).join(', ')}</span>
+                    </>
+                  ) : (
+                    <>
+                      เฉพาะ PO ที่มี wave และ (ช่วง wave ทับเดือนที่เลือก หรือเมื่อกรองสถานที่ — มีหัวงวดสถานที่ในเดือนนี้และ PO ทับเดือนปฏิทิน)
+                      {filterLocationKey ? (
+                        <span className="block mt-1 text-emerald-900 font-medium">
+                          กรองเฉพาะ PO ที่มีหัวงวดสถานที่นี้ในเดือนนี้ — เหลือ {posRows.length} การ์ด
+                        </span>
+                      ) : null}
+                    </>
+                  )}
                 </CardDescription>
               </div>
               <Button
@@ -1497,7 +1999,135 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
               <p className="p-6 text-sm text-muted-foreground text-center">ยังไม่มี PO+wave ในปฏิทินนี้</p>
             ) : (
               <div className="space-y-6 p-4">
-                {posRows.map((po) => {
+                {bundleToolbarMode && bundleToolbarSnap && anchorPo ? (
+                  <div className="rounded-lg border bg-card p-4 space-y-3 print:break-inside-avoid ring-2 ring-primary/20">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="font-mono font-bold text-sm">{bundleToolbarSnap.poCodesLabel}</div>
+                        <div className="text-sm text-muted-foreground">ชุด PO Active · {posRows.length} ใบ</div>
+                      </div>
+                      <span className="text-xs font-semibold">{bundleToolbarSnap.reviewStatusLabel}</span>
+                    </div>
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-[10px] text-muted-foreground">วันสุดท้ายของงวดปิด (ทุก PO ในชุด)</Label>
+                        <Input
+                          type="date"
+                          className="h-9 w-[180px] font-mono"
+                          min={`${monthYm}-01`}
+                          max={lastDayOfCalendarMonth(monthYm)}
+                          value={periodEndByPo[anchorPo.id] ?? lastDayOfCalendarMonth(monthYm)}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setPeriodEndByPo((prev) => {
+                              const next = { ...prev };
+                              for (const p of posRows) next[p.id] = v;
+                              return next;
+                            });
+                          }}
+                          disabled={bundleToolbarSnap.attachDisabled && bundleToolbarSnap.lockDisabled}
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="gap-1"
+                        disabled={bundleToolbarSnap.lockDisabled}
+                        onClick={() => void lockAllPosInBundle()}
+                      >
+                        {submittingPoId === PO_ACTIVE_BUNDLE_TOOLBAR_ID ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Lock className="h-3.5 w-3.5" />
+                        )}
+                        ปิดงวดสร้าง Payroll
+                      </Button>
+                      {!bundleToolbarSnap.sendHidden ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="gap-1"
+                          disabled={bundleToolbarSnap.sendDisabled}
+                          onClick={() => {
+                            setSubmitDialogBundle(true);
+                            setSubmitDialogPo(anchorPo);
+                          }}
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                          ส่งอนุมัติ Timesheet
+                        </Button>
+                      ) : null}
+                    </div>
+                    <div className="border-t border-dashed pt-3 space-y-2">
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,application/pdf"
+                        className="hidden"
+                        id={`pom-file-${anchorPo.id}`}
+                        disabled={bundleToolbarSnap.attachDisabled}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          e.target.value = '';
+                          if (f) void appendPhoto(anchorPo, f);
+                        }}
+                      />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={bundleToolbarSnap.attachDisabled}
+                          onClick={() => document.getElementById(`pom-file-${anchorPo.id}`)?.click()}
+                        >
+                          {bundleToolbarSnap.attachUploading ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <ImagePlus className="h-3.5 w-3.5" />
+                          )}
+                          แนบรูป / PDF
+                        </Button>
+                        <span className="text-xs text-muted-foreground">
+                          แนบรวมชุด PO Active · สูงสุด {MAX_PO_MONTH_ATTACHMENTS} ไฟล์
+                        </span>
+                      </div>
+                      {bundleToolbarSnap.attachments.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {bundleToolbarSnap.attachments.map((att) => (
+                            <div key={`${att.sourcePoId ?? ''}-${att.id}`} className="relative">
+                              {isWaveMonthAttachmentPdf(att) ? (
+                                <a href={att.downloadUrl} target="_blank" rel="noopener noreferrer" className="flex h-16 w-16 flex-col items-center justify-center rounded border bg-muted/50 text-[9px]">
+                                  <FileIcon className="h-6 w-6 text-primary" />
+                                  <span>PDF</span>
+                                </a>
+                              ) : (
+                                <a href={att.downloadUrl} target="_blank" rel="noopener noreferrer" className="block">
+                                  <img src={att.downloadUrl} alt={att.fileName} className="h-16 w-16 rounded border object-cover" />
+                                </a>
+                              )}
+                              {!bundleToolbarSnap.attachDisabled && att.sourcePoId ? (
+                                <button
+                                  type="button"
+                                  className="absolute -right-1 -top-1 rounded-full bg-destructive p-0.5 text-destructive-foreground shadow"
+                                  onClick={() => {
+                                    const po = posRows.find((p) => p.id === att.sourcePoId);
+                                    if (po) void removePhoto(po, att.id, att.storagePath);
+                                  }}
+                                  aria-label="ลบ"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">ยังไม่มีไฟล์แนบสำหรับชุด PO นี้</p>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                posRows.map((po) => {
                   const r = reviewByPoId.get(po.id);
                   const isHi =
                     (!!highlightPo && highlightPo === po.id) ||
@@ -1672,17 +2302,23 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
                       </div>
                     </div>
                   );
-                })}
+                })
+                )}
               </div>
             )}
           </CardContent>
         </Card>
+        ) : null}
       </div>
+      ) : null}
 
       <Dialog
         open={!!submitDialogPo}
         onOpenChange={(o) => {
-          if (!o) setSubmitDialogPo(null);
+          if (!o) {
+            setSubmitDialogPo(null);
+            setSubmitDialogBundle(false);
+          }
         }}
       >
         <DialogContent className="sm:max-w-lg">
@@ -1715,14 +2351,27 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
             </Button>
             <Button
               type="button"
-              disabled={!submitQ1 || !submitQ2 || !submitDialogPo || submittingPoId === submitDialogPo.id}
+              disabled={
+                !submitQ1 ||
+                !submitQ2 ||
+                !submitDialogPo ||
+                submittingPoId === submitDialogPo.id ||
+                submittingPoId === PO_ACTIVE_BUNDLE_TOOLBAR_ID
+              }
               onClick={() => {
                 if (!submitDialogPo) return;
+                if (submitDialogBundle) {
+                  void submitAllPosInBundle();
+                  return;
+                }
                 const po = submitDialogPo;
                 void writePoMonthReview(po, 'pending_manager_review').then(() => setSubmitDialogPo(null));
               }}
             >
-              {submitDialogPo && submittingPoId === submitDialogPo.id ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{' '}
+              {(submitDialogPo &&
+                (submittingPoId === submitDialogPo.id || submittingPoId === PO_ACTIVE_BUNDLE_TOOLBAR_ID)) ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : null}{' '}
               ยืนยันส่งอนุมัติ
             </Button>
           </DialogFooter>
@@ -1732,7 +2381,10 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
       <Dialog
         open={!!unlockConfirmPo}
         onOpenChange={(o) => {
-          if (!o) setUnlockConfirmPo(null);
+          if (!o) {
+            setUnlockConfirmPo(null);
+            setUnlockConfirmBundle(false);
+          }
         }}
       >
         <DialogContent className="sm:max-w-lg">
@@ -1740,10 +2392,18 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
             <DialogTitle>ปลดล็อกงวด PO+เดือน (System Admin)</DialogTitle>
             <DialogDescription>
               {unlockConfirmPo ? (
-                <>
-                  <span className="font-mono font-semibold">{unlockConfirmPo.poCode}</span>
-                  <span> · งวด {monthYm}</span>
-                </>
+                unlockConfirmBundle ? (
+                  <>
+                    ชุด PO Active:{' '}
+                    <span className="font-mono font-semibold">{posRows.map((p) => p.poCode).join(', ')}</span>
+                    <span> · งวด {monthYm}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-mono font-semibold">{unlockConfirmPo.poCode}</span>
+                    <span> · งวด {monthYm}</span>
+                  </>
+                )
               ) : null}
             </DialogDescription>
           </DialogHeader>
@@ -1764,16 +2424,31 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
             ) : null}
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setUnlockConfirmPo(null)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setUnlockConfirmPo(null);
+                setUnlockConfirmBundle(false);
+              }}
+            >
               ยกเลิก
             </Button>
             <Button
               type="button"
               variant="destructive"
               className="gap-2"
-              disabled={!unlockConfirmPo || submittingPoId === unlockConfirmPo.id}
+              disabled={
+                !unlockConfirmPo ||
+                submittingPoId === unlockConfirmPo.id ||
+                submittingPoId === PO_ACTIVE_BUNDLE_TOOLBAR_ID
+              }
               onClick={() => {
                 if (!unlockConfirmPo) return;
+                if (unlockConfirmBundle) {
+                  void unlockAllPosInBundle();
+                  return;
+                }
                 void adminUnlockPoMonthReview(unlockConfirmPo);
               }}
             >

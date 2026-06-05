@@ -69,7 +69,7 @@ import { assertWorkerCanBeDeleted, deleteWorkerWithAuditLog } from '@/lib/servic
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
-import { effectiveWorkerJobStatus } from '@/lib/ops/worker-effective-job-status';
+import { effectiveWorkerJobStatus, displayWorkerRegistryJobStatus, workerRegistryJobStatusBadgeProps } from '@/lib/ops/worker-effective-job-status';
 import { isWorkerDispatchReady } from '@/lib/worker-readiness';
 
 type WorkerSortKey = 'name' | 'hours';
@@ -98,28 +98,6 @@ function workerTotalHours(
 }
 
 /** ชั่วโมง: desc = มาก→น้อย, asc = น้อย→มาก — เทียบเท่ากันเรียงชื่อ A–Z */
-function jobStatusBadgeProps(status: WorkerStatus): {
-  variant: 'outline' | 'secondary' | 'default' | 'destructive';
-  className: string;
-} {
-  switch (status) {
-    case 'AVAILABLE':
-      return { variant: 'outline', className: 'text-green-600 border-green-200' };
-    case 'ON_SITE':
-      return { variant: 'default', className: 'bg-emerald-700 hover:bg-emerald-700 text-white' };
-    case 'ASSIGNED':
-      return { variant: 'secondary', className: 'bg-amber-100 text-amber-950 border border-amber-200' };
-    case 'ON_LEAVE':
-      return { variant: 'outline', className: 'text-blue-700 border-blue-200' };
-    case 'INACTIVE':
-      return { variant: 'secondary', className: 'text-muted-foreground' };
-    case 'BLACKLISTED':
-      return { variant: 'destructive', className: '' };
-    default:
-      return { variant: 'secondary', className: '' };
-  }
-}
-
 function compareWorkersByHours(
   a: Worker,
   b: Worker,
@@ -398,7 +376,7 @@ export default function WorkersPage() {
       <div className="flex flex-col gap-1 items-start max-w-[240px]">
         {worker.readinessManualHold && worker.readinessStatus === 'READY' ? (
           <Badge variant="outline" className="border-amber-600 text-amber-900 bg-amber-50 font-semibold">
-            <AlertCircle className="h-3 w-3 mr-1" /> UNREADY (HR)
+            <AlertCircle className="h-3 w-3 mr-1" /> NOT READY (HR)
           </Badge>
         ) : (
           getReadinessBadge(worker.readinessStatus)
@@ -629,8 +607,8 @@ export default function WorkersPage() {
                   {filteredWorkers?.map((worker) => {
                     const position = positions?.find(p => p.id === worker.currentPositionId);
                     const workedHours = Number(workerHoursById.get(worker.id)?.totalHours || worker.totalWorkedHours || 0);
-                    const displayJobStatus = effectiveWorkerJobStatus(worker, allMobilizations ?? []);
-                    const jobBadge = jobStatusBadgeProps(displayJobStatus);
+                    const displayJobStatus = displayWorkerRegistryJobStatus(worker, allMobilizations ?? []);
+                    const jobBadge = workerRegistryJobStatusBadgeProps(displayJobStatus);
                     return (
                       <TableRow key={worker.id} className="cursor-pointer hover:bg-muted/30 group transition-colors" onClick={() => router.push(`/workers/${worker.id}`)}>
                         <TableCell className="py-4 pl-6">
@@ -651,7 +629,7 @@ export default function WorkersPage() {
                         <TableCell onClick={(e) => e.stopPropagation()}>{renderReadinessCell(worker)}</TableCell>
                         <TableCell>
                           <Badge variant={jobBadge.variant} className={jobBadge.className}>
-                            {displayJobStatus.toUpperCase()}
+                            {jobBadge.label}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right pr-6">

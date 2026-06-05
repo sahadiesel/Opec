@@ -85,17 +85,10 @@ export function buildPoActiveBundleRows(
 ): PoQuotaQueueRow[] {
   if (!activePOs?.length || allPOLines === undefined || !contractsLoaded) return [];
 
-  const bundlePoIds = new Set<string>();
-  for (const b of poActiveBundles ?? []) {
-    for (const id of b.poIds ?? []) {
-      if (id) bundlePoIds.add(id);
-    }
-  }
-
-  if (activeMainContractIdSet.size === 0 && bundlePoIds.size === 0) return [];
+  if (activeMainContractIdSet.size === 0) return [];
 
   const contractPOs = activePOs.filter((po) =>
-    isContractPurchaseOrderEligibleForPoActiveBundle(po, activeMainContractIdSet, bundlePoIds),
+    isContractPurchaseOrderEligibleForPoActiveBundle(po, activeMainContractIdSet),
   );
 
   const groups = new Map<string, PurchaseOrder[]>();

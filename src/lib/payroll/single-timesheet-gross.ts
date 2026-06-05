@@ -2,15 +2,26 @@
  * คำนวณ gross รายใบ timesheet แบบเดียวกับ generatePayrollBatch (สำหรับแสดงรายวันในหน้า HR)
  */
 import { collection, doc, getDoc, getDocs, type Firestore } from 'firebase/firestore';
-import type { DailyTimesheet, MainContract, Position, PurchaseOrder, Worker } from '@/lib/types';
-import { loadWorkersAndPositionsForPayroll } from '@/lib/payroll/timesheet-labor-base-cost';
+import type { DailyTimesheet, JobMode, MainContract, Position, Worker } from '@/lib/types';
+import {
+  loadWorkersAndPositionsForPayroll,
+  collectPayrollContractIds,
+  loadPayrollPoLineMaps,
+  loadPayrollPoContractIdMap,
+  loadPayrollPoWorkModeMap,
+  buildPoWorkModeMapFromPurchaseOrders,
+  resolvePoLineForPayrollTimesheet,
+  type PayrollPoLineMaps,
+} from '@/lib/payroll/timesheet-labor-base-cost';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
 import type { WorkerGlobalLaborContext } from '@/lib/payroll/worker-global-labor-policy';
 import { fetchWorkerGlobalLaborContextFromFirestore } from '@/lib/payroll/worker-global-labor-policy';
 
 export type SingleTimesheetGrossContext = {
   contractMap: Map<string, MainContract>;
-  poLineById: Map<string, Record<string, unknown>>;
+  poLineMaps: PayrollPoLineMaps;
+  poContractById: Map<string, string>;
+  poWorkModeByPoId: Map<string, JobMode>;
   workerById: Map<string, Worker>;
   posById: Map<string, Position>;
   workerGlobalLabor: WorkerGlobalLaborContext;
@@ -21,7 +32,7 @@ export function computeSingleTimesheetGrossLikeBatch(
   ts: DailyTimesheet,
   ctx: SingleTimesheetGrossContext,
 ): number | null {
-  const poLine = (ctx.poLineById.get(ts.poLineId) || {}) as Record<string, unknown>;
+  const poLine = resolvePoLineForPayrollTimesheet(ts, ctx.poLineMaps);
   const wk = ctx.workerById.get(ts.workerId);
   const linePos = ts.positionId ? ctx.posById.get(ts.positionId) : undefined;
   const r = computeRegistryWorkerTimesheetGross(ts, {
@@ -29,6 +40,8 @@ export function computeSingleTimesheetGrossLikeBatch(
     linePosition: linePos,
     poLine,
     contractMap: ctx.contractMap,
+    poContractById: ctx.poContractById,
+    poWorkModeByPoId: ctx.poWorkModeByPoId,
     workerGlobalLabor: ctx.workerGlobalLabor,
   });
   return r.gross > 0 ? r.gross : null;
@@ -42,8 +55,15 @@ export async function buildSingleTimesheetGrossContext(
   if (timesheets.length === 0) return null;
   const { workerById, posById } = await loadWorkersAndPositionsForPayroll(db, timesheets);
 
+  const poIds = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
+  const [poLineMaps, poContractById, poWorkModeByPoId] = await Promise.all([
+    loadPayrollPoLineMaps(db, poIds),
+    loadPayrollPoContractIdMap(db, poIds),
+    loadPayrollPoWorkModeMap(db, poIds),
+  ]);
+
   const contractMap = new Map<string, MainContract>();
-  const contractIds = Array.from(new Set(timesheets.map((ts) => ts.contractId).filter(Boolean)));
+  const contractIds = collectPayrollContractIds(timesheets, poContractById);
   await Promise.all(
     contractIds.map(async (contractId) => {
       const contractSnap = await getDoc(doc(db, 'main_contracts', contractId));
@@ -70,16 +90,7 @@ export async function buildSingleTimesheetGrossContext(
     }),
   );
 
-  const poLineById = new Map<string, Record<string, unknown>>();
-  const poIds = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
-  await Promise.all(
-    poIds.map(async (poId) => {
-      const linesSnap = await getDocs(collection(db, 'purchase_orders', poId, 'po_lines'));
-      linesSnap.docs.forEach((lineDoc) => poLineById.set(lineDoc.id, lineDoc.data() as Record<string, unknown>));
-    }),
-  );
-
   const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(db);
 
-  return { contractMap, poLineById, workerById, posById, workerGlobalLabor };
+  return { contractMap, poLineMaps, poContractById, poWorkModeByPoId, workerById, posById, workerGlobalLabor };
 }
