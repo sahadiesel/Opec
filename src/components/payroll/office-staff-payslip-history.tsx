@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { doc } from 'firebase/firestore';
 import { useFirestore, useMemoFirebase, useDoc } from '@/firebase';
 import { canViewPayrollPerFirestoreRules } from '@/lib/permission-core';
-import type { OfficePayrollLine, OfficePayrollRun, User } from '@/lib/types';
+import type { OfficePayrollLine, OfficePayrollRun, OfficeStaffPayrollLineRef, User } from '@/lib/types';
 import { buildPayslipFromOfficeLine, officePayrollRunStubFromLine } from '@/lib/payroll/payslip-model';
 import { useOfficeStaffPayrollLines } from '@/lib/payroll/fetch-self-payroll-lines';
 import type { CompanyDocumentProfileNames } from '@/hooks/use-company-document-profile';
@@ -82,12 +82,16 @@ export function OfficeStaffPayslipHistory({
   currentUser,
   selfProfileOnly = false,
   linkedUserId,
+  payrollLineRefs,
+  staffCode,
 }: {
   staffId: string;
   currentUser: User | null;
   /** หน้า My Profile — เฉพาะสลิปของตนเอง ไม่เปิดงวดเต็ม */
   selfProfileOnly?: boolean;
   linkedUserId?: string | null;
+  payrollLineRefs?: OfficeStaffPayrollLineRef[];
+  staffCode?: string;
 }) {
   const firestore = useFirestore();
   const { profile: companyProfile } = useCompanyDocumentProfile();
@@ -97,7 +101,14 @@ export function OfficeStaffPayslipHistory({
     firestore,
     staffId,
     allowed,
-    selfProfileOnly && linkedUserId ? { linkedUserId } : undefined,
+    selfProfileOnly && linkedUserId
+      ? {
+          linkedUserId,
+          payrollLineRefs,
+          staffCode,
+          autoSyncWhenEmpty: true,
+        }
+      : undefined,
   );
 
   const sorted = useMemo(() => lines ?? [], [lines]);

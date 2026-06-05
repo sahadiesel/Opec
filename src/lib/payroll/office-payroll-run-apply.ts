@@ -28,6 +28,7 @@ import {
   buildOfficeStaffSelfPayrollLineIndex,
   officeStaffSelfPayrollLineIndexRef,
 } from '@/lib/payroll/self-payroll-line-index';
+import { isActiveOfficeStaffStatus } from '@/lib/hr/office-staff-active';
 
 /** วันที่ 1 และวันสุดท้ายของเดือน (ปฏิทินเกรกอเรียน YYYY-MM-DD) */
 export function getPayrollMonthPeriodBounds(yyyyMm: string): { payrollPeriodStart: string; payrollPeriodEnd: string } {
@@ -207,7 +208,7 @@ export async function applyStandardOfficeRunLines(
     batch.set(lineDoc, stripUndefinedForFirestore(newLine));
 
     const linked = staff.linkedUserId?.trim();
-    if (linked && staff.status === 'ACTIVE') {
+    if (linked && isActiveOfficeStaffStatus(staff.status)) {
       batch.set(
         officeStaffSelfPayrollLineIndexRef(firestore, staff.id, lineId),
         buildOfficeStaffSelfPayrollLineIndex({ ...newLine, subjectLinkedUserId: linked }),

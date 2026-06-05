@@ -44,6 +44,7 @@ import type { OfficeStaff } from '@/lib/types';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import { fetchLinkedPersonnelForUser } from '@/lib/hr/linked-personnel';
+import { isActiveOfficeStaffStatus } from '@/lib/hr/office-staff-active';
 import type {
   CashAdvanceRequest,
   OfficePayrollLine,
@@ -260,14 +261,18 @@ export default function MyProfilePage() {
   }, [firestore, linked]);
 
   const officeSelfPayrollEnabled =
-    linked?.kind === 'office_staff' &&
-    (linked.record.status === 'ACTIVE' || linked.record.status === 'active');
+    linked?.kind === 'office_staff' && isActiveOfficeStaffStatus(linked.record.status);
 
   const officePayrollLinesHook = useOfficeStaffPayrollLines(
     firestore,
     linked?.kind === 'office_staff' ? linked.record.id : null,
     !!linked && linked.kind === 'office_staff' && officeSelfPayrollEnabled,
-    { linkedUserId: currentUser?.id },
+    {
+      linkedUserId: currentUser?.id,
+      payrollLineRefs: linked?.kind === 'office_staff' ? linked.record.payrollLineRefs : undefined,
+      staffCode: linked?.kind === 'office_staff' ? linked.record.staffCode : undefined,
+      autoSyncWhenEmpty: true,
+    },
   );
   const workerPayrollLinesHook = useWorkerPayrollLines(
     firestore,
@@ -841,9 +846,7 @@ export default function MyProfilePage() {
             </TabsContent>
 
             <TabsContent value="holidays" className="mt-4">
-              {linked.kind === 'office_staff' &&
-              linked.record.status !== 'ACTIVE' &&
-              linked.record.status !== 'active' ? (
+              {linked.kind === 'office_staff' && !isActiveOfficeStaffStatus(linked.record.status) ? (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base">วันหยุดและกฎค่าจ้างอ้างอิง</CardTitle>
@@ -925,9 +928,7 @@ export default function MyProfilePage() {
             </TabsContent>
 
             <TabsContent value="payslips" className="mt-4">
-              {linked.kind === 'office_staff' &&
-              linked.record.status !== 'ACTIVE' &&
-              linked.record.status !== 'active' ? (
+              {linked.kind === 'office_staff' && !isActiveOfficeStaffStatus(linked.record.status) ? (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base">สลิปเงินเดือน</CardTitle>
@@ -942,6 +943,8 @@ export default function MyProfilePage() {
                   currentUser={currentUser}
                   selfProfileOnly
                   linkedUserId={currentUser.id}
+                  payrollLineRefs={linked.record.payrollLineRefs}
+                  staffCode={linked.record.staffCode}
                 />
               ) : (
                 <WorkerPayslipHistory
@@ -954,9 +957,7 @@ export default function MyProfilePage() {
             </TabsContent>
 
             <TabsContent value="wht" className="mt-4">
-              {linked.kind === 'office_staff' &&
-              linked.record.status !== 'ACTIVE' &&
-              linked.record.status !== 'active' ? (
+              {linked.kind === 'office_staff' && !isActiveOfficeStaffStatus(linked.record.status) ? (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base">ใบหัก ณ ที่จ่าย (ภงด.1)</CardTitle>

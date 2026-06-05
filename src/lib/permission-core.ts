@@ -638,9 +638,7 @@ export function canEditEmployeeCompensation(user: User | null): boolean {
  */
 export function canViewPayrollPerFirestoreRules(user: User | null): boolean {
   if (!user) return false;
-  if (!user.isActive) return false;
-  const st = user.approvalStatus;
-  if (st && st !== 'ACTIVE' && st !== 'APPROVED') return false;
+  if (!isActiveForApp(user)) return false;
   if (user.userType === 'customer_portal') return false;
   if (getEffectiveAccessGroup(user) === 'client') return false;
   return true;
