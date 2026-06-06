@@ -13,24 +13,37 @@ export function sumLineAmounts(lines: { amount: number }[]): number {
  */
 export function computePurchaseTotalsFromLines(
   lineSum: number,
-  vat: PurchaseRequestVatTreatment | undefined
-): { amountBeforeTax: number; vatAmount: number; totalAmount: number } {
+  vat: PurchaseRequestVatTreatment | undefined,
+  discountAmount = 0,
+): { lineSum: number; discountAmount: number; amountBeforeTax: number; vatAmount: number; totalAmount: number } {
   const mode = vat ?? 'EXCLUSIVE';
   const sum = roundMoney2(lineSum);
+  const discount = Math.max(0, roundMoney2(Number(discountAmount) || 0));
+
   if (mode === 'NONE') {
-    return { amountBeforeTax: sum, vatAmount: 0, totalAmount: sum };
+    const amountBeforeTax = Math.max(0, roundMoney2(sum - discount));
+    return { lineSum: sum, discountAmount: discount, amountBeforeTax, vatAmount: 0, totalAmount: amountBeforeTax };
   }
   if (mode === 'EXCLUSIVE') {
-    const amountBeforeTax = sum;
+    const amountBeforeTax = Math.max(0, roundMoney2(sum - discount));
     const vatAmount = roundMoney2(amountBeforeTax * 0.07);
     return {
+      lineSum: sum,
+      discountAmount: discount,
       amountBeforeTax,
       vatAmount,
       totalAmount: roundMoney2(amountBeforeTax + vatAmount),
     };
   }
-  const totalAmount = sum;
-  const amountBeforeTax = roundMoney2(totalAmount / 1.07);
-  const vatAmount = roundMoney2(totalAmount - amountBeforeTax);
-  return { amountBeforeTax, vatAmount, totalAmount };
+  const preDiscountBeforeTax = roundMoney2(sum / 1.07);
+  const cappedDiscount = Math.min(discount, preDiscountBeforeTax);
+  const amountBeforeTax = Math.max(0, roundMoney2(preDiscountBeforeTax - cappedDiscount));
+  const vatAmount = roundMoney2(amountBeforeTax * 0.07);
+  return {
+    lineSum: sum,
+    discountAmount: cappedDiscount,
+    amountBeforeTax,
+    vatAmount,
+    totalAmount: roundMoney2(amountBeforeTax + vatAmount),
+  };
 }

@@ -219,27 +219,65 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   const [whtEnabled, setWhtEnabled] = useState(false);
   const [whtRateInput, setWhtRateInput] = useState('3');
   const [whtSaving, setWhtSaving] = useState(false);
+  const [discountInput, setDiscountInput] = useState('0');
+  const [discountSaving, setDiscountSaving] = useState(false);
 
   useEffect(() => {
     if (!purchase) return;
     setWhtEnabled(!!purchase.supplierWithholdingEnabled);
     setWhtRateInput(String(purchase.supplierWithholdingRatePercent ?? 3));
-  }, [purchase?.id, purchase?.supplierWithholdingEnabled, purchase?.supplierWithholdingRatePercent]);
+    setDiscountInput(String(purchase.discountAmount ?? 0));
+  }, [purchase?.id, purchase?.supplierWithholdingEnabled, purchase?.supplierWithholdingRatePercent, purchase?.discountAmount]);
 
-  const recalculateTotals = (currentLines: PurchaseLine[]) => {
+  const lineSumGross = useMemo(
+    () => sumLineAmounts((lines ?? []).map((l) => ({ amount: Number(l.amount) || 0 }))),
+    [lines],
+  );
+
+  /** PO อ้าง PR — ตั้งส่วนลดได้ก่อนส่งคู่ค้า (รายการล็อกแล้ว) */
+  const discountEditable =
+    !!purchase &&
+    hasPurchaseRequisition &&
+    canEditPurchases &&
+    (purchase.status === 'DRAFT' || purchase.status === 'APPROVED');
+
+  const recalculateTotals = (currentLines: PurchaseLine[], discountAmount = purchase?.discountAmount ?? 0) => {
     if (!purchaseRef || !purchase) return;
     const lineSum = sumLineAmounts(currentLines.map((l) => ({ amount: Number(l.amount) || 0 })));
-    const { amountBeforeTax, vatAmount, totalAmount } = computePurchaseTotalsFromLines(
-      lineSum,
-      purchase.vatTreatment
-    );
+    const totals = computePurchaseTotalsFromLines(lineSum, purchase.vatTreatment, discountAmount);
 
     updateDoc(purchaseRef, {
-      amountBeforeTax,
-      vatAmount,
-      totalAmount,
+      discountAmount: roundMoney2(Number(discountAmount) || 0),
+      amountBeforeTax: totals.amountBeforeTax,
+      vatAmount: totals.vatAmount,
+      totalAmount: totals.totalAmount,
       updatedAt: Date.now(),
     });
+  };
+
+  const savePurchaseDiscount = async () => {
+    if (!purchaseRef || !purchase || !discountEditable) return;
+    const raw = String(discountInput).trim().replace(/,/g, '');
+    const parsed = raw === '' || raw === '.' ? 0 : parseFloat(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      toast({ variant: 'destructive', title: 'ส่วนลดไม่ถูกต้อง', description: 'ใส่ตัวเลขไม่ติดลบ' });
+      return;
+    }
+    setDiscountSaving(true);
+    try {
+      const totals = computePurchaseTotalsFromLines(lineSumGross, purchase.vatTreatment, parsed);
+      await updateDocumentNonBlocking(purchaseRef, {
+        discountAmount: totals.discountAmount,
+        amountBeforeTax: totals.amountBeforeTax,
+        vatAmount: totals.vatAmount,
+        totalAmount: totals.totalAmount,
+        updatedAt: Date.now(),
+      });
+      setDiscountInput(String(totals.discountAmount));
+      toast({ title: 'บันทึกส่วนลดแล้ว', description: 'ยอดก่อนภาษีและ VAT อัปเดตตามส่วนลด' });
+    } finally {
+      setDiscountSaving(false);
+    }
   };
 
   const handleAddLine = async () => {
@@ -798,6 +836,59 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6 space-y-4">
+                {discountEditable && (
+                  <div className="rounded-lg border border-dashed border-primary/30 bg-muted/20 p-4 space-y-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                      <div className="space-y-1">
+                        <Label htmlFor="po-discount">ส่วนลด (หักจากยอดก่อนภาษี)</Label>
+                        <p className="text-xs text-muted-foreground">
+                          รายการจาก PR แก้ไม่ได้ — ใส่ส่วนลดรวมก่อนพิมพ์/ส่ง PO ให้คู่ค้า
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-end gap-2">
+                        <div className="relative w-full sm:w-40">
+                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
+                            ฿
+                          </span>
+                          <Input
+                            id="po-discount"
+                            className="pl-8 text-right tabular-nums"
+                            inputMode="decimal"
+                            readOnly={false}
+                            disabled={discountSaving}
+                            value={discountInput}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === '' || /^\d*\.?\d*$/.test(v)) setDiscountInput(v);
+                            }}
+                          />
+                        </div>
+                        {discountEditable && (
+                          <Button type="button" variant="secondary" disabled={discountSaving} onClick={() => void savePurchaseDiscount()}>
+                            {discountSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                            บันทึกส่วนลด
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {(purchase.discountAmount ?? 0) > 0 && (
+                  <div className="flex justify-between items-center text-sm border-b pb-2">
+                    <span className="text-muted-foreground">รวมบรรทัด</span>
+                    <span className="font-mono font-semibold">
+                      ฿ {lineSumGross.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+                {(purchase.discountAmount ?? 0) > 0 && (
+                  <div className="flex justify-between items-center text-sm border-b pb-2 text-amber-900 dark:text-amber-200">
+                    <span>ส่วนลด</span>
+                    <span className="font-mono font-semibold">
+                      − ฿ {(purchase.discountAmount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center text-sm border-b pb-2">
                   <span className="text-muted-foreground">ยอดรวมก่อนภาษี</span>
                   <span className="font-bold">

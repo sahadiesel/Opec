@@ -2386,6 +2386,8 @@ export interface Purchase {
   totalAmount: number;
   amountBeforeTax: number;
   vatAmount: number;
+  /** ส่วนลดหักจากฐานก่อนภาษี (บาท) — ตั้งได้บน PO อ้าง PR ก่อนส่งคู่ค้า */
+  discountAmount?: number;
   status: PurchaseStatus;
   /** แบบที่ 1 เลือกจากคลัง / แบบที่ 2 สั่งจ้างคีย์มือ */
   purchaseLineMode?: PurchaseLineEntryMode;

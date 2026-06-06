@@ -53,6 +53,7 @@ import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
 import { translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
+import { sumLineAmounts } from '@/lib/purchase/pr-totals';
 
 export type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 
@@ -1522,6 +1523,35 @@ export function buildPurchaseOrderPrintHtml(params: {
   const amountBeforeTaxN = Number(purchase.amountBeforeTax ?? 0);
   const vatAmountN = Number(purchase.vatAmount ?? 0);
   const totalAmountN = Number(purchase.totalAmount ?? 0);
+  const discountN = Math.max(0, roundMoney2(Number(purchase.discountAmount) || 0));
+  const lineSumN = sumLineAmounts((lines || []).map((l) => ({ amount: Number(l.amount) || 0 })));
+
+  const totalRows: { label: string; value: string; grand?: boolean }[] = [];
+  if (discountN > 0) {
+    totalRows.push({
+      label: printT(L, 'lineSubtotal'),
+      value: lineSumN.toLocaleString(loc, { minimumFractionDigits: 2 }),
+    });
+    totalRows.push({
+      label: printT(L, 'discount'),
+      value: `− ${discountN.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+    });
+  }
+  totalRows.push(
+    {
+      label: printT(L, 'subtotal'),
+      value: amountBeforeTaxN.toLocaleString(loc, { minimumFractionDigits: 2 }),
+    },
+    {
+      label: L === 'en' ? `${printT(L, 'vat')} 7%` : 'ภาษีมูลค่าเพิ่ม 7%',
+      value: vatAmountN.toLocaleString(loc, { minimumFractionDigits: 2 }),
+    },
+    {
+      label: printT(L, 'grandTotal'),
+      value: `฿ ${totalAmountN.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+      grand: true,
+    },
+  );
 
   const lineRows = (lines || [])
     .map((line, idx) => {
@@ -1612,21 +1642,7 @@ export function buildPurchaseOrderPrintHtml(params: {
   </table>`;
 
   const totalsHtml = buildStandardTotalsBlockHtml({
-    rows: [
-      {
-        label: printT(L, 'subtotal'),
-        value: amountBeforeTaxN.toLocaleString(loc, { minimumFractionDigits: 2 }),
-      },
-      {
-        label: L === 'en' ? `${printT(L, 'vat')} 7%` : 'ภาษีมูลค่าเพิ่ม 7%',
-        value: vatAmountN.toLocaleString(loc, { minimumFractionDigits: 2 }),
-      },
-      {
-        label: printT(L, 'grandTotal'),
-        value: `฿ ${totalAmountN.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
-        grand: true,
-      },
-    ],
+    rows: totalRows,
     amountInWords: totalWords,
   });
 
