@@ -69,6 +69,7 @@ export default function CashbookPage() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [newEntry, setNewEntry] = useState<Partial<CashbookEntry>>({
     entryNo: getPreviewPattern('cashbook_entry'),
     entryDate: timestampToHtmlDateValue(Date.now()),
@@ -93,6 +94,38 @@ export default function CashbookPage() {
       return String(b.entryNo || '').localeCompare(String(a.entryNo || ''), undefined, { numeric: true });
     });
   }, [entries]);
+
+  const bankById = useMemo(() => {
+    const m = new Map<string, BankAccount>();
+    for (const b of bankAccounts ?? []) m.set(b.id, b);
+    return m;
+  }, [bankAccounts]);
+
+  const filteredEntries = useMemo(() => {
+    const list = sortedEntries ?? [];
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((entry) => {
+      const bank = bankById.get(entry.bankAccountId);
+      const haystack = [
+        entry.description,
+        entry.entryNo,
+        entry.entryType,
+        entry.referenceId,
+        entry.entryDate,
+        entry.paymentMethod,
+        entry.direction,
+        bank?.accountCode,
+        bank?.bankName,
+        bank?.accountName,
+        bank?.accountNumber,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [sortedEntries, searchQuery, bankById]);
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -189,7 +222,12 @@ export default function CashbookPage() {
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาตามรายละเอียด หรือ บัญชี..." className="pl-9 h-11" />
+              <Input
+                placeholder="ค้นหาตามรายละเอียด หรือ บัญชี..."
+                className="pl-9 h-11"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
             </div>
             <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
           </div>
@@ -288,8 +326,8 @@ export default function CashbookPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedEntries?.map((entry) => {
-                    const bankAccount = bankAccounts?.find(b => b.id === entry.bankAccountId);
+                  {filteredEntries?.map((entry) => {
+                    const bankAccount = bankById.get(entry.bankAccountId);
                     const amt = Number(entry.amount);
                     const safeAmt = Number.isFinite(amt) ? amt : 0;
                     const payrollBankHint =
@@ -342,9 +380,13 @@ export default function CashbookPage() {
                       </TableRow>
                     );
                   })}
-                  {(!sortedEntries || sortedEntries.length === 0) && !isLoading && (
+                  {(!filteredEntries || filteredEntries.length === 0) && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่มีประวัติรายการทางการเงิน</TableCell>
+                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
+                        {searchQuery.trim()
+                          ? `ไม่พบรายการที่ตรงกับ "${searchQuery.trim()}"`
+                          : 'ไม่มีประวัติรายการทางการเงิน'}
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>
