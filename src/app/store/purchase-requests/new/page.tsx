@@ -34,6 +34,7 @@ import { VendorSearchSelect } from '@/components/store/vendor-search-select';
 import {
   PurchaseRequestLinesEditor,
   newLine,
+  parsePrDecimal,
   type PrLineDraft,
 } from '@/components/store/purchase-request-lines-editor';
 import { Switch } from '@/components/ui/switch';
@@ -102,8 +103,8 @@ export default function NewPurchaseRequestPage() {
     const badLine = lines.find(
       (l) =>
         !l.itemDescription.trim() ||
-        !(Number(l.quantity) > 0) ||
-        Number(l.unitPrice) < 0 ||
+        !(parsePrDecimal(l.quantity) > 0) ||
+        parsePrDecimal(l.unitPrice) < 0 ||
         !(Number(l.amount) >= 0)
     );
     if (submitForApproval && badLine) {
@@ -192,8 +193,8 @@ export default function NewPurchaseRequestPage() {
         const lr = doc(collection(firestore, 'purchase_requests', prRef.id, 'lines'));
         batch.set(lr, {
           itemDescription: l.itemDescription.trim(),
-          quantity: Number(l.quantity) || 0,
-          unitPrice: roundMoney2(Number(l.unitPrice) || 0),
+          quantity: parsePrDecimal(l.quantity),
+          unitPrice: roundMoney2(parsePrDecimal(l.unitPrice)),
           amount: roundMoney2(Number(l.amount) || 0),
           storeItemId: l.storeItemId || null,
           createdAt: now,

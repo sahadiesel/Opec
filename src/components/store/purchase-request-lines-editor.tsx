@@ -27,18 +27,37 @@ import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 export type PrLineDraft = {
   key: string;
   itemDescription: string;
-  quantity: number;
-  unitPrice: number;
+  /** เก็บเป็นข้อความระหว่างพิมพ์ — รองรับทศนิยม เช่น 1.5 */
+  quantity: string;
+  unitPrice: string;
   amount: number;
   storeItemId?: string;
 };
+
+/** แปลงค่าจากช่องกรอก PR เป็นตัวเลข (ว่าง / "." → 0) */
+export function parsePrDecimal(raw: string | number | undefined | null): number {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0;
+  const s = String(raw ?? '').trim().replace(/,/g, '');
+  if (!s || s === '.' || s === '-') return 0;
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function isValidDecimalInput(raw: string): boolean {
+  return raw === '' || /^\d*\.?\d*$/.test(raw);
+}
+
+function formatDecimalField(n: number): string {
+  if (!Number.isFinite(n)) return '';
+  return String(n);
+}
 
 export function newLine(): PrLineDraft {
   return {
     key: crypto.randomUUID(),
     itemDescription: '',
-    quantity: 1,
-    unitPrice: 0,
+    quantity: '1',
+    unitPrice: '0',
     amount: 0,
   };
 }
@@ -82,7 +101,7 @@ export function PurchaseRequestLinesEditor({
         if (l.key !== key) return l;
         const next = { ...l, ...patch };
         if ('quantity' in patch || 'unitPrice' in patch) {
-          next.amount = roundMoney2(Number(next.quantity) * Number(next.unitPrice));
+          next.amount = roundMoney2(parsePrDecimal(next.quantity) * parsePrDecimal(next.unitPrice));
         }
         return next;
       })
@@ -105,8 +124,8 @@ export function PurchaseRequestLinesEditor({
     onLinesChange(
       lines.map((l) => {
         if (l.key !== pickerTargetKey) return l;
-        const qty = Number(l.quantity) || 1;
-        const up = Number(l.unitPrice) || 0;
+        const qty = parsePrDecimal(l.quantity) || 1;
+        const up = parsePrDecimal(l.unitPrice);
         return {
           ...l,
           itemDescription: desc,
@@ -194,24 +213,57 @@ export function PurchaseRequestLinesEditor({
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Input
-                    className="text-right tabular-nums"
-                    inputMode="decimal"
-                    readOnly={readOnly}
-                    disabled={readOnly}
-                    value={line.quantity}
-                    onChange={(e) => updateLine(line.key, { quantity: parseFloat(e.target.value) || 0 })}
-                  />
+                  {readOnly ? (
+                    <span className="block text-right tabular-nums text-sm">
+                      {parsePrDecimal(line.quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                    </span>
+                  ) : (
+                    <Input
+                      type="text"
+                      className="text-right tabular-nums"
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={line.quantity}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (!isValidDecimalInput(raw)) return;
+                        updateLine(line.key, { quantity: raw });
+                      }}
+                      onBlur={() => {
+                        const n = parsePrDecimal(line.quantity);
+                        updateLine(line.key, { quantity: n > 0 ? formatDecimalField(n) : '' });
+                      }}
+                    />
+                  )}
                 </TableCell>
                 <TableCell>
-                  <Input
-                    className="text-right tabular-nums"
-                    inputMode="decimal"
-                    readOnly={readOnly}
-                    disabled={readOnly}
-                    value={line.unitPrice}
-                    onChange={(e) => updateLine(line.key, { unitPrice: parseFloat(e.target.value) || 0 })}
-                  />
+                  {readOnly ? (
+                    <span className="block text-right tabular-nums text-sm">
+                      {parsePrDecimal(line.unitPrice).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 4,
+                      })}
+                    </span>
+                  ) : (
+                    <Input
+                      type="text"
+                      className="text-right tabular-nums"
+                      inputMode="decimal"
+                      placeholder="0"
+                      value={line.unitPrice}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (!isValidDecimalInput(raw)) return;
+                        updateLine(line.key, { unitPrice: raw });
+                      }}
+                      onBlur={() => {
+                        const n = parsePrDecimal(line.unitPrice);
+                        updateLine(line.key, {
+                          unitPrice: n > 0 ? formatDecimalField(roundMoney2(n)) : n === 0 ? '0' : '',
+                        });
+                      }}
+                    />
+                  )}
                 </TableCell>
                 <TableCell className="text-right font-semibold tabular-nums">
                   {line.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}

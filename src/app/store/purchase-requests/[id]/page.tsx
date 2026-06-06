@@ -44,6 +44,7 @@ import { VendorSearchSelect } from '@/components/store/vendor-search-select';
 import {
   PurchaseRequestLinesEditor,
   newLine,
+  parsePrDecimal,
   type PrLineDraft,
 } from '@/components/store/purchase-request-lines-editor';
 import { Switch } from '@/components/ui/switch';
@@ -163,8 +164,8 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
       prLines.map((row) => ({
         key: row.id,
         itemDescription: row.itemDescription,
-        quantity: row.quantity,
-        unitPrice: row.unitPrice,
+        quantity: String(row.quantity),
+        unitPrice: String(row.unitPrice),
         amount: row.amount,
         storeItemId: row.storeItemId,
       }))
@@ -185,8 +186,8 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     return prLines.map((row) => ({
       key: row.id,
       itemDescription: row.itemDescription,
-      quantity: row.quantity,
-      unitPrice: row.unitPrice,
+      quantity: String(row.quantity),
+      unitPrice: String(row.unitPrice),
       amount: row.amount,
       storeItemId: row.storeItemId,
     }));
@@ -204,8 +205,8 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     const badLine = lines.find(
       (l) =>
         !l.itemDescription.trim() ||
-        !(Number(l.quantity) > 0) ||
-        Number(l.unitPrice) < 0
+        !(parsePrDecimal(l.quantity) > 0) ||
+        parsePrDecimal(l.unitPrice) < 0
     );
     if (submitForApproval && badLine) {
       toast({ variant: 'destructive', title: 'รายการไม่ครบ', description: 'ตรวจทุกบรรทัดก่อนส่งอนุมัติ' });
@@ -244,8 +245,8 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         .filter((l) => l.itemDescription.trim())
         .map((l) => ({
           itemDescription: l.itemDescription,
-          quantity: Number(l.quantity) || 0,
-          unitPrice: Number(l.unitPrice) || 0,
+          quantity: parsePrDecimal(l.quantity),
+          unitPrice: roundMoney2(parsePrDecimal(l.unitPrice)),
           amount: roundMoney2(Number(l.amount) || 0),
           storeItemId: l.storeItemId,
         }))
