@@ -85,7 +85,7 @@ async function fetchPurchaseDeleteBlockReason(
   );
   for (const d of vbSnap.docs) {
     const row = d.data() as { status?: string; paidAt?: number };
-    if (row.status === 'PAID' || (typeof row.paidAt === 'number' && row.paidAt > 0)) {
+    if (row.status === 'PAID' || row.status === 'CLOSED' || (typeof row.paidAt === 'number' && row.paidAt > 0)) {
       return 'มีใบรับวางบิลที่บันทึกจ่ายแล้ว — ลบใบสั่งซื้อนี้ไม่ได้';
     }
   }
@@ -119,8 +119,10 @@ async function unlinkPurchaseRequestsBeforePoDelete(
     const ref = doc(firestore, 'purchase_requests', rawPrId);
     const snap = await getDoc(ref);
     if (snap.exists()) {
+      const prStatus = snap.data()?.status;
       await updateDoc(ref, {
         linkedPurchaseId: deleteField(),
+        ...(prStatus === 'PO_ISSUED' ? { status: 'APPROVED' } : {}),
         updatedAt: Date.now(),
       });
       touched.add(ref.id);
@@ -132,8 +134,10 @@ async function unlinkPurchaseRequestsBeforePoDelete(
   );
   for (const d of linkedSnap.docs) {
     if (touched.has(d.id)) continue;
+    const prStatus = d.data()?.status;
     await updateDoc(d.ref, {
       linkedPurchaseId: deleteField(),
+      ...(prStatus === 'PO_ISSUED' ? { status: 'APPROVED' } : {}),
       updatedAt: Date.now(),
     });
   }
@@ -374,6 +378,7 @@ export default function PurchasesPage() {
 
       await updateDoc(doc(firestore, 'purchase_requests', prId), {
         linkedPurchaseId: docRef.id,
+        status: 'PO_ISSUED',
         updatedAt: Date.now(),
       });
 

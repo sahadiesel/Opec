@@ -51,11 +51,17 @@ async function deletePurchaseRequestCascade(firestore: Firestore, prId: string) 
   await deleteDoc(doc(firestore, 'purchase_requests', prId));
 }
 
+function effectivePrStatus(r: Pick<PurchaseRequest, 'status' | 'linkedPurchaseId'>): PurchaseRequestStatus {
+  if (r.status === 'APPROVED' && r.linkedPurchaseId) return 'PO_ISSUED';
+  return r.status;
+}
+
 function statusBadge(s: PurchaseRequestStatus) {
   const map: Record<PurchaseRequestStatus, { label: string; className: string }> = {
     DRAFT: { label: 'ฉบับร่าง', className: 'bg-slate-100 text-slate-800' },
     PENDING_APPROVAL: { label: 'รออนุมัติ', className: 'bg-amber-100 text-amber-900' },
     APPROVED: { label: 'อนุมัติแล้ว', className: 'bg-green-100 text-green-900' },
+    PO_ISSUED: { label: 'ออก PO แล้ว', className: 'bg-blue-100 text-blue-900' },
     REJECTED: { label: 'ไม่อนุมัติ', className: 'bg-red-100 text-red-800' },
     CANCELLED: { label: 'ยกเลิก', className: 'bg-muted' },
   };
@@ -63,11 +69,13 @@ function statusBadge(s: PurchaseRequestStatus) {
   return <Badge className={c.className}>{c.label}</Badge>;
 }
 
-function tabFilter(tab: string, s: PurchaseRequestStatus): boolean {
+function tabFilter(tab: string, r: Pick<PurchaseRequest, 'status' | 'linkedPurchaseId'>): boolean {
+  const s = effectivePrStatus(r);
   if (tab === 'all') return true;
   if (tab === 'drafts') return s === 'DRAFT';
   if (tab === 'pending') return s === 'PENDING_APPROVAL';
-  if (tab === 'approved') return s === 'APPROVED' || s === 'REJECTED' || s === 'CANCELLED';
+  if (tab === 'approved')
+    return s === 'APPROVED' || s === 'PO_ISSUED' || s === 'REJECTED' || s === 'CANCELLED';
   return true;
 }
 
@@ -161,7 +169,7 @@ export default function StorePurchaseRequestsPage() {
   const rows = useMemo(() => {
     const qq = q.trim().toLowerCase();
     return (list || [])
-      .filter((r) => tabFilter(tab, r.status))
+      .filter((r) => tabFilter(tab, r))
       .filter((r) => {
         if (monthYm === 'all') return true;
         const d = new Date(r.createdAt);
@@ -312,7 +320,7 @@ export default function StorePurchaseRequestsPage() {
                               : '—';
                           })()}
                         </TableCell>
-                        <TableCell>{statusBadge(r.status)}</TableCell>
+                        <TableCell>{statusBadge(effectivePrStatus(r))}</TableCell>
                         {showPrDeleteColumn && (
                           <TableCell
                             className="w-14 px-2 text-center"

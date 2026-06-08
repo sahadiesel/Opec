@@ -282,6 +282,7 @@ export default function HrLeavesManagementPage() {
   const [submitBusy, setSubmitBusy] = useState(false);
   const [proxyDialogOpen, setProxyDialogOpen] = useState(false);
   const [editingLeave, setEditingLeave] = useState<(OfficeLeaveRequestDoc & { id: string }) | null>(null);
+  const [activeTab, setActiveTab] = useState<'summary' | 'requests'>('summary');
 
   function openCreateLeaveDialog() {
     setEditingLeave(null);
@@ -296,6 +297,15 @@ export default function HrLeavesManagementPage() {
   function handleProxyDialogOpenChange(open: boolean) {
     setProxyDialogOpen(open);
     if (!open) setEditingLeave(null);
+  }
+
+  function handleLeavePersisted(result: { id: string; status: OfficeLeaveStatus }) {
+    setActiveTab('requests');
+    if (result.status === 'SUBMITTED') {
+      setStatusFilter('SUBMITTED');
+    } else if (result.status === 'DRAFT') {
+      setStatusFilter('DRAFT');
+    }
   }
 
   async function handleApprove() {
@@ -340,8 +350,10 @@ export default function HrLeavesManagementPage() {
       });
       toast({
         title: 'ส่งเข้าคิวอนุมัติแล้ว',
-        description: 'ผู้จัดการจะเห็นในหน้าคิวอนุมัติวันลา',
+        description: 'ผู้จัดการจะเห็นในศูนย์อนุมัติ → อนุมัติวันลา',
       });
+      setActiveTab('requests');
+      setStatusFilter('SUBMITTED');
     } catch (e) {
       toast({
         variant: 'destructive',
@@ -513,7 +525,7 @@ export default function HrLeavesManagementPage() {
           </CardContent>
         </Card>
 
-        <Tabs defaultValue="summary">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'summary' | 'requests')}>
           <TabsList>
             <TabsTrigger value="summary">สรุปวันลา</TabsTrigger>
             <TabsTrigger value="requests" className="gap-2">
@@ -831,6 +843,7 @@ export default function HrLeavesManagementPage() {
             officeStaff={officeStaff}
             entCfg={entCfg}
             editLeave={editingLeave}
+            onLeavePersisted={handleLeavePersisted}
           />
         )}
       </div>

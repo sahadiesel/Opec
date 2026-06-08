@@ -2334,6 +2334,7 @@ export type PurchaseRequestStatus =
   | 'DRAFT'
   | 'PENDING_APPROVAL'
   | 'APPROVED'
+  | 'PO_ISSUED'
   | 'REJECTED'
   | 'CANCELLED';
 
@@ -2486,7 +2487,7 @@ export interface VendorBillSupportingDocumentLink {
 export type VendorBillVatTreatmentOverride = 'NONE' | 'VAT_7' | 'VAT_7_INCLUSIVE';
 
 /** รับวางบิลจากใบสั่งซื้อที่อนุมัติแล้ว — คลังสร้าง บัญชีติดตามจ่าย */
-export type PurchaseVendorBillStatus = 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_PAID' | 'PAID';
+export type PurchaseVendorBillStatus = 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_PAID' | 'PAID' | 'CLOSED';
 
 /** บัญชีเลือกประเภทหัก ณ ที่จ่ายบนใบวางบิลก่อนจ่าย — อัตราและข้อความบนใบหัก ม.50 ทวิ */
 export type VendorBillWhtPresetCategory = 'TRANSPORT_FREIGHT' | 'SERVICE' | 'RENT';

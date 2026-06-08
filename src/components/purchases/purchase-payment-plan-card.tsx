@@ -51,6 +51,7 @@ import {
   supplierWithholdingOnMilestone,
   syncPurchasePaymentClosure,
 } from '@/lib/ops/purchase-payment-milestones';
+import { effectiveVendorBillStatus } from '@/lib/ops/vendor-bill-status';
 import { formatDateThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import Link from 'next/link';
@@ -82,10 +83,12 @@ function dueDisplay(ymd: string | undefined): string {
   return formatDateThaiBE(`${ymd}T12:00:00`);
 }
 
-function vendorBillStatusTh(s: PurchaseVendorBillStatus): string {
+function vendorBillStatusTh(bill: Pick<PurchaseVendorBill, 'status' | 'vendorBillDocumentationClosed'>) {
+  const s = effectiveVendorBillStatus(bill);
   if (s === 'DRAFT') return 'ร่าง';
   if (s === 'SUBMITTED') return 'แจ้งบัญชีแล้ว';
   if (s === 'PARTIALLY_PAID') return 'จ่ายบางส่วน';
+  if (s === 'CLOSED') return 'Close';
   return 'จ่ายแล้ว';
 }
 
@@ -392,7 +395,12 @@ export function PurchasePaymentPlanCard({
     run(`waive-${m.id}`, async () => {
       if (m.vendorBillId) {
         const b = vendorBills?.find((x) => x.id === m.vendorBillId);
-        if (b?.status === 'SUBMITTED' || b?.status === 'PAID') {
+        if (
+          b?.status === 'SUBMITTED' ||
+          b?.status === 'PARTIALLY_PAID' ||
+          b?.status === 'PAID' ||
+          b?.status === 'CLOSED'
+        ) {
           toast({
             variant: 'destructive',
             title: 'ยกเว้นงวดไม่ได้',
@@ -804,7 +812,7 @@ export function PurchasePaymentPlanCard({
                         {linkedBill ? (
                           <div className="flex flex-col items-end gap-1 text-xs">
                             <Badge variant="outline" className="font-normal">
-                              {vendorBillStatusTh(linkedBill.status)}
+                              {vendorBillStatusTh(linkedBill)}
                             </Badge>
                             <Link
                               href={`/store/vendor-bills/${linkedBill.id}`}

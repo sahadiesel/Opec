@@ -26,6 +26,7 @@ import type {
 import {
   billUsesPaymentInstallmentPlan,
 } from '@/lib/ops/vendor-bill-installment-plan';
+import { vendorBillStatusAfterPayment } from '@/lib/ops/vendor-bill-status';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import {
   syncPurchasePaymentClosure,
@@ -245,9 +246,10 @@ export async function executeVendorBillPayment(params: {
         : i,
     );
     const allPaid = updatedInstallments.every((x) => x.payStatus === 'PAID');
+    const paidStatus = vendorBillStatusAfterPayment(bill);
     billPatch = {
       paymentInstallments: updatedInstallments,
-      status: allPaid ? 'PAID' : 'PARTIALLY_PAID',
+      status: allPaid ? paidStatus : 'PARTIALLY_PAID',
       updatedAt: now,
     };
     if (allPaid) {
@@ -260,7 +262,7 @@ export async function executeVendorBillPayment(params: {
     }
   } else {
     billPatch = {
-      status: 'PAID',
+      status: vendorBillStatusAfterPayment(bill),
       paidAt: now,
       paidByUid: currentUser.id,
       paidByName: actor,

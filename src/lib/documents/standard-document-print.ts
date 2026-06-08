@@ -1658,7 +1658,8 @@ export function buildPurchaseOrderPrintHtml(params: {
 
   const prApproverDisplay =
     purchase.purchaseRequestId?.trim() &&
-    linkedPurchaseRequest?.status === 'APPROVED' &&
+    (linkedPurchaseRequest?.status === 'APPROVED' ||
+      linkedPurchaseRequest?.status === 'PO_ISSUED') &&
     linkedPurchaseRequest.decidedByName?.trim()
       ? linkedPurchaseRequest.decidedByName.trim()
       : purchase.approvalDecisionByName?.trim() || '';

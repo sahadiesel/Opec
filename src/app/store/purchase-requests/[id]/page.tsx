@@ -67,6 +67,7 @@ function statusLabel(s: PurchaseRequestStatus) {
     DRAFT: 'ฉบับร่าง',
     PENDING_APPROVAL: 'รออนุมัติ',
     APPROVED: 'อนุมัติแล้ว',
+    PO_ISSUED: 'ออก PO แล้ว',
     REJECTED: 'ไม่อนุมัติ',
     CANCELLED: 'ยกเลิก',
   };
@@ -450,6 +451,8 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
 
   const displayLines = draftEditable ? lines : readonlyLines;
   const displayMode = draftEditable ? lineEntryMode : pr.lineEntryMode || 'SERVICE';
+  const displayStatus: PurchaseRequestStatus =
+    pr.status === 'APPROVED' && pr.linkedPurchaseId ? 'PO_ISSUED' : pr.status;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -468,16 +471,18 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           </div>
           <Badge
             className={
-              pr.status === 'APPROVED'
+              displayStatus === 'APPROVED'
                 ? 'bg-green-100 text-green-900'
-                : pr.status === 'PENDING_APPROVAL'
-                  ? 'bg-amber-100 text-amber-900'
-                  : pr.status === 'REJECTED'
-                    ? 'bg-red-100 text-red-900'
-                    : ''
+                : displayStatus === 'PO_ISSUED'
+                  ? 'bg-blue-100 text-blue-900'
+                  : displayStatus === 'PENDING_APPROVAL'
+                    ? 'bg-amber-100 text-amber-900'
+                    : displayStatus === 'REJECTED'
+                      ? 'bg-red-100 text-red-900'
+                      : ''
             }
           >
-            {statusLabel(pr.status)}
+            {statusLabel(displayStatus)}
           </Badge>
         </div>
 

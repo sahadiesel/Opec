@@ -74,6 +74,8 @@ export type HrProxyLeaveDialogProps = {
   entCfg: OfficeLeaveEntitlementsDoc | null;
   /** เปิดแก้ไขใบลาที่มีอยู่ (DRAFT / SUBMITTED) */
   editLeave?: (OfficeLeaveRequestDoc & { id: string }) | null;
+  /** หลังบันทึกสำเร็จ — ให้หน้า HR สลับไปแท็บรายการคำขอ */
+  onLeavePersisted?: (result: { id: string; status: OfficeLeaveRequestDoc['status'] }) => void;
 };
 
 export function HrProxyLeaveDialog({
@@ -84,6 +86,7 @@ export function HrProxyLeaveDialog({
   officeStaff,
   entCfg,
   editLeave = null,
+  onLeavePersisted,
 }: HrProxyLeaveDialogProps) {
   const { toast } = useToast();
   const [staffId, setStaffId] = useState<string>('');
@@ -214,7 +217,11 @@ export function HrProxyLeaveDialog({
           ...upd,
           updatedAt: ts,
         });
-        toast({ title: isEditing ? 'บันทึกการแก้ไขแล้ว' : 'บันทึกฉบับร่างแล้ว' });
+        toast({
+          title: isEditing ? 'บันทึกการแก้ไขแล้ว' : 'บันทึกฉบับร่างแล้ว',
+          description: 'ยังไม่เข้าคิวอนุมัติ — กด «ส่งเข้าคิวอนุมัติ» หรือ ⋮ → ส่งให้อนุมัติ',
+        });
+        onLeavePersisted?.({ id: draftDocId, status: draftSaveStatus() });
       } else {
         const p = buildPayload('DRAFT');
         const ref = await addDoc(collection(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION), {
@@ -223,7 +230,11 @@ export function HrProxyLeaveDialog({
           updatedAt: ts,
         });
         setDraftDocId(ref.id);
-        toast({ title: 'สร้างฉบับร่างแล้ว', description: 'ส่งให้ผู้จัดการเมื่อพร้อม' });
+        toast({
+          title: 'สร้างฉบับร่างแล้ว',
+          description: 'ยังไม่เข้าคิวอนุมัติ — กด «ส่งเข้าคิวอนุมัติ» เมื่อพร้อม',
+        });
+        onLeavePersisted?.({ id: ref.id, status: 'DRAFT' });
       }
     } catch (e) {
       toast({
@@ -254,6 +265,7 @@ export function HrProxyLeaveDialog({
     setBusy(true);
     try {
       const ts = Date.now();
+      let savedId = draftDocId;
       if (draftDocId) {
         const { createdAt: _c, createdByUid: _u, createdByName: _n, ...upd } = buildPayload('SUBMITTED');
         await updateDoc(doc(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION, draftDocId), {
@@ -262,16 +274,18 @@ export function HrProxyLeaveDialog({
         });
       } else {
         const raw = buildPayload('SUBMITTED');
-        await addDoc(collection(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION), {
+        const ref = await addDoc(collection(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION), {
           ...raw,
           createdAt: ts,
           updatedAt: ts,
         });
+        savedId = ref.id;
       }
       toast({
         title: 'ส่งคำขอแล้ว',
-        description: 'เข้าคิวศูนย์อนุมัติวันลา — ผู้จัดการจะพิจารณา',
+        description: 'สถานะ «รออนุมัติ» — ดูที่แท็บคำขอทั้งหมด หรือ HR → ศูนย์อนุมัติ → อนุมัติวันลา',
       });
+      if (savedId) onLeavePersisted?.({ id: savedId, status: 'SUBMITTED' });
       closeDialog();
     } catch (e) {
       toast({
@@ -403,10 +417,10 @@ export function HrProxyLeaveDialog({
             </Button>
             <Button type="button" variant="secondary" onClick={() => void handleSaveDraft()} disabled={busy || !staffId}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {isEditing && editLeave?.status === 'SUBMITTED' ? 'บันทึกการแก้ไข' : 'บันทึกฉบับร่าง'}
+              {isEditing && editLeave?.status === 'SUBMITTED' ? 'บันทึกการแก้ไข' : 'บันทึกฉบับร่าง (ยังไม่เข้าคิว)'}
             </Button>
             <Button type="button" onClick={() => setConfirmSubmitOpen(true)} disabled={busy || !staffId}>
-              ส่งคำขอ (เข้าคิวอนุมัติ)
+              ส่งเข้าคิวอนุมัติ
             </Button>
           </DialogFooter>
         </DialogContent>

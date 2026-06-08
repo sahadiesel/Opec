@@ -131,6 +131,11 @@ import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
+  effectiveVendorBillStatus,
+  isVendorBillFullyClosed,
+  isVendorBillPaymentComplete,
+} from '@/lib/ops/vendor-bill-status';
+import {
   uploadVendorBillPaymentProofPdf,
   validateVendorBillPaymentProof,
 } from '@/lib/storage/vendor-bill-payment-proofs';
@@ -139,7 +144,17 @@ function statusLabel(s: PurchaseVendorBillStatus) {
   if (s === 'DRAFT') return 'ฉบับร่าง';
   if (s === 'SUBMITTED') return 'รอจ่ายเงิน';
   if (s === 'PARTIALLY_PAID') return 'จ่ายบางส่วน';
+  if (s === 'CLOSED') return 'Close';
   return 'จ่ายครบแล้ว';
+}
+
+function installmentPayStatusLabel(
+  payStatus: VendorBillPaymentInstallment['payStatus'],
+  billClosed: boolean,
+) {
+  if (payStatus === 'PAID' && billClosed) return 'Close';
+  if (payStatus === 'PAID') return 'จ่ายแล้ว';
+  return 'รอจ่าย';
 }
 
 type SupportingFormRow = { attached: boolean; documentNo: string; documentDate: string };
@@ -312,7 +327,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
   const whtAtSourceQuery = useMemoFirebase(
     () =>
-      firestore && bill?.status === 'PAID' && bill?.id
+      firestore && isVendorBillPaymentComplete(bill ?? { status: 'DRAFT' }) && bill?.id
         ? query(collection(firestore, 'withholding_at_source_items'), where('vendorBillId', '==', bill.id), limit(1))
         : null,
     [firestore, bill?.id, bill?.status],
@@ -539,7 +554,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       return null;
     }
     if (whtCertificate) return whtCertificate;
-    if (bill.status !== 'PAID' || !payoutCashbook) return null;
+    if (!isVendorBillPaymentComplete(bill) || !payoutCashbook) return null;
     const draftCore = buildWithholdingCertificateDraft({
       bill,
       purchase,
@@ -1325,11 +1340,14 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         vendorBillDocumentationClosedAt: Date.now(),
         vendorBillDocumentationClosedByUid: currentUser.id,
         vendorBillDocumentationClosedByName: actor,
+        ...(isVendorBillPaymentComplete(bill) ? { status: 'CLOSED' as const } : {}),
         updatedAt: Date.now(),
       }));
       toast({
         title: 'ปิดเรื่องเอกสารสมบูรณ์แล้ว',
-        description: 'บันทึกเลขที่ใบกำกับภาษีและใบเสร็จแล้ว — แยกจากสถานะการจ่ายเงิน',
+        description: isVendorBillPaymentComplete(bill)
+          ? 'สถานะใบวางบิลเป็น Close — จ่ายครบและเอกสารครบแล้ว'
+          : 'บันทึกเลขที่ใบกำกับภาษีและใบเสร็จแล้ว — สถานะจะเป็น Close เมื่อจ่ายครบ',
       });
     } finally {
       setDocCloseBusy(false);
@@ -1444,9 +1462,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
   const readOnly = bill.status !== 'DRAFT' || !okStore;
 
+  const billClosed = isVendorBillFullyClosed(bill);
+  const displayBillStatus = effectiveVendorBillStatus(bill);
+
   /** งวดที่ตรงกับ cashbook หลักของใบ (หลังจ่ายครบ — ใช้สำหรับหนังสือรับรองหัก ณ ที่จ่าย) */
   const isPrimaryPaidCashbookRow = (row: VendorBillPaymentInstallment) =>
-    bill.status === 'PAID' &&
+    isVendorBillPaymentComplete(bill) &&
     !!bill.cashbookEntryId &&
     row.payStatus === 'PAID' &&
     row.cashbookEntryId === bill.cashbookEntryId;
@@ -1506,8 +1527,16 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
             </p>
           </div>
           <div className="ml-auto flex flex-col items-end gap-1">
-            <Badge>{statusLabel(bill.status)}</Badge>
-            {bill.vendorBillDocumentationClosed ? (
+            <Badge
+              className={
+                displayBillStatus === 'CLOSED'
+                  ? 'bg-slate-800 text-white hover:bg-slate-800'
+                  : undefined
+              }
+            >
+              {statusLabel(displayBillStatus)}
+            </Badge>
+            {bill.vendorBillDocumentationClosed && displayBillStatus !== 'CLOSED' ? (
               <Badge variant="outline" className="border-emerald-600 text-emerald-900">
                 เอกสารครบ — ปิดเรื่องแล้ว
               </Badge>
@@ -1515,7 +1544,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
           </div>
         </div>
 
-        {bill.status === 'PAID' && !bill.vendorBillDocumentationClosed && (
+        {isVendorBillPaymentComplete(bill) && !billClosed && (
           <Card className="border-amber-200 bg-amber-50/50">
             <CardHeader className="pb-2">
               <CardTitle className="text-base text-amber-950">ยังไม่ปิดเรื่องเอกสาร</CardTitle>
@@ -1541,7 +1570,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         {purchase &&
           bill.status !== 'DRAFT' &&
           (((bill.paymentInstallments?.length ?? 0) > 0 ||
-            (bill.status === 'PAID' && !!bill.cashbookEntryId))) && (
+            (isVendorBillPaymentComplete(bill) && !!bill.cashbookEntryId))) && (
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">แผนงวดชำระในใบนี้</CardTitle>
@@ -1578,9 +1607,17 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                               </td>
                               <td className="py-2 pr-3">
                                 {row.payStatus === 'PAID' ? (
-                                  <Badge className="bg-green-600">จ่ายแล้ว</Badge>
+                                  <Badge
+                                    className={
+                                      billClosed ? 'bg-slate-800 hover:bg-slate-800' : 'bg-green-600'
+                                    }
+                                  >
+                                    {installmentPayStatusLabel(row.payStatus, billClosed)}
+                                  </Badge>
                                 ) : (
-                                  <Badge variant="outline">รอจ่าย</Badge>
+                                  <Badge variant="outline">
+                                    {installmentPayStatusLabel(row.payStatus, billClosed)}
+                                  </Badge>
                                 )}
                               </td>
                               <td className="py-2 pr-3 font-mono text-xs">
@@ -1610,7 +1647,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                             </tr>
                           );
                         })
-                      : bill.status === 'PAID' && bill.cashbookEntryId ? (
+                      : isVendorBillPaymentComplete(bill) && bill.cashbookEntryId ? (
                           <tr className="border-b border-muted/60">
                             <td className="py-2 pr-3 font-mono">1</td>
                             <td className="py-2 pr-3 text-muted-foreground">ชำระเต็มจำนวน (ไม่แบ่งงวดในใบนี้)</td>
@@ -1621,7 +1658,13 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                               })}
                             </td>
                             <td className="py-2 pr-3">
-                              <Badge className="bg-green-600">จ่ายแล้ว</Badge>
+                              <Badge
+                                className={
+                                  billClosed ? 'bg-slate-800 hover:bg-slate-800' : 'bg-green-600'
+                                }
+                              >
+                                {installmentPayStatusLabel('PAID', billClosed)}
+                              </Badge>
                             </td>
                             <td className="py-2 pr-3 font-mono text-xs">
                               {bill.cashbookEntryNo || bill.cashbookEntryId || '—'}
@@ -2661,7 +2704,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
               </div>
               <div className="space-y-2 min-w-0">
                 <Label>วันที่จ่ายเงิน</Label>
-                {bill.status === 'PAID' && bill.paidAt ? (
+                {isVendorBillPaymentComplete(bill) && bill.paidAt ? (
                   <DatePickerThaiBE
                     className="h-11"
                     value={bill.paidAt}

@@ -41,6 +41,7 @@ import {
   User,
   Vendor,
 } from '@/lib/types';
+import { effectiveVendorBillStatus } from '@/lib/ops/vendor-bill-status';
 import {
   Dialog,
   DialogContent,
@@ -90,7 +91,8 @@ async function deleteVendorBillDraft(firestore: Firestore, bill: PurchaseVendorB
   await deleteDoc(doc(firestore, 'purchase_vendor_bills', bill.id));
 }
 
-function statusBadge(status: PurchaseVendorBillStatus) {
+function statusBadge(bill: Pick<PurchaseVendorBill, 'status' | 'vendorBillDocumentationClosed'>) {
+  const status = effectiveVendorBillStatus(bill);
   switch (status) {
     case 'DRAFT':
       return <Badge variant="outline">ฉบับร่าง</Badge>;
@@ -98,6 +100,8 @@ function statusBadge(status: PurchaseVendorBillStatus) {
       return <Badge className="bg-amber-600">รอจ่ายเงิน</Badge>;
     case 'PARTIALLY_PAID':
       return <Badge className="bg-orange-600">จ่ายบางส่วน</Badge>;
+    case 'CLOSED':
+      return <Badge className="bg-slate-800 hover:bg-slate-800">Close</Badge>;
     case 'PAID':
       return <Badge className="bg-green-600">จ่ายแล้ว</Badge>;
     default:
@@ -189,7 +193,14 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
         ? bills
         : tab === 'SUBMITTED'
           ? bills.filter((b) => b.status === 'SUBMITTED' || b.status === 'PARTIALLY_PAID')
-          : bills.filter((b) => b.status === tab);
+          : tab === 'PAID'
+            ? bills.filter(
+                (b) =>
+                  b.status === 'PAID' ||
+                  b.status === 'CLOSED' ||
+                  effectiveVendorBillStatus(b) === 'CLOSED',
+              )
+            : bills.filter((b) => b.status === tab);
     list = list.filter((b) => {
       if (billVendorId !== 'all' && b.vendorId !== billVendorId) return false;
       if (billMonth !== 'all') {
@@ -516,7 +527,7 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                           </TableCell>
                           <TableCell>{b.billingReceivedDate}</TableCell>
                           <TableCell>{b.plannedPaymentDate}</TableCell>
-                          <TableCell>{statusBadge(b.status)}</TableCell>
+                          <TableCell>{statusBadge(b)}</TableCell>
                           {showBillDeleteColumn && (
                             <TableCell className="w-14 px-2 text-center" onClick={(e) => e.stopPropagation()}>
                               {billTrashVisible ? (
