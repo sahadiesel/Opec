@@ -11,9 +11,9 @@ import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatOptionalDateThaiBE, formatDateThaiBE } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Plus, Trash2, AlertCircle, Camera, Loader2, X } from 'lucide-react';
-import { addDoc, doc, type Firestore, type CollectionReference } from 'firebase/firestore';
-import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { Plus, Trash2, Pencil, AlertCircle, Camera, Loader2, X } from 'lucide-react';
+import { addDoc, doc, deleteField, type Firestore, type CollectionReference } from 'firebase/firestore';
+import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { useFirebaseApp } from '@/firebase';
 import { displayLocation, sortDrugTestsNewestFirst } from '@/lib/drug-test-panel';
@@ -49,6 +49,8 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
   const [drugFormResult, setDrugFormResult] = useState<DrugTestResult>('none');
   const [drugFormFile, setDrugFormFile] = useState<File | null>(null);
   const [drugFormPreviewUrl, setDrugFormPreviewUrl] = useState<string | null>(null);
+  const [drugFormRemoveAttachment, setDrugFormRemoveAttachment] = useState(false);
+  const [editingDrugId, setEditingDrugId] = useState<string | null>(null);
   const [drugSaving, setDrugSaving] = useState(false);
 
   const sortedRecords = useMemo(() => sortDrugTestsNewestFirst(drugTests || []), [drugTests]);
@@ -65,16 +67,31 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
     }
     setDrugFormPreviewUrl(null);
     setDrugFormFile(null);
+    setDrugFormRemoveAttachment(false);
     if (photoInputRef.current) photoInputRef.current.value = '';
   };
 
   const resetDrugForm = () => {
     clearPhotoPreview();
+    setEditingDrugId(null);
     setDrugFormSubstanceKey(panelSubstances[0]?.id || '');
     setDrugFormDate('');
     setDrugFormLocType('OPEC');
     setDrugFormLocOther('');
     setDrugFormResult('none');
+  };
+
+  const populateFormFromRow = (row: WorkerDrugTest) => {
+    clearPhotoPreview();
+    setEditingDrugId(row.id);
+    setDrugFormSubstanceKey(row.substanceKey || panelSubstances[0]?.id || '');
+    setDrugFormDate(row.testDate ? timestampToHtmlDateValue(row.testDate) : '');
+    setDrugFormLocType(row.testLocationType || 'OPEC');
+    setDrugFormLocOther(row.testLocationOther || '');
+    setDrugFormResult(row.result || 'none');
+    if (row.attachment?.downloadUrl) {
+      setDrugFormPreviewUrl(row.attachment.downloadUrl);
+    }
   };
 
   useEffect(() => {
@@ -89,6 +106,21 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
     setDrugDialogOpen(true);
   };
 
+  const openEditDrugDialog = (row: WorkerDrugTest) => {
+    populateFormFromRow(row);
+    setDrugDialogOpen(true);
+  };
+
+  const removeAttachmentPreview = () => {
+    if (drugFormPreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(drugFormPreviewUrl);
+    }
+    setDrugFormPreviewUrl(null);
+    setDrugFormFile(null);
+    setDrugFormRemoveAttachment(true);
+    if (photoInputRef.current) photoInputRef.current.value = '';
+  };
+
   const onPhotoPick = (file: File | null) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
@@ -99,11 +131,13 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
       URL.revokeObjectURL(drugFormPreviewUrl);
     }
     setDrugFormFile(file);
+    setDrugFormRemoveAttachment(false);
     setDrugFormPreviewUrl(URL.createObjectURL(file));
   };
 
   const handleSaveDrug = async () => {
-    if (!drugTestsQuery || !firestore) return;
+    if (!firestore) return;
+    if (!editingDrugId && !drugTestsQuery) return;
     const substance = panelSubstances.find((s) => s.id === drugFormSubstanceKey);
     if (!substance) {
       toast({ variant: 'destructive', title: 'กรอกข้อมูลไม่ครบ', description: 'เลือกอุปกรณ์การตรวจ' });
@@ -132,13 +166,25 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
         testLocationType: drugFormLocType,
         testLocationOther: drugFormLocType === 'OTHER' ? drugFormLocOther.trim() : '',
         result: drugFormResult,
-        createdAt: Date.now(),
       };
-      if (attachment) payload.attachment = attachment;
 
-      await addDoc(drugTestsQuery, payload);
+      if (editingDrugId) {
+        if (attachment) {
+          payload.attachment = attachment;
+        } else if (drugFormRemoveAttachment) {
+          payload.attachment = deleteField();
+        }
+        updateDocumentNonBlocking(doc(firestore, 'workers', workerId, 'drug_tests', editingDrugId), payload);
+      } else {
+        payload.createdAt = Date.now();
+        if (attachment) payload.attachment = attachment;
+        await addDoc(drugTestsQuery!, payload);
+      }
+
+      const wasEdit = !!editingDrugId;
       setDrugDialogOpen(false);
-      toast({ title: 'บันทึกแล้ว' });
+      resetDrugForm();
+      toast({ title: wasEdit ? 'อัปเดตแล้ว' : 'บันทึกแล้ว' });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: message });
@@ -237,19 +283,30 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
                     </TableCell>
                     {canEdit ? (
                       <TableCell className="text-right pr-6">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive h-8 w-8"
-                          title="ลบรายการ"
-                          onClick={() => {
-                            if (!firestore) return;
-                            if (confirm('ลบรายการผลตรวจนี้?'))
-                              deleteDocumentNonBlocking(doc(firestore, 'workers', workerId, 'drug_tests', row.id));
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-primary"
+                            title="แก้ไขรายการ"
+                            onClick={() => openEditDrugDialog(row)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive h-8 w-8"
+                            title="ลบรายการ"
+                            onClick={() => {
+                              if (!firestore) return;
+                              if (confirm('ลบรายการผลตรวจนี้?'))
+                                deleteDocumentNonBlocking(doc(firestore, 'workers', workerId, 'drug_tests', row.id));
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     ) : null}
                   </TableRow>
@@ -308,11 +365,21 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
           </div>
         )}
 
-        <Dialog open={drugDialogOpen} onOpenChange={setDrugDialogOpen}>
+        <Dialog
+          open={drugDialogOpen}
+          onOpenChange={(open) => {
+            setDrugDialogOpen(open);
+            if (!open) resetDrugForm();
+          }}
+        >
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>บันทึกผลตรวจ</DialogTitle>
-              <DialogDescription>ผลเริ่มต้น NONE = ยังไม่ได้ตรวจ — สถานที่เริ่มต้น OPEC</DialogDescription>
+              <DialogTitle>{editingDrugId ? 'แก้ไขผลตรวจ' : 'บันทึกผลตรวจ'}</DialogTitle>
+              <DialogDescription>
+                {editingDrugId
+                  ? 'แก้ไขวันที่ สถานที่ ผลตรวจ หรือไฟล์แนบ — ลบรูปเดิมแล้วเลือกไฟล์ใหม่ได้'
+                  : 'ผลเริ่มต้น NONE = ยังไม่ได้ตรวจ — สถานที่เริ่มต้น OPEC'}
+              </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 py-2">
               <div className="space-y-2">
@@ -383,11 +450,14 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
                     onChange={(e) => onPhotoPick(e.target.files?.[0] ?? null)}
                   />
                   {drugFormPreviewUrl && (
-                    <Button type="button" variant="ghost" size="sm" className="h-8 text-destructive" onClick={clearPhotoPreview}>
-                      <X className="h-3 w-3 mr-1" /> ลบรูป
+                    <Button type="button" variant="ghost" size="sm" className="h-8 text-destructive" onClick={removeAttachmentPreview}>
+                      <X className="h-3 w-3 mr-1" /> {editingDrugId && !drugFormFile ? 'ลบไฟล์แนบ' : 'ลบรูป'}
                     </Button>
                   )}
                 </div>
+                {drugFormRemoveAttachment && !drugFormPreviewUrl && (
+                  <p className="text-[10px] text-amber-700">จะลบไฟล์แนบเดิมเมื่อกดบันทึก</p>
+                )}
                 {drugFormPreviewUrl && (
                   <a href={drugFormPreviewUrl} target="_blank" rel="noopener noreferrer" className="inline-block">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -402,7 +472,7 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
               </Button>
               <Button onClick={() => void handleSaveDrug()} disabled={drugSaving}>
                 {drugSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                บันทึก
+                {editingDrugId ? 'บันทึกการแก้ไข' : 'บันทึก'}
               </Button>
             </DialogFooter>
           </DialogContent>

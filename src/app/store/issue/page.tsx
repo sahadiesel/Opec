@@ -653,7 +653,7 @@ export default function IssueItemsPage() {
                         <PackageOpen className="h-10 w-10 mx-auto text-muted-foreground/40 mb-2" />
                         <p className="text-sm text-muted-foreground font-medium">ไม่มีรายการรอเบิก</p>
                         <p className="text-xs text-muted-foreground mt-1">
-                          ไม่มี mobilization ในช่วงที่ต้องเบิก หรือครบทุกรายการ PPE/อุปกรณ์แล้ว
+                          ไม่มี mobilization ที่มอบหมายแล้ว (Waiting MOB ขึ้นไป) หรือครบทุกรายการ PPE/เครื่องมือแล้ว
                         </p>
                       </div>
                     ) : (

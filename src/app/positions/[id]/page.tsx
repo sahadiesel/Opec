@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/ui/searchable-select';
 import {
   Plus,
   Trash2,
@@ -20,13 +21,12 @@ import {
   HardHat,
   Hammer,
   ArrowLeft,
-  Sparkles,
   Loader2,
   Briefcase,
   Activity,
   Info,
 } from 'lucide-react';
-import { 
+import {
   Dialog, 
   DialogContent, 
   DialogDescription, 
@@ -55,7 +55,6 @@ import {
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { generatePositionRequirements } from '@/ai/flows/generate-position-requirements';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { positionDetailHeadline, type PositionDoc } from '@/lib/position-display';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -75,6 +74,17 @@ function formatPositionCatalogPickLabel(si: StoreItem): string {
     return `${si.itemCode} · ${(si.itemName || '').trim() || '—'}`;
   }
   return `${si.itemCode} — ${formatStoreItemLabel(si)}`;
+}
+
+function storeCatalogToSearchOptions(items: StoreItem[]): SearchableSelectOption[] {
+  return items.map((si) => ({
+    id: si.id,
+    label:
+      si.catalogGroupRole === 'header'
+        ? `${formatPositionCatalogPickLabel(si)} · เมน`
+        : formatPositionCatalogPickLabel(si),
+    searchText: [si.itemCode, si.itemName, si.variantSpecification, si.category].filter(Boolean).join(' '),
+  }));
 }
 
 function normalizePositionPayrollBasis(raw: unknown): Position['payrollBasis'] {
@@ -177,11 +187,33 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
       .sort((a, b) => (a.itemName || '').localeCompare(b.itemName || '', 'th'));
   }, [storeItems]);
 
+  const ppeCatalogOptions = useMemo(
+    () => storeCatalogToSearchOptions(ppeMainCatalogPickList),
+    [ppeMainCatalogPickList],
+  );
+
+  const toolCatalogOptions = useMemo(
+    () => storeCatalogToSearchOptions(toolMainCatalogPickList),
+    [toolMainCatalogPickList],
+  );
+
+  const certCatalogOptions = useMemo(
+    () =>
+      (workerDocCatalog || [])
+        .filter((x) => x.active !== false)
+        .map((x) => ({
+          id: x.id,
+          label: `${x.itemName} - ${x.requirementType}`,
+          searchText: [x.itemName, x.itemCode, x.requirementType, x.description].filter(Boolean).join(' '),
+        })),
+    [workerDocCatalog],
+  );
+
   const resetAddToolDialog = useCallback(() => {
     setNewTool({ allowed: true, quantityDefault: 1, itemType: 'tool' });
   }, []);
 
-  const [isGenerating, setIsGenerating] = useState<string | null>(null);
+
   const [activeTab, setActiveTab] = useState('master');
   const [laborSaveDialogOpen, setLaborSaveDialogOpen] = useState(false);
   const [laborWorkerCount, setLaborWorkerCount] = useState<number | null>(null);
@@ -430,31 +462,6 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     if (!firestore) return;
     if (confirm('ยืนยันการลบรายการนี้?')) {
       deleteDocumentNonBlocking(doc(firestore, 'positions', id, sub, reqId));
-    }
-  };
-
-  const handleGenerateAI = async (type: 'certificate' | 'ppe' | 'tool') => {
-    if (!position) return;
-    setIsGenerating(type);
-    try {
-      const result = await generatePositionRequirements({
-        positionName: position.positionName || position.positionNameEn,
-        requirementsType: type,
-        additionalDetails: position.description
-      });
-      
-      toast({
-        title: "AI Suggested Requirements",
-        description: result.description,
-      });
-    } catch (e) {
-      toast({
-        variant: "destructive",
-        title: "AI Generation Failed",
-        description: "ไม่สามารถสร้างคำแนะนำได้ในขณะนี้"
-      });
-    } finally {
-      setIsGenerating(null);
     }
   };
 
@@ -711,12 +718,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                   </CardTitle>
                   <CardDescription>ใบเซอร์ที่คนงานต้องมีและยังไม่หมดอายุเพื่อผ่านเกณฑ์ READY</CardDescription>
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" className="h-10 border-blue-200 text-blue-700 bg-blue-50" onClick={() => handleGenerateAI('certificate')} disabled={!!isGenerating}>
-                    {isGenerating === 'certificate' ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-                    แนะนำโดย AI (AI Suggest)
-                  </Button>
-                  <Dialog open={isAddCertOpen} onOpenChange={setIsAddCertOpen}>
+                <Dialog open={isAddCertOpen} onOpenChange={setIsAddCertOpen}>
                     <DialogTrigger asChild>
                       <Button className="h-10 bg-primary font-bold shadow-md"><Plus className="h-4 w-4 mr-2" /> เพิ่มเกณฑ์ (Add)</Button>
                     </DialogTrigger>
@@ -726,19 +728,16 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                         <DialogDescription>กำหนดมาตรฐานใบรับรองสำหรับตำแหน่งงานนี้</DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
-                        <div className="grid gap-2">
-                          <Label className="font-bold">เลือกรายการจากเอกสารกลาง *</Label>
-                          <Select value={newCert.templateId || ''} onValueChange={v => setNewCert({...newCert, templateId: v})}>
-                            <SelectTrigger><SelectValue placeholder="เลือกเอกสารกลาง..." /></SelectTrigger>
-                            <SelectContent>
-                              {(workerDocCatalog || []).filter((x) => x.active !== false).map((x) => (
-                                <SelectItem key={x.id} value={x.id}>
-                                  {x.itemName} - {x.requirementType}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                        <SearchableSelect
+                          label="เลือกรายการจากเอกสารกลาง *"
+                          labelClassName="font-bold"
+                          options={certCatalogOptions}
+                          value={newCert.templateId || undefined}
+                          onChange={(v) => setNewCert({ ...newCert, templateId: v ?? '' })}
+                          placeholder="เลือกเอกสารกลาง..."
+                          searchPlaceholder="ค้นหาชื่อหรือรหัสใบเซอร์…"
+                          emptyMessage="ไม่พบเอกสารกลาง"
+                        />
                         {selectedCatalogItem && (
                           <div className="text-xs rounded-lg border p-3 bg-muted/20">
                             ประเภท: <b>{selectedCatalogItem.requirementType}</b> | มีอายุ:{' '}
@@ -757,7 +756,6 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
-                </div>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -814,12 +812,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     <HardHat className="h-5 w-5" /> อุปกรณ์ PPE บังคับ (Standard PPE)</CardTitle>
                   <CardDescription>รายการชุดและอุปกรณ์ป้องกันภัยที่บริษัทต้องจัดเตรียมให้ตำแหน่งนี้</CardDescription>
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" className="h-10 border-blue-200 text-blue-700 bg-blue-50" onClick={() => handleGenerateAI('ppe')} disabled={!!isGenerating}>
-                    {isGenerating === 'ppe' ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-                    แนะนำโดย AI
-                  </Button>
-                  <Dialog
+                <Dialog
                     open={isAddPPEOpen}
                     onOpenChange={(open) => {
                       setIsAddPPEOpen(open);
@@ -839,42 +832,29 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                         </DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
-                        <div className="grid gap-2">
-                          <Label className="font-bold">รายการจากคลัง (PPE) — ชื่อหลัก *</Label>
-                          <Select
-                            key={ppeMainCatalogPickList.length}
-                            value={newPPE.storeItemId ?? undefined}
-                            onValueChange={(storeItemId) => {
-                              const si = ppeMainCatalogPickList.find((x) => x.id === storeItemId);
-                              if (!si) return;
-                              setNewPPE((prev) => ({
-                                ...prev,
-                                storeItemId: si.id,
-                                itemCode: si.itemCode,
-                                itemName: si.itemName,
-                              }));
-                            }}
-                          >
-                            <SelectTrigger className="h-10">
-                              <SelectValue
-                                placeholder={
-                                  ppeMainCatalogPickList.length
-                                    ? 'เลือกชื่อหลัก…'
-                                    : 'ยังไม่มีเมน/รายการเดี่ยว — ไปที่ /store/ppe'
-                                }
-                              />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {ppeMainCatalogPickList.map((si) => (
-                                <SelectItem key={si.id} value={si.id}>
-                                  {si.catalogGroupRole === 'header'
-                                    ? `${formatPositionCatalogPickLabel(si)} · เมน`
-                                    : formatPositionCatalogPickLabel(si)}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                        <SearchableSelect
+                          label="รายการจากคลัง (PPE) — ชื่อหลัก *"
+                          labelClassName="font-bold"
+                          options={ppeCatalogOptions}
+                          value={newPPE.storeItemId ?? undefined}
+                          onChange={(storeItemId) => {
+                            const si = ppeMainCatalogPickList.find((x) => x.id === storeItemId);
+                            if (!si) return;
+                            setNewPPE((prev) => ({
+                              ...prev,
+                              storeItemId: si.id,
+                              itemCode: si.itemCode,
+                              itemName: si.itemName,
+                            }));
+                          }}
+                          placeholder={
+                            ppeMainCatalogPickList.length
+                              ? 'เลือกชื่อหลัก…'
+                              : 'ยังไม่มีเมน/รายการเดี่ยว — ไปที่ /store/ppe'
+                          }
+                          searchPlaceholder="ค้นหารหัสหรือชื่อ PPE…"
+                          emptyMessage="ไม่พบรายการ PPE"
+                        />
                         <div className="grid gap-2">
                           <Label className="font-bold">จำนวนต่อคน (โควต้า)</Label>
                           <Input type="number" min={1} value={newPPE.quantityDefault || 1} onChange={e => setNewPPE({...newPPE, quantityDefault: parseInt(e.target.value, 10) || 1})} />
@@ -891,7 +871,6 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
-                </div>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -951,12 +930,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                   </CardTitle>
                   <CardDescription>รายการเครื่องมือช่างพื้นฐานที่อนุญาตให้เบิกได้ตามตำแหน่งงาน</CardDescription>
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" className="h-10 border-blue-200 text-blue-700 bg-blue-50" onClick={() => handleGenerateAI('tool')} disabled={!!isGenerating}>
-                    {isGenerating === 'tool' ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Sparkles className="h-4 w-4 mr-2" />}
-                    แนะนำโดย AI
-                  </Button>
-                  <Dialog
+                <Dialog
                     open={isAddToolOpen}
                     onOpenChange={(open) => {
                       setIsAddToolOpen(open);
@@ -975,41 +949,30 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <div className="grid gap-2">
-                          <Label className="font-bold">อุปกรณ์จากคลัง — ชื่อหลัก *</Label>
-                          <Select
-                            key={toolMainCatalogPickList.length}
-                            value={newTool.storeItemId ?? undefined}
-                            onValueChange={(storeItemId) => {
-                              const si = toolMainCatalogPickList.find((x) => x.id === storeItemId);
-                              if (!si) return;
-                              setNewTool((prev) => ({
-                                ...prev,
-                                storeItemId: si.id,
-                                itemCode: si.itemCode,
-                                itemName: si.itemName,
-                                itemType: storeItemToToolItemType(si),
-                              }));
-                            }}
-                          >
-                            <SelectTrigger className="h-10">
-                              <SelectValue
-                                placeholder={
-                                  toolMainCatalogPickList.length
-                                    ? 'เลือกชื่อหลัก…'
-                                    : 'ยังไม่มีเมน/รายการเดี่ยว — ไปที่ /store/items'
-                                }
-                              />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {toolMainCatalogPickList.map((si) => (
-                                <SelectItem key={si.id} value={si.id}>
-                                  {si.catalogGroupRole === 'header'
-                                    ? `${formatPositionCatalogPickLabel(si)} · เมน`
-                                    : formatPositionCatalogPickLabel(si)}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <SearchableSelect
+                            label="อุปกรณ์จากคลัง — ชื่อหลัก *"
+                            labelClassName="font-bold"
+                            options={toolCatalogOptions}
+                          value={newTool.storeItemId ?? undefined}
+                          onChange={(storeItemId) => {
+                            const si = toolMainCatalogPickList.find((x) => x.id === storeItemId);
+                            if (!si) return;
+                            setNewTool((prev) => ({
+                              ...prev,
+                              storeItemId: si.id,
+                              itemCode: si.itemCode,
+                              itemName: si.itemName,
+                              itemType: storeItemToToolItemType(si),
+                            }));
+                          }}
+                          placeholder={
+                            toolMainCatalogPickList.length
+                              ? 'เลือกชื่อหลัก…'
+                              : 'ยังไม่มีเมน/รายการเดี่ยว — ไปที่ /store/items'
+                          }
+                          searchPlaceholder="ค้นหารหัสหรือชื่ออุปกรณ์…"
+                            emptyMessage="ไม่พบรายการอุปกรณ์"
+                          />
                           {newTool.storeItemId && (
                             <p className="text-xs text-muted-foreground">
                               ประเภทเบิก (อ้างอิงคลัง):{' '}
@@ -1033,7 +996,6 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
-                </div>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>

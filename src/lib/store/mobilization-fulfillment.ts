@@ -15,8 +15,9 @@ export function fulfillmentLineDocId(kind: 'ppe' | 'tool', positionRequirementId
   return `${kind}_${positionRequirementId}`;
 }
 
-/** งานมอบหมายที่ต้องดูแลเรื่องเบิกคลัง */
+/** งานมอบหมายที่ต้องดูแลเรื่องเบิกคลัง — รวม DRAFT (Waiting MOB) หลัง assign แล้ว */
 export const DEPLOYMENT_STATUSES_FOR_STORE_FULFILLMENT: DeploymentStatus[] = [
+  'DRAFT',
   'READINESS_CHECK',
   'CLIENT_SUBMITTED',
   'CLIENT_APPROVED',
@@ -63,7 +64,8 @@ export function appliesPpeRequirement(req: PositionPPERequirement): boolean {
 }
 
 export function appliesToolRequirement(req: PositionToolRequirement): boolean {
-  return !!req.allowed;
+  /** รายการที่ลงในตำแหน่งถือว่าเบิกได้ — ปิดเฉพาะเมื่อ `allowed === false` */
+  return req.allowed !== false;
 }
 
 export function fulfillmentLineSatisfied(
