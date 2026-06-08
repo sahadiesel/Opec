@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -8,6 +8,7 @@ import {
   ArrowLeft, 
   Plus, 
   Trash2, 
+  Pencil,
   Save, 
   PackagePlus, 
   Building2, 
@@ -25,9 +26,18 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain } from '@/lib/permission-core';
 import { collection, doc, writeBatch, increment, query, orderBy } from 'firebase/firestore';
-import { StoreItem, Vendor, Purchase, User as AppUser } from '@/lib/types';
+import { StoreItem, Vendor, Purchase, PurchaseLine, formatStoreItemLabel } from '@/lib/types';
+import { computePurchaseTotalsFromLines } from '@/lib/purchase/pr-totals';
+import {
+  guessVariantFromPoDescription,
+  receiveLineFromStoreItem,
+  resolveReceiveStockPick,
+  storeCatalogHeaders,
+  storeCatalogStandalone,
+  variantLinesForParent,
+} from '@/lib/store/receive-stock-select';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
@@ -39,17 +49,107 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
+import { VendorSearchSelect } from '@/components/store/vendor-search-select';
 
 interface ReceiveLine {
   id: string;
   itemId: string;
   itemName: string;
   itemCode: string;
+  variantSpecification?: string;
   quantity: number;
   unit: string;
   unitCost: number;
   currentStock: number;
+  /** บรรทัดจาก PO — ราคาดึงจาก PO */
+  purchaseLineId?: string;
+  poDescription?: string;
+  /** PO บรรทัดไม่มี storeItemId — ต้องเลือกผูกสต็อก */
+  needsStockMapping?: boolean;
+  /** เมนมีรุ่นย่อย — ต้องเลือก SKU ก่อนรับเข้า */
+  needsVariantSelection?: boolean;
+  mappingHeaderId?: string;
 }
+
+function ReceiveStockSelectOptions({ items }: { items: StoreItem[] }) {
+  const headers = storeCatalogHeaders(items);
+  const standalone = storeCatalogStandalone(items);
+  return (
+    <>
+      {standalone.map((i) => (
+        <SelectItem key={i.id} value={i.id}>
+          {i.itemCode} | {formatStoreItemLabel(i)}
+        </SelectItem>
+      ))}
+      {headers.map((h) => {
+        const variants = variantLinesForParent(h.id, items);
+        if (variants.length === 0) return null;
+        return (
+          <SelectGroup key={h.id}>
+            <SelectLabel className="text-xs font-semibold text-muted-foreground">
+              {h.itemCode} | {h.itemName}
+            </SelectLabel>
+            {variants.map((v) => (
+              <SelectItem key={v.id} value={v.id}>
+                ↳ {formatStoreItemLabel(v)} ({v.itemCode})
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        );
+      })}
+    </>
+  );
+}
+
+function poLineToReceiveLine(pl: PurchaseLine, storeItems: StoreItem[]): ReceiveLine {
+  const base = {
+    id: pl.id,
+    quantity: pl.quantity,
+    unitCost: pl.unitPrice,
+    purchaseLineId: pl.id,
+    poDescription: pl.itemDescription,
+  };
+
+  const linked = pl.storeItemId ? storeItems.find((i) => i.id === pl.storeItemId) : undefined;
+  if (linked) {
+    if (linked.catalogGroupRole === 'header') {
+      const guessed = guessVariantFromPoDescription(linked.id, pl.itemDescription, storeItems);
+      if (guessed) {
+        return receiveLineFromStoreItem(base, guessed);
+      }
+      return {
+        ...base,
+        itemId: '',
+        itemName: linked.itemName,
+        itemCode: linked.itemCode,
+        unit: linked.unit,
+        currentStock: 0,
+        needsStockMapping: true,
+        needsVariantSelection: true,
+        mappingHeaderId: linked.id,
+      };
+    }
+    if (linked.catalogGroupRole === 'line' || !linked.catalogGroupRole) {
+      return receiveLineFromStoreItem(base, linked);
+    }
+  }
+
+  return {
+    ...base,
+    itemId: '',
+    itemName: pl.itemDescription,
+    itemCode: '—',
+    unit: 'หน่วย',
+    currentStock: 0,
+    needsStockMapping: true,
+  };
+}
+
+const PO_RECEIVABLE_STATUSES: Purchase['status'][] = [
+  'APPROVED',
+  'ISSUED',
+  'COMPLETED',
+];
 
 export default function StoreReceivePage() {
   const router = useRouter();
@@ -90,21 +190,142 @@ export default function StoreReceivePage() {
   }, [firestore, canAccess]);
   const { data: allPurchases } = useCollection<Purchase>(purchasesQuery as any);
 
-  const handleAddItem = (itemId: string) => {
-    const item = allStoreItems?.find(i => i.id === itemId);
-    if (!item) return;
-    if (receiveLines.some(l => l.itemId === itemId)) return;
+  const purchaseLinesQuery = useMemoFirebase(() => {
+    if (!firestore || !canAccess || !refPurchaseId) return null;
+    return collection(firestore, 'purchases', refPurchaseId, 'lines');
+  }, [firestore, canAccess, refPurchaseId]);
+  const { data: purchaseLines } = useCollection<PurchaseLine>(purchaseLinesQuery as any);
 
-    setReceiveLines([...receiveLines, {
-      id: Math.random().toString(36).substr(2, 9),
-      itemId: item.id,
-      itemName: item.itemName,
-      itemCode: item.itemCode,
-      quantity: 1,
-      unit: item.unit,
-      unitCost: 0,
-      currentStock: item.currentStock
-    }]);
+  const vendorPurchases = useMemo(() => {
+    if (!vendorId || !allPurchases) return [];
+    return allPurchases
+      .filter((p) => p.vendorId === vendorId && PO_RECEIVABLE_STATUSES.includes(p.status))
+      .sort((a, b) => String(b.purchaseDate || '').localeCompare(String(a.purchaseDate || '')));
+  }, [allPurchases, vendorId]);
+
+  const selectedPurchase = useMemo(
+    () => (refPurchaseId ? allPurchases?.find((p) => p.id === refPurchaseId) : undefined),
+    [allPurchases, refPurchaseId],
+  );
+
+  useEffect(() => {
+    if (!refPurchaseId || !purchaseLines) return;
+    setReceiveLines((prev) => {
+      const manualLines = prev.filter((l) => !l.purchaseLineId);
+      const fromPo = purchaseLines.map((pl) => poLineToReceiveLine(pl, allStoreItems ?? []));
+      return [...fromPo, ...manualLines];
+    });
+  }, [refPurchaseId, purchaseLines, allStoreItems]);
+
+  const handleVendorChange = (nextVendorId: string) => {
+    setVendorId(nextVendorId);
+    if (refPurchaseId) {
+      const po = allPurchases?.find((p) => p.id === refPurchaseId);
+      if (po?.vendorId !== nextVendorId) {
+        setRefPurchaseId('');
+        setReceiveLines([]);
+      }
+    }
+  };
+
+  const handlePurchaseChange = (purchaseId: string) => {
+    if (purchaseId === 'none') {
+      setRefPurchaseId('');
+      setReceiveLines([]);
+      return;
+    }
+    setRefPurchaseId(purchaseId);
+    const po = allPurchases?.find((p) => p.id === purchaseId);
+    if (po?.vendorId) setVendorId(po.vendorId);
+  };
+
+  const applyStoreItemToLine = (lineId: string, item: StoreItem) => {
+    setReceiveLines((lines) =>
+      lines.map((l) =>
+        l.id === lineId
+          ? {
+              ...receiveLineFromStoreItem(
+                {
+                  id: l.id,
+                  quantity: l.quantity,
+                  unitCost: l.unitCost,
+                  purchaseLineId: l.purchaseLineId,
+                  poDescription: l.poDescription,
+                },
+                item,
+              ),
+            }
+          : l,
+      ),
+    );
+  };
+
+  const handleMapPoLineToStock = (lineId: string, storeItemId: string) => {
+    const pick = resolveReceiveStockPick(allStoreItems ?? [], storeItemId);
+    if (!pick) return;
+    if (pick.kind === 'pick_variant') {
+      setReceiveLines((lines) =>
+        lines.map((l) =>
+          l.id === lineId
+            ? {
+                ...l,
+                itemId: '',
+                itemName: pick.header.itemName,
+                itemCode: pick.header.itemCode,
+                unit: pick.header.unit,
+                currentStock: 0,
+                needsStockMapping: true,
+                needsVariantSelection: true,
+                mappingHeaderId: pick.header.id,
+              }
+            : l,
+        ),
+      );
+      return;
+    }
+    applyStoreItemToLine(lineId, pick.item);
+  };
+
+  const handlePickVariant = (lineId: string, variantId: string) => {
+    const item = allStoreItems?.find((i) => i.id === variantId);
+    if (!item || item.catalogGroupRole !== 'line') return;
+    applyStoreItemToLine(lineId, item);
+  };
+
+  const handleEditLineMapping = (lineId: string) => {
+    setReceiveLines((lines) =>
+      lines.map((l) => {
+        if (l.id !== lineId) return l;
+        return {
+          ...l,
+          itemId: '',
+          variantSpecification: undefined,
+          currentStock: 0,
+          needsStockMapping: true,
+          needsVariantSelection: false,
+          mappingHeaderId: undefined,
+        };
+      }),
+    );
+  };
+
+  const handleAddItem = (itemId: string) => {
+    const pick = resolveReceiveStockPick(allStoreItems ?? [], itemId);
+    if (!pick || pick.kind !== 'ready') return;
+    const item = pick.item;
+    if (receiveLines.some((l) => l.itemId === item.id)) return;
+
+    setReceiveLines([
+      ...receiveLines,
+      receiveLineFromStoreItem(
+        {
+          id: Math.random().toString(36).substr(2, 9),
+          quantity: 1,
+          unitCost: 0,
+        },
+        item,
+      ),
+    ]);
   };
 
   const handleRemoveLine = (id: string) => {
@@ -115,13 +336,30 @@ export default function StoreReceivePage() {
     setReceiveLines(receiveLines.map(l => l.id === id ? { ...l, [field]: value } : l));
   };
 
-  const totals = useMemo(() => {
-    return receiveLines.reduce((sum, l) => sum + (l.quantity * l.unitCost), 0);
-  }, [receiveLines]);
+  const summaryTotals = useMemo(() => {
+    const lineSum = receiveLines.reduce((sum, l) => sum + l.quantity * l.unitCost, 0);
+    const vatMode = selectedPurchase?.vatTreatment ?? 'EXCLUSIVE';
+    return computePurchaseTotalsFromLines(lineSum, vatMode, 0);
+  }, [receiveLines, selectedPurchase]);
+
+  const vatSummaryLabel = useMemo(() => {
+    if (selectedPurchase?.vatTreatment === 'NONE') return 'ภาษีมูลค่าเพิ่ม (ไม่มี VAT ตาม PO):';
+    if (selectedPurchase?.vatTreatment === 'INCLUSIVE') return 'ภาษีมูลค่าเพิ่ม (รวมในราคา PO):';
+    if (selectedPurchase) return 'ภาษีมูลค่าเพิ่ม (7% ตาม PO):';
+    return 'ภาษีมูลค่าเพิ่ม (7% Est.):';
+  }, [selectedPurchase]);
 
   const handleConfirmReceive = async () => {
     if (!firestore || !currentUser || receiveLines.length === 0) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุรายการสินค้าที่ต้องการรับเข้า" });
+      return;
+    }
+    if (receiveLines.some((l) => !l.itemId || l.needsStockMapping || l.needsVariantSelection)) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังผูกสต็อกไม่ครบ',
+        description: 'กรุณาเลือกสินค้าคลังและรุ่นย่อย (ถ้ามี) ให้ครบทุกบรรทัดก่อนยืนยันรับของ',
+      });
       return;
     }
 
@@ -139,9 +377,12 @@ export default function StoreReceivePage() {
         receiveNo: finalNo,
         receiveDate,
         vendorId,
-        referencePurchaseId: refPurchaseId,
+        referencePurchaseId: refPurchaseId || null,
         notes,
-        totalAmount: totals,
+        totalAmount: summaryTotals.totalAmount,
+        amountBeforeTax: summaryTotals.amountBeforeTax,
+        vatAmount: summaryTotals.vatAmount,
+        vatTreatment: selectedPurchase?.vatTreatment ?? null,
         createdAt: Date.now(),
         createdBy: currentUser.displayName
       });
@@ -154,7 +395,9 @@ export default function StoreReceivePage() {
           itemId: line.itemId,
           quantity: line.quantity,
           unitCost: line.unitCost,
-          amount: line.quantity * line.unitCost
+          amount: line.quantity * line.unitCost,
+          purchaseLineId: line.purchaseLineId ?? null,
+          poDescription: line.poDescription ?? null,
         });
 
         // Update Master Stock
@@ -235,28 +478,35 @@ export default function StoreReceivePage() {
                     onChange={(ms) => setReceiveDate(timestampToHtmlDateValue(ms))}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label className="font-bold">คู่ค้า / ผู้ขาย (Vendor)</Label>
-                  <Select onValueChange={setVendorId} value={vendorId}>
-                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกบริษัทคู่ค้า..." /></SelectTrigger>
-                    <SelectContent>
-                      {allVendors?.map(v => (
-                        <SelectItem key={v.id} value={v.id}>{v.vendorName}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                <VendorSearchSelect
+                  vendors={allVendors ?? undefined}
+                  value={vendorId || undefined}
+                  onChange={(id) => handleVendorChange(id ?? '')}
+                  label="คู่ค้า / ผู้ขาย (Vendor)"
+                  placeholder="เลือกบริษัทคู่ค้า..."
+                />
                 <div className="space-y-2 md:col-span-2">
                   <Label className="font-bold">อ้างอิงรายการสั่งซื้อ (PO Reference - Optional)</Label>
-                  <Select onValueChange={setRefPurchaseId} value={refPurchaseId}>
-                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกรายการสั่งซื้อที่อ้างอิง..." /></SelectTrigger>
+                  <Select
+                    onValueChange={handlePurchaseChange}
+                    value={refPurchaseId || 'none'}
+                    disabled={!vendorId}
+                  >
+                    <SelectTrigger className="h-11">
+                      <SelectValue placeholder={vendorId ? 'เลือกรายการสั่งซื้อที่อ้างอิง...' : 'เลือกคู่ค้าก่อน'} />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">-- ไม่ระบุ --</SelectItem>
-                      {allPurchases?.map(p => (
-                        <SelectItem key={p.id} value={p.id}>{p.purchaseNo} | ฿{p.totalAmount.toLocaleString()}</SelectItem>
+                      {vendorPurchases.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.purchaseNo} | ฿{p.totalAmount.toLocaleString()}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {vendorId && vendorPurchases.length === 0 && (
+                    <p className="text-xs text-muted-foreground">ไม่มี PO ที่อนุมัติ/ออกแล้วของคู่ค้ารายนี้</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold">หมายเหตุ</Label>
@@ -269,16 +519,18 @@ export default function StoreReceivePage() {
               <CardHeader className="bg-muted/20 border-b flex flex-row items-center justify-between">
                 <div>
                   <CardTitle className="text-lg">รายการสินค้าที่รับเข้า (Inventory Items)</CardTitle>
-                  <CardDescription>ระบุจำนวนและต้นทุนต่อหน่วยของแต่ละรายการ</CardDescription>
+                  <CardDescription>
+                    {refPurchaseId
+                      ? 'ดึงรายการจาก PO — บรรทัดที่ยังไม่ผูกสต็อกให้เลือกสินค้าคลัง (ราคาต่อหน่วยจาก PO)'
+                      : 'ระบุจำนวนและต้นทุนต่อหน่วยของแต่ละรายการ'}
+                  </CardDescription>
                 </div>
                 <div className="w-72 relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Select onValueChange={handleAddItem}>
                     <SelectTrigger className="h-10 pl-9"><SelectValue placeholder="ค้นหาและเพิ่มอุปกรณ์..." /></SelectTrigger>
-                    <SelectContent>
-                      {allStoreItems?.filter(i => i.active).map(i => (
-                        <SelectItem key={i.id} value={i.id}>{i.itemCode} | {i.itemName}</SelectItem>
-                      ))}
+                    <SelectContent className="max-h-72">
+                      {allStoreItems && <ReceiveStockSelectOptions items={allStoreItems} />}
                     </SelectContent>
                   </Select>
                 </div>
@@ -300,10 +552,54 @@ export default function StoreReceivePage() {
                     {receiveLines.map((line) => (
                       <TableRow key={line.id} className="hover:bg-muted/10">
                         <TableCell className="pl-6">
-                          <div className="flex flex-col">
-                            <span className="font-bold text-sm text-primary">{line.itemName}</span>
-                            <span className="text-[10px] font-mono text-muted-foreground">{line.itemCode}</span>
-                          </div>
+                          {line.needsStockMapping && !line.itemId ? (
+                            <div className="flex flex-col gap-2 max-w-sm">
+                              <Badge variant="outline" className="w-fit text-[10px] border-amber-300 text-amber-800 bg-amber-50">
+                                {line.needsVariantSelection ? 'เลือกรุ่นย่อย' : 'จาก PO — เลือกสต็อก'}
+                              </Badge>
+                              {line.poDescription && (
+                                <p className="text-xs text-muted-foreground leading-snug">PO: {line.poDescription}</p>
+                              )}
+                              {line.needsVariantSelection && line.mappingHeaderId ? (
+                                <Select onValueChange={(v) => handlePickVariant(line.id, v)}>
+                                  <SelectTrigger className="h-9">
+                                    <SelectValue placeholder="เลือกรุ่นย่อย / ไซส์..." />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {variantLinesForParent(line.mappingHeaderId, allStoreItems ?? []).map((v) => (
+                                      <SelectItem key={v.id} value={v.id}>
+                                        ↳ {formatStoreItemLabel(v)} ({v.itemCode})
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <Select onValueChange={(v) => handleMapPoLineToStock(line.id, v)}>
+                                  <SelectTrigger className="h-9">
+                                    <SelectValue placeholder="เลือกสินค้าคลัง..." />
+                                  </SelectTrigger>
+                                  <SelectContent className="max-h-72">
+                                    {allStoreItems && <ReceiveStockSelectOptions items={allStoreItems} />}
+                                  </SelectContent>
+                                </Select>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              <span className="font-bold text-sm text-primary">
+                                {formatStoreItemLabel({
+                                  itemName: line.itemName,
+                                  variantSpecification: line.variantSpecification,
+                                })}
+                              </span>
+                              <span className="text-[10px] font-mono text-muted-foreground">{line.itemCode}</span>
+                              {line.poDescription &&
+                                line.poDescription !== line.itemName &&
+                                !line.poDescription.includes(line.variantSpecification || '') && (
+                                  <span className="text-[10px] text-muted-foreground">PO: {line.poDescription}</span>
+                                )}
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="text-center text-muted-foreground">{line.currentStock} {line.unit}</TableCell>
                         <TableCell className="text-center">
@@ -321,20 +617,39 @@ export default function StoreReceivePage() {
                           </div>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Input 
-                            type="number" 
-                            className="w-24 ml-auto text-right h-8" 
-                            value={line.unitCost} 
-                            onChange={e => updateLine(line.id, 'unitCost', parseFloat(e.target.value) || 0)} 
-                          />
+                          {line.purchaseLineId ? (
+                            <span className="font-mono text-sm tabular-nums">
+                              ฿ {line.unitCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </span>
+                          ) : (
+                            <Input
+                              type="number"
+                              className="w-24 ml-auto text-right h-8"
+                              value={line.unitCost}
+                              onChange={(e) => updateLine(line.id, 'unitCost', parseFloat(e.target.value) || 0)}
+                            />
+                          )}
                         </TableCell>
                         <TableCell className="text-right font-bold text-primary">
                           ฿ {(line.quantity * line.unitCost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </TableCell>
                         <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleRemoveLine(line.id)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center justify-end gap-1">
+                            {line.itemId && !line.needsStockMapping && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-primary"
+                                title="แก้ไขการผูกสต็อก"
+                                onClick={() => handleEditLineMapping(line.id)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleRemoveLine(line.id)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -369,15 +684,21 @@ export default function StoreReceivePage() {
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">ยอดรวมก่อนภาษี:</span>
-                  <span className="font-bold">฿ {totals.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="font-bold">
+                    ฿ {summaryTotals.amountBeforeTax.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm border-b pb-2">
-                  <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม (7% Est.):</span>
-                  <span className="font-bold">฿ {(totals * 0.07).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="text-muted-foreground">{vatSummaryLabel}</span>
+                  <span className="font-bold">
+                    ฿ {summaryTotals.vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
                 </div>
                 <div className="flex justify-between text-lg pt-2">
                   <span className="font-black text-primary uppercase">ยอดรวมสุทธิ:</span>
-                  <span className="font-black text-2xl text-primary">฿ {(totals * 1.07).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="font-black text-2xl text-primary">
+                    ฿ {summaryTotals.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
                 </div>
 
                 <Separator className="my-4" />

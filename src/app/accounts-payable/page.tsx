@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,7 +9,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { 
   ArrowDownLeft, 
   Search, 
-  Filter, 
   Building2, 
   Calendar,
   AlertCircle,
@@ -25,7 +24,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import { collection, query, orderBy } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Button } from '@/components/ui/button';
+import { formatPayrollYearMonthThaiBE } from '@/lib/date-thai';
 
 export default function AccountsPayablePage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -47,14 +46,53 @@ export default function AccountsPayablePage() {
   const vendorsQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'vendors') : null), [firestore, isAuthorized]);
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
+  const [searchQuery, setSearchQuery] = useState('');
+  const [monthYm, setMonthYm] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+
+  const vendorById = useMemo(() => {
+    const m = new Map<string, Vendor>();
+    for (const v of vendors ?? []) m.set(v.id, v);
+    return m;
+  }, [vendors]);
+
+  const monthFilteredItems = useMemo(() => {
+    const list = apItems ?? [];
+    return list.filter((item) => String(item.billDate || '').slice(0, 7) === monthYm);
+  }, [apItems, monthYm]);
+
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return monthFilteredItems;
+    return monthFilteredItems.filter((item) => {
+      const vendor = vendorById.get(item.vendorId);
+      const haystack = [
+        item.documentNo,
+        item.referenceId,
+        item.billDate,
+        item.dueDate,
+        item.status,
+        vendor?.vendorName,
+        vendor?.vendorCode,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [monthFilteredItems, searchQuery, vendorById]);
+
   const stats = useMemo(() => {
-    if (!apItems) return { totalOutstanding: 0, overdue: 0, paid: 0 };
     return {
-      totalOutstanding: apItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
-      overdue: apItems.filter(item => item.status === 'OVERDUE').reduce((sum, item) => sum + item.outstandingAmount, 0),
-      paid: apItems.reduce((sum, item) => sum + item.creditAmount, 0),
+      totalOutstanding: monthFilteredItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
+      overdue: monthFilteredItems
+        .filter((item) => item.status === 'OVERDUE')
+        .reduce((sum, item) => sum + item.outstandingAmount, 0),
+      paid: monthFilteredItems.reduce((sum, item) => sum + item.creditAmount, 0),
     };
-  }, [apItems]);
+  }, [monthFilteredItems]);
 
   const getStatusBadge = (status: APStatus) => {
     switch (status) {
@@ -87,7 +125,9 @@ export default function AccountsPayablePage() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-black text-primary">฿ {stats.totalOutstanding.toLocaleString()}</div>
-              <p className="text-[10px] text-muted-foreground mt-1">Total Outstanding Liability</p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                งวด {formatPayrollYearMonthThaiBE(monthYm)} · จากใบแจ้งหนี้ในเดือนที่เลือก
+              </p>
             </CardContent>
           </Card>
           <Card className="border-l-8 border-l-red-600">
@@ -96,7 +136,9 @@ export default function AccountsPayablePage() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-black text-red-600">฿ {stats.overdue.toLocaleString()}</div>
-              <p className="text-[10px] text-muted-foreground mt-1">Pending Urgent Payment</p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                งวด {formatPayrollYearMonthThaiBE(monthYm)} · หนี้เกินกำหนดในเดือนที่เลือก
+              </p>
             </CardContent>
           </Card>
           <Card className="border-l-8 border-l-green-600">
@@ -105,7 +147,9 @@ export default function AccountsPayablePage() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-black text-green-700">฿ {stats.paid.toLocaleString()}</div>
-              <p className="text-[10px] text-muted-foreground mt-1">Total Paid Current Month</p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                งวด {formatPayrollYearMonthThaiBE(monthYm)} · ยอดจ่ายแล้วในเดือนที่เลือก
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -134,9 +178,23 @@ export default function AccountsPayablePage() {
           <div className="flex items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาชื่อคู่ค้า หรือ เลขที่เอกสาร..." className="pl-9 h-11" />
+              <Input
+                placeholder="ค้นหาชื่อคู่ค้า หรือ เลขที่เอกสาร..."
+                className="pl-9 h-11"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
             </div>
-            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
+            <div className="flex items-center gap-2 shrink-0">
+              <Calendar className="h-4 w-4 text-muted-foreground hidden sm:block" aria-hidden />
+              <Input
+                type="month"
+                className="h-11 w-[min(100%,11rem)] font-mono"
+                value={monthYm}
+                onChange={(e) => setMonthYm(e.target.value)}
+                aria-label="กรองตามเดือน"
+              />
+            </div>
           </div>
         </div>
 
@@ -158,8 +216,8 @@ export default function AccountsPayablePage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {apItems?.map((item) => {
-                    const vendor = vendors?.find(v => v.id === item.vendorId);
+                  {filteredItems.map((item) => {
+                    const vendor = vendorById.get(item.vendorId);
                     return (
                       <TableRow key={item.id} className="hover:bg-muted/20">
                         <TableCell className="py-4 pl-6">
@@ -193,9 +251,13 @@ export default function AccountsPayablePage() {
                       </TableRow>
                     );
                   })}
-                  {(!apItems || apItems.length === 0) && !isLoading && (
+                  {filteredItems.length === 0 && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่มีรายการเจ้าหนี้ค้างจ่าย</TableCell>
+                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
+                        {searchQuery.trim()
+                          ? `ไม่พบรายการที่ตรงกับ "${searchQuery.trim()}" ในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`
+                          : `ไม่มีรายการเจ้าหนี้ในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`}
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>

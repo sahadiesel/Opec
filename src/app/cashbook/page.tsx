@@ -9,7 +9,6 @@ import {
   BookOpen, 
   Plus, 
   Search, 
-  Filter, 
   ArrowUpRight, 
   ArrowDownLeft, 
   Building2, 
@@ -24,7 +23,7 @@ import {
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { formatPayrollYearMonthThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { CashbookEntry, User, BankAccount } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -70,6 +69,10 @@ export default function CashbookPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [monthYm, setMonthYm] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [newEntry, setNewEntry] = useState<Partial<CashbookEntry>>({
     entryNo: getPreviewPattern('cashbook_entry'),
     entryDate: timestampToHtmlDateValue(Date.now()),
@@ -79,11 +82,6 @@ export default function CashbookPage() {
     description: '',
     entryType: 'OTHER'
   });
-
-  const stats = useMemo(
-    () => (entries ? cashbookPnlFromEntries(entries, bankAccounts) : { pnlIn: 0, pnlOut: 0, net: 0 }),
-    [entries, bankAccounts],
-  );
 
   /** เรียงซ้ำตามวันเดียวกันให้คงที่ + กัน toLocaleString พังเมื่อ amount ไม่ใช่ตัวเลข */
   const sortedEntries = useMemo(() => {
@@ -95,6 +93,16 @@ export default function CashbookPage() {
     });
   }, [entries]);
 
+  const monthFilteredEntries = useMemo(() => {
+    const list = sortedEntries ?? [];
+    return list.filter((entry) => String(entry.entryDate || '').slice(0, 7) === monthYm);
+  }, [sortedEntries, monthYm]);
+
+  const stats = useMemo(
+    () => cashbookPnlFromEntries(monthFilteredEntries, bankAccounts),
+    [monthFilteredEntries, bankAccounts],
+  );
+
   const bankById = useMemo(() => {
     const m = new Map<string, BankAccount>();
     for (const b of bankAccounts ?? []) m.set(b.id, b);
@@ -102,7 +110,7 @@ export default function CashbookPage() {
   }, [bankAccounts]);
 
   const filteredEntries = useMemo(() => {
-    const list = sortedEntries ?? [];
+    const list = monthFilteredEntries;
     const q = searchQuery.trim().toLowerCase();
     if (!q) return list;
     return list.filter((entry) => {
@@ -125,7 +133,7 @@ export default function CashbookPage() {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [sortedEntries, searchQuery, bankById]);
+  }, [monthFilteredEntries, searchQuery, bankById]);
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -213,7 +221,9 @@ export default function CashbookPage() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-black text-primary">฿ {stats.net.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-              <p className="text-[10px] text-muted-foreground mt-1">จาก 2,000 รายการล่าสุด ตามวันที่ (ไม่รวมโอนภายใน ธ-ธ เป็นขาย-ซื้อ)</p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                งวด {formatPayrollYearMonthThaiBE(monthYm)} · จากรายการในเดือนที่เลือก (ไม่รวมโอนภายใน ธ-ธ เป็นขาย-ซื้อ)
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -229,7 +239,16 @@ export default function CashbookPage() {
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
+            <div className="flex items-center gap-2 shrink-0">
+              <Calendar className="h-4 w-4 text-muted-foreground hidden sm:block" aria-hidden />
+              <Input
+                type="month"
+                className="h-11 w-[min(100%,11rem)] font-mono"
+                value={monthYm}
+                onChange={(e) => setMonthYm(e.target.value)}
+                aria-label="กรองตามเดือน"
+              />
+            </div>
           </div>
           
           <Dialog open={canWriteCashbook && isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -384,8 +403,8 @@ export default function CashbookPage() {
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
                         {searchQuery.trim()
-                          ? `ไม่พบรายการที่ตรงกับ "${searchQuery.trim()}"`
-                          : 'ไม่มีประวัติรายการทางการเงิน'}
+                          ? `ไม่พบรายการที่ตรงกับ "${searchQuery.trim()}" ในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`
+                          : `ไม่มีรายการในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`}
                       </TableCell>
                     </TableRow>
                   )}

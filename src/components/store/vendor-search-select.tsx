@@ -31,15 +31,16 @@ export function VendorSearchSelect({
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
-    const list = (vendors || []).filter((v) => v.status === 'ACTIVE');
-    if (!qq) return list.slice(0, 80);
+    const list = (vendors || [])
+      .filter((v) => v.status === 'ACTIVE')
+      .sort((a, b) => a.vendorName.localeCompare(b.vendorName, 'th', { sensitivity: 'base' }));
+    if (!qq) return list;
     return list
       .filter(
         (v) =>
           v.vendorName.toLowerCase().includes(qq) ||
-          (v.vendorCode || '').toLowerCase().includes(qq)
-      )
-      .slice(0, 80);
+          (v.vendorCode || '').toLowerCase().includes(qq),
+      );
   }, [vendors, q]);
 
   return (
