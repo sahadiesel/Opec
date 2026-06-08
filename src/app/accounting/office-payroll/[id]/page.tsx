@@ -36,7 +36,7 @@ import { formatDateThaiBE, formatDateTimeThaiBE, formatPayrollYearMonthEnAbbrev 
 import { useToast } from '@/hooks/use-toast';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { canView } from '@/lib/permissions';
+import { canView, canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Label } from '@/components/ui/label';
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
@@ -61,6 +61,10 @@ export default function AccountingOfficePayrollPayoutPage({ params }: { params: 
   const { profile: companyProfile } = useCompanyDocumentProfile();
 
   const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
+  const canOpenPayoutDetail = useMemo(
+    () => canExecuteBankCashbookPayments(currentUser),
+    [currentUser],
+  );
   const { check } = usePermissions(currentUser);
   const canMutate = check('office_payroll', 'edit');
 
@@ -113,8 +117,11 @@ export default function AccountingOfficePayrollPayoutPage({ params }: { params: 
   const [statusBusy, setStatusBusy] = useState(false);
 
   const bankAccountsQuery = useMemoFirebase(
-    () => (firestore && isAuthorized ? query(collection(firestore, 'bank_accounts'), where('status', '==', 'ACTIVE')) : null),
-    [firestore, isAuthorized],
+    () =>
+      firestore && isAuthorized && canOpenPayoutDetail
+        ? query(collection(firestore, 'bank_accounts'), where('status', '==', 'ACTIVE'))
+        : null,
+    [firestore, isAuthorized, canOpenPayoutDetail],
   );
   const { data: bankAccounts } = useCollection<BankAccount>(bankAccountsQuery as any);
   const activeBanks = useMemo(() => {
@@ -214,12 +221,24 @@ export default function AccountingOfficePayrollPayoutPage({ params }: { params: 
 
   if (userLoading || !currentUser) return null;
 
-  if (!isAuthorized) {
+  if (!isAuthorized || !canOpenPayoutDetail) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
-        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+        <div className="flex flex-col items-center justify-center py-20 text-center space-y-4 max-w-lg mx-auto">
           <ShieldAlert className="h-12 w-12 text-destructive opacity-50" />
-          <h2 className="text-xl font-bold">ไม่มีสิทธิ์เข้าถึง</h2>
+          <h2 className="text-xl font-bold">
+            {!isAuthorized ? 'ไม่มีสิทธิ์เข้าถึง' : 'ไม่มีสิทธิ์เปิดหน้าตัดจ่าย'}
+          </h2>
+          {isAuthorized ? (
+            <p className="text-sm text-muted-foreground">
+              เจ้าหน้าที่บัญชีดูคิวงวดได้ที่รายการ แต่การเลือกบัญชีธนาคารและบันทึก cashbook ทำได้เฉพาะผู้จัดการบัญชี
+            </p>
+          ) : null}
+          {isAuthorized ? (
+            <Button variant="outline" onClick={() => router.push('/accounting/office-payroll')}>
+              กลับรายการงวด
+            </Button>
+          ) : null}
         </div>
       </AppShell>
     );

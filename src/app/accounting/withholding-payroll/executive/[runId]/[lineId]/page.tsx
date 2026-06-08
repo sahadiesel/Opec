@@ -10,9 +10,10 @@ import { PayrollExecutiveWhtCertificatePanel } from '@/components/payroll/payrol
 import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
-import { canAccess, canSeeAccountingPillarUi, canView, isMatrixControlledRole } from '@/lib/permissions';
+import { canAccess, canView, isMatrixControlledRole } from '@/lib/permissions';
+import { canViewHrPayrollFlowSubsection } from '@/lib/navigation/nav-access';
 import { isSystemAdmin } from '@/lib/permission-core';
-import { isSimpleAccounting, isSimpleAdmin } from '@/lib/simple-tier-model';
+import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { usePermissions } from '@/hooks/use-permissions';
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
 import type { OfficePayrollLine, OfficePayrollRun, User } from '@/lib/types';
@@ -41,12 +42,14 @@ export default function AccountingPayrollExecutiveWhtCertificatePage({
 
   const canViewExecutivePayroll = useMemo(() => {
     if (!currentUser) return false;
-    if (isSystemAdmin(currentUser) || isSimpleAdmin(currentUser) || isSimpleAccounting(currentUser)) return true;
+    const admin = isSystemAdmin(currentUser) || isSimpleAdmin(currentUser);
+    if (admin) return true;
+    if (canViewHrPayrollFlowSubsection(currentUser, profile, false)) return true;
     if (useMatrixGuards) {
       return canAccess(currentUser, 'executive_payroll', 'view');
     }
-    return canView(currentUser, 'executive_payroll');
-  }, [currentUser, useMatrixGuards]);
+    return canView(currentUser, 'executive_payroll', profile);
+  }, [currentUser, useMatrixGuards, profile]);
 
   const runRef = useMemoFirebase(
     () => (firestore && canViewExecutivePayroll ? doc(firestore, 'executive_payroll_runs', runId) : null),
@@ -71,10 +74,12 @@ export default function AccountingPayrollExecutiveWhtCertificatePage({
   }
 
   const user = currentUser as User;
-  if (!canSeeAccountingPillarUi(user, profile)) {
+  if (!canViewExecutivePayroll) {
     return (
       <AppShell user={user} onLogout={() => {}}>
-        <div className="max-w-3xl mx-auto py-16 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูบัญชี</div>
+        <div className="max-w-3xl mx-auto py-16 text-center text-muted-foreground">
+          คุณไม่มีสิทธิ์เข้าถึงเอกสารหัก ณ ที่จ่ายผู้บริหาร
+        </div>
       </AppShell>
     );
   }

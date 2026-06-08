@@ -111,6 +111,11 @@ export const MENU_PERMISSION_GROUPS: MenuPermissionGroup[] = [
         note: 'รวม ap_bills, accounts_payable',
       },
       {
+        moduleKey: 'executive_payroll',
+        label: 'หัก ณ ที่จ่าย (ผู้บริหาร)',
+        path: '/accounting/withholding-payroll/executive',
+      },
+      {
         moduleKey: 'withholding_tax_items',
         label: 'หัก ณ ที่จ่าย (พนักงาน/คู่ค้า)',
         path: '/accounting/withholding-payroll',

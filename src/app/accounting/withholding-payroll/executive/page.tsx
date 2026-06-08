@@ -25,7 +25,10 @@ import type {
   OfficePayrollLine,
   PayrollRunStatus,
 } from '@/lib/types';
-import { canSeeAccountingPillarUi } from '@/lib/permissions';
+import { canView } from '@/lib/permissions';
+import { canViewHrPayrollFlowSubsection } from '@/lib/navigation/nav-access';
+import { isSystemAdmin } from '@/lib/permission-core';
+import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { usePermissions } from '@/hooks/use-permissions';
 import { officePayrollLineTaxAmount, resolveOfficePayrollWhtPaymentDateYmd } from '@/lib/payroll/payroll-office-wht-model';
 
@@ -172,10 +175,15 @@ export default function AccountingWithholdingPayrollExecutivePage() {
   }
 
   const user = currentUser as User;
-  if (!canSeeAccountingPillarUi(user, profile)) {
+  const admin = isSystemAdmin(user) || isSimpleAdmin(user);
+  const canOpenExecutiveWht =
+    canView(user, 'executive_payroll', profile) || canViewHrPayrollFlowSubsection(user, profile, admin);
+  if (!canOpenExecutiveWht) {
     return (
       <AppShell user={user} onLogout={() => {}}>
-        <div className="max-w-3xl mx-auto py-16 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูบัญชี</div>
+        <div className="max-w-3xl mx-auto py-16 text-center text-muted-foreground">
+          คุณไม่มีสิทธิ์เข้าถึงเอกสารหัก ณ ที่จ่ายผู้บริหาร
+        </div>
       </AppShell>
     );
   }

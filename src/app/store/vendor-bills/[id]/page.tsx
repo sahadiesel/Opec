@@ -1860,6 +1860,26 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                 </CardHeader>
               </Card>
             )}
+            {okAccounting && !canPay && awaitingVendorPayment && (
+              <Card className="border-muted bg-muted/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">รอผู้จัดการบัญชีตัดจ่าย</CardTitle>
+                  <CardDescription>
+                    เจ้าหน้าที่บัญชีไม่สามารถเลือกบัญชีธนาคารหรือบันทึกโอนเงินได้ — ให้ผู้จัดการบัญชีเป็นผู้ตัดจ่ายและลง cashbook
+                  </CardDescription>
+                </CardHeader>
+              </Card>
+            )}
+            {okAccounting && !canPay && awaitingVendorPayment && (
+              <Card className="border-muted bg-muted/20">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">รอผู้จัดการบัญชีตัดจ่าย</CardTitle>
+                  <CardDescription>
+                    เจ้าหน้าที่บัญชีไม่สามารถเลือกบัญชีธนาคารหรือบันทึกโอนเงินได้ — ให้ผู้จัดการบัญชีเป็นผู้ตัดจ่ายและลง cashbook
+                  </CardDescription>
+                </CardHeader>
+              </Card>
+            )}
             {canPay && (
               <Card className={isCashPo ? 'border-emerald-200' : 'border-slate-200'}>
                 <CardHeader>

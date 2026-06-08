@@ -36,6 +36,7 @@ import {
   canAccess,
   canConfirmWorkerPayrollPaid,
   canCreate,
+  canExecuteBankCashbookPayments,
   canGeneratePayslips,
   canView,
   isMatrixControlledRole,
@@ -362,6 +363,21 @@ export function PayrollBatchDetailView({
     return (
       <AppShell user={currentUser as User} onLogout={() => {}}>
         <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเมนูนี้</div>
+      </AppShell>
+    );
+  }
+  if (shell === 'accounting' && !canExecuteBankCashbookPayments(currentUser)) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-lg mx-auto py-20 text-center space-y-4">
+          <h2 className="text-xl font-bold">ไม่มีสิทธิ์เปิดหน้าตัดจ่าย</h2>
+          <p className="text-sm text-muted-foreground">
+            เจ้าหน้าที่บัญชีดูคิวงวดได้ที่รายการ แต่การเลือกบัญชีธนาคารและบันทึก cashbook ทำได้เฉพาะผู้จัดการบัญชี
+          </p>
+          <Button variant="outline" onClick={() => router.push('/accounting/worker-payroll')}>
+            กลับรายการงวด
+          </Button>
+        </div>
       </AppShell>
     );
   }

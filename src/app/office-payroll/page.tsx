@@ -52,7 +52,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
-import { canView, canCreate, canPreparePayroll } from '@/lib/permissions';
+import { canView, canCreate, canPreparePayroll, canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { isSystemAdmin, canSubmitOfficeRunForManagerReview } from '@/lib/permission-core';
 import { usePermissions } from '@/hooks/use-permissions';
 import { submitOfficeRunForManagerReview } from '@/lib/payroll/office-submit-hr-review';
@@ -149,6 +149,10 @@ export default function OfficePayrollPage() {
         canPrepareWorkerPayroll,
       }),
     [currentUser, canCreateOfficePayroll, canCreateWorkerPayroll, canPrepareWorkerPayroll],
+  );
+  const canOpenAccountingPayoutDetail = useMemo(
+    () => canExecuteBankCashbookPayments(currentUser),
+    [currentUser],
   );
 
   const [deleteTarget, setDeleteTarget] = useState<OfficePayrollRun | null>(null);
@@ -851,12 +855,17 @@ export default function OfficePayrollPage() {
                   {displayRuns?.map((run) => (
                     <TableRow 
                       key={run.id} 
-                      className="cursor-pointer hover:bg-muted/30 group transition-all" 
-                      onClick={() =>
+                      className={
+                        !accountingPayoutQueueOnly || canOpenAccountingPayoutDetail
+                          ? 'cursor-pointer hover:bg-muted/30 group transition-all'
+                          : 'group transition-all'
+                      } 
+                      onClick={() => {
+                        if (accountingPayoutQueueOnly && !canOpenAccountingPayoutDetail) return;
                         router.push(
                           accountingPayoutQueueOnly ? `/accounting/office-payroll/${run.id}` : `/office-payroll/${run.id}`,
-                        )
-                      }
+                        );
+                      }}
                     >
                       <TableCell className="py-4 font-bold text-primary font-mono">{run.payrollRunNo}</TableCell>
                       <TableCell className="font-medium">
@@ -920,13 +929,20 @@ export default function OfficePayrollPage() {
                             variant="ghost"
                             size="icon"
                             className="group-hover:text-primary"
-                            onClick={() =>
+                            disabled={accountingPayoutQueueOnly && !canOpenAccountingPayoutDetail}
+                            title={
+                              accountingPayoutQueueOnly && !canOpenAccountingPayoutDetail
+                                ? 'เปิดรายละเอียดตัดจ่ายได้เฉพาะผู้จัดการบัญชี'
+                                : undefined
+                            }
+                            onClick={() => {
+                              if (accountingPayoutQueueOnly && !canOpenAccountingPayoutDetail) return;
                               router.push(
                                 accountingPayoutQueueOnly
                                   ? `/accounting/office-payroll/${run.id}`
                                   : `/office-payroll/${run.id}`,
-                              )
-                            }
+                              );
+                            }}
                           >
                             <ChevronRight className="h-5 w-5" />
                           </Button>

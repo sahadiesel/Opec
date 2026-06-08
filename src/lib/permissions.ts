@@ -26,6 +26,7 @@ import {
   isTimekeeper,
   isPayrollOfficer,
   isAccountingOfficer,
+  isAccountingManager,
   canRecordTaxInvoiceBillingCustomerApproval,
   canEditEmployeeCompensation,
   canSubmitAttendanceCorrectionRequest,
@@ -87,6 +88,7 @@ export {
   isTimekeeper,
   isPayrollOfficer,
   isAccountingOfficer,
+  isAccountingManager,
   canRecordTaxInvoiceBillingCustomerApproval,
   canEditEmployeeCompensation,
   canSubmitAttendanceCorrectionRequest,
@@ -813,7 +815,7 @@ export function canConfirmWorkerPayrollPaid(user: User | null): boolean {
   const u = normalizeCurrentUserPermissions(user);
   if (!u || !isActiveForApp(u)) return false;
   if (isSimpleAdmin(u)) return true;
-  return isSimpleAccounting(u);
+  return canExecuteBankCashbookPayments(u);
 }
 
 export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = SYSTEM_MODULES.reduce(
@@ -957,10 +959,24 @@ export function canApprovePurchaseAsManager(user: User | null): boolean {
   return isOperationManager(user) || isOperationsPillarExecutive(user);
 }
 
+/** ตัดจ่ายผ่านบัญชีธนาคาร / cashbook — ผู้จัดการบัญชีหรือแอดมิน (ไม่รวม accounting_officer) */
+export function canExecuteBankCashbookPayments(user: User | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user)) return true;
+  return isAccountingManager(user);
+}
+
+/** เห็นเลขบัญชีและยอดคงเหลือ — ผู้จัดการบัญชี / แอดมิน / ops (Petty Cash) */
+export function canViewBankAccountSensitiveDetails(user: User | null): boolean {
+  if (!user) return false;
+  if (isSystemAdmin(user)) return true;
+  if (isAccountingManager(user)) return true;
+  return isOperationManager(user);
+}
+
 /** บันทึกว่าจ่ายเงินตามใบรับวางบิลจากคลัง */
 export function canMarkPurchaseVendorBillPaid(user: User | null): boolean {
-  if (!user) return false;
-  return isSystemAdmin(user) || isSimpleAccounting(user);
+  return canExecuteBankCashbookPayments(user);
 }
 
 /** หนังสือรับรองหัก ณ ที่จ่าย (ม.50 ทวิ) — อ่านได้ถ้าเข้าถึง AP หรือเมนูหัก ณ ที่จ่าย */
@@ -970,9 +986,11 @@ export function canReadWhtCertificates(user: User | null, profile?: PermissionPr
   return canView(user, 'accounts_payable', profile) || canView(user, 'withholding_tax_items', profile);
 }
 
-/** สร้าง / ตรวจสอบ / พิมพ์ร่าง — เทียบเท่าเจ้าหน้าที่บัญชี */
+/** สร้าง / ตรวจสอบ / พิมพ์ร่าง — เจ้าหน้าที่หรือผู้จัดการบัญชี */
 export function canCreateVerifyPrintWhtCertificate(user: User | null): boolean {
-  return canMarkPurchaseVendorBillPaid(user);
+  if (!user) return false;
+  if (isSystemAdmin(user)) return true;
+  return isSimpleAccounting(user);
 }
 
 /**
@@ -1001,9 +1019,9 @@ export function canCancelWhtCertificate(user: User | null): boolean {
   return canIssueWhtCertificate(user);
 }
 
-/** Generate internal XML payload — เจ้าหน้าที่บัญชีที่มีสิทธิ์ลงรายการจ่าย + ผู้จัดการ */
+/** Generate internal XML payload — เจ้าหน้าที่หรือผู้จัดการบัญชี */
 export function canGenerateWhtXmlPayload(user: User | null): boolean {
-  return canMarkPurchaseVendorBillPaid(user);
+  return canCreateVerifyPrintWhtCertificate(user);
 }
 
 export function getBaselineProfiles(): Partial<PermissionProfile>[] {

@@ -9,6 +9,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { PayrollService } from '@/lib/services/payroll-service';
 import {
   canAccess,
+  canExecuteBankCashbookPayments,
   canGeneratePayslips,
   canView,
   isMatrixControlledRole,
@@ -154,6 +155,7 @@ export function PayrollApprovalCenterD6({
     ? canAccess(currentUser, 'worker_payroll', 'view') || canAccess(currentUser, 'payroll_runs', 'view')
     : canView(currentUser, 'worker_payroll');
   const canOffice = canView(currentUser, 'office_payroll');
+  const canOpenAccountingPayoutDetail = canExecuteBankCashbookPayments(currentUser);
 
   /** อนุมัติ batch ลูกจ้างหลัง HR_REVIEWED — เฉพาะผู้จัดการ (ไม่ใช่ payroll_officer) */
   const canManagerApproveWorkerBatch = canApproveWorkerPayrollBatchAsManager(currentUser);
@@ -1035,7 +1037,7 @@ export function PayrollApprovalCenterD6({
                       >
                         ส่งกลับแก้ไข
                       </Button>
-                      {selectedRun.status === 'HR_APPROVED' ? (
+                      {selectedRun.status === 'HR_APPROVED' && canOpenAccountingPayoutDetail ? (
                         <Button variant="outline" asChild>
                           <Link href={`/accounting/office-payroll/${selectedRun.id}`}>
                             ฝ่ายบัญชี · ทำจ่าย / cashbook
@@ -1043,7 +1045,9 @@ export function PayrollApprovalCenterD6({
                         </Button>
                       ) : (
                         <Button variant="outline" disabled>
-                          ฝ่ายบัญชี · ทำจ่าย / cashbook
+                          {selectedRun.status === 'HR_APPROVED'
+                            ? 'ฝ่ายบัญชี · ทำจ่าย / cashbook (ผู้จัดการบัญชี)'
+                            : 'ฝ่ายบัญชี · ทำจ่าย / cashbook'}
                         </Button>
                       )}
                     </CardContent>

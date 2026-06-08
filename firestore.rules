@@ -55,6 +55,14 @@ service cloud.firestore {
     }
     function isAdmin() { return isInternalUser() && userRole() == 'system_admin'; }
     function isAccounting() { return isInternalUser() && (userRole() == 'accounting_manager' || userRole() == 'accounting_officer'); }
+    /** ตัดจ่าย / cashbook — ไม่รวม accounting_officer */
+    function isAccountingManagerOrAdmin() {
+      return isInternalUser() && userRole() in ['system_admin', 'accounting_manager'];
+    }
+    /** เห็นเลขบัญชีและยอดคงเหลือ — ops ใช้ Petty Cash */
+    function canReadBankAccountSensitiveDetails() {
+      return isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'operations_manager'];
+    }
     /**  append-only collection (audit logs, etc.) */
     function internalStaffFirestoreActor() {
       return isSignedIn() && exists(userRef()) && isInternalTypeData(get(userRef()).data) && !isCustomerPortalData(get(userRef()).data);
@@ -511,10 +519,11 @@ service cloud.firestore {
       allow read, write: if rs19();
     }
     match /cashbook_entries/{id} {
-      allow read, write: if rs19();
+      allow read: if isAccountingManagerOrAdmin() || (isInternalUser() && userRole() == 'operations_manager');
+      allow write: if isAccountingManagerOrAdmin() || (isInternalUser() && userRole() == 'operations_manager');
     }
     match /bank_accounts/{id} {
-      allow read, write: if rs19();
+      allow read, write: if isAccountingManagerOrAdmin();
     }
     match /executive_payroll_runs/{id} {
       allow read, write: if rs19();
@@ -646,19 +655,16 @@ service cloud.firestore {
     // Operations manager may also UPDATE petty-cash bank accounts (currentBalance
     // increments) so they can post petty cash entries that adjust the fund balance.
     match /bank_accounts/{id} {
-      allow read: if isInternalUser();
-      allow create, delete: if isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer'];
-      allow update: if isInternalUser() && (
-        userRole() in ['system_admin', 'accounting_manager', 'accounting_officer']
-        || (
-          userRole() == 'operations_manager'
-          && resource.data.accountType == 'PETTY_CASH'
-        )
+      allow read: if canReadBankAccountSensitiveDetails();
+      allow create, delete: if isAccountingManagerOrAdmin();
+      allow update: if isAccountingManagerOrAdmin() || (
+        userRole() == 'operations_manager'
+        && resource.data.accountType == 'PETTY_CASH'
       );
     }
     match /cashbook_entries/{id} {
-      allow read: if isInternalUser();
-      allow write: if isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer', 'operations_manager'];
+      allow read: if isAccountingManagerOrAdmin() || (isInternalUser() && userRole() == 'operations_manager');
+      allow write: if isAccountingManagerOrAdmin() || (isInternalUser() && userRole() == 'operations_manager');
     }
     match /petty_cash_entries/{id} {
       allow read, write: if isInternalUser() && userRole() in ['system_admin', 'operations_manager', 'accounting_manager', 'accounting_officer'];

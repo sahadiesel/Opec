@@ -152,7 +152,7 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
         icon: FileText,
       },
       {
-        key: 'withholding_tax_items',
+        key: 'executive_payroll',
         title: '2. เอกสาร หัก ณ ที่จ่าย (ผู้บริหาร)',
         href: '/accounting/withholding-payroll/executive',
         icon: Briefcase,

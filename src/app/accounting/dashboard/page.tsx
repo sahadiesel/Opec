@@ -38,7 +38,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Separator } from '@/components/ui/separator';
-import { canSeeAccountingPillarUi } from '@/lib/permissions';
+import { canSeeAccountingPillarUi, canViewBankAccountSensitiveDetails } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { useAppUser } from '@/hooks/use-app-user';
 
@@ -86,10 +86,15 @@ export default function AccountingDashboardPage() {
   }, [firestore, isAccountingAuthorized]);
   const { data: pendingPayroll } = useCollection<PayrollRun>(prQuery as any);
 
+  const canViewBankBalances = useMemo(
+    () => canViewBankAccountSensitiveDetails(currentUser),
+    [currentUser],
+  );
+
   const bankQuery = useMemoFirebase(() => {
-    if (!firestore || !isAccountingAuthorized) return null;
+    if (!firestore || !isAccountingAuthorized || !canViewBankBalances) return null;
     return collection(firestore, 'bank_accounts');
-  }, [firestore, isAccountingAuthorized]);
+  }, [firestore, isAccountingAuthorized, canViewBankBalances]);
   const { data: bankAccounts } = useCollection<BankAccount>(bankQuery as any);
 
   // --- Computed Stats ---
@@ -182,7 +187,13 @@ export default function AccountingDashboardPage() {
           <StatCard title="ใบแจ้งหนี้ค้าง" value={stats.pendingBilling} sub="Draft / รอลูกค้า" icon={Receipt} colorClass="border-l-amber-500" />
           <StatCard title="ใบกำกับภาษีร่าง" value={stats.draftInvoices} sub="Draft Tax Invoices" icon={FileBadge} colorClass="border-l-indigo-500" />
           <StatCard title="รอจ่ายเงินเดือน" value={stats.payrollWaiting} sub="Payroll Handoff" icon={Coins} colorClass="border-l-purple-600" />
-          <StatCard title="ยอดเงินสดรวม" value={`฿${stats.totalCash.toLocaleString()}`} sub="All Bank Balances" icon={Wallet} colorClass="border-l-green-600" />
+          <StatCard
+            title="ยอดเงินสดรวม"
+            value={canViewBankBalances ? `฿${stats.totalCash.toLocaleString()}` : '—'}
+            sub={canViewBankBalances ? 'All Bank Balances' : 'เฉพาะผู้จัดการบัญชี'}
+            icon={Wallet}
+            colorClass="border-l-green-600"
+          />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

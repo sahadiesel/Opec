@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, orderBy, query } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { canView } from '@/lib/permissions';
+import { canView, canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { useAppUser } from '@/hooks/use-app-user';
 import { OFFICE_RUN_STATUSES_FOR_ACCOUNTING_PAYOUT } from '@/lib/payroll/accounting-payout-queue';
 
@@ -40,6 +40,10 @@ export default function AccountingOfficePayrollQueuePage() {
   const [runSearch, setRunSearch] = useState('');
 
   const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
+  const canOpenPayoutDetail = useMemo(
+    () => canExecuteBankCashbookPayments(currentUser),
+    [currentUser],
+  );
 
   const runsQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -85,6 +89,7 @@ export default function AccountingOfficePayrollQueuePage() {
           </h1>
           <p className="text-muted-foreground">
             คิวหลังผู้จัดการอนุมัติแล้ว — เลือกบัญชีตัดจ่าย บันทึก cashbook และล็อกงวดได้ที่หน้ารายละเอียด (ไม่ใช่หน้าคำนวณของ HR)
+            {!canOpenPayoutDetail ? ' · เจ้าหน้าที่บัญชีดูรายการได้อย่างเดียว — เปิดรายละเอียดตัดจ่ายได้เฉพาะผู้จัดการบัญชี' : ''}
           </p>
         </div>
 
@@ -131,8 +136,12 @@ export default function AccountingOfficePayrollQueuePage() {
                   {displayRuns.map((run) => (
                     <TableRow
                       key={run.id}
-                      className="cursor-pointer hover:bg-muted/30"
-                      onClick={() => router.push(`/accounting/office-payroll/${run.id}`)}
+                      className={canOpenPayoutDetail ? 'cursor-pointer hover:bg-muted/30' : undefined}
+                      onClick={
+                        canOpenPayoutDetail
+                          ? () => router.push(`/accounting/office-payroll/${run.id}`)
+                          : undefined
+                      }
                     >
                       <TableCell className="font-mono font-bold text-primary">{run.payrollRunNo}</TableCell>
                       <TableCell>
@@ -146,15 +155,19 @@ export default function AccountingOfficePayrollQueuePage() {
                       <TableCell className="text-right font-black text-primary">฿{run.netAmount.toLocaleString()}</TableCell>
                       <TableCell>{getStatusBadge(run.status)}</TableCell>
                       <TableCell className="text-right pr-6" onClick={(e) => e.stopPropagation()}>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="เปิดหน้าทำจ่าย"
-                          onClick={() => router.push(`/accounting/office-payroll/${run.id}`)}
-                        >
-                          <ChevronRight className="h-5 w-5" />
-                        </Button>
+                        {canOpenPayoutDetail ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label="เปิดหน้าทำจ่าย"
+                            onClick={() => router.push(`/accounting/office-payroll/${run.id}`)}
+                          >
+                            <ChevronRight className="h-5 w-5" />
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

@@ -52,7 +52,7 @@ import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { canView } from '@/lib/permissions';
+import { canView, canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { canApproveOfficePayrollAsManager, canSubmitOfficeRunForManagerReview } from '@/lib/permission-core';
 import { submitOfficeRunForManagerReview } from '@/lib/payroll/office-submit-hr-review';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -76,6 +76,10 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
   const { toast } = useToast();
 
   const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
+  const canOpenAccountingPayoutDetail = useMemo(
+    () => canExecuteBankCashbookPayments(currentUser),
+    [currentUser],
+  );
   const { check } = usePermissions(currentUser);
   const canMutate = check('office_payroll', 'edit');
 
@@ -666,9 +670,15 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                     )}
                   </div>
                   {['HR_APPROVED', 'FINANCE_APPROVED', 'LOCKED', 'PAID'].includes(run.status) ? (
-                    <Button className="w-full" variant="default" asChild>
-                      <Link href={`/accounting/office-payroll/${id}`}>เปิดหน้าทำจ่าย (บัญชี)</Link>
-                    </Button>
+                    canOpenAccountingPayoutDetail ? (
+                      <Button className="w-full" variant="default" asChild>
+                        <Link href={`/accounting/office-payroll/${id}`}>เปิดหน้าทำจ่าย (บัญชี)</Link>
+                      </Button>
+                    ) : (
+                      <Button className="w-full" variant="outline" disabled>
+                        เปิดหน้าทำจ่าย (บัญชี) — เฉพาะผู้จัดการบัญชี
+                      </Button>
+                    )
                   ) : (
                     <Button className="w-full" variant="outline" disabled>
                       เปิดหน้าทำจ่าย (บัญชี) — หลังผู้จัดการอนุมัติ
