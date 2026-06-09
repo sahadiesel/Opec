@@ -17,6 +17,7 @@ import { useFirestore, useCollection, useDoc, useMemoFirebase } from '@/firebase
 import { canAccessHrAttendanceKioskPages } from '@/lib/navigation/nav-access';
 import {
   canSubmitAttendanceCorrectionRequest,
+  canAdminResetAttendanceDay,
 } from '@/lib/permissions';
 import type { User, OfficeStaff } from '@/lib/types';
 import {
@@ -46,6 +47,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
+  RotateCcw,
 } from 'lucide-react';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { cn } from '@/lib/utils';
@@ -58,11 +60,25 @@ import {
   type WeeklyRestPatternForCalendar,
 } from '@/lib/attendance/bangkok-calendar';
 import {
+  attendanceInCorrectedByOverride,
+  attendanceOutCorrectedByOverride,
   buildAttendanceDayRows,
   countDaysWithEffectiveRecord,
 } from '@/lib/attendance/correction-merge';
+import { adminResetAttendanceDay } from '@/lib/attendance/admin-day-reset';
 import { AttendanceCorrectionRequestDialog } from '@/components/attendance/attendance-correction-request-dialog';
 import { AttendanceOvertimeRequestDialog } from '@/components/attendance/attendance-overtime-request-dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { useToast } from '@/hooks/use-toast';
 import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import {
   hrSettingsCalendarHolidayLabelForYmd,
@@ -125,6 +141,7 @@ function dayKindBadges(
 export default function HrAttendanceManagePage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
   const [viewMonth, setViewMonth] = useState(() => startOfMonth(new Date()));
   const [search, setSearch] = useState('');
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
@@ -148,6 +165,14 @@ export default function HrAttendanceManagePage() {
     subjectNameSnapshot: string;
     workDateYmd: string;
   } | null>(null);
+
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetCtx, setResetCtx] = useState<{
+    staffId: string;
+    staffName: string;
+    workDateYmd: string;
+  } | null>(null);
+  const [resetBusyKey, setResetBusyKey] = useState<string | null>(null);
 
   const range = useMemo(() => {
     const startMs = viewMonth.getTime();
@@ -191,6 +216,8 @@ export default function HrAttendanceManagePage() {
     () => canSubmitAttendanceCorrectionRequest(currentUser),
     [currentUser],
   );
+
+  const canAdminReset = useMemo(() => canAdminResetAttendanceDay(currentUser), [currentUser]);
 
   const punchesQuery = useMemoFirebase(() => {
     if (!firestore || !canUse) return null;
@@ -282,6 +309,41 @@ export default function HrAttendanceManagePage() {
   const openOvertimeRequest = (ctx: NonNullable<typeof otCtx>) => {
     setOtCtx(ctx);
     setOtOpen(true);
+  };
+
+  const openResetConfirm = (ctx: NonNullable<typeof resetCtx>) => {
+    setResetCtx(ctx);
+    setResetOpen(true);
+  };
+
+  const handleConfirmReset = async () => {
+    if (!firestore || !currentUser || !resetCtx || !canAdminReset) return;
+    const busyKey = `${resetCtx.staffId}:${resetCtx.workDateYmd}`;
+    setResetBusyKey(busyKey);
+    try {
+      await adminResetAttendanceDay({
+        firestore: firestore as Firestore,
+        currentUser: currentUser as User,
+        subjectType: 'office_staff',
+        subjectId: resetCtx.staffId,
+        payrollMonth,
+        workDateYmd: resetCtx.workDateYmd,
+      });
+      toast({
+        title: 'ล้างเวลาแล้ว',
+        description: `${resetCtx.staffName} · ${formatDateThaiBE(resetCtx.workDateYmd)} — แสดงเป็น — ในสรุปและ payroll`,
+      });
+      setResetOpen(false);
+      setResetCtx(null);
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'ล้างเวลาไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setResetBusyKey(null);
+    }
   };
 
   if (userLoading || !currentUser) {
@@ -447,7 +509,7 @@ export default function HrAttendanceManagePage() {
                                     <TableHead>ประเภทวัน</TableHead>
                                     <TableHead className="whitespace-nowrap">เข้างาน</TableHead>
                                     <TableHead className="whitespace-nowrap">ออกงาน</TableHead>
-                                    <TableHead className="w-[120px] text-right">จัดการ</TableHead>
+                                    <TableHead className="w-[140px] text-right">จัดการ</TableHead>
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -459,6 +521,11 @@ export default function HrAttendanceManagePage() {
                                     const weekendOrHol =
                                       isBangkokWeeklyRestDayYmd(d.ymd, weeklyRestPattern)
                                       || isHrSettingsCalendarHolidayYmd(d.ymd, calendarHolidays);
+                                    const hasEffectiveTime = d.effectiveInMs != null || d.effectiveOutMs != null;
+                                    const inCorrectedBadge = attendanceInCorrectedByOverride(d);
+                                    const outCorrectedBadge = attendanceOutCorrectedByOverride(d);
+                                    const resetKey = `${row.staffId}:${d.ymd}`;
+                                    const resetBusy = resetBusyKey === resetKey;
                                     return (
                                       <TableRow
                                         key={d.ymd}
@@ -477,7 +544,7 @@ export default function HrAttendanceManagePage() {
                                           {d.effectiveInMs != null ? (
                                             <span>
                                               {formatBangkokHmFromUtcMs(d.effectiveInMs)}
-                                              {d.override ? (
+                                              {inCorrectedBadge ? (
                                                 <Badge variant="secondary" className="ml-2 text-[9px]">
                                                   หลังแก้
                                                 </Badge>
@@ -491,7 +558,7 @@ export default function HrAttendanceManagePage() {
                                           {d.effectiveOutMs != null ? (
                                             <span>
                                               {formatBangkokHmFromUtcMs(d.effectiveOutMs)}
-                                              {d.override ? (
+                                              {outCorrectedBadge ? (
                                                 <Badge variant="secondary" className="ml-2 text-[9px]">
                                                   หลังแก้
                                                 </Badge>
@@ -502,44 +569,76 @@ export default function HrAttendanceManagePage() {
                                           )}
                                         </TableCell>
                                         <TableCell className="text-right align-top">
-                                          {canRequestCorrection ? (
+                                          {canRequestCorrection || canAdminReset ? (
                                             <div className="flex flex-col items-end gap-1">
-                                              <Button
-                                                type="button"
-                                                variant="outline"
-                                                size="sm"
-                                                className="h-8"
-                                                onClick={() =>
-                                                  openCorrection({
-                                                    subjectType: 'office_staff',
-                                                    subjectId: row.staffId,
-                                                    subjectNameSnapshot: row.name,
-                                                    workDateYmd: d.ymd,
-                                                    previousInAtMs: d.effectiveInMs,
-                                                    previousOutAtMs: d.effectiveOutMs,
-                                                    previousInPunchId: d.rawFirstIn?.id ?? null,
-                                                    previousOutPunchId: d.rawLastOut?.id ?? null,
-                                                  })
-                                                }
-                                              >
-                                                ขอแก้ไข
-                                              </Button>
-                                              <Button
-                                                type="button"
-                                                variant="secondary"
-                                                size="sm"
-                                                className="h-8"
-                                                onClick={() =>
-                                                  openOvertimeRequest({
-                                                    subjectType: 'office_staff',
-                                                    subjectId: row.staffId,
-                                                    subjectNameSnapshot: row.name,
-                                                    workDateYmd: d.ymd,
-                                                  })
-                                                }
-                                              >
-                                                ขอ OT
-                                              </Button>
+                                              {canRequestCorrection ? (
+                                                <>
+                                                  <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-8"
+                                                    onClick={() =>
+                                                      openCorrection({
+                                                        subjectType: 'office_staff',
+                                                        subjectId: row.staffId,
+                                                        subjectNameSnapshot: row.name,
+                                                        workDateYmd: d.ymd,
+                                                        previousInAtMs: d.effectiveInMs,
+                                                        previousOutAtMs: d.effectiveOutMs,
+                                                        previousInPunchId: d.rawFirstIn?.id ?? null,
+                                                        previousOutPunchId: d.rawLastOut?.id ?? null,
+                                                      })
+                                                    }
+                                                  >
+                                                    ขอแก้ไข
+                                                  </Button>
+                                                  <Button
+                                                    type="button"
+                                                    variant="secondary"
+                                                    size="sm"
+                                                    className="h-8"
+                                                    onClick={() =>
+                                                      openOvertimeRequest({
+                                                        subjectType: 'office_staff',
+                                                        subjectId: row.staffId,
+                                                        subjectNameSnapshot: row.name,
+                                                        workDateYmd: d.ymd,
+                                                      })
+                                                    }
+                                                  >
+                                                    ขอ OT
+                                                  </Button>
+                                                </>
+                                              ) : null}
+                                              {canAdminReset && hasEffectiveTime ? (
+                                                <Button
+                                                  type="button"
+                                                  variant="destructive"
+                                                  size="sm"
+                                                  className="h-8"
+                                                  disabled={resetBusy}
+                                                  onClick={() =>
+                                                    openResetConfirm({
+                                                      staffId: row.staffId,
+                                                      staffName: row.name,
+                                                      workDateYmd: d.ymd,
+                                                    })
+                                                  }
+                                                >
+                                                  {resetBusy ? (
+                                                    <>
+                                                      <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+                                                      Reset
+                                                    </>
+                                                  ) : (
+                                                    <>
+                                                      <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                                                      Reset
+                                                    </>
+                                                  )}
+                                                </Button>
+                                              ) : null}
                                             </div>
                                           ) : (
                                             <span className="text-[11px] text-muted-foreground">—</span>
@@ -606,6 +705,38 @@ export default function HrAttendanceManagePage() {
           workDateYmd={otCtx.workDateYmd}
         />
       ) : null}
+
+      <AlertDialog
+        open={resetOpen}
+        onOpenChange={(v) => {
+          setResetOpen(v);
+          if (!v) setResetCtx(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>ล้างเวลาเข้า-ออก?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {resetCtx
+                ? `${resetCtx.staffName} · ${formatDateThaiBE(resetCtx.workDateYmd)} — เวลาเข้าและออกจะแสดงเป็น — และไม่นับในงวด payroll (บันทึกสแกนเดิมยังอยู่ในระบบ)`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!resetBusyKey}>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!!resetBusyKey}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleConfirmReset();
+              }}
+            >
+              {resetBusyKey ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ล้างเวลา'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }

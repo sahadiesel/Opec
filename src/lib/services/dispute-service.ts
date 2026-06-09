@@ -4,6 +4,7 @@
 import { Firestore, collection, doc, setDoc, CollectionReference } from 'firebase/firestore';
 import { CustomerIssue, User } from '@/lib/types';
 import { CustomerIssueSchema } from '@/lib/validations/dispute-schemas';
+import { isClient } from '@/lib/permissions';
 import { writeAuditLog } from './audit-service';
 
 /**
@@ -38,16 +39,18 @@ export class DisputeService {
 
     await setDoc(issueRef, validated);
 
-    // Audit for OPEC staff
-    await writeAuditLog(this.db, user, {
-      actionType: 'REPORT_ISSUE',
-      entityType: 'CustomerIssue',
-      entityId: issueRef.id,
-      entityLabel: `${validated.category}: ${validated.referenceNo}`,
-      sourceModule: 'client',
-      linkedIds: [validated.referenceId, user.customerId],
-      afterSummary: `Customer reported an issue with ${validated.category} ${validated.referenceNo}`
-    });
+    // Portal users cannot create audit_logs (rules: internal staff only) — issue doc is the customer-side record.
+    if (!isClient(user)) {
+      await writeAuditLog(this.db, user, {
+        actionType: 'REPORT_ISSUE',
+        entityType: 'CustomerIssue',
+        entityId: issueRef.id,
+        entityLabel: `${validated.category}: ${validated.referenceNo}`,
+        sourceModule: 'client',
+        linkedIds: [validated.referenceId, user.customerId],
+        afterSummary: `Customer reported an issue with ${validated.category} ${validated.referenceNo}`,
+      });
+    }
 
     return issueRef.id;
   }

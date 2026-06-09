@@ -19,8 +19,15 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { useFirestore, useAuth, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import type { User } from '@/lib/types';
-import { ATTENDANCE_KIOSK_SESSIONS_COLLECTION, ATTENDANCE_PUNCHES_COLLECTION } from '@/lib/attendance/constants';
+import {
+  ATTENDANCE_DAY_OVERRIDES_COLLECTION,
+  ATTENDANCE_KIOSK_SESSIONS_COLLECTION,
+  ATTENDANCE_PUNCHES_COLLECTION,
+} from '@/lib/attendance/constants';
+import { bangkokYmdFromUtcMs } from '@/lib/attendance/bangkok-calendar';
+import { effectiveDailyPunchSummary } from '@/lib/attendance/correction-merge';
 import type {
+  AttendanceDayOverrideDoc,
   AttendanceKioskSessionDoc,
   AttendancePunchDirection,
   AttendancePunchDoc,
@@ -30,7 +37,6 @@ import {
   deriveMobileAttendanceUi,
   getBangkokDayBoundsMs,
   getCurrentAttendanceShift,
-  summarizeDailyPunches,
 } from '@/lib/attendance/shift-windows';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -175,6 +181,9 @@ function MobileAttendanceInner() {
 
   const shift = useMemo(() => getCurrentAttendanceShift(new Date(now)), [now]);
   const dayBounds = useMemo(() => getBangkokDayBoundsMs(new Date(now)), [now]);
+  const todayYmd = useMemo(() => bangkokYmdFromUtcMs(now), [now]);
+  const payrollMonth = useMemo(() => todayYmd.slice(0, 7), [todayYmd]);
+  const subjectKey = resolved ? `${resolved.subjectType}:${resolved.subjectId}` : null;
 
   /** Resolve worker/office_staff row linked to current auth user */
   useEffect(() => {
@@ -246,9 +255,22 @@ function MobileAttendanceInner() {
     todayPunchesQuery as any,
   );
 
+  const todayOverridesQuery = useMemoFirebase(() => {
+    if (!firestore || !subjectKey || !payrollMonth) return null;
+    return query(
+      collection(firestore, ATTENDANCE_DAY_OVERRIDES_COLLECTION),
+      where('subjectKey', '==', subjectKey),
+      where('payrollMonth', '==', payrollMonth),
+    );
+  }, [firestore, subjectKey, payrollMonth]);
+
+  const { data: todayOverrides, isLoading: overridesLoading } = useCollection<AttendanceDayOverrideDoc>(
+    todayOverridesQuery as any,
+  );
+
   const dailySummary = useMemo(
-    () => summarizeDailyPunches(todayPunches ?? []),
-    [todayPunches],
+    () => effectiveDailyPunchSummary(todayPunches ?? [], todayOverrides ?? [], todayYmd),
+    [todayPunches, todayOverrides, todayYmd],
   );
 
   const uiState = useMemo(() => deriveMobileAttendanceUi(shift, dailySummary), [shift, dailySummary]);
@@ -437,7 +459,7 @@ function MobileAttendanceInner() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {punchesLoading && (
+              {(punchesLoading || overridesLoading) && (
                 <div className="flex items-center gap-2 text-muted-foreground text-sm">
                   <Loader2 className="h-4 w-4 animate-spin" /> กำลังโหลดประวัติวันนี้…
                 </div>

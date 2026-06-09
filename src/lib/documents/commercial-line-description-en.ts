@@ -57,6 +57,8 @@ export function translateCommercialLineDescriptionToEn(text: string): string {
   s = s.replace(/วันเดินทาง/g, 'Travel day');
   s = s.replace(/โมบิไลเซชัน/g, 'Mobilization');
   s = s.replace(/ดีโมบิไลเซชัน/g, 'Demobilization');
+  s = s.replace(/ส่วนลด\s*\/\s*ค่าเพิ่ม/g, 'Discount / surcharge');
+  s = s.replace(/\(ระบุรายละเอียด\)/g, '(specify details)');
   s = s.replace(/หน่วย/g, 'units');
   s = s.replace(/ชม\./g, 'hrs');
 

@@ -409,34 +409,61 @@ async function loadPositionLabels(
   return map;
 }
 
-/** คำอธิบายบรรทัด — ไม่ใส่จำนวน/ราคาในข้อความ (มีคอลัมน์ Qty / Unit price / Amount แล้ว) */
+function billingQuantityPhrase(acc: LineAcc): string {
+  const nw = acc.workerIds.size;
+  const q = acc.totalQuantity;
+  const tsN = acc.timesheetIds.length;
+  const workerBit = nw > 0 ? ` · พนักงาน ${nw} คน` : '';
+
+  if (
+    acc.eventType === 'ot_1.5' ||
+    acc.eventType === 'ot_2.0' ||
+    acc.eventType === 'ot_3.0' ||
+    acc.eventType === 'sell_overflow_normal'
+  ) {
+    return `รวม ${q} ชม.${workerBit}`;
+  }
+
+  if (acc.eventType === 'work_day') {
+    const mandayLike = tsN > 0 && q === tsN;
+    if (mandayLike) {
+      return `รวม ${q} คน-วัน${workerBit}`;
+    }
+    return `รวม ${q} ชม. (ชม.ปกติในแพ็กขาย)${workerBit}`;
+  }
+
+  return `รวม ${q} คน-วัน${workerBit}`;
+}
+
+/** คำอธิบายบรรทัด — รวม person-day / จำนวนคนในวงเล็บ (Qty / Unit price / Amount แยกคอลัมน์) */
 function descriptionForLine(acc: LineAcc, positionTitle: string): string {
   const title = positionTitle || acc.positionId;
+  const qtyPhrase = billingQuantityPhrase(acc);
   switch (acc.eventType) {
     case 'work_day':
-      return `${title} — ค่าแรงวันทำงาน`;
+      return `${title} — ค่าแรงวันทำงาน (${qtyPhrase})`;
     case 'ot_1.5':
-      return `${title} — OT x1.5`;
+      return `${title} — OT x1.5 (${qtyPhrase})`;
     case 'ot_2.0':
-      return `${title} — OT x2`;
+      return `${title} — OT x2 (${qtyPhrase})`;
     case 'ot_3.0':
-      return `${title} — OT x3`;
+      return `${title} — OT x3 (${qtyPhrase})`;
     case 'off_day_worked':
-      return `${title} — ทำงานวันหยุด`;
+      return `${title} — ทำงานวันหยุด (${qtyPhrase})`;
     case 'standby_day':
-      return `${title} — สแตนด์บาย`;
+      return `${title} — สแตนด์บาย (${qtyPhrase})`;
     case 'travel_day':
-      return `${title} — วันเดินทาง`;
+      return `${title} — วันเดินทาง (${qtyPhrase})`;
     case 'public_holiday_worked':
-      return `${title} — ทำงานวันหยุดนักขัตฤกษ์`;
+      return `${title} — ทำงานวันหยุดนักขัตฤกษ์ (${qtyPhrase})`;
     case 'mobilization_day':
-      return `${title} — โมบิไลเซชัน`;
+      return `${title} — โมบิไลเซชัน (${qtyPhrase})`;
     case 'demobilization_day':
-      return `${title} — ดีโมบิไลเซชัน`;
+      return `${title} — ดีโมบิไลเซชัน (${qtyPhrase})`;
     case 'sell_overflow_normal':
-      return `${title} — ชม.ปกติเกินกรอบ 8 ชม. (ขาย)`;
+      return `${title} — ชม.ปกติเกินกรอบ 8 ชม. (ขาย) (${qtyPhrase})`;
     default:
-      return `${title} — ${acc.eventType}`;
+      return `${title} — ${acc.eventType} (${qtyPhrase})`;
   }
 }
 

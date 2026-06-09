@@ -497,7 +497,7 @@ export default function MyProfilePage() {
                   subjectType={linked.kind === 'worker' ? 'worker' : 'office_staff'}
                   subjectId={linked.record.id}
                   title="ประวัติการลงเวลา"
-                  description="ข้อมูลเดียวกับการสแกนลงเวลาผ่าน Kiosk / มือถือ — ซิงค์จากชุดข้อมูลเดียวกับเมนูจัดการการลงเวลา"
+                  description="เวลาเข้า/ออกที่ใช้จริง — รวมสแกน Kiosk และการแก้ไขที่ HR อนุมัติแล้ว (แหล่งเดียวกับเมนูจัดการการลงเวลา)"
                 />
               ) : (
                 <Card>

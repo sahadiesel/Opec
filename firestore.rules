@@ -117,6 +117,16 @@ service cloud.firestore {
     function portalAccountingDocWriteOk() {
       return portalAccountingDocReadOk();
     }
+    /** Portal / preview: แจ้ง dispute หรือยืนยันยอดบน commercial invoice ของลูกค้าตนเอง */
+    function portalCommercialInvoiceCustomerActionOk() {
+      return portalAccountingDocReadOk()
+        && resource.data.customerId == userData().customerId
+        && (
+          (resource.data.status == 'PENDING_CUSTOMER' && request.resource.data.status == 'PENDING_CUSTOMER')
+          || (resource.data.status == 'PENDING_CUSTOMER' && request.resource.data.status == 'ISSUED')
+          || (resource.data.status == 'ISSUED' && request.resource.data.status == 'ISSUED')
+        );
+    }
     function portalCustomerRootReadOk(customerId) {
       return isClientPortalUser()
         && userRole() in ['client_user']
@@ -574,7 +584,24 @@ service cloud.firestore {
     // PRESERVED-PATH (simplified fallback): commercial_invoices/{id}
     match /commercial_invoices/{id} {
       allow read: if isInternalUser() || portalAccountingDocReadOk();
-      allow write: if isInternalUser() || portalAccountingDocWriteOk();
+      allow create: if isInternalUser();
+      allow update: if isInternalUser() || portalCommercialInvoiceCustomerActionOk();
+      allow delete: if isInternalUser();
+    }
+    // Client portal — รายงาน dispute / ต่อรอง (Open Dispute)
+    match /customer_issues/{id} {
+      allow read: if isInternalUser()
+        || (isClientPortalUser()
+            && portalCustomerIdOk()
+            && resource.data.customerId == userData().customerId);
+      allow create: if isInternalUser()
+        || (isClientPortalUser()
+            && userRole() in ['client_user']
+            && portalCustomerIdOk()
+            && request.resource.data.customerId == userData().customerId
+            && request.resource.data.status == 'OPEN'
+            && request.resource.data.createdById == request.auth.uid);
+      allow update, delete: if isInternalUser();
     }
     //    generated gate  path 
     // PRESERVED-PATH (simplified fallback): daily_timesheets/{id}

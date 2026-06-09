@@ -21,6 +21,7 @@ import {
   Ban,
   Pencil,
   FileBadge,
+  RefreshCw,
 } from 'lucide-react';
 import {
   CommercialInvoice,
@@ -62,6 +63,7 @@ import {
   sendCommercialDraftToCustomer,
   voidCommercialInvoice,
   updateCommercialDraftInvoice,
+  regenerateCommercialDraftInvoiceFromTimesheets,
   QUOTATION_PO_WAVE_PLACEHOLDER,
   PO_MONTH_WAVE_PLACEHOLDER,
 } from '@/lib/services/commercial-invoice-service';
@@ -69,6 +71,8 @@ import {
   buildCommercialInvoicePrintHtml,
   openStandardPrintWindow,
 } from '@/lib/documents/standard-document-print';
+import { translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
+import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { createTaxInvoiceDraftFromIssuedCommercial } from '@/lib/services/tax-invoice-from-commercial-service';
@@ -128,6 +132,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const [actionBusy, setActionBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [voidBusy, setVoidBusy] = useState(false);
+  const [regenerateBusy, setRegenerateBusy] = useState(false);
   const [taxFromComBusy, setTaxFromComBusy] = useState(false);
   const [offerTaxDialogOpen, setOfferTaxDialogOpen] = useState(false);
   const [draftLines, setDraftLines] = useState<CommercialInvoiceLine[]>([]);
@@ -249,6 +254,29 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     const vat = roundMoney((before * (Number(invoice.vatPercent) || 0)) / 100);
     return { before, vat, total: roundMoney(before + vat) };
   }, [draftLines, invoice]);
+
+  const canRegenerateFromTimesheets = useMemo(() => {
+    if (!invoice || !canAct || invoice.status !== 'DRAFT') return false;
+    return invoice.waveId !== QUOTATION_PO_WAVE_PLACEHOLDER;
+  }, [invoice, canAct]);
+
+  const docEn = printLocale === 'en';
+  const moneyLoc = docEn ? 'en-GB' : 'th-TH';
+
+  const lineDescription = useMemo(() => {
+    return (raw: string, workerName?: string) => {
+      const base = (raw || '—') + (workerName ? ` (${workerName})` : '');
+      if (printLocale === 'en') return translateCommercialLineDescriptionToEn(base);
+      return base;
+    };
+  }, [printLocale]);
+
+  const lineCols = useMemo(() => {
+    const L = printLocale as PrintDocumentLocale;
+    return L === 'en'
+      ? { desc: 'Description', qty: 'Qty', unit: 'Unit price', amt: 'Amount' }
+      : { desc: 'รายละเอียด', qty: 'จำนวน', unit: 'ราคา/หน่วย', amt: 'จำนวนเงิน' };
+  }, [printLocale]);
 
   const handlePrintCommercial = async () => {
     if (!invoice) return;
@@ -385,6 +413,30 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     }
   };
 
+  const handleRegenerateFromTimesheets = async () => {
+    if (!firestore || !currentUser || !canAct || !invoice || !canRegenerateFromTimesheets) return;
+    setRegenerateBusy(true);
+    try {
+      const res = await regenerateCommercialDraftInvoiceFromTimesheets(
+        firestore,
+        invoice.id,
+        currentUser,
+      );
+      toast({
+        title: 'ดึงรายการใหม่แล้ว',
+        description: `${res.lineCount} บรรทัด (จาก ${res.timesheetCount} แถว timesheet) — บรรทัดส่วนลด/ค่าเพิ่มที่เพิ่มเองยังอยู่`,
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ดึงรายการใหม่ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setRegenerateBusy(false);
+    }
+  };
+
   const handleVoid = async () => {
     if (!firestore || !currentUser || !canAdminVoid || !invoice) return;
     setVoidBusy(true);
@@ -477,7 +529,9 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       ...rows,
       {
         id: newLineId(),
-        description: 'ส่วนลด / ค่าเพิ่ม (ระบุรายละเอียด)',
+        description: docEn
+          ? 'Discount / surcharge (specify details)'
+          : 'ส่วนลด / ค่าเพิ่ม (ระบุรายละเอียด)',
         quantity: 1,
         unitPrice: 0,
         amount: 0,
@@ -729,6 +783,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               <div className="font-mono">
                 {invoice.waveId === QUOTATION_PO_WAVE_PLACEHOLDER ? (
                   <span>ใบเสนอราคา (ไม่มี Wave / timesheet)</span>
+                ) : invoice.waveId === PO_MONTH_WAVE_PLACEHOLDER ? (
+                  <span>{invoice.waveCode || 'PO+งวด (รวม wave)'}</span>
                 ) : (
                   <>
                     <span className="font-mono">{invoice.waveCode || '—'}</span>
@@ -774,6 +830,41 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               <Plus className="h-4 w-4" />
               เพิ่มส่วนลด / ค่าเพิ่ม
             </Button>
+            {canRegenerateFromTimesheets && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2 shrink-0 border-blue-300 text-blue-800 hover:bg-blue-50 dark:text-blue-200 dark:hover:bg-blue-950/40"
+                    disabled={regenerateBusy || saveBusy || actionBusy}
+                  >
+                    {regenerateBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                    ดึงจาก timesheet ใหม่
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>ดึงรายการจาก timesheet ใหม่?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      ระบบจะคำนวณบรรทัดค่าแรงจาก timesheet ที่พร้อมวางบิลในงวดนี้อีกครั้ง (รวมทุก wave ใต้ PO
+                      สำหรับงวด PO+เดือน) และแทนที่บรรทัดเดิมจาก timesheet — บรรทัดส่วนลด/ค่าเพิ่มที่เพิ่มเองจะยังอยู่
+                      · เลขที่ใบและสถานะ DRAFT ไม่เปลี่ยน
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => void handleRegenerateFromTimesheets()}>
+                      ดึงใหม่
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </div>
         )}
 
@@ -867,33 +958,43 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="pl-6">รายละเอียด</TableHead>
-                  <TableHead className="text-right w-28">จำนวน</TableHead>
-                  <TableHead className="text-right w-36">ราคา/หน่วย</TableHead>
-                  <TableHead className="text-right pr-6 w-36">จำนวนเงิน</TableHead>
+                  <TableHead className="pl-6">{lineCols.desc}</TableHead>
+                  <TableHead className="text-right w-28">{lineCols.qty}</TableHead>
+                  <TableHead className="text-right w-36">{lineCols.unit}</TableHead>
+                  <TableHead className="text-right pr-6 w-36">{lineCols.amt}</TableHead>
                   {invoice.status === 'DRAFT' && canAct && (
                     <TableHead className="w-12 print:hidden" aria-label="ลบ" />
                   )}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(invoice.status === 'DRAFT' && canAct ? draftLines : invoice.lines ?? []).map((line) => (
+                {(invoice.status === 'DRAFT' && canAct ? draftLines : invoice.lines ?? []).map((line) => {
+                  const isManualLine = line.lineSource === 'manual';
+                  return (
                   <TableRow key={line.id}>
                     <TableCell className="pl-6 max-w-md align-top">
                       {invoice.status === 'DRAFT' && canAct ? (
-                        <Input
-                          className="font-medium text-sm h-9"
-                          value={line.description}
-                          onChange={(e) => patchDraftLine(line.id, { description: e.target.value })}
-                        />
+                        <>
+                          <Input
+                            className="font-medium text-sm h-9"
+                            value={line.description}
+                            onChange={(e) => patchDraftLine(line.id, { description: e.target.value })}
+                          />
+                          {docEn && !isManualLine && (
+                            <div className="text-xs text-muted-foreground mt-1 leading-snug">
+                              {lineDescription(line.description || '—', line.workerName)}
+                            </div>
+                          )}
+                        </>
                       ) : (
-                        <div className="font-medium text-sm">{line.description}</div>
+                        <div className="font-medium text-sm">
+                          {lineDescription(line.description || '—', line.workerName)}
+                        </div>
                       )}
-                      {line.lineSource === 'manual' && (
-                        <div className="text-xs text-muted-foreground mt-0.5">ปรับยอดด้วยมือ</div>
-                      )}
-                      {line.workerName && invoice.status !== 'DRAFT' && (
-                        <div className="text-xs text-muted-foreground">{line.workerName}</div>
+                      {isManualLine && (
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {docEn ? 'Manual adjustment' : 'ปรับยอดด้วยมือ'}
+                        </div>
                       )}
                     </TableCell>
                     <TableCell className="text-right align-top">
@@ -923,12 +1024,12 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                           }
                         />
                       ) : (
-                        <>฿{line.unitPrice.toLocaleString('th-TH', { minimumFractionDigits: 2 })}</>
+                        <>฿{line.unitPrice.toLocaleString(moneyLoc, { minimumFractionDigits: 2 })}</>
                       )}
                     </TableCell>
                     <TableCell className="text-right pr-6 font-medium align-top font-mono text-sm">
                       ฿
-                      {roundMoney(line.quantity * line.unitPrice).toLocaleString('th-TH', {
+                      {roundMoney(line.quantity * line.unitPrice).toLocaleString(moneyLoc, {
                         minimumFractionDigits: 2,
                       })}
                     </TableCell>
@@ -947,7 +1048,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                       </TableCell>
                     )}
                   </TableRow>
-                ))}
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>
@@ -971,13 +1073,15 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               <div className="flex flex-col sm:flex-row sm:justify-end text-sm order-1 lg:order-2">
                 <div className="text-right space-y-1 w-full">
                   <div>
-                    <span className="text-muted-foreground">ยอดก่อน VAT ({invoice.vatPercent}%) </span>
+                    <span className="text-muted-foreground">
+                      {docEn ? `Before VAT (${invoice.vatPercent}%)` : `ยอดก่อน VAT (${invoice.vatPercent}%)`}{' '}
+                    </span>
                     <span className="font-mono font-medium">
                       ฿
                       {(invoice.status === 'DRAFT' && canAct
                         ? previewTotals.before
                         : invoice.amountBeforeTax
-                      ).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                      ).toLocaleString(moneyLoc, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div>
@@ -985,15 +1089,15 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                     <span className="font-mono font-medium">
                       ฿
                       {(invoice.status === 'DRAFT' && canAct ? previewTotals.vat : invoice.vatAmount).toLocaleString(
-                        'th-TH',
+                        moneyLoc,
                         { minimumFractionDigits: 2 },
                       )}
                     </span>
                   </div>
                   <div className="text-lg font-bold text-primary pt-2">
-                    รวม ฿
+                    {docEn ? 'Total' : 'รวม'} ฿
                     {(invoice.status === 'DRAFT' && canAct ? previewTotals.total : invoice.totalAmount).toLocaleString(
-                      'th-TH',
+                      moneyLoc,
                       { minimumFractionDigits: 2 },
                     )}{' '}
                     {invoice.currency}

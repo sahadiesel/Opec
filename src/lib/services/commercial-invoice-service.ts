@@ -483,7 +483,6 @@ export async function ensureCommercialDraftInvoiceAfterPoMonthApproval(
         issueDate,
         actor,
         sourcePoMonthReviewId: review.id,
-        poMonthRelatedWaveIds: review.relatedWaveIds,
       },
     );
     return { ok: true, id, invoiceNo };
@@ -495,8 +494,8 @@ export async function ensureCommercialDraftInvoiceAfterPoMonthApproval(
 
 /**
  * สร้างใบแจ้งหนี้จาก timesheet ในช่วงงวด PO+เดือน
- * — ถ้า `poMonthRelatedWaveIds` หรือฟิลด์ `relatedWaveIds` ในเอกสารรีวิวมีค่า จะดึงเฉพาะ wave เหล่านั้น (สอดคล้องตารางรีวิว)
- * — ถ้าไม่มี จะดึงทุก wave ใต้ PO (พฤติกรรมเดิม)
+ * — ดึงทุก `daily_timesheets` ที่ `readyForBilling` ใต้ PO ในช่วงงวด (ไม่กรอง wave)
+ *   สอดคล้อง {@link markTimesheetsReadyForPayrollAfterPoMonthApproval} และตารางสรุปรายเดือน
  */
 export async function createCommercialDraftInvoiceForPoMonth(
   db: Firestore,
@@ -509,45 +508,22 @@ export async function createCommercialDraftInvoiceForPoMonth(
     actor: User;
     notes?: string;
     sourcePoMonthReviewId: string;
-    /** จากรอบอนุมัติ — ใช้แทนการอ่านซ้ำจาก `po_month_timesheet_reviews` */
-    poMonthRelatedWaveIds?: readonly string[] | null;
   },
 ): Promise<{ id: string; invoiceNo: string }> {
   const { poId, periodStart, periodEnd, issueDate, actor, sourcePoMonthReviewId } = params;
   const currency = params.currency || 'THB';
 
-  const normalizeWaveIds = (raw: readonly string[] | null | undefined): string[] | undefined => {
-    const ids = (raw ?? []).map((x) => String(x).trim()).filter(Boolean);
-    return ids.length > 0 ? ids : undefined;
-  };
-
-  let scopedWaveIds = normalizeWaveIds(params.poMonthRelatedWaveIds ?? null);
-  if (!scopedWaveIds) {
-    const reviewSnap = await getDoc(doc(db, 'po_month_timesheet_reviews', sourcePoMonthReviewId));
-    if (reviewSnap.exists()) {
-      const rev = reviewSnap.data() as PoMonthTimesheetReview;
-      scopedWaveIds = normalizeWaveIds(rev.relatedWaveIds);
-    }
-  }
-
-  const gen = await generateBillingLines(db, poId, periodStart, periodEnd, undefined, {
-    poMonthWaveIds: scopedWaveIds,
-  });
+  const gen = await generateBillingLines(db, poId, periodStart, periodEnd, undefined);
   if (gen.lines.length === 0) {
     throw new Error(
-      scopedWaveIds?.length
-        ? 'ไม่มีรายการจาก timesheet — ตรวจช่วงงวด / readyForBilling และว่า wave ใน relatedWaveIds มี timesheet ในงวดนี้หรือไม่'
-        : 'ไม่มีรายการจาก timesheet — ตรวจช่วงงวด / สถานะ readyForBilling ของ timesheet ใต้ PO นี้ (ทุก wave)',
+      'ไม่มีรายการจาก timesheet — ตรวจช่วงงวด / สถานะ readyForBilling ของ timesheet ใต้ PO นี้ (ทุก wave)',
     );
   }
 
   const [poSnap] = await Promise.all([getDoc(doc(db, 'purchase_orders', poId))]);
   if (!poSnap.exists()) throw new Error('ไม่พบ PO');
   const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
-  const waveCodeLabel =
-    scopedWaveIds && scopedWaveIds.length > 0
-      ? `PO+งวด (${scopedWaveIds.length} wave ตามเอกสารรีวิว)`
-      : 'PO+งวด (รวม wave)';
+  const waveCodeLabel = 'PO+งวด (รวม wave)';
 
   const vatPercent = await resolveVatPercent(db, po.customerId, po.contractId);
   const amountBeforeTax = roundMoney(gen.totalAmount);
@@ -1006,6 +982,98 @@ export async function deleteCommercialInvoice(
     linkedIds: [cur.customerId, cur.poId, cur.waveId],
     afterSummary: `ลบใบแจ้งหนี้ถาวร (สถานะเดิม ${cur.status})`,
   });
+}
+
+/**
+ * ดึงบรรทัดจาก timesheet ใหม่ — เฉพาะ DRAFT ที่มาจาก timesheet (ไม่ใช่ PO ใบเสนอราคา)
+ * รักษาบรรทัด `lineSource: manual` (ส่วนลด/ค่าเพิ่ม) ไว้ต่อท้าย
+ */
+export async function regenerateCommercialDraftInvoiceFromTimesheets(
+  db: Firestore,
+  invoiceId: string,
+  actor: User,
+): Promise<{ lineCount: number; timesheetCount: number }> {
+  const ref = doc(db, 'commercial_invoices', invoiceId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
+  const cur = snap.data() as CommercialInvoice;
+  if (cur.status !== 'DRAFT') {
+    throw new Error('ดึงรายการใหม่ได้เฉพาะใบสถานะ DRAFT (ตรวจภายใน)');
+  }
+  if (cur.waveId === QUOTATION_PO_WAVE_PLACEHOLDER) {
+    throw new Error('ใบจาก PO ใบเสนอราคาไม่มี timesheet — ไม่สามารถดึงใหม่ได้');
+  }
+  if (!cur.poId?.trim() || !cur.periodStart || !cur.periodEnd) {
+    throw new Error('ใบแจ้งหนี้ไม่มี PO หรือช่วงงวด');
+  }
+
+  const isPoMonth = cur.waveId === PO_MONTH_WAVE_PLACEHOLDER;
+  const gen = await generateBillingLines(
+    db,
+    cur.poId,
+    cur.periodStart,
+    cur.periodEnd,
+    isPoMonth ? undefined : cur.waveId,
+  );
+  if (gen.lines.length === 0) {
+    throw new Error(
+      isPoMonth
+        ? 'ไม่มีรายการจาก timesheet — ตรวจช่วงงวด / readyForBilling ของ timesheet ใต้ PO นี้ (ทุก wave)'
+        : 'ไม่มีรายการจาก timesheet — ตรวจช่วงวันที่ / wave / สถานะ readyForBilling',
+    );
+  }
+
+  const manualLines = (cur.lines ?? []).filter((l) => l.lineSource === 'manual');
+  const timesheetLines: CommercialInvoiceLine[] = gen.lines.map((l, idx) => ({
+    id: newLineId(),
+    displayOrder: idx,
+    description: l.description,
+    ...(l.workerId ? { workerId: l.workerId } : {}),
+    ...(l.workerName ? { workerName: l.workerName } : {}),
+    positionId: l.positionId,
+    eventType: l.eventType,
+    timesheetIds: l.timesheetIds,
+    quantity: l.quantity,
+    unitPrice: l.unitPrice,
+    amount: l.amount,
+    lineSource: 'timesheet' as const,
+  }));
+
+  const merged = normalizeDraftLines([...timesheetLines, ...manualLines]);
+  const amountBeforeTax = roundMoney(merged.reduce((s, x) => s + x.amount, 0));
+  const vp = Number(cur.vatPercent) || 0;
+  const vatAmount = roundMoney((amountBeforeTax * vp) / 100);
+  const totalAmount = roundMoney(amountBeforeTax + vatAmount);
+  const now = Date.now();
+
+  const payload: Record<string, unknown> = {
+    lines: merged,
+    amountBeforeTax,
+    vatAmount,
+    totalAmount,
+    generationWarnings: gen.warnings,
+    timesheetCount: gen.timesheetCount,
+    updatedAt: now,
+    updatedByUid: actor.id,
+    updatedByName: actor.displayName || actor.email || actor.id,
+  };
+  if (isPoMonth) {
+    payload.waveCode = 'PO+งวด (รวม wave)';
+  }
+
+  await updateDoc(ref, sanitizeFirestorePayload(payload) as Record<string, unknown>);
+
+  await writeAuditLog(db, actor, {
+    actionType: 'UPDATE',
+    entityType: 'CommercialInvoice',
+    entityId: invoiceId,
+    entityLabel: `${cur.invoiceNo} → ดึงจาก timesheet ใหม่`,
+    sourceModule: 'commercial_invoices',
+    linkedIds: [cur.customerId, cur.poId, cur.waveId],
+    afterSummary: `ดึงรายการจาก timesheet ใหม่ (${gen.timesheetCount} แถว → ${timesheetLines.length} บรรทัดวางบิล)`,
+  });
+
+  return { lineCount: merged.length, timesheetCount: gen.timesheetCount };
 }
 
 /** บันทึกรายการ + คำนวณยอดก่อน VAT / VAT / รวมใหม่ — เฉพาะ DRAFT */

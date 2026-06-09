@@ -1,24 +1,47 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   collection,
   Firestore,
   query,
   where,
   orderBy,
-  limit,
 } from 'firebase/firestore';
+import { addMonths, format, startOfMonth } from 'date-fns';
+import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { useCollection, useMemoFirebase } from '@/firebase';
-import { ATTENDANCE_PUNCHES_COLLECTION } from '@/lib/attendance/constants';
-import type { AttendancePunchDoc, AttendanceSubjectType } from '@/lib/attendance/types';
+import {
+  ATTENDANCE_DAY_OVERRIDES_COLLECTION,
+  ATTENDANCE_PUNCHES_COLLECTION,
+} from '@/lib/attendance/constants';
+import { formatBangkokHmFromUtcMs } from '@/lib/attendance/bangkok-calendar';
+import { effectiveAttendanceHistoryDayRows } from '@/lib/attendance/correction-merge';
+import type { AttendanceDayOverrideDoc, AttendancePunchDoc, AttendanceSubjectType } from '@/lib/attendance/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Loader2 } from 'lucide-react';
-import { formatDateTimeThaiBE } from '@/lib/date-thai';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { formatDateThaiBE } from '@/lib/date-thai';
 
-const HISTORY_LIMIT = 400;
+function TimeCell(props: { ms: number | null; corrected: boolean }) {
+  const { ms, corrected } = props;
+  if (ms == null) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="font-mono text-sm whitespace-nowrap">
+      {formatBangkokHmFromUtcMs(ms)}
+      {corrected ? (
+        <Badge variant="secondary" className="ml-2 text-[9px] font-normal">
+          หลังแก้
+        </Badge>
+      ) : null}
+    </span>
+  );
+}
 
 export function SubjectAttendanceHistory(props: {
   firestore: Firestore;
@@ -28,6 +51,17 @@ export function SubjectAttendanceHistory(props: {
   description?: string;
 }) {
   const { firestore, subjectType, subjectId, title, description } = props;
+  const subjectKey = `${subjectType}:${subjectId}`;
+
+  const [viewMonth, setViewMonth] = useState(() => startOfMonth(new Date()));
+  const payrollMonth = format(viewMonth, 'yyyy-MM');
+  const monthLabel = format(viewMonth, 'MMMM yyyy');
+
+  const punchRange = useMemo(() => {
+    const startMs = viewMonth.getTime();
+    const endExclusiveMs = addMonths(viewMonth, 1).getTime();
+    return { startMs, endExclusiveMs };
+  }, [viewMonth]);
 
   const punchesQuery = useMemoFirebase(() => {
     if (!subjectId) return null;
@@ -35,23 +69,95 @@ export function SubjectAttendanceHistory(props: {
       collection(firestore, ATTENDANCE_PUNCHES_COLLECTION),
       where('subjectType', '==', subjectType),
       where('subjectId', '==', subjectId),
+      where('punchedAt', '>=', punchRange.startMs),
+      where('punchedAt', '<', punchRange.endExclusiveMs),
       orderBy('punchedAt', 'desc'),
-      limit(HISTORY_LIMIT),
     );
-  }, [firestore, subjectType, subjectId]);
+  }, [firestore, subjectType, subjectId, punchRange.startMs, punchRange.endExclusiveMs]);
 
-  const { data: punches, isLoading, error } = useCollection<AttendancePunchDoc>(punchesQuery as any);
+  const overridesQuery = useMemoFirebase(() => {
+    if (!subjectId) return null;
+    return query(
+      collection(firestore, ATTENDANCE_DAY_OVERRIDES_COLLECTION),
+      where('subjectKey', '==', subjectKey),
+      where('payrollMonth', '==', payrollMonth),
+    );
+  }, [firestore, subjectId, subjectKey, payrollMonth]);
 
-  const rows = useMemo(() => punches ?? [], [punches]);
+  const { data: punches, isLoading: punchesLoading, error: punchesError } =
+    useCollection<AttendancePunchDoc>(punchesQuery as any);
+  const { data: overrides, isLoading: overridesLoading, error: overridesError } =
+    useCollection<AttendanceDayOverrideDoc>(overridesQuery as any);
+
+  const rows = useMemo(
+    () =>
+      effectiveAttendanceHistoryDayRows(punches ?? [], overrides ?? []).filter((r) =>
+        r.ymd.startsWith(payrollMonth),
+      ),
+    [punches, overrides, payrollMonth],
+  );
+
+  const isLoading = punchesLoading || overridesLoading;
+  const error = punchesError ?? overridesError;
 
   return (
     <Card className="shadow-sm">
       <CardHeader className="bg-muted/30 border-b py-4">
-        <CardTitle className="text-lg">{title ?? 'ประวัติการลงเวลา (Kiosk)'}</CardTitle>
-        <CardDescription>
-          {description ??
-            'บันทึกเข้า/ออกจากหน้าลงเวลาบนมือถือหลังสแกน QR — แสดงล่าสุดในชุดนี้'}
-        </CardDescription>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1 min-w-0">
+            <CardTitle className="text-lg">{title ?? 'ประวัติการลงเวลา (Kiosk)'}</CardTitle>
+            <CardDescription>
+              {description ??
+                'เวลาเข้า/ออกที่ใช้จริง — รวมสแกน Kiosk และการแก้ไขที่ HR อนุมัติแล้ว (แหล่งเดียวกับเมนูจัดการการลงเวลา)'}
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              type="button"
+              onClick={() => setViewMonth(startOfMonth(new Date()))}
+            >
+              เดือนนี้
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              type="button"
+              className="h-9 w-9"
+              aria-label="เดือนก่อน"
+              onClick={() => setViewMonth((m) => addMonths(m, -1))}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Label htmlFor="attendance-history-month" className="sr-only">
+              เลือกเดือน
+            </Label>
+            <Input
+              id="attendance-history-month"
+              type="month"
+              className="h-9 w-[9.5rem] tabular-nums"
+              value={payrollMonth}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (!/^\d{4}-\d{2}$/.test(v)) return;
+                const [y, m] = v.split('-').map(Number);
+                setViewMonth(startOfMonth(new Date(y, m - 1, 1)));
+              }}
+            />
+            <Button
+              variant="outline"
+              size="icon"
+              type="button"
+              className="h-9 w-9"
+              aria-label="เดือนถัดไป"
+              onClick={() => setViewMonth((m) => addMonths(m, 1))}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+            <span className="hidden lg:inline text-xs text-muted-foreground tabular-nums">{monthLabel}</span>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="pt-4">
         {isLoading && (
@@ -65,26 +171,28 @@ export function SubjectAttendanceHistory(props: {
           </p>
         )}
         {!isLoading && !error && rows.length === 0 && (
-          <p className="text-sm text-muted-foreground py-4">ยังไม่มีบันทึกการลงเวลาผ่าน Kiosk</p>
+          <p className="text-sm text-muted-foreground py-4">ไม่มีบันทึกการลงเวลาในเดือนนี้</p>
         )}
         {!isLoading && !error && rows.length > 0 && (
-          <Table>
+          <Table className="table-fixed w-full">
             <TableHeader>
               <TableRow>
-                <TableHead>วันเวลา</TableHead>
-                <TableHead>การกระทำ</TableHead>
+                <TableHead className="w-1/3">วันที่</TableHead>
+                <TableHead className="w-1/3">เข้างาน</TableHead>
+                <TableHead className="w-1/3">ออกงาน</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {rows.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-mono text-sm whitespace-nowrap">
-                    {formatDateTimeThaiBE(r.punchedAt)}
+                <TableRow key={r.ymd}>
+                  <TableCell className="w-1/3 font-mono text-sm whitespace-nowrap align-top">
+                    {formatDateThaiBE(r.ymd)}
                   </TableCell>
-                  <TableCell>
-                    <Badge variant={r.direction === 'IN' ? 'default' : 'secondary'} className="font-normal">
-                      {r.direction === 'IN' ? 'เข้างาน (IN)' : 'ออกงาน (OUT)'}
-                    </Badge>
+                  <TableCell className="w-1/3 align-top">
+                    <TimeCell ms={r.inMs} corrected={r.inCorrected} />
+                  </TableCell>
+                  <TableCell className="w-1/3 align-top">
+                    <TimeCell ms={r.outMs} corrected={r.outCorrected} />
                   </TableCell>
                 </TableRow>
               ))}

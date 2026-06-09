@@ -607,6 +607,12 @@ export function canApproveAttendanceCorrectionRequest(user: User | null): boolea
   return canApproveWorkerPayrollBatchAsManager(user);
 }
 
+/** ล้างเวลาเข้า-ออกในสรุปลงเวลา (override ว่าง) — system admin เท่านั้น */
+export function canAdminResetAttendanceDay(user: User | null): boolean {
+  if (!user) return false;
+  return isSystemAdmin(user) || isSimpleAdmin(user);
+}
+
 /** ชื่อเดิมในหน้า HR — ชี้ไปที่ {@link canApproveMonthlyTimesheetReviewQueue} */
 export const canReviewMonthlyQueue = canApproveMonthlyTimesheetReviewQueue;
 
