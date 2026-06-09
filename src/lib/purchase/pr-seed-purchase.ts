@@ -92,6 +92,7 @@ export async function seedPurchaseLinesAndMilestonesFromPr(input: SeedPurchaseFr
       unitPrice: Number(data.unitPrice) || 0,
       amount: roundMoney2(Number(data.amount) || 0),
       storeItemId: data.storeItemId || null,
+      storeItemCode: data.storeItemCode || null,
       purchaseId,
       createdAt: data.createdAt ?? now,
     });

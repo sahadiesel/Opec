@@ -29,13 +29,13 @@ import { collection, doc, writeBatch, increment, query, orderBy } from 'firebase
 import { StoreItem, Vendor, Purchase, PurchaseLine, formatStoreItemLabel } from '@/lib/types';
 import { computePurchaseTotalsFromLines } from '@/lib/purchase/pr-totals';
 import {
-  guessVariantFromPoDescription,
   receiveLineFromStoreItem,
   resolveReceiveStockPick,
   storeCatalogHeaders,
   storeCatalogStandalone,
   variantLinesForParent,
 } from '@/lib/store/receive-stock-select';
+import { purchaseLineToReceivableStoreItem, resolvePurchaseLineStoreItem } from '@/lib/purchase/purchase-line-store-link';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
@@ -110,35 +110,31 @@ function poLineToReceiveLine(pl: PurchaseLine, storeItems: StoreItem[]): Receive
     poDescription: pl.itemDescription,
   };
 
-  const linked = pl.storeItemId ? storeItems.find((i) => i.id === pl.storeItemId) : undefined;
-  if (linked) {
-    if (linked.catalogGroupRole === 'header') {
-      const guessed = guessVariantFromPoDescription(linked.id, pl.itemDescription, storeItems);
-      if (guessed) {
-        return receiveLineFromStoreItem(base, guessed);
-      }
-      return {
-        ...base,
-        itemId: '',
-        itemName: linked.itemName,
-        itemCode: linked.itemCode,
-        unit: linked.unit,
-        currentStock: 0,
-        needsStockMapping: true,
-        needsVariantSelection: true,
-        mappingHeaderId: linked.id,
-      };
-    }
-    if (linked.catalogGroupRole === 'line' || !linked.catalogGroupRole) {
-      return receiveLineFromStoreItem(base, linked);
-    }
+  const receivable = purchaseLineToReceivableStoreItem(pl, storeItems);
+  if (receivable) {
+    return receiveLineFromStoreItem(base, receivable);
+  }
+
+  const linked = resolvePurchaseLineStoreItem(pl, storeItems);
+  if (linked?.catalogGroupRole === 'header') {
+    return {
+      ...base,
+      itemId: '',
+      itemName: linked.itemName,
+      itemCode: linked.itemCode,
+      unit: linked.unit,
+      currentStock: 0,
+      needsStockMapping: true,
+      needsVariantSelection: true,
+      mappingHeaderId: linked.id,
+    };
   }
 
   return {
     ...base,
     itemId: '',
     itemName: pl.itemDescription,
-    itemCode: '—',
+    itemCode: pl.storeItemCode || '—',
     unit: 'หน่วย',
     currentStock: 0,
     needsStockMapping: true,

@@ -25,6 +25,22 @@ export function storeCatalogStandalone(items: StoreItem[]): StoreItem[] {
     .sort((a, b) => a.itemName.localeCompare(b.itemName, 'th', { sensitivity: 'base' }));
 }
 
+/** PR / จัดซื้อ — ไม่แสดงเมนหลักที่มีรุ่นย่อย; แสดงเฉพาะ SKU ย่อย (ชื่อ — รุ่น) หรือรายการเดี่ยว */
+export function storeCatalogPickableItems(items: StoreItem[]): StoreItem[] {
+  const active = items.filter((i) => i.active);
+  const menuIdsWithVariants = new Set(
+    active
+      .filter((i) => i.catalogGroupRole === 'line' && i.parentStoreItemId)
+      .map((i) => i.parentStoreItemId as string),
+  );
+
+  return active
+    .filter((i) => i.catalogGroupRole !== 'header' && !menuIdsWithVariants.has(i.id))
+    .sort((a, b) =>
+      formatStoreItemLabel(a).localeCompare(formatStoreItemLabel(b), 'th', { sensitivity: 'base' }),
+    );
+}
+
 /** จับคู่รุ่นย่อยจากคำอธิบาย PO เช่น «สีเหลือง» → variantSpecification */
 export function guessVariantFromPoDescription(
   headerId: string,

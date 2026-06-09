@@ -299,6 +299,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       await addDocumentNonBlocking(collection(firestore, 'purchases', id, 'lines'), {
         itemDescription: desc,
         storeItemId: si.id,
+        storeItemCode: si.itemCode,
         quantity: Number(newLine.quantity),
         unitPrice: Number(newLine.unitPrice),
         purchaseId: id,
@@ -312,6 +313,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
           purchaseId: id,
           itemDescription: desc,
           storeItemId: si.id,
+          storeItemCode: si.itemCode,
           quantity: Number(newLine.quantity),
           unitPrice: Number(newLine.unitPrice),
           amount,
@@ -797,7 +799,12 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   <TableBody>
                     {lines?.map((line) => (
                       <TableRow key={line.id}>
-                        <TableCell className="font-medium">{line.itemDescription}</TableCell>
+                        <TableCell className="font-medium">
+                          <div>{line.itemDescription}</div>
+                          {line.storeItemCode && (
+                            <div className="text-[10px] font-mono text-muted-foreground mt-0.5">{line.storeItemCode}</div>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right">{line.quantity.toLocaleString()}</TableCell>
                         <TableCell className="text-right">{line.unitPrice.toLocaleString()}</TableCell>
                         <TableCell className="text-right font-bold text-primary">

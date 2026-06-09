@@ -23,6 +23,7 @@ import { Trash2, Plus, PackageSearch, Search } from 'lucide-react';
 import type { PurchaseLineEntryMode, StoreItem } from '@/lib/types';
 import { formatStoreItemLabel } from '@/lib/types';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
+import { storeCatalogPickableItems } from '@/lib/store/receive-stock-select';
 
 export type PrLineDraft = {
   key: string;
@@ -32,6 +33,7 @@ export type PrLineDraft = {
   unitPrice: string;
   amount: number;
   storeItemId?: string;
+  storeItemCode?: string;
 };
 
 /** แปลงค่าจากช่องกรอก PR เป็นตัวเลข (ว่าง / "." → 0) */
@@ -83,15 +85,18 @@ export function PurchaseRequestLinesEditor({
 
   const pickerItems = useMemo(() => {
     const qq = pickerQ.trim().toLowerCase();
-    const list = (storeItems || []).filter((s) => s.active);
+    const list = storeCatalogPickableItems(storeItems ?? []);
     if (!qq) return list.slice(0, 60);
     return list
-      .filter(
-        (s) =>
+      .filter((s) => {
+        const label = formatStoreItemLabel(s).toLowerCase();
+        return (
+          label.includes(qq) ||
           s.itemName.toLowerCase().includes(qq) ||
           (s.itemCode || '').toLowerCase().includes(qq) ||
           (s.variantSpecification || '').toLowerCase().includes(qq)
-      )
+        );
+      })
       .slice(0, 60);
   }, [storeItems, pickerQ]);
 
@@ -130,6 +135,7 @@ export function PurchaseRequestLinesEditor({
           ...l,
           itemDescription: desc,
           storeItemId: item.id,
+          storeItemCode: item.itemCode,
           amount: roundMoney2(qty * up),
         };
       })
@@ -191,22 +197,27 @@ export function PurchaseRequestLinesEditor({
                     {readOnly ? (
                       <span className="text-sm font-medium">{line.itemDescription || '—'}</span>
                     ) : lineEntryMode === 'INVENTORY' ? (
-                      <div className="flex flex-wrap gap-1">
-                        <Input
-                          value={line.itemDescription}
-                          readOnly
-                          className="flex-1 min-w-[140px] bg-muted/30"
-                          placeholder="เลือกจากคลัง…"
-                        />
-                        <Button type="button" size="sm" variant="secondary" onClick={() => openPickerForLine(line.key)}>
-                          <Search className="h-4 w-4 mr-1" />
-                          ค้นหา
-                        </Button>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex flex-wrap gap-1">
+                          <Input
+                            value={line.itemDescription}
+                            readOnly
+                            className="flex-1 min-w-[140px] bg-muted/30"
+                            placeholder="เลือกจากคลัง…"
+                          />
+                          <Button type="button" size="sm" variant="secondary" onClick={() => openPickerForLine(line.key)}>
+                            <Search className="h-4 w-4 mr-1" />
+                            ค้นหา
+                          </Button>
+                        </div>
+                        {line.storeItemCode && (
+                          <span className="text-[10px] font-mono text-muted-foreground">{line.storeItemCode}</span>
+                        )}
                       </div>
                     ) : (
                       <Input
                         value={line.itemDescription}
-                        onChange={(e) => updateLine(line.key, { itemDescription: e.target.value, storeItemId: undefined })}
+                        onChange={(e) => updateLine(line.key, { itemDescription: e.target.value, storeItemId: undefined, storeItemCode: undefined })}
                         placeholder="ระบุรายการ"
                       />
                     )}

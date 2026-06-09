@@ -8,6 +8,7 @@ export type PrLineWrite = {
   unitPrice: number;
   amount: number;
   storeItemId?: string;
+  storeItemCode?: string;
 };
 
 /** แทนที่บรรทัดทั้งหมดใต้ PR (ใช้ตอนบันทึกฉบับร่าง) */
@@ -29,6 +30,7 @@ export async function replacePurchaseRequestLines(
       unitPrice: roundMoney2(Number(l.unitPrice) || 0),
       amount: roundMoney2(Number(l.amount) || 0),
       storeItemId: l.storeItemId || null,
+      storeItemCode: l.storeItemCode || null,
       createdAt: now,
     });
   });

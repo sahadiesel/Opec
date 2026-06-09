@@ -2439,6 +2439,8 @@ export interface PurchaseLine {
   amount: number;
   /** เมื่อ purchaseLineMode = INVENTORY */
   storeItemId?: string;
+  /** รหัส SKU คลัง (EQM-/PPE-) — คัดลอกจาก PR เพื่อผูกรับเข้าสต็อก */
+  storeItemCode?: string;
   createdAt: number;
 }
 

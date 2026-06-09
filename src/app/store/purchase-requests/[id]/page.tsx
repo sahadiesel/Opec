@@ -123,6 +123,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     unitPrice: number;
     amount: number;
     storeItemId?: string;
+    storeItemCode?: string;
   }>(linesQuery as any);
 
   const storeItemsQuery = useMemoFirebase(() => (firestore && ok ? collection(firestore, 'store_items') : null), [firestore, ok]);
@@ -169,6 +170,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         unitPrice: String(row.unitPrice),
         amount: row.amount,
         storeItemId: row.storeItemId,
+        storeItemCode: row.storeItemCode,
       }))
     );
   }, [pr?.status, prLines, pr?.id]);
@@ -191,6 +193,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
       unitPrice: String(row.unitPrice),
       amount: row.amount,
       storeItemId: row.storeItemId,
+      storeItemCode: row.storeItemCode,
     }));
   }, [prLines]);
 
@@ -212,6 +215,17 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     if (submitForApproval && badLine) {
       toast({ variant: 'destructive', title: 'รายการไม่ครบ', description: 'ตรวจทุกบรรทัดก่อนส่งอนุมัติ' });
       return false;
+    }
+    if (submitForApproval && lineEntryMode === 'INVENTORY') {
+      const unlinked = lines.find((l) => l.itemDescription.trim() && !l.storeItemId);
+      if (unlinked) {
+        toast({
+          variant: 'destructive',
+          title: 'ยังไม่เลือกสินค้าคลัง',
+          description: 'โหมดจากคลัง — กด «ค้นหา» เลือก SKU ให้ครบทุกบรรทัด',
+        });
+        return false;
+      }
     }
     if (
       submitForApproval &&
@@ -250,6 +264,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           unitPrice: roundMoney2(parsePrDecimal(l.unitPrice)),
           amount: roundMoney2(Number(l.amount) || 0),
           storeItemId: l.storeItemId,
+          storeItemCode: l.storeItemCode,
         }))
     );
   };

@@ -115,6 +115,17 @@ export default function NewPurchaseRequestPage() {
       });
       return false;
     }
+    if (submitForApproval && lineEntryMode === 'INVENTORY') {
+      const unlinked = lines.find((l) => l.itemDescription.trim() && !l.storeItemId);
+      if (unlinked) {
+        toast({
+          variant: 'destructive',
+          title: 'ยังไม่เลือกสินค้าคลัง',
+          description: 'โหมดจากคลัง — กด «ค้นหา» เลือก SKU ให้ครบทุกบรรทัด',
+        });
+        return false;
+      }
+    }
     if (
       submitForApproval &&
       purchasePaymentType === 'CREDIT' &&
@@ -197,6 +208,7 @@ export default function NewPurchaseRequestPage() {
           unitPrice: roundMoney2(parsePrDecimal(l.unitPrice)),
           amount: roundMoney2(Number(l.amount) || 0),
           storeItemId: l.storeItemId || null,
+          storeItemCode: l.storeItemCode || null,
           createdAt: now,
         });
       });
