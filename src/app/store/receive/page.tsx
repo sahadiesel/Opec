@@ -349,6 +349,11 @@ export default function StoreReceivePage() {
     return 'ภาษีมูลค่าเพิ่ม (7% Est.):';
   }, [selectedPurchase]);
 
+  const hasIncompleteStockMapping = useMemo(
+    () => receiveLines.some((l) => !l.itemId || l.needsStockMapping || l.needsVariantSelection),
+    [receiveLines],
+  );
+
   const handleConfirmReceive = async () => {
     if (!firestore || !currentUser || receiveLines.length === 0) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุรายการสินค้าที่ต้องการรับเข้า" });
@@ -428,7 +433,14 @@ export default function StoreReceivePage() {
       router.push('/store');
     } catch (e) {
       console.error(e);
-      toast({ variant: "destructive", title: "Error", description: "ไม่สามารถบันทึกข้อมูลได้" });
+      const code = typeof e === 'object' && e && 'code' in e ? String((e as { code?: string }).code) : '';
+      const message =
+        code === 'permission-denied'
+          ? 'ไม่มีสิทธิ์บันทึก (Firestore rules) — แจ้งผู้ดูแลให้ deploy กฎล่าสุด'
+          : code === 'not-found'
+            ? 'ไม่พบสินค้าในทะเบียนคลัง — ลองเลือกสินค้าใหม่'
+            : 'ไม่สามารถบันทึกข้อมูลได้ กรุณาลองใหม่หรือแจ้งผู้ดูแลระบบ';
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: message });
     } finally {
       setIsSubmitting(false);
     }
@@ -703,9 +715,18 @@ export default function StoreReceivePage() {
 
                 <Separator className="my-4" />
 
+                {hasIncompleteStockMapping && (
+                  <Alert variant="destructive" className="py-3">
+                    <AlertTitle className="text-sm">ยังเลือกสินค้าคลังไม่ครบ</AlertTitle>
+                    <AlertDescription className="text-xs">
+                      บรรทัดจาก PO ที่มีป้าย «จาก PO — เลือกสต็อก» ต้องเลือกสินค้าในระบบ (และรุ่นย่อยถ้ามี) ก่อนกดยืนยัน
+                    </AlertDescription>
+                  </Alert>
+                )}
+
                 <Button 
                   className="w-full h-14 font-black text-lg bg-primary shadow-lg" 
-                  disabled={receiveLines.length === 0 || isSubmitting}
+                  disabled={receiveLines.length === 0 || isSubmitting || hasIncompleteStockMapping}
                   onClick={handleConfirmReceive}
                 >
                   {isSubmitting ? <Loader2 className="h-6 w-6 animate-spin mr-2" /> : <CheckCircle2 className="h-6 w-6 mr-2" />}

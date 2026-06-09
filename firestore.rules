@@ -331,10 +331,25 @@ service cloud.firestore {
     match /store_receipts/{id} {
       allow read, write: if rs7();
     }
+    match /store_receipts/{id}/{document=**} {
+      allow read, write: if rs7();
+    }
     match /store_issue_slips/{id} {
       allow read, write: if rs7();
     }
+    match /store_issue_slips/{id}/{document=**} {
+      allow read, write: if rs7();
+    }
     match /store_return_slips/{id} {
+      allow read, write: if rs7();
+    }
+    match /store_return_slips/{id}/{document=**} {
+      allow read, write: if rs7();
+    }
+    match /store_writeoffs/{id} {
+      allow read, write: if rs7();
+    }
+    match /store_writeoffs/{id}/{document=**} {
       allow read, write: if rs7();
     }
     // ===== HR & Payroll - Match blocks =====

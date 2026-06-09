@@ -412,7 +412,7 @@ export function getPayrollOfficerModulePermission(moduleKey: ModuleKey): ModuleP
   return { ...NO_ACCESS };
 }
 
-/** VCEA ไม่ลบ — manpower / invoice / store ของเจ้าหน้าที่บัญชี */
+/** VCEA ไม่ลบ — manpower / invoice ของเจ้าหน้าที่บัญชี (คลังใช้ FULL_ACCESS แยก — เทียบ store_officer) */
 const ACCOUNTING_OFFICER_OPS_ACCESS: ModulePermission = {
   view: true,
   create: true,
@@ -458,13 +458,19 @@ export function getAccountingOfficerModulePermission(moduleKey: ModuleKey): Modu
   }
 
   if (
+    moduleKey === 'vendors' ||
+    moduleKey === 'purchases' ||
+    moduleKey === 'store_inventory'
+  ) {
+    /** คลัง/จัดซื้อ — สิทธิ์เทียบ store_officer (VCEDA) */
+    return { ...FULL_ACCESS };
+  }
+
+  if (
     moduleKey === 'waves' ||
     moduleKey === 'assignments' ||
     moduleKey === 'mobilization' ||
-    moduleKey === 'draft_invoices' ||
-    moduleKey === 'store_inventory' ||
-    moduleKey === 'vendors' ||
-    moduleKey === 'purchases'
+    moduleKey === 'draft_invoices'
   ) {
     return { ...ACCOUNTING_OFFICER_OPS_ACCESS };
   }
