@@ -18,6 +18,7 @@ import {
   Info,
   Building2,
   Briefcase,
+  Printer,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import {
@@ -38,7 +39,27 @@ import { collection, query, orderBy, limit } from 'firebase/firestore';
 import Link from 'next/link';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { useToast } from '@/hooks/use-toast';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
+  buildInventoryLedgerPrintHtml,
+  describeLedgerPrintFilters,
+  ledgerBangkokYyyyMmNow,
+  ledgerMonthSelectOptions,
+  storeTransactionInLedgerMonth,
+  type LedgerPrintContext,
+} from '@/lib/store/inventory-ledger-print';
 import { formatYmdLocalThaiBE, formatTimeThaiBE } from '@/lib/date-thai';
+import { filterActiveWorkersForSelection } from '@/lib/hr/worker-active';
+import { filterActiveOfficeStaffForSelection } from '@/lib/hr/office-staff-active';
 
 type LedgerHolderPick = { kind: 'worker' | 'office'; id: string; displayName: string };
 
@@ -50,6 +71,7 @@ export default function InventoryLedgerPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
 
   const canAccess = useMemo(() => canAccessDomain(currentUser, 'store'), [currentUser]);
 
@@ -61,6 +83,11 @@ export default function InventoryLedgerPage() {
 
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+  const [monthFilter, setMonthFilter] = useState(() => ledgerBangkokYyyyMmNow());
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
+
+  const monthOptions = useMemo(() => ledgerMonthSelectOptions(36), []);
 
   useEffect(() => {
     const onDocMouseDown = (e: MouseEvent) => {
@@ -97,14 +124,14 @@ export default function InventoryLedgerPage() {
     if (q.length < 1) return [];
     type Sug = LedgerHolderPick & { sortKey: string };
     const out: Sug[] = [];
-    for (const w of workers ?? []) {
+    for (const w of filterActiveWorkersForSelection(workers)) {
       const displayName = `${w.firstName || ''} ${w.lastName || ''}`.trim() || w.id;
       const hay = normalizeLedgerSearch(displayName);
       if (hay.includes(q) || normalizeLedgerSearch(w.id).includes(q)) {
         out.push({ kind: 'worker', id: w.id, displayName, sortKey: displayName });
       }
     }
-    for (const s of officeStaffList ?? []) {
+    for (const s of filterActiveOfficeStaffForSelection(officeStaffList)) {
       const displayName = (s.fullName || '').trim() || s.id;
       const hay = normalizeLedgerSearch(displayName);
       if (hay.includes(q) || normalizeLedgerSearch(s.id).includes(q)) {
@@ -139,6 +166,8 @@ export default function InventoryLedgerPage() {
     const holderQ = normalizeLedgerSearch(holderSearchInput);
 
     return transactions.filter((tx) => {
+      if (!storeTransactionInLedgerMonth(tx, monthFilter)) return false;
+
       const item = items?.find((i) => i.id === tx.itemId);
       const matchesItem =
         !itemQ ||
@@ -171,6 +200,7 @@ export default function InventoryLedgerPage() {
     selectedHolder,
     typeFilter,
     categoryFilter,
+    monthFilter,
     requesterDisplayLabel,
   ]);
 
@@ -178,6 +208,91 @@ export default function InventoryLedgerPage() {
     if (!items) return [];
     return Array.from(new Set(items.map(i => i.category))).sort();
   }, [items]);
+
+  const printFilterSummary = useMemo(
+    () => ({
+      monthYyyyMm: monthFilter,
+      itemSearch: itemSearchTerm,
+      holderLabel: selectedHolder?.displayName ?? holderSearchInput,
+      typeFilter,
+      categoryFilter,
+    }),
+    [monthFilter, itemSearchTerm, selectedHolder, holderSearchInput, typeFilter, categoryFilter],
+  );
+
+  const printContext: LedgerPrintContext = useMemo(
+    () => ({ items, workers, assignments, waves, officeStaffList }),
+    [items, workers, assignments, waves, officeStaffList],
+  );
+
+  const hasActiveFilters = useMemo(() => {
+    return (
+      monthFilter !== ledgerBangkokYyyyMmNow() ||
+      itemSearchTerm.trim() !== '' ||
+      holderSearchInput.trim() !== '' ||
+      selectedHolder !== null ||
+      typeFilter !== 'ALL' ||
+      categoryFilter !== 'ALL'
+    );
+  }, [monthFilter, itemSearchTerm, holderSearchInput, selectedHolder, typeFilter, categoryFilter]);
+
+  const runLedgerPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const rows = scope === 'filtered' ? filteredLedger : transactions ?? [];
+      if (rows.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
+              : 'ยังไม่มีประวัติการเคลื่อนไหวในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines =
+          scope === 'filtered' ? describeLedgerPrintFilters(printFilterSummary) : [];
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
+
+        const body = buildInventoryLedgerPrintHtml({
+          rows,
+          ctx: printContext,
+          scopeTitle,
+          filterLines,
+          generatedAt,
+          printedBy: currentUser?.displayName,
+        });
+
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Inventory-Ledger',
+          suggestedFileName: `Inventory-Ledger-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [filteredLedger, transactions, printFilterSummary, printContext, currentUser, toast],
+  );
 
   const getTransactionBadge = (type: TransactionType) => {
     switch (type) {
@@ -216,16 +331,91 @@ export default function InventoryLedgerPage() {
               ตรวจสอบการรับเข้า เบิก คืน และปรับยอดสต็อกทั้งหมดแบบละเอียด (Audit Trail)
             </p>
           </div>
+          <Button variant="outline" className="gap-2 h-11" onClick={() => setPrintDialogOpen(true)}>
+            <Printer className="h-4 w-4" /> พิมพ์รายการ
+          </Button>
           <Button variant="outline" className="gap-2 h-11">
             <Download className="h-4 w-4" /> Export CSV
           </Button>
         </div>
 
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการสมุดบัญชีสินค้า</DialogTitle>
+              <DialogDescription>
+                เลือกพิมพ์ตามตัวกรองที่ตั้งไว้ หรือพิมพ์ทุกรายการในชุดข้อมูลล่าสุด (สูงสุด 500 รายการ)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              {hasActiveFilters ? (
+                <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                  <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                  <ul className="list-disc list-inside text-xs text-muted-foreground space-y-0.5">
+                    {describeLedgerPrintFilters(printFilterSummary).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                  <p className="text-xs font-medium pt-1">
+                    จะพิมพ์ {filteredLedger.length} รายการ
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  ยังไม่ได้ตั้งตัวกรอง — 「พิมพ์ตามตัวกรอง」จะพิมพ์ทุกรายการในตาราง (เท่ากับพิมพ์ทั้งหมด)
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                ข้อมูลทั้งหมดในระบบ: {transactions?.length ?? 0} รายการ
+              </p>
+            </div>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={printBusy || filteredLedger.length === 0}
+                onClick={() => void runLedgerPrint('filtered')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ตามตัวกรอง ({filteredLedger.length})
+              </Button>
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                disabled={printBusy || !(transactions?.length)}
+                onClick={() => void runLedgerPrint('all')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ทั้งหมด ({transactions?.length ?? 0})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Filters Card */}
         <Card className="shadow-sm border-none bg-card">
           <CardContent className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-              <div className="space-y-2 md:col-span-3">
+              <div className="space-y-2 md:col-span-2">
+                <Label className="text-xs font-bold uppercase text-muted-foreground">
+                  เดือน (Month)
+                </Label>
+                <Select value={monthFilter} onValueChange={setMonthFilter}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {monthOptions.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
                 <Label className="text-xs font-bold uppercase text-muted-foreground">
                   ค้นหาอุปกรณ์ (Item)
                 </Label>
@@ -240,7 +430,7 @@ export default function InventoryLedgerPage() {
                 </div>
               </div>
 
-              <div className="space-y-2 md:col-span-3" ref={holderWrapRef}>
+              <div className="space-y-2 md:col-span-2" ref={holderWrapRef}>
                 <Label className="text-xs font-bold uppercase text-muted-foreground">
                   ผู้เบิก / ผู้ถือครอง (Requester)
                 </Label>
@@ -351,6 +541,7 @@ export default function InventoryLedgerPage() {
                     setHolderSuggestOpen(false);
                     setTypeFilter('ALL');
                     setCategoryFilter('ALL');
+                    setMonthFilter(ledgerBangkokYyyyMmNow());
                   }}
                 >
                   <Filter className="h-4 w-4" /> ล้างตัวกรอง (Clear)

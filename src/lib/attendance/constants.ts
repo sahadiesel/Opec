@@ -13,6 +13,6 @@ export const HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID = 'office_leave_entitlements';
 
 /**
  * Kiosk QR session length (ms) — single-use token, refreshed after every successful scan
- * แต่ละโค้ดอายุ 60 วินาที และจะถูกตั้ง `active = false` ทันทีหลังสแกนสำเร็จ (กันสแกนซ้ำใบเดิม)
+ * แต่ละโค้ดอายุ 10 วินาที และจะถูกตั้ง `active = false` ทันทีหลังสแกนสำเร็จ (กันสแกนซ้ำใบเดิม)
  */
-export const KIOSK_SESSION_TTL_MS = 60 * 1000;
+export const KIOSK_SESSION_TTL_MS = 10 * 1000;

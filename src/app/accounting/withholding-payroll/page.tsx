@@ -1,13 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { collection, getDocs, orderBy, query, limit } from 'firebase/firestore';
 import { AppShell } from '@/components/layout/app-shell';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -15,10 +15,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { Users, ExternalLink, Loader2, Search, Building2 } from 'lucide-react';
+import { Users, ExternalLink, Loader2, Search, Building2, Printer } from 'lucide-react';
 import type {
   User,
   PayrollBatch,
@@ -34,14 +42,41 @@ import { isSystemAdmin } from '@/lib/permission-core';
 import { usePermissions } from '@/hooks/use-permissions';
 import { workerPayrollLinePitAmount, resolvePayrollWorkerWhtPaymentDateYmd } from '@/lib/payroll/payroll-worker-wht-model';
 import { officePayrollLineTaxAmount, resolveOfficePayrollWhtPaymentDateYmd } from '@/lib/payroll/payroll-office-wht-model';
+import { useToast } from '@/hooks/use-toast';
+import {
+  buildWithholdingPayrollListPrintHtml,
+  capWithholdingPayrollListPrintRows,
+  type WithholdingPayrollListPrintRow,
+} from '@/lib/documents/withholding-payroll-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 
-type WorkerWhtRow = { batch: PayrollBatch; line: PayrollBatchLine; pit: number; paymentYmd: string };
+type WorkerWhtRow = { batch: PayrollBatch; line: PayrollBatchLine; pit: number; paid: number; paymentYmd: string };
 
-type OfficeWhtRow = { run: OfficePayrollRun; line: OfficePayrollLine; tax: number; paymentYmd: string };
+type OfficeWhtRow = { run: OfficePayrollRun; line: OfficePayrollLine; tax: number; paid: number; paymentYmd: string };
 
 function fmtBaht(n: number): string {
   return `฿${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+
+function workerPayrollLinePaidAmount(line: PayrollBatchLine): number {
+  return Number(line.netAmount) || 0;
+}
+
+function officePayrollLinePaidAmount(line: OfficePayrollLine): number {
+  return Number(line.netPay) || 0;
+}
+
+const WHT_PAYROLL_TABLE_COLGROUP = (
+  <colgroup>
+    <col className="w-[9%]" />
+    <col className="w-[14%]" />
+    <col className="w-[26%]" />
+    <col className="w-[11%]" />
+    <col className="w-[12%]" />
+    <col className="w-[12%]" />
+    <col className="w-[72px]" />
+  </colgroup>
+);
 
 /** YYYY-MM สำหรับกรองเดือน — อิงวันที่จ่าย ถ้าไม่มีใช้ช่วงงวด/งวดออฟฟิศ */
 function workerRowYm(r: WorkerWhtRow): string | null {
@@ -95,13 +130,61 @@ function officeRunStatusBadge(status: PayrollRunStatus): { label: string; varian
   return { label: 'ระหว่างทาง', variant: 'secondary' };
 }
 
+function buildWithholdingPayrollPrintRows(
+  workers: WorkerWhtRow[],
+  offices: OfficeWhtRow[],
+): WithholdingPayrollListPrintRow[] {
+  const rows: WithholdingPayrollListPrintRow[] = [];
+  for (const { batch, line, pit, paid, paymentYmd } of workers) {
+    const st = workerBatchStatusBadge(batch.status);
+    rows.push({
+      section: 'ลูกจ้าง',
+      periodStatus: st.label,
+      batchLabel: batch.id,
+      earnerName: line.workerNameSnapshot || '—',
+      earnerId: line.workerId,
+      paymentDate: paymentYmd,
+      paidLabel: fmtBaht(paid),
+      amountLabel: fmtBaht(pit),
+    });
+  }
+  for (const { run, line, tax, paid, paymentYmd } of offices) {
+    const st = officeRunStatusBadge(run.status);
+    rows.push({
+      section: 'ออฟฟิศ',
+      periodStatus: st.label,
+      batchLabel: run.payrollRunNo || run.id,
+      earnerName: line.staffName || '—',
+      earnerId: line.staffId,
+      paymentDate: paymentYmd,
+      paidLabel: fmtBaht(paid),
+      amountLabel: fmtBaht(tax),
+    });
+  }
+  return rows;
+}
+
+function describeWithholdingPayrollPrintFilters(searchTerm: string, monthFilter: string): string[] {
+  const lines: string[] = [];
+  if (monthFilter !== 'ALL') {
+    lines.push(`เดือน: ${ymLabelTh(monthFilter)} (${monthFilter})`);
+  }
+  if (searchTerm.trim()) {
+    lines.push(`ค้นหา: "${searchTerm.trim()}"`);
+  }
+  return lines;
+}
+
 export default function AccountingWithholdingPayrollHubPage() {
   const { currentUser, isLoading } = useAppUser();
   const { profile } = usePermissions(currentUser);
   const firestore = useFirestore();
+  const { toast } = useToast();
   const [q, setQ] = useState('');
   /** 'ALL' | YYYY-MM — กรองรายการตามเดือนอ้างอิง (วันที่จ่าย / ช่วงงวด) */
   const [monthFilter, setMonthFilter] = useState<string>('ALL');
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
   const [workerRows, setWorkerRows] = useState<WorkerWhtRow[]>([]);
   const [officeRows, setOfficeRows] = useState<OfficeWhtRow[]>([]);
   const [loadingWorkerLines, setLoadingWorkerLines] = useState(false);
@@ -143,6 +226,7 @@ export default function AccountingWithholdingPayrollHubPage() {
               batch,
               line,
               pit,
+              paid: workerPayrollLinePaidAmount(line),
               paymentYmd: payYmd && /^\d{4}-\d{2}-\d{2}$/.test(payYmd) ? payYmd : '—',
             });
           });
@@ -181,6 +265,7 @@ export default function AccountingWithholdingPayrollHubPage() {
               run,
               line,
               tax,
+              paid: officePayrollLinePaidAmount(line),
               paymentYmd: payYmd && /^\d{4}-\d{2}-\d{2}$/.test(payYmd) ? payYmd : '—',
             });
           });
@@ -259,6 +344,93 @@ export default function AccountingWithholdingPayrollHubPage() {
   /** ยอดหัก ภงด.1 รวมลูกจ้าง + พนักงานออฟฟิศ ตามรายการที่ค้นหา/กรองเดือนปัจจุบัน */
   const grandTotalPit = workerTotalPit + officeTotalTax;
 
+  const allWorkerTotalPit = useMemo(
+    () => workerRows.reduce((sum, { pit }) => sum + pit, 0),
+    [workerRows],
+  );
+  const allOfficeTotalTax = useMemo(
+    () => officeRows.reduce((sum, { tax }) => sum + tax, 0),
+    [officeRows],
+  );
+  const filteredRowCount = filteredWorker.length + filteredOffice.length;
+  const allRowCount = workerRows.length + officeRows.length;
+
+  const runWithholdingPayrollListPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const workers = scope === 'filtered' ? filteredWorker : workerRows;
+      const offices = scope === 'filtered' ? filteredOffice : officeRows;
+      const sourceRows = buildWithholdingPayrollPrintRows(workers, offices);
+
+      if (sourceRows.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
+              : 'ยังไม่มีรายการหัก ภงด.1 ในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const { rows, truncated } = capWithholdingPayrollListPrintRows(sourceRows);
+        const workerTotal = workers.reduce((sum, { pit }) => sum + pit, 0);
+        const officeTotal = offices.reduce((sum, { tax }) => sum + tax, 0);
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines =
+          scope === 'filtered' ? describeWithholdingPayrollPrintFilters(q, monthFilter) : [];
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
+
+        const body = buildWithholdingPayrollListPrintHtml({
+          rows,
+          scopeTitle,
+          filterLines,
+          grandTotalLabel: fmtBaht(workerTotal + officeTotal),
+          workerTotalLabel: fmtBaht(workerTotal),
+          officeTotalLabel: fmtBaht(officeTotal),
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Withholding-Payroll-List',
+          suggestedFileName: `Withholding-Payroll-List-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [
+      filteredWorker,
+      filteredOffice,
+      workerRows,
+      officeRows,
+      q,
+      monthFilter,
+      currentUser?.displayName,
+      toast,
+    ],
+  );
+
   if (isLoading || !currentUser) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -295,18 +467,26 @@ export default function AccountingWithholdingPayrollHubPage() {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">ค้นหาและกรองเดือน</CardTitle>
-            <CardDescription>ชื่อผู้มีเงินได้ เลขที่ชุดจ่าย / งวดออฟฟิศ / งวดผู้บริหาร รหัสบรรทัด หรือวันที่จ่าย — กรองเดือนใช้เดือนอ้างอิง (วันที่จ่าย หรือช่วงงวด / งวดเงินเดือน)</CardDescription>
-            <div className="flex flex-col gap-4 pt-3 sm:flex-row sm:items-end">
-              <div className="relative max-w-md flex-1">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input className="pl-9" placeholder="พิมพ์คำค้น..." value={q} onChange={(e) => setQ(e.target.value)} />
-              </div>
-              <div className="w-full space-y-1.5 rounded-lg border bg-muted/50 p-3 sm:max-w-[260px] sm:shrink-0">
-                <Label htmlFor="wht-month-filter" className="text-xs text-muted-foreground">
-                  กรองตามเดือน
-                </Label>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-md">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="h-10 pl-9"
+                    placeholder="พิมพ์คำค้น..."
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    aria-label="ค้นหารายการหัก ณ ที่จ่าย"
+                  />
+                </div>
                 <Select value={monthFilter} onValueChange={setMonthFilter}>
-                  <SelectTrigger id="wht-month-filter" className="bg-background">
+                  <SelectTrigger
+                    id="wht-month-filter"
+                    className="h-10 w-[min(100%,13rem)] shrink-0 bg-background"
+                    aria-label="กรองตามเดือน"
+                  >
                     <SelectValue placeholder="เลือกเดือน" />
                   </SelectTrigger>
                   <SelectContent>
@@ -319,13 +499,77 @@ export default function AccountingWithholdingPayrollHubPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="w-full rounded-lg border-2 border-primary/40 bg-primary/5 px-4 py-3 sm:max-w-[220px] sm:shrink-0">
-                <p className="text-xs font-medium text-muted-foreground">รวมลูกจ้าง + ออฟฟิศ (ในตาราง)</p>
-                <p className="text-2xl font-bold tabular-nums tracking-tight text-primary">{fmtBaht(grandTotalPit)}</p>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {!loadingBatches && !loadingRuns && !loadingWorkerLines && !loadingOfficeLines ? (
+                  <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-2 min-w-[11rem]">
+                    <p className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">
+                      รวมลูกจ้าง + ออฟฟิศ
+                    </p>
+                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(grandTotalPit)}</p>
+                  </div>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 shrink-0 gap-2"
+                  onClick={() => setPrintDialogOpen(true)}
+                >
+                  <Printer className="h-4 w-4" /> พิมพ์
+                </Button>
               </div>
             </div>
-          </CardHeader>
+          </CardContent>
         </Card>
+
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการหัก ณ ที่จ่าย (พนักงาน)</DialogTitle>
+              <DialogDescription>
+                รวมลูกจ้างและพนักงานออฟฟิศ — สูงสุด 500 รายการต่อครั้ง
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                <ul className="list-disc list-inside text-xs text-muted-foreground">
+                  {describeWithholdingPayrollPrintFilters(q, monthFilter).length > 0 ? (
+                    describeWithholdingPayrollPrintFilters(q, monthFilter).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))
+                  ) : (
+                    <li>ทุกเดือน — ไม่มีคำค้น</li>
+                  )}
+                </ul>
+                <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredRowCount} รายการ</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                ข้อมูลทั้งหมดในระบบ: {allRowCount} รายการ · รวม {fmtBaht(allWorkerTotalPit + allOfficeTotalTax)}
+              </p>
+            </div>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={printBusy || filteredRowCount === 0}
+                onClick={() => void runWithholdingPayrollListPrint('filtered')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ตามตัวกรอง ({filteredRowCount})
+              </Button>
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                disabled={printBusy || allRowCount === 0}
+                onClick={() => void runWithholdingPayrollListPrint('all')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ทั้งหมด ({allRowCount})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {listLoadErr ? (
           <p className="text-sm text-destructive">
@@ -368,33 +612,42 @@ export default function AccountingWithholdingPayrollHubPage() {
               </p>
             ) : (
               <div className="rounded-md border overflow-x-auto">
-                <Table>
+                <Table className="table-fixed w-full min-w-[760px]">
+                  {WHT_PAYROLL_TABLE_COLGROUP}
                   <TableHeader>
                     <TableRow>
                       <TableHead>สถานะงวด</TableHead>
                       <TableHead>ชุดจ่าย</TableHead>
                       <TableHead>ผู้มีเงินได้</TableHead>
                       <TableHead>วันที่จ่าย</TableHead>
+                      <TableHead className="text-right">ยอดจ่าย</TableHead>
                       <TableHead className="text-right">ยอดหัก</TableHead>
-                      <TableHead className="w-[100px]" />
+                      <TableHead className="text-right pr-3"> </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredWorker.map(({ batch, line, pit, paymentYmd }) => {
+                    {filteredWorker.map(({ batch, line, pit, paid, paymentYmd }) => {
                       const st = workerBatchStatusBadge(batch.status);
                       return (
                         <TableRow key={`${batch.id}-${line.id}`}>
                           <TableCell>
                             <Badge variant={st.variant === 'default' ? 'default' : 'secondary'}>{st.label}</Badge>
                           </TableCell>
-                          <TableCell className="font-mono text-sm">{batch.id}</TableCell>
-                          <TableCell className="max-w-[240px]">
-                            <div className="truncate font-medium">{line.workerNameSnapshot || '—'}</div>
-                            <div className="text-xs text-muted-foreground font-mono">{line.workerId}</div>
+                          <TableCell className="font-mono text-xs truncate" title={batch.id}>
+                            {batch.id}
+                          </TableCell>
+                          <TableCell className="max-w-0">
+                            <div className="truncate font-medium" title={line.workerNameSnapshot || '—'}>
+                              {line.workerNameSnapshot || '—'}
+                            </div>
+                            <div className="truncate text-xs text-muted-foreground font-mono">{line.workerId}</div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtBaht(pit)}</TableCell>
-                          <TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">{fmtBaht(paid)}</TableCell>
+                          <TableCell className="text-right tabular-nums text-sm font-semibold text-primary">
+                            {fmtBaht(pit)}
+                          </TableCell>
+                          <TableCell className="text-right pr-3">
                             <Link
                               href={`/accounting/withholding-payroll/worker/${encodeURIComponent(batch.id)}/${encodeURIComponent(line.id)}`}
                               className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
@@ -448,36 +701,45 @@ export default function AccountingWithholdingPayrollHubPage() {
               </p>
             ) : (
               <div className="rounded-md border overflow-x-auto">
-                <Table>
+                <Table className="table-fixed w-full min-w-[760px]">
+                  {WHT_PAYROLL_TABLE_COLGROUP}
                   <TableHeader>
                     <TableRow>
                       <TableHead>สถานะงวด</TableHead>
                       <TableHead>งวด</TableHead>
                       <TableHead>ผู้มีเงินได้</TableHead>
                       <TableHead>วันที่จ่าย</TableHead>
+                      <TableHead className="text-right">ยอดจ่าย</TableHead>
                       <TableHead className="text-right">ยอดหัก</TableHead>
-                      <TableHead className="w-[100px]" />
+                      <TableHead className="text-right pr-3"> </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredOffice.map(({ run, line, tax, paymentYmd }) => {
+                    {filteredOffice.map(({ run, line, tax, paid, paymentYmd }) => {
                       const st = officeRunStatusBadge(run.status);
                       return (
                         <TableRow key={`${run.id}-${line.id}`}>
                           <TableCell>
                             <Badge variant={st.variant === 'default' ? 'default' : 'secondary'}>{st.label}</Badge>
                           </TableCell>
-                          <TableCell className="text-sm">
-                            <div className="font-mono">{run.payrollRunNo || run.id}</div>
-                            <div className="text-xs text-muted-foreground">{run.payrollMonth || '—'}</div>
+                          <TableCell className="text-xs">
+                            <div className="font-mono truncate" title={run.payrollRunNo || run.id}>
+                              {run.payrollRunNo || run.id}
+                            </div>
+                            <div className="truncate text-muted-foreground">{run.payrollMonth || '—'}</div>
                           </TableCell>
-                          <TableCell className="max-w-[240px]">
-                            <div className="truncate font-medium">{line.staffName || '—'}</div>
-                            <div className="text-xs text-muted-foreground font-mono">{line.staffId}</div>
+                          <TableCell className="max-w-0">
+                            <div className="truncate font-medium" title={line.staffName || '—'}>
+                              {line.staffName || '—'}
+                            </div>
+                            <div className="truncate text-xs text-muted-foreground font-mono">{line.staffId}</div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtBaht(tax)}</TableCell>
-                          <TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">{fmtBaht(paid)}</TableCell>
+                          <TableCell className="text-right tabular-nums text-sm font-semibold text-primary">
+                            {fmtBaht(tax)}
+                          </TableCell>
+                          <TableCell className="text-right pr-3">
                             <Link
                               href={`/accounting/withholding-payroll/office/${encodeURIComponent(run.id)}/${encodeURIComponent(line.id)}`}
                               className="inline-flex items-center gap-1 text-sm text-primary hover:underline"

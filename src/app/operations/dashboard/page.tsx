@@ -219,7 +219,7 @@ export default function OperationsDashboardPage() {
       const workerLink =
         w.readinessStatus === 'BLOCKED'
           ? workerProfileHrefForReadiness(w.id, w.readinessStatus)
-          : `/workers/${w.id}?tab=certs`;
+          : `/workers/${w.id}?tab=credentials`;
       tasks.push({
         id: `worker-policy-${w.id}`,
         type: w.readinessStatus === 'BLOCKED' ? 'Blocked Assign' : 'Expiry Warning',

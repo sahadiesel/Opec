@@ -528,6 +528,57 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
       padding-top: 2mm;
     }
   }
+  /** รายงานรายการ (list print) — ไม่ใช้ sd-page; ลด padding และกันหน้าว่างท้ายเอกสาร */
+  body:has(.sd-list-report) {
+    padding: 8mm 10mm 8mm 10mm;
+    line-height: 1.35;
+  }
+  @media print {
+    html:has(.sd-list-report),
+    body:has(.sd-list-report) {
+      height: auto !important;
+      min-height: 0 !important;
+      overflow: visible !important;
+    }
+    body:has(.sd-list-report) {
+      padding: 4mm 6mm 4mm 6mm !important;
+    }
+    body:has(.sd-list-report) script,
+    body:has(.sd-list-report) textarea {
+      display: none !important;
+      height: 0 !important;
+      overflow: hidden !important;
+      visibility: hidden !important;
+    }
+    .sd-list-report {
+      page-break-after: avoid;
+      break-after: avoid-page;
+    }
+    .sd-list-report > :last-child {
+      page-break-after: avoid;
+      break-after: avoid-page;
+    }
+    .sd-list-report [class$="-totals"] {
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .sd-list-report [class$="-total-box"] {
+      padding: 4px 8px;
+      min-width: 0;
+    }
+    .sd-list-report [class$="-table"] {
+      font-size: 8pt;
+    }
+    .sd-list-report [class$="-table"] th,
+    .sd-list-report [class$="-table"] td {
+      padding: 3px 5px;
+    }
+    .sd-list-report [class$="-foot"] {
+      margin-top: 4px;
+      page-break-before: avoid;
+      break-before: avoid-page;
+    }
+  }
 `;
 
 /**

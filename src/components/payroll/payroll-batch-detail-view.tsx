@@ -62,6 +62,12 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
 import {
+  buildWorkerPayrollBatchLinesListPrintHtml,
+  capWorkerPayrollBatchLinePrintRows,
+  type WorkerPayrollBatchLinePrintRow,
+} from '@/lib/documents/worker-payroll-batch-lines-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -108,6 +114,7 @@ export function PayrollBatchDetailView({
   const firestore = useFirestore();
   const useMatrixGuards = isMatrixControlledRole(currentUser);
   const [bankCsvBusy, setBankCsvBusy] = useState(false);
+  const [listPrintBusy, setListPrintBusy] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmPaidOpen, setConfirmPaidOpen] = useState(false);
   const [confirmLineIds, setConfirmLineIds] = useState<Set<string>>(() => new Set());
@@ -275,6 +282,77 @@ export function PayrollBatchDetailView({
       setBankCsvBusy(false);
     }
   }, [batch, linesSorted, firestore, toast]);
+
+  const handlePrintSettlementLines = useCallback(async () => {
+    if (!batch || linesSorted.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีรายการให้พิมพ์',
+        description: 'งวดนี้ยังไม่มีบรรทัด settlement',
+      });
+      return;
+    }
+
+    const fmtBaht = (n: number) =>
+      `฿${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    const sourceRows: WorkerPayrollBatchLinePrintRow[] = linesSorted.map((line) => {
+      const financePaid = !!(line as PayrollBatchLine).financePayoutCashbookEntryId;
+      const statusParts = [line.exportStatus || '—'];
+      if (financePaid) statusParts.push('บัญชี: จ่ายแล้ว');
+      else if (batch.status === 'FINANCE_PREPARED' || batch.status === 'PAYMENT_EXPORTED') {
+        statusParts.push('บัญชี: รอตัด');
+      }
+      return {
+        workerName: line.workerNameSnapshot || '—',
+        workerId: line.workerId,
+        paymentMethod: line.workerPaymentProfileSnapshot?.paymentMethod || 'CASH',
+        statusLabel: statusParts.join(' · '),
+        grossLabel: fmtBaht(safeNum(line.grossAmount)),
+        deductionsLabel: fmtBaht(lineDeductionsTotal(line)),
+        netLabel: fmtBaht(safeNum(line.netAmount)),
+      };
+    });
+
+    setListPrintBusy(true);
+    try {
+      const { rows, truncated } = capWorkerPayrollBatchLinePrintRows(sourceRows);
+      const generatedAt = new Date().toLocaleString('th-TH', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+      const body = buildWorkerPayrollBatchLinesListPrintHtml({
+        batchId: batch.id,
+        periodLabel: period?.label || batch.payrollPeriodId,
+        batchStatusLabel: workerPayrollBatchStatusLabelTh(batch.status),
+        rows,
+        workerCountLabel: String(safeNum(batch.totalWorkers)),
+        grossTotalLabel: fmtBaht(safeNum(batch.grossAmount)),
+        deductionsTotalLabel: fmtBaht(safeNum(batch.totalDeductions)),
+        netTotalLabel: fmtBaht(safeNum(batch.netAmount)),
+        generatedAt,
+        printedBy: currentUser?.displayName,
+        truncated,
+      });
+
+      const ok = await openStandardPrintWindow({
+        windowTitle: 'Worker-Payroll-Batch-Lines',
+        suggestedFileName: `Worker-Payroll-Batch-${batch.id}`,
+        bodyInnerHtml: body,
+        htmlLang: 'th',
+      });
+
+      if (!ok) {
+        toast({
+          variant: 'destructive',
+          title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+          description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+        });
+      }
+    } finally {
+      setListPrintBusy(false);
+    }
+  }, [batch, linesSorted, period?.label, currentUser?.displayName, toast]);
 
   const handleOfficerSubmitForPayout = useCallback(async () => {
     if (!firestore || !batch || !currentUser) return;
@@ -617,13 +695,14 @@ export function PayrollBatchDetailView({
                   <span className="font-mono text-xs">PAID</span> เมื่อครบทุกแถว
                 </p>
               )}
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
                 {canBankCheckCsv && linesSorted.length > 0 && (
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="gap-2"
+                    className="gap-2 h-10"
                     disabled={bankCsvBusy}
                     onClick={() => void handleDownloadBankCsv()}
                   >
@@ -695,6 +774,23 @@ export function PayrollBatchDetailView({
                   <span className="text-xs text-muted-foreground font-mono">
                     Cashbook ref: {batch.financeCashbookEntryId}
                   </span>
+                ) : null}
+                </div>
+                {linesSorted.length > 0 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 shrink-0 gap-2"
+                    disabled={listPrintBusy}
+                    onClick={() => void handlePrintSettlementLines()}
+                  >
+                    {listPrintBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Printer className="h-4 w-4" />
+                    )}
+                    พิมพ์รายการ
+                  </Button>
                 ) : null}
               </div>
             </CardContent>

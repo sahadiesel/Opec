@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useEffect, useRef } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { 
@@ -34,6 +34,11 @@ import {
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, limit, orderBy } from 'firebase/firestore';
+import { reconcileAllStaleArEntries } from '@/lib/services/reconcile-stale-ar-from-receipts';
+import {
+  buildSupersededCommercialInvoiceIds,
+  filterSupersededCommercialArEntries,
+} from '@/lib/accounts-receivable/ar-list-display';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
@@ -45,6 +50,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 export default function AccountingDashboardPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
+  const staleArReconcileRan = useRef(false);
 
   const isAccountingAuthorized = useMemo(() => {
     return isSystemAdmin(currentUser) || canSeeAccountingPillarUi(currentUser, null);
@@ -73,6 +79,17 @@ export default function AccountingDashboardPage() {
     return query(collection(firestore, 'accounts_receivable'), where('status', 'in', ['OPEN', 'PARTIALLY_PAID', 'OVERDUE']));
   }, [firestore, isAccountingAuthorized]);
   const { data: arItems } = useCollection<AccountsReceivable>(arQuery as any);
+
+  const issuedTaxForArQuery = useMemoFirebase(() => {
+    if (!firestore || !isAccountingAuthorized) return null;
+    return query(collection(firestore, 'tax_invoices'), where('status', '==', 'ISSUED'), limit(200));
+  }, [firestore, isAccountingAuthorized]);
+  const { data: issuedTaxForAr } = useCollection<TaxInvoice>(issuedTaxForArQuery as any);
+
+  const visibleArItems = useMemo(() => {
+    const superseded = buildSupersededCommercialInvoiceIds({ taxInvoices: issuedTaxForAr });
+    return filterSupersededCommercialArEntries(arItems ?? [], superseded);
+  }, [arItems, issuedTaxForAr]);
 
   const apQuery = useMemoFirebase(() => {
     if (!firestore || !isAccountingAuthorized) return null;
@@ -103,12 +120,12 @@ export default function AccountingDashboardPage() {
     return {
       pendingBilling: commercialDrafts?.length || 0,
       draftInvoices: draftInvoices?.length || 0,
-      outstandingAR: arItems?.reduce((sum, item) => sum + item.outstandingAmount, 0) || 0,
+      outstandingAR: visibleArItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
       pendingAP: apItems?.reduce((sum, item) => sum + item.outstandingAmount, 0) || 0,
       payrollWaiting: pendingPayroll?.length || 0,
       totalCash: bankAccounts?.reduce((sum, acc) => sum + acc.currentBalance, 0) || 0,
     };
-  }, [commercialDrafts, draftInvoices, arItems, apItems, pendingPayroll, bankAccounts]);
+  }, [commercialDrafts, draftInvoices, visibleArItems, apItems, pendingPayroll, bankAccounts]);
 
   const urgentTasks = useMemo(() => {
     const tasks: any[] = [];
@@ -126,7 +143,7 @@ export default function AccountingDashboardPage() {
     });
 
     // Overdue AR
-    arItems?.filter(item => item.status === 'OVERDUE').forEach(item => {
+    visibleArItems.filter(item => item.status === 'OVERDUE').forEach(item => {
       tasks.push({
         id: item.id,
         type: 'Collection',
@@ -151,7 +168,15 @@ export default function AccountingDashboardPage() {
     });
 
     return tasks;
-  }, [pendingPayroll, arItems, draftInvoices]);
+  }, [pendingPayroll, visibleArItems, draftInvoices]);
+
+  useEffect(() => {
+    if (!firestore || !isAccountingAuthorized || staleArReconcileRan.current) return;
+    staleArReconcileRan.current = true;
+    void reconcileAllStaleArEntries(firestore).catch((e) => {
+      console.error('Batch AR reconcile failed', e);
+    });
+  }, [firestore, isAccountingAuthorized]);
 
   if (userLoading || !currentUser) return null;
 
@@ -199,6 +224,58 @@ export default function AccountingDashboardPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Action Queue Section */}
           <div className="lg:col-span-2 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Card className="shadow-md border-none overflow-hidden">
+                <CardHeader className="bg-primary/5 border-b pb-4">
+                  <CardTitle className="text-sm font-bold flex items-center gap-2">
+                    <History className="h-4 w-4 text-primary" /> รายการลูกหนี้ค้างชำระ (Recent AR)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="divide-y">
+                    {visibleArItems.slice(0, 5).map(item => (
+                      <div key={item.id} className="p-3 flex items-center justify-between text-xs">
+                        <div className="space-y-0.5">
+                          <p className="font-bold">{item.documentNo}</p>
+                          <p className="text-muted-foreground font-mono">Due: {item.dueDate}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-black text-blue-700">฿{item.outstandingAmount.toLocaleString()}</p>
+                          <Badge variant="outline" className="text-[8px] h-4">{item.status}</Badge>
+                        </div>
+                      </div>
+                    ))}
+                    {visibleArItems.length === 0 && <p className="p-10 text-center text-xs text-muted-foreground italic">No outstanding AR</p>}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="shadow-md border-none overflow-hidden">
+                <CardHeader className="bg-primary/5 border-b pb-4">
+                  <CardTitle className="text-sm font-bold flex items-center gap-2">
+                    <History className="h-4 w-4 text-red-600" /> รายการเจ้าหนี้ค้างชำระ (Recent AP)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="divide-y">
+                    {apItems?.slice(0, 5).map(item => (
+                      <div key={item.id} className="p-3 flex items-center justify-between text-xs">
+                        <div className="space-y-0.5">
+                          <p className="font-bold">{item.documentNo}</p>
+                          <p className="text-muted-foreground font-mono">Due: {item.dueDate}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-black text-red-600">฿{item.outstandingAmount.toLocaleString()}</p>
+                          <Badge variant="outline" className="text-[8px] h-4">{item.status}</Badge>
+                        </div>
+                      </div>
+                    ))}
+                    {(!apItems || apItems.length === 0) && <p className="p-10 text-center text-xs text-muted-foreground italic">No outstanding AP</p>}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
             <Card className="shadow-md border-none overflow-hidden">
               <CardHeader className="bg-primary/5 border-b pb-4">
                 <div className="flex items-center justify-between">
@@ -249,58 +326,6 @@ export default function AccountingDashboardPage() {
                 </Button>
               </CardFooter>
             </Card>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card className="shadow-md border-none overflow-hidden">
-                <CardHeader className="bg-primary/5 border-b pb-4">
-                  <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <History className="h-4 w-4 text-primary" /> รายการลูกหนี้ค้างชำระ (Recent AR)
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="divide-y">
-                    {arItems?.slice(0, 5).map(item => (
-                      <div key={item.id} className="p-3 flex items-center justify-between text-xs">
-                        <div className="space-y-0.5">
-                          <p className="font-bold">{item.documentNo}</p>
-                          <p className="text-muted-foreground font-mono">Due: {item.dueDate}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-black text-blue-700">฿{item.outstandingAmount.toLocaleString()}</p>
-                          <Badge variant="outline" className="text-[8px] h-4">{item.status}</Badge>
-                        </div>
-                      </div>
-                    ))}
-                    {(!arItems || arItems.length === 0) && <p className="p-10 text-center text-xs text-muted-foreground italic">No outstanding AR</p>}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="shadow-md border-none overflow-hidden">
-                <CardHeader className="bg-primary/5 border-b pb-4">
-                  <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <History className="h-4 w-4 text-red-600" /> รายการเจ้าหนี้ค้างชำระ (Recent AP)
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="divide-y">
-                    {apItems?.slice(0, 5).map(item => (
-                      <div key={item.id} className="p-3 flex items-center justify-between text-xs">
-                        <div className="space-y-0.5">
-                          <p className="font-bold">{item.documentNo}</p>
-                          <p className="text-muted-foreground font-mono">Due: {item.dueDate}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-black text-red-600">฿{item.outstandingAmount.toLocaleString()}</p>
-                          <Badge variant="outline" className="text-[8px] h-4">{item.status}</Badge>
-                        </div>
-                      </div>
-                    ))}
-                    {(!apItems || apItems.length === 0) && <p className="p-10 text-center text-xs text-muted-foreground italic">No outstanding AP</p>}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
           </div>
 
           {/* Sidebar Section */}

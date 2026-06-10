@@ -1,23 +1,23 @@
 
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { 
-  ArrowDownLeft, 
-  Search, 
-  Building2, 
+import {
+  ArrowDownLeft,
+  Search,
+  Building2,
   Calendar,
-  AlertCircle,
   Clock,
-  CircleDollarSign,
-  Info
+  Info,
+  Printer,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { AccountsPayable, APStatus, User, Vendor } from '@/lib/types';
+import { AccountsPayable, APStatus, Vendor } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -25,12 +25,36 @@ import { canView } from '@/lib/permissions';
 import { collection, query, orderBy } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { formatPayrollYearMonthThaiBE } from '@/lib/date-thai';
+import { useToast } from '@/hooks/use-toast';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  buildAccountsPayableListPrintHtml,
+  capAccountsPayableListPrintRows,
+  describeAccountsPayableListPrintFilters,
+  type AccountsPayableListPrintRow,
+} from '@/lib/documents/accounts-payable-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 
+function formatApMoney(amount: number): string {
+  return `฿ ${amount.toLocaleString()}`;
+}
+
+function apStatusPrintLabel(status: APStatus): string {
+  if (status === 'PARTIALLY_PAID') return 'PARTIAL';
+  return status;
+}
 export default function AccountsPayablePage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
-  const { user: firebaseUser, isUserLoading } = useUser();
+  const { isUserLoading } = useUser();
   const firestore = useFirestore();
-
+  const { toast } = useToast();
   const isAuthorized = useMemo(
     () => !!currentUser && canView(currentUser, 'accounts_payable'),
     [currentUser]
@@ -51,7 +75,8 @@ export default function AccountsPayablePage() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
-
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
   const vendorById = useMemo(() => {
     const m = new Map<string, Vendor>();
     for (const v of vendors ?? []) m.set(v.id, v);
@@ -85,17 +110,100 @@ export default function AccountsPayablePage() {
   }, [monthFilteredItems, searchQuery, vendorById]);
 
   const stats = useMemo(() => {
+    const all = apItems ?? [];
     return {
-      totalOutstanding: monthFilteredItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
+      globalOutstanding: all.reduce((sum, item) => sum + item.outstandingAmount, 0),
+      monthOutstanding: monthFilteredItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
       overdue: monthFilteredItems
         .filter((item) => item.status === 'OVERDUE')
         .reduce((sum, item) => sum + item.outstandingAmount, 0),
       paid: monthFilteredItems.reduce((sum, item) => sum + item.creditAmount, 0),
     };
-  }, [monthFilteredItems]);
+  }, [apItems, monthFilteredItems]);
 
-  const getStatusBadge = (status: APStatus) => {
-    switch (status) {
+  const printFilterSummary = useMemo(
+    () => ({ searchTerm: searchQuery, monthYyyyMm: monthYm }),
+    [searchQuery, monthYm],
+  );
+
+  const buildPrintRows = useCallback(
+    (list: AccountsPayable[]): AccountsPayableListPrintRow[] =>
+      list.map((item) => {
+        const vendor = vendorById.get(item.vendorId);
+        return {
+          vendorName: vendor?.vendorName || 'N/A',
+          documentNo: item.documentNo || '—',
+          billDate: item.billDate || '—',
+          dueDate: item.dueDate || '—',
+          debitLabel: formatApMoney(item.debitAmount ?? 0),
+          creditLabel: formatApMoney(item.creditAmount ?? 0),
+          outstandingLabel: formatApMoney(item.outstandingAmount ?? 0),
+          status: apStatusPrintLabel(item.status),
+        };
+      }),
+    [vendorById],
+  );
+
+  const runAccountsPayableListPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const source = scope === 'filtered' ? filteredItems : apItems ?? [];
+      if (source.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
+              : 'ยังไม่มีรายการเจ้าหนี้ในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const { rows, truncated } = capAccountsPayableListPrintRows(buildPrintRows(source));
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines =
+          scope === 'filtered' ? describeAccountsPayableListPrintFilters(printFilterSummary) : [];
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
+
+        const body = buildAccountsPayableListPrintHtml({
+          rows,
+          scopeTitle,
+          filterLines,
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Accounts-Payable-List',
+          suggestedFileName: `Accounts-Payable-List-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [filteredItems, apItems, buildPrintRows, printFilterSummary, currentUser?.displayName, toast],
+  );
+
+  const getStatusBadge = (status: APStatus) => {    switch (status) {
       case 'OPEN': return <Badge variant="outline" className="border-blue-200 text-blue-700 bg-blue-50">OPEN</Badge>;
       case 'PARTIALLY_PAID': return <Badge variant="outline" className="border-amber-200 text-amber-700 bg-amber-50">PARTIAL</Badge>;
       case 'PAID': return <Badge className="bg-green-600">PAID</Badge>;
@@ -118,15 +226,24 @@ export default function AccountsPayablePage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <Card className="border-l-8 border-l-blue-600">
             <CardHeader className="pb-2">
               <CardTitle className="text-xs font-bold uppercase text-muted-foreground">ยอดเจ้าหนี้ค้างจ่ายทั้งหมด</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black text-primary">฿ {stats.totalOutstanding.toLocaleString()}</div>
+              <div className="text-3xl font-black text-primary">฿ {stats.globalOutstanding.toLocaleString()}</div>
+              <p className="text-[10px] text-muted-foreground mt-1">ทุกรายการในระบบ — ไม่กรองตามเดือน</p>
+            </CardContent>
+          </Card>
+          <Card className="border-l-8 border-l-indigo-600">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-bold uppercase text-muted-foreground">ยอดค้างจ่ายตามเดือน</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-black text-indigo-700">฿ {stats.monthOutstanding.toLocaleString()}</div>
               <p className="text-[10px] text-muted-foreground mt-1">
-                งวด {formatPayrollYearMonthThaiBE(monthYm)} · จากใบแจ้งหนี้ในเดือนที่เลือก
+                งวด {formatPayrollYearMonthThaiBE(monthYm)} · จากใบในเดือนที่เลือก
               </p>
             </CardContent>
           </Card>
@@ -174,30 +291,80 @@ export default function AccountsPayablePage() {
           </AlertDescription>
         </Alert>
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="relative w-full max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <div className="flex flex-col gap-3 bg-card p-4 rounded-lg border shadow-sm lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="ค้นหาชื่อคู่ค้า หรือ เลขที่เอกสาร..."
-                className="pl-9 h-11"
+                className="pl-9 h-10"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                aria-label="ค้นหาเจ้าหนี้"
               />
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Calendar className="h-4 w-4 text-muted-foreground hidden sm:block" aria-hidden />
-              <Input
-                type="month"
-                className="h-11 w-[min(100%,11rem)] font-mono"
-                value={monthYm}
-                onChange={(e) => setMonthYm(e.target.value)}
-                aria-label="กรองตามเดือน"
-              />
-            </div>
+            <Input
+              type="month"
+              className="h-10 w-[11rem] shrink-0 font-mono"
+              value={monthYm}
+              onChange={(e) => setMonthYm(e.target.value)}
+              aria-label="กรองตามเดือนเอกสาร"
+              title="เดือนเอกสาร"
+            />
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 shrink-0 gap-2"
+            onClick={() => setPrintDialogOpen(true)}
+          >
+            <Printer className="h-4 w-4" /> พิมพ์รายการ
+          </Button>
         </div>
 
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการเจ้าหนี้การค้า</DialogTitle>
+              <DialogDescription>
+                เลือกพิมพ์ตามตัวกรองเดือน/ค้นหาปัจจุบัน หรือพิมพ์ทุกรายการในชุดข้อมูลล่าสุด (สูงสุด 500 รายการ)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                <ul className="list-disc list-inside text-xs text-muted-foreground">
+                  {describeAccountsPayableListPrintFilters(printFilterSummary).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+                <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredItems.length} รายการ</p>
+              </div>
+              <p className="text-xs text-muted-foreground">ข้อมูลทั้งหมดในระบบ: {apItems?.length ?? 0} รายการ</p>
+            </div>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={printBusy || filteredItems.length === 0}
+                onClick={() => void runAccountsPayableListPrint('filtered')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ตามตัวกรอง ({filteredItems.length})
+              </Button>
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                disabled={printBusy || !(apItems?.length)}
+                onClick={() => void runAccountsPayableListPrint('all')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ทั้งหมด ({apItems?.length ?? 0})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isLoading ? (

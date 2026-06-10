@@ -226,7 +226,7 @@ export default function HRDashboardPage() {
           label: `${w.firstName} ${w.lastName}`,
           sub: `เอกสารใกล้หมดอายุใน ${w.nearestExpiryInDays ?? '-'} วัน`,
           status: 'WARNING',
-          link: `/workers/${w.id}?tab=certs`,
+          link: `/workers/${w.id}?tab=credentials`,
           priority: 'medium',
           icon: AlertTriangle,
         });

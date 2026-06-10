@@ -15,6 +15,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "migrate:fix-receipt-wht": "npx --yes tsx scripts/fix-money-receipt-wht-amounts.ts",
+    "migrate:reconcile-ar": "npx --yes tsx scripts/reconcile-duplicate-commercial-ar.ts",
     "migrate:phase5": "npx --yes tsx scripts/phase5-strip-position-rate-cost-baseline.ts",
     "migrate:phase6": "npx --yes tsx scripts/phase6-strip-main-contract-costing-denorm.ts",
     "migrate:po-active-phase1": "npx --yes tsx scripts/po-active-workflow-phase1-migration.ts",

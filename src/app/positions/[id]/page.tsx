@@ -269,10 +269,10 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
   const certCatalogOptions = useMemo(
     () =>
       (workerDocCatalog || [])
-        .filter((x) => x.active !== false)
+        .filter((x) => x.active !== false && (x.requirementType || 'certificate') === 'certificate')
         .map((x) => ({
           id: x.id,
-          label: `${x.itemName} - ${x.requirementType}`,
+          label: `${x.itemName} - certificate`,
           searchText: [x.itemName, x.itemCode, x.requirementType, x.description].filter(Boolean).join(' '),
         })),
     [workerDocCatalog],
@@ -406,6 +406,14 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     if (!certsQuery) return;
     if (!selectedCatalogItem) {
       toast({ variant: 'destructive', title: 'ยังไม่ได้เลือกเอกสารกลาง', description: 'กรุณาเลือกรายการจากเมนูรายการเอกสารกลางก่อนบันทึก' });
+      return;
+    }
+    if ((selectedCatalogItem.requirementType || 'certificate') !== 'certificate') {
+      toast({
+        variant: 'destructive',
+        title: 'ประเภทไม่ถูกต้อง',
+        description: 'เกณฑ์ตำแหน่งงานเลือกได้เฉพาะรายการประเภท certificate',
+      });
       return;
     }
     addDocumentNonBlocking(certsQuery, {
@@ -789,7 +797,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     <DialogContent>
                       <DialogHeader>
                         <DialogTitle>เพิ่มเกณฑ์ใบรับรอง</DialogTitle>
-                        <DialogDescription>กำหนดมาตรฐานใบรับรองสำหรับตำแหน่งงานนี้</DialogDescription>
+                        <DialogDescription>กำหนดมาตรฐานใบรับรองสำหรับตำแหน่งงาน — เลือกได้เฉพาะประเภท certificate</DialogDescription>
                       </DialogHeader>
                       <div className="grid gap-4 py-4">
                         <SearchableSelect
@@ -800,7 +808,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                           onChange={(v) => setNewCert({ ...newCert, templateId: v ?? '' })}
                           placeholder="เลือกเอกสารกลาง..."
                           searchPlaceholder="ค้นหาชื่อหรือรหัสใบเซอร์…"
-                          emptyMessage="ไม่พบเอกสารกลาง"
+                          emptyMessage="ไม่พบใบเซอร์ (certificate) ในเอกสารกลาง"
                         />
                         {selectedCatalogItem && (
                           <div className="text-xs rounded-lg border p-3 bg-muted/20">

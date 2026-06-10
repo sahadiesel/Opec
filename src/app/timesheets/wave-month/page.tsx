@@ -17,6 +17,7 @@ import {
   ImagePlus,
   Loader2,
   Lock,
+  Printer,
   Send,
   Trash2,
   Unlock,
@@ -83,6 +84,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { TimesheetService } from '@/lib/services/timesheet-service';
 import { cn } from '@/lib/utils';
+import { formatPayrollYearMonthThaiBE } from '@/lib/date-thai';
+import { buildWaveMonthTimesheetGridPrintHtml } from '@/lib/documents/wave-month-timesheet-grid-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import {
   ensureOpenPayrollPeriodForWaveMonthReview,
   markTimesheetsReadyForPayrollAfterMonthApproval,
@@ -188,6 +192,7 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [savingCell, setSavingCell] = useState(false);
   /** ยืนยันใน Dialog เดียว — ไม่ใช้ AlertDialog ซ้อน (กันค้าง overlay/focus) */
   const [cellSaveAwaitingConfirm, setCellSaveAwaitingConfirm] = useState(false);
+  const [gridPrintBusy, setGridPrintBusy] = useState(false);
   const payrollAutoHealRef = useRef<Set<string>>(new Set());
   const poMonthPanelRef = useRef<TimesheetPoMonthPanelHandle>(null);
   const [poToolbarSnapshots, setPoToolbarSnapshots] = useState<TimesheetPoMonthToolbarSnapshot[]>([]);
@@ -884,6 +889,106 @@ export default function WaveMonthTimesheetSummaryPage() {
     return out;
   }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments]);
 
+  const handlePrintGridTable = useCallback(async () => {
+    if (dedupedTableRows.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีตารางให้พิมพ์',
+        description: 'ยังไม่มีแถวในงวดที่เลือก — เลือกชุด PO และเดือนก่อน',
+      });
+      return;
+    }
+
+    setGridPrintBusy(true);
+    try {
+      const printRows = dedupedTableRows.map((tr) => {
+        const { wave, rw, rosterAssignment } = tr;
+        const alternateMobIds = mobAssignments
+          .filter((m) => m.waveId === wave.id && m.workerId === rw.workerId && m.id !== rosterAssignment.id)
+          .map((m) => m.id);
+        const dayCells = days.map((d) => {
+          const inMobWindow = isYmdWithinAssignmentMobTimesheetWindow(rosterAssignment, d);
+          const ts = resolveTimesheetForWaveMonthCell(
+            wave.id,
+            rw.workerId,
+            d,
+            rosterAssignment.id,
+            sheetsByWaveWorker,
+            monthSheetsForOpenPos,
+            poTimesheetScopeId(rosterAssignment.poId),
+            rosterAssignment,
+            alternateMobIds,
+          );
+          if (!inMobWindow && !ts) return '-';
+          if (ts) return timesheetWaveMonthCellDisplay(ts);
+          return '-';
+        });
+        const rowKey = `${wave.id}|${rw.workerId}|${rosterAssignment.id}`;
+        const positionLabel =
+          positionLabelById.get((rosterAssignment.positionId || '').trim()) ||
+          rosterAssignment.positionId ||
+          '—';
+        return {
+          workerName: rw.name,
+          waveCode: wave.waveCode?.trim() || wave.id,
+          positionLabel,
+          dayCells,
+          workHoursTotal: String(rowWorkHoursMonthTotalByKey.get(rowKey) ?? 0),
+          standbyHoursTotal: String(rowStandbyHoursMonthTotalByKey.get(rowKey) ?? 0),
+        };
+      });
+
+      const generatedAt = new Date().toLocaleString('th-TH', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+      const summaryLine = `Wave ในตาราง ${displayWaves.length} · PO ในชุด ${scopedPoIdSet.size}`;
+      const body = buildWaveMonthTimesheetGridPrintHtml({
+        monthLabel: formatPayrollYearMonthThaiBE(monthYm),
+        monthYm,
+        bundleLabel: activeBundleLabel,
+        summaryLine,
+        dayHeaders: days.map((d) => d.slice(8, 10)),
+        rows: printRows,
+        generatedAt,
+        printedBy: currentUser?.displayName,
+      });
+
+      const ok = await openStandardPrintWindow({
+        windowTitle: 'Wave-Month-Timesheet-Grid',
+        suggestedFileName: `Timesheet-Grid-${monthYm}${effectiveBundleId ? `-${effectiveBundleId.slice(0, 12)}` : ''}`,
+        bodyInnerHtml: body,
+        htmlLang: 'th',
+      });
+
+      if (!ok) {
+        toast({
+          variant: 'destructive',
+          title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+          description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+        });
+      }
+    } finally {
+      setGridPrintBusy(false);
+    }
+  }, [
+    dedupedTableRows,
+    days,
+    mobAssignments,
+    sheetsByWaveWorker,
+    monthSheetsForOpenPos,
+    positionLabelById,
+    rowWorkHoursMonthTotalByKey,
+    rowStandbyHoursMonthTotalByKey,
+    displayWaves.length,
+    scopedPoIdSet.size,
+    monthYm,
+    activeBundleLabel,
+    effectiveBundleId,
+    currentUser?.displayName,
+    toast,
+  ]);
+
   const openCellEdit = useCallback(
     (
       wave: Wave,
@@ -1385,23 +1490,41 @@ export default function WaveMonthTimesheetSummaryPage() {
             {!needsBundlePick ? (
             <Card id="wave-month-timesheet-grid">
               <CardHeader className="space-y-4">
-                <div className="min-w-0 flex-1 space-y-1">
-                  <CardTitle className="text-base">สรุปลงเวลารายเดือน</CardTitle>
-                  <CardDescription className="space-y-2">
-                    {activeBundleLabel ? (
-                      <p className="font-medium text-foreground">{activeBundleLabel}</p>
-                    ) : null}
-                    <p>
-                      พบ {sortedWaves.length} Wave สถานะเปิด · แสดงในตาราง {displayWaves.length} Wave
-                      {pos != null ? ` · ${scopedPoIdSet.size} PO ในชุดนี้` : ''}
-                      · ปิดงวด/แนบไฟล์รวมชุด PO Active ด้านบน
-                    </p>
-                    <p>
-                      แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ ·{' '}
-                      <strong>รวมชม.</strong> = ชม.ทำงาน (W) และชม. Standby (SB/MO) แยกคอลัมน์ — นับเฉพาะวันที่อยู่ในช่วง mobilization ของแถว
-                      (วันที่อยู่นอกหน้าต่างอาจแสดง W พร้อมวงแหวนแต่ไม่รวมในยอดรวม)
-                    </p>
-                  </CardDescription>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <CardTitle className="text-base">สรุปลงเวลารายเดือน</CardTitle>
+                    <CardDescription className="space-y-2">
+                      {activeBundleLabel ? (
+                        <p className="font-medium text-foreground">{activeBundleLabel}</p>
+                      ) : null}
+                      <p>
+                        พบ {sortedWaves.length} Wave สถานะเปิด · แสดงในตาราง {displayWaves.length} Wave
+                        {pos != null ? ` · ${scopedPoIdSet.size} PO ในชุดนี้` : ''}
+                        · ปิดงวด/แนบไฟล์รวมชุด PO Active ด้านบน
+                      </p>
+                      <p>
+                        แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ ·{' '}
+                        <strong>รวมชม.</strong> = ชม.ทำงาน (W) และชม. Standby (SB/MO) แยกคอลัมน์ — นับเฉพาะวันที่อยู่ในช่วง mobilization ของแถว
+                        (วันที่อยู่นอกหน้าต่างอาจแสดง W พร้อมวงแหวนแต่ไม่รวมในยอดรวม)
+                      </p>
+                    </CardDescription>
+                  </div>
+                  {dedupedTableRows.length > 0 ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 shrink-0 gap-2"
+                      disabled={gridPrintBusy}
+                      onClick={() => void handlePrintGridTable()}
+                    >
+                      {gridPrintBusy ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Printer className="h-4 w-4" />
+                      )}
+                      พิมพ์ตาราง
+                    </Button>
+                  ) : null}
                 </div>
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">

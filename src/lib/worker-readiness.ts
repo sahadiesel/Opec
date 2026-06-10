@@ -13,13 +13,12 @@ export function workerProfileHrefForReadiness(workerId: string, readinessStatus:
   switch (readinessStatus) {
     case 'MISSING_CERTIFICATE':
     case 'DOCUMENT_EXPIRED':
-      return `${base}?tab=certs`;
+    case 'INCOMPLETE':
+      return `${base}?tab=credentials`;
     case 'MEDICAL_EXPIRED':
       return `${base}?tab=medical`;
     case 'DRUG_TEST_EXPIRED':
       return `${base}?tab=drug`;
-    case 'INCOMPLETE':
-      return `${base}?tab=docs`;
     default:
       return base;
   }

@@ -15,6 +15,14 @@ import { addDocumentNonBlocking, deleteDocumentNonBlocking, updateDocumentNonBlo
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
+  STORE_CATALOG_TABLE_CLASS,
+  StoreCatalogColGroup,
+  StoreCatalogViewVariantsButton,
+  STORE_CATALOG_ROW_ACTION_BTN_CLASS,
+  storeCatalogCol as sc,
+  useStoreCatalogVariantExpansion,
+} from '@/components/store/store-catalog-table-layout';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -71,8 +79,6 @@ function buildPpeDisplayRows(items: StoreItem[]): PpeDisplayRow[] {
       (a.variantSpecification || '').localeCompare(b.variantSpecification || '', 'th'),
     );
   }
-  headers.sort((a, b) => (a.itemName || '').localeCompare(b.itemName || '', 'th'));
-  standalones.sort((a, b) => (a.itemName || '').localeCompare(b.itemName || '', 'th'));
 
   const rows: PpeDisplayRow[] = [];
   for (const h of headers) {
@@ -81,6 +87,11 @@ function buildPpeDisplayRows(items: StoreItem[]): PpeDisplayRow[] {
   for (const it of standalones) {
     rows.push({ kind: 'standalone', item: it });
   }
+  rows.sort((a, b) => {
+    const nameA = a.kind === 'group' ? a.header.itemName || '' : a.item.itemName || '';
+    const nameB = b.kind === 'group' ? b.header.itemName || '' : b.item.itemName || '';
+    return nameA.localeCompare(nameB, 'th');
+  });
   return rows;
 }
 
@@ -160,6 +171,8 @@ export default function StorePpeCatalogPage() {
     () => filterPpeDisplayRows(displayRows, searchQuery, categoryFilter),
     [displayRows, searchQuery, categoryFilter],
   );
+
+  const { isVariantExpanded, toggleVariantExpanded } = useStoreCatalogVariantExpansion();
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createMode, setCreateMode] = useState<PpeCreateMode>('main');
@@ -910,49 +923,54 @@ export default function StorePpeCatalogPage() {
             {isLoading ? (
               <div className="py-20 text-center text-muted-foreground animate-pulse">กำลังโหลดข้อมูล...</div>
             ) : (
-              <Table>
+              <Table className={STORE_CATALOG_TABLE_CLASS}>
+                <StoreCatalogColGroup />
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4 pl-6">รหัส</TableHead>
-                    <TableHead className="font-bold">ชื่อหลัก</TableHead>
-                    <TableHead className="font-bold">ขนาด/รุ่น</TableHead>
-                    <TableHead className="font-bold">หมวดหมู่</TableHead>
-                    <TableHead className="font-bold text-center">คงเหลือ</TableHead>
-                    <TableHead className="font-bold">สถานะ</TableHead>
-                    <TableHead className="text-right pr-6">จัดการ</TableHead>
+                    <TableHead className={sc.codeHead}>รหัส</TableHead>
+                    <TableHead className={sc.nameHead}>ชื่อหลัก</TableHead>
+                    <TableHead className={sc.variantHead}>ขนาด/รุ่น</TableHead>
+                    <TableHead className={sc.categoryHead}>หมวดหมู่</TableHead>
+                    <TableHead className={sc.stockHead}>คงเหลือ</TableHead>
+                    <TableHead className={sc.statusHead}>สถานะ</TableHead>
+                    <TableHead className={sc.actionsHead}>จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredDisplayRows.map((row) =>
                     row.kind === 'standalone' ? (
                       <TableRow key={row.item.id} className="hover:bg-muted/30 transition-colors">
-                        <TableCell className="pl-6 font-mono text-xs font-bold text-orange-700">{row.item.itemCode}</TableCell>
-                        <TableCell className="font-bold text-primary">{row.item.itemName}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
+                        <TableCell className={`${sc.codeCell} text-orange-700`}>{row.item.itemCode}</TableCell>
+                        <TableCell className={`${sc.nameCell} text-primary`}>
+                          <span className="line-clamp-2" title={row.item.itemName}>
+                            {row.item.itemName}
+                          </span>
+                        </TableCell>
+                        <TableCell className={sc.variantCell}>
                           {(row.item.variantSpecification || '').trim() || '—'}
                           {(row.item.variantGroupKey || '').trim() ? (
                             <span className="block text-[10px] font-mono text-orange-700 mt-0.5">กลุ่ม: {row.item.variantGroupKey}</span>
                           ) : null}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className={sc.categoryCell}>
                           <Badge variant="outline">{row.item.category}</Badge>
                         </TableCell>
-                        <TableCell className="text-center">
+                        <TableCell className={sc.stockCell}>
                           <span className={`font-black text-lg ${stockTone(row.item.currentStock, row.item.minimumStock)}`}>
                             {row.item.currentStock}
                           </span>
                           <span className="text-[10px] text-muted-foreground ml-1">{row.item.unit}</span>
                         </TableCell>
-                        <TableCell>
+                        <TableCell className={sc.statusCell}>
                           <Badge className={row.item.active ? 'bg-green-600' : 'bg-slate-200'}>
                             {row.item.active ? 'Active' : 'Inactive'}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right pr-6 space-x-2">
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => openEditDialog(row.item)}>
+                        <TableCell className={sc.actionsCell}>
+                          <Button variant="ghost" size="icon" className={`${STORE_CATALOG_ROW_ACTION_BTN_CLASS} text-primary`} onClick={() => openEditDialog(row.item)}>
                             <Edit2 className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => void handleDelete(row.item)}>
+                          <Button variant="ghost" size="icon" className={`${STORE_CATALOG_ROW_ACTION_BTN_CLASS} text-destructive`} onClick={() => void handleDelete(row.item)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </TableCell>
@@ -960,41 +978,53 @@ export default function StorePpeCatalogPage() {
                     ) : (
                       <Fragment key={row.header.id}>
                         <TableRow className="bg-muted/50 hover:bg-muted/60 border-t-2 border-t-orange-500/30">
-                          <TableCell className="pl-6 font-mono text-xs font-bold text-orange-700">{row.header.itemCode}</TableCell>
-                          <TableCell className="font-bold text-primary">
-                            {row.header.itemName}
-                            <Badge variant="outline" className="ml-2 text-[10px] border-orange-300 text-orange-800">
-                              เมน
-                            </Badge>
+                          <TableCell className={`${sc.codeCell} text-orange-700`}>{row.header.itemCode}</TableCell>
+                          <TableCell className={`${sc.nameCell} text-primary`}>
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                              <span className="line-clamp-2 min-w-0" title={row.header.itemName}>
+                                {row.header.itemName}
+                              </span>
+                              <Badge variant="outline" className="text-[10px] border-orange-300 text-orange-800 shrink-0">
+                                เมน
+                              </Badge>
+                              <StoreCatalogViewVariantsButton
+                                headerId={row.header.id}
+                                childCount={row.children.length}
+                                expanded={isVariantExpanded(row.header.id)}
+                                onToggle={toggleVariantExpanded}
+                                className="border-orange-300 text-orange-800 hover:bg-orange-50"
+                              />
+                            </div>
                           </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">—</TableCell>
-                          <TableCell>
+                          <TableCell className={sc.variantCell}>—</TableCell>
+                          <TableCell className={sc.categoryCell}>
                             <Badge variant="outline">{row.header.category}</Badge>
                           </TableCell>
-                          <TableCell className="text-center">
+                          <TableCell className={sc.stockCell}>
                             <span className="font-black text-lg text-orange-700">{sumChildStock(row.children)}</span>
                             <span className="text-[10px] text-muted-foreground ml-1">{row.header.unit}</span>
                             <div className="text-[10px] text-muted-foreground">รวมรุ่นย่อย</div>
                           </TableCell>
-                          <TableCell>
+                          <TableCell className={sc.statusCell}>
                             <Badge className={row.header.active !== false ? 'bg-green-600' : 'bg-slate-200'}>
                               {row.header.active !== false ? 'Active' : 'Inactive'}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-right pr-6 space-x-2">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => openEditDialog(row.header)}>
+                          <TableCell className={sc.actionsCell}>
+                            <Button variant="ghost" size="icon" className={`${STORE_CATALOG_ROW_ACTION_BTN_CLASS} text-primary`} onClick={() => openEditDialog(row.header)}>
                               <Edit2 className="h-4 w-4" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => void handleDelete(row.header)}>
+                            <Button variant="ghost" size="icon" className={`${STORE_CATALOG_ROW_ACTION_BTN_CLASS} text-destructive`} onClick={() => void handleDelete(row.header)}>
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </TableCell>
                         </TableRow>
-                        {row.children.map((child) => (
+                        {isVariantExpanded(row.header.id)
+                          ? row.children.map((child) => (
                           <TableRow key={child.id} className="hover:bg-muted/20 border-l-4 border-l-orange-400/40">
-                            <TableCell className="pl-10 font-mono text-xs text-muted-foreground">{child.itemCode}</TableCell>
-                            <TableCell className="text-muted-foreground text-sm italic pl-6">↳ รุ่นย่อย</TableCell>
-                            <TableCell className="text-sm">
+                            <TableCell className={sc.codeCellChild}>{child.itemCode}</TableCell>
+                            <TableCell className={sc.nameCellChild}>↳ รุ่นย่อย</TableCell>
+                            <TableCell className={sc.variantCell}>
                               {(child.variantSpecification || '').trim() || '—'}
                               {(child.variantGroupKey || '').trim() ? (
                                 <span className="block text-[10px] font-mono text-muted-foreground mt-0.5">
@@ -1002,32 +1032,33 @@ export default function StorePpeCatalogPage() {
                                 </span>
                               ) : null}
                             </TableCell>
-                            <TableCell>
+                            <TableCell className={sc.categoryCell}>
                               <Badge variant="secondary" className="text-xs">
                                 {child.category}
                               </Badge>
                             </TableCell>
-                            <TableCell className="text-center">
+                            <TableCell className={sc.stockCell}>
                               <span className={`font-bold ${stockTone(child.currentStock, child.minimumStock)}`}>
                                 {child.currentStock}
                               </span>
                               <span className="text-[10px] text-muted-foreground ml-1">{child.unit}</span>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className={sc.statusCell}>
                               <Badge className={child.active !== false ? 'bg-green-600/90' : 'bg-slate-200'}>
                                 {child.active !== false ? 'Active' : 'Inactive'}
                               </Badge>
                             </TableCell>
-                            <TableCell className="text-right pr-6 space-x-2">
-                              <Button variant="ghost" size="icon" className="h-8 w-8 text-primary" onClick={() => openEditDialog(child)}>
+                            <TableCell className={sc.actionsCell}>
+                              <Button variant="ghost" size="icon" className={`${STORE_CATALOG_ROW_ACTION_BTN_CLASS} text-primary`} onClick={() => openEditDialog(child)}>
                                 <Edit2 className="h-4 w-4" />
                               </Button>
-                              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => void handleDelete(child)}>
+                              <Button variant="ghost" size="icon" className={`${STORE_CATALOG_ROW_ACTION_BTN_CLASS} text-destructive`} onClick={() => void handleDelete(child)}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </TableCell>
                           </TableRow>
-                        ))}
+                            ))
+                          : null}
                       </Fragment>
                     ),
                   )}

@@ -141,7 +141,7 @@ export default function HrAttendanceKioskPage() {
     return () => window.clearTimeout(t);
   }, [consumed, liveSession?.consumedAt, liveSession?.consumedDirection, refreshSession]);
 
-  /** เมื่อหมดอายุ 60 วินาที: สร้างโค้ดใหม่อัตโนมัติ */
+  /** เมื่อหมดอายุ 10 วินาที: สร้างโค้ดใหม่อัตโนมัติ */
   useEffect(() => {
     if (!expiresAtMs || consumed) return;
     const remain = expiresAtMs - Date.now();

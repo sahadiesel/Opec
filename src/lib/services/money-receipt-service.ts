@@ -13,9 +13,13 @@ import {
   updateDoc,
   writeBatch,
 } from 'firebase/firestore';
-import type { AccountsReceivable, ARStatus, MoneyReceipt, TaxInvoice, User } from '@/lib/types';
+import type { MoneyReceipt, TaxInvoice, User } from '@/lib/types';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { expectedMoneyReceiptAmountFromInvoice } from '@/lib/accounting/money-receipt-wht-amount';
+import {
+  closeOpenCommercialArInBatch,
+  prepareTaxInvoiceArReceiptUpdate,
+} from '@/lib/services/accounts-receivable-reconcile-service';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 
 /** ยอดใบเสร็จ = ยอดรวมใบกำกับ (ฐานภาษี + VAT) — ไม่หัก ณ ที่จ่าย */
@@ -112,37 +116,14 @@ export async function confirmPaymentAndIssueMoneyReceipt(
   const taxRef = doc(db, 'tax_invoices', inv.id);
 
   let arUpdate: { ref: ReturnType<typeof doc>; patch: Record<string, unknown> } | undefined;
-  const arId = inv.arEntryId?.trim();
-  if (arId) {
-    const arRef = doc(db, 'accounts_receivable', arId);
-    const arSnap = await getDoc(arRef);
-    if (arSnap.exists()) {
-      const ar = arSnap.data() as Omit<AccountsReceivable, 'id'>;
-      if (ar.referenceType === 'TAX_INVOICE' && ar.referenceId === inv.id) {
-        const debit = roundMoney2(Number(ar.debitAmount) || 0);
-        const prevCredit = roundMoney2(Number(ar.creditAmount) || 0);
-        const remaining = roundMoney2(debit - prevCredit);
-        if (amt > remaining + 0.02) {
-          throw new Error(
-            `ยอดรับเกินยอดค้างชำระในลูกหนี้ (คงเหลือ ${remaining.toLocaleString('th-TH', { minimumFractionDigits: 2 })} ${inv.currency})`,
-          );
-        }
-        const newCredit = roundMoney2(prevCredit + amt);
-        const outstanding = roundMoney2(Math.max(0, debit - newCredit));
-        let nextStatus: ARStatus = ar.status;
-        if (outstanding <= 0.01) nextStatus = 'PAID';
-        else if (newCredit > 0.01) nextStatus = 'PARTIALLY_PAID';
-        arUpdate = {
-          ref: arRef,
-          patch: {
-            creditAmount: newCredit,
-            outstandingAmount: outstanding,
-            status: nextStatus,
-            updatedAt: now,
-          },
-        };
-      }
-    }
+  let resolvedArEntryId: string | undefined;
+  try {
+    const prepared = await prepareTaxInvoiceArReceiptUpdate(db, inv, amt, now);
+    arUpdate = prepared.arUpdate;
+    resolvedArEntryId = prepared.resolvedArEntryId;
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'ไม่สามารถอัปเดตลูกหนี้ได้';
+    throw new Error(msg);
   }
 
   const desc = `รับเงินลูกค้า ใบเสร็จ ${receiptNo} (ใบกำกับ ${inv.taxInvoiceNo})`.slice(0, 500);
@@ -194,11 +175,15 @@ export async function confirmPaymentAndIssueMoneyReceipt(
     linkedReceiptId: receiptRef.id,
     paymentReceivedCashbookEntryId: cashbookRef.id,
     paymentReceivedBankAccountId: bankId,
+    ...(resolvedArEntryId && resolvedArEntryId !== inv.arEntryId?.trim()
+      ? { arEntryId: resolvedArEntryId }
+      : {}),
     updatedAt: now,
   });
   if (arUpdate) {
     batch.update(arUpdate.ref, arUpdate.patch);
   }
+  await closeOpenCommercialArInBatch(db, batch, inv.sourceCommercialInvoiceId, now);
 
   await batch.commit();
 

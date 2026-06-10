@@ -1542,7 +1542,7 @@ export interface AccountsReceivable {
   id: string;
   customerId: string;
   documentNo: string;
-  /** ลูกหนี้ยังไม่ออกใบกำกับ — อ้างใบแจ้งหนี้เรียกเก็บ; รับเงิน + ออกใบกำกับแล้วจะย้ายไปอ้าง TAX_INVOICE ได้ */
+  /** ลูกหนี้ — ตั้งเมื่อออกใบกำกับภาษี (ISSUED) เท่านั้น; COMMERCIAL_INVOICE = legacy ก่อนปรับนโยบาย */
   referenceType: 'TAX_INVOICE' | 'BILLING_NOTE' | 'COMMERCIAL_INVOICE';
   referenceId: string;
   /** เลขที่ใบกำกับ (แสดงผล / audit) */

@@ -1,7 +1,6 @@
-
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -17,6 +16,7 @@ import {
   Info,
   Loader2,
   Trash2,
+  Printer,
 } from 'lucide-react';
 import {
   formatStoredDateThaiBE,
@@ -47,6 +47,13 @@ import { createTaxInvoiceDraftFromIssuedCommercial } from '@/lib/services/tax-in
 import { deleteTaxInvoiceBundleAsAdmin } from '@/lib/services/tax-invoice-delete-service';
 import { isSystemAdmin } from '@/lib/permission-core';
 import {
+  buildTaxInvoiceListPrintHtml,
+  capTaxInvoiceListPrintRows,
+  describeTaxInvoiceListPrintFilters,
+  type TaxInvoiceListPrintRow,
+} from '@/lib/documents/tax-invoice-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
   AlertDialog,
   AlertDialogCancel,
   AlertDialogContent,
@@ -55,6 +62,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
+function formatTaxInvoiceMoney(amount: number, currency = 'THB'): string {
+  return `${currency} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+}
 
 export default function TaxInvoicesPage() {
   const router = useRouter();
@@ -116,6 +127,9 @@ export default function TaxInvoicesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [monthFilter, setMonthFilter] = useState('');
 
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
+
   const receiptNoById = useMemo(() => {
     const m = new Map<string, string>();
     for (const r of receipts ?? []) {
@@ -155,6 +169,107 @@ export default function TaxInvoicesPage() {
       return no.includes(term) || custName.includes(term);
     });
   }, [invoices, searchTerm, monthFilter, customers]);
+
+  const printFilterSummary = useMemo(
+    () => ({ searchTerm, monthYyyyMm: monthFilter }),
+    [searchTerm, monthFilter],
+  );
+
+  const hasActivePrintFilters = useMemo(
+    () => searchTerm.trim() !== '' || monthFilter.trim() !== '',
+    [searchTerm, monthFilter],
+  );
+
+  const buildPrintRows = useCallback(
+    (list: TaxInvoice[]): TaxInvoiceListPrintRow[] =>
+      list.map((inv) => {
+        const customer = customers?.find((c) => c.id === inv.customerId);
+        let receiptNo = '-';
+        if (inv.linkedReceiptId) {
+          const fromLink = receiptNoById.get(inv.linkedReceiptId)?.trim();
+          if (fromLink) receiptNo = fromLink;
+        } else {
+          receiptNo = receiptNoByTaxInvoiceId.get(inv.id)?.trim() || '-';
+        }
+        return {
+          taxInvoiceNo: inv.taxInvoiceNo || '—',
+          customerName: customer?.name || 'N/A',
+          issueDateLabel: formatStoredDateThaiBE(inv.issueDate),
+          receiptNo,
+          taxableLabel: formatTaxInvoiceMoney(inv.taxableAmount ?? 0, inv.currency),
+          vatLabel: formatTaxInvoiceMoney(inv.vatAmount ?? 0, inv.currency),
+          totalLabel: formatTaxInvoiceMoney(inv.totalAmount ?? 0, inv.currency),
+          status: inv.status || '—',
+        };
+      }),
+    [customers, receiptNoById, receiptNoByTaxInvoiceId],
+  );
+
+  const runTaxInvoiceListPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const source = scope === 'filtered' ? filteredInvoices : invoices ?? [];
+      if (source.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
+              : 'ยังไม่มีใบกำกับภาษีในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const { rows, truncated } = capTaxInvoiceListPrintRows(buildPrintRows(source));
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines =
+          scope === 'filtered' ? describeTaxInvoiceListPrintFilters(printFilterSummary) : [];
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
+
+        const body = buildTaxInvoiceListPrintHtml({
+          rows,
+          scopeTitle,
+          filterLines,
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Tax-Invoice-List',
+          suggestedFileName: `Tax-Invoice-List-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [
+      filteredInvoices,
+      invoices,
+      buildPrintRows,
+      printFilterSummary,
+      currentUser?.displayName,
+      toast,
+    ],
+  );
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -251,39 +366,51 @@ export default function TaxInvoicesPage() {
           </AlertDescription>
         </Alert>
 
-        <div className="flex flex-col gap-3 bg-card rounded-lg border p-4 shadow-sm md:flex-row md:flex-wrap md:items-center md:justify-between">
-          <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative w-full max-w-sm">
+        <div className="flex flex-col gap-3 bg-card rounded-lg border p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-sm">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="search"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="ค้นหาเลขที่ใบกำกับภาษี, ลูกค้า…"
-                className="h-11 pl-9"
+                className="h-10 pl-9"
                 aria-label="ค้นหาใบกำกับภาษี"
               />
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Label htmlFor="tax-inv-month" className="whitespace-nowrap text-sm text-muted-foreground">
-                เดือนออกเอกสาร
-              </Label>
-              <Input
-                id="tax-inv-month"
-                type="month"
-                value={monthFilter}
-                onChange={(e) => setMonthFilter(e.target.value)}
-                className="h-11 w-[min(100%,11rem)]"
-                aria-label="กรองตามเดือนที่ออกใบกำกับภาษี"
-              />
-              {monthFilter ? (
-                <Button type="button" variant="ghost" size="sm" className="h-9 px-2" onClick={() => setMonthFilter('')}>
-                  ล้างเดือน
-                </Button>
-              ) : null}
-            </div>
+            <Input
+              id="tax-inv-month"
+              type="month"
+              value={monthFilter}
+              onChange={(e) => setMonthFilter(e.target.value)}
+              className="h-10 w-[11rem] shrink-0"
+              aria-label="กรองตามเดือนออกเอกสาร"
+              title="เดือนออกเอกสาร"
+            />
+            {monthFilter ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-10 shrink-0 px-2"
+                onClick={() => setMonthFilter('')}
+              >
+                ล้างเดือน
+              </Button>
+            ) : null}
           </div>
-          
+
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 gap-2"
+              onClick={() => setPrintDialogOpen(true)}
+            >
+              <Printer className="h-4 w-4" /> พิมพ์รายการ
+            </Button>
+
           <Dialog
             open={isAuthorized && canCreateInvoice && isDialogOpen}
             onOpenChange={(open) => {
@@ -296,7 +423,7 @@ export default function TaxInvoicesPage() {
           >
             <DialogTrigger asChild>
               <Button
-                className="h-11 shrink-0 gap-2 bg-primary px-6 text-base font-bold shadow-md"
+                className="h-10 shrink-0 gap-2 bg-primary px-6 text-base font-bold shadow-md"
                 disabled={!canCreateInvoice}
               >
                 <Plus className="h-5 w-5" /> สร้างใบกำกับภาษีร่าง
@@ -359,7 +486,60 @@ export default function TaxInvoicesPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
+
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการใบกำกับภาษี</DialogTitle>
+              <DialogDescription>
+                เลือกพิมพ์ตามตัวกรองที่ตั้งไว้ หรือพิมพ์ทุกรายการในชุดข้อมูลล่าสุด (สูงสุด 500 รายการ)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              {hasActivePrintFilters ? (
+                <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                  <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                  <ul className="list-disc list-inside text-xs text-muted-foreground space-y-0.5">
+                    {describeTaxInvoiceListPrintFilters(printFilterSummary).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                  <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredInvoices.length} รายการ</p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  ยังไม่ได้ตั้งตัวกรอง — 「พิมพ์ตามตัวกรอง」จะพิมพ์ทุกรายการในตาราง (เท่ากับพิมพ์ทั้งหมด)
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                ข้อมูลทั้งหมดในระบบ: {invoices?.length ?? 0} รายการ
+              </p>
+            </div>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={printBusy || filteredInvoices.length === 0}
+                onClick={() => void runTaxInvoiceListPrint('filtered')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ตามตัวกรอง ({filteredInvoices.length})
+              </Button>
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                disabled={printBusy || !(invoices?.length)}
+                onClick={() => void runTaxInvoiceListPrint('all')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ทั้งหมด ({invoices?.length ?? 0})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <AlertDialog
           open={deleteDialogOpen}
@@ -406,9 +586,11 @@ export default function TaxInvoicesPage() {
                     <TableHead className="font-bold">ลูกค้า (Customer)</TableHead>
                     <TableHead className="font-bold">วันที่ออก</TableHead>
                     <TableHead className="font-bold">เลขที่ใบเสร็จ</TableHead>
-                    <TableHead className="text-right font-bold">ยอดรวมสุทธิ</TableHead>
-                    <TableHead className="font-bold">สถานะ</TableHead>
-                    <TableHead className="pr-6 text-right">จัดการ</TableHead>
+                    <TableHead className="text-right font-bold whitespace-nowrap">ก่อนภาษี</TableHead>
+                    <TableHead className="text-right font-bold whitespace-nowrap">ภาษี</TableHead>
+                    <TableHead className="text-right font-bold whitespace-nowrap">ยอดรวมสุทธิ</TableHead>
+                    <TableHead className="text-right font-bold w-[1%] whitespace-nowrap">สถานะ</TableHead>
+                    <TableHead className="pr-6 text-right w-[1%] whitespace-nowrap">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -435,10 +617,18 @@ export default function TaxInvoicesPage() {
                           </div>
                         </TableCell>
                         <TableCell className="font-mono text-sm text-muted-foreground">{receiptNo}</TableCell>
-                        <TableCell className="text-right font-black text-primary">
-                          {inv.currency} {inv.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        <TableCell className="text-right font-mono text-sm tabular-nums whitespace-nowrap">
+                          {formatTaxInvoiceMoney(inv.taxableAmount ?? 0, inv.currency)}
                         </TableCell>
-                        <TableCell>{getStatusBadge(inv.status)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm tabular-nums whitespace-nowrap">
+                          {formatTaxInvoiceMoney(inv.vatAmount ?? 0, inv.currency)}
+                        </TableCell>
+                        <TableCell className="text-right font-black text-primary tabular-nums whitespace-nowrap">
+                          {formatTaxInvoiceMoney(inv.totalAmount ?? 0, inv.currency)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end">{getStatusBadge(inv.status)}</div>
+                        </TableCell>
                         <TableCell className="text-right pr-6">
                           <div className="inline-flex items-center gap-1 justify-end">
                             {canAdminDelete && inv.status !== 'ISSUED' && (
@@ -476,14 +666,14 @@ export default function TaxInvoicesPage() {
                   })}
                   {!isLoading && (!invoices || invoices.length === 0) && (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-20 text-center italic text-muted-foreground">
+                      <TableCell colSpan={9} className="py-20 text-center italic text-muted-foreground">
                         ไม่มีรายการใบกำกับภาษีในระบบ
                       </TableCell>
                     </TableRow>
                   )}
                   {!isLoading && (invoices?.length ?? 0) > 0 && filteredInvoices.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="py-20 text-center text-muted-foreground">
+                      <TableCell colSpan={9} className="py-20 text-center text-muted-foreground">
                         ไม่พบรายการที่ตรงกับการค้นหาหรือเดือนที่เลือก
                       </TableCell>
                     </TableRow>

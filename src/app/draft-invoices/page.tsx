@@ -1,13 +1,22 @@
 'use client';
 
-import { Fragment, useState, useMemo } from 'react';
+import { Fragment, useState, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, FileText, Building2, Loader2, Info, ChevronRight, ExternalLink, RefreshCw, Ban, Trash2 } from 'lucide-react';
+import { Plus, FileText, Building2, Loader2, Info, ChevronRight, ExternalLink, RefreshCw, Ban, Trash2, Printer } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { Input } from '@/components/ui/input';
+import { formatStoredDateThaiBE } from '@/lib/date-thai';
+import {
+  buildCommercialInvoiceListPrintHtml,
+  capCommercialInvoiceListPrintRows,
+  describeCommercialInvoiceListPrintFilters,
+  type CommercialInvoiceListPrintRow,
+} from '@/lib/documents/commercial-invoice-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import {
   CommercialInvoice,
   Customer,
@@ -85,6 +94,28 @@ function statusBadge(inv: CommercialInvoice) {
   }
 }
 
+function commercialStatusPrintLabel(inv: CommercialInvoice): string {
+  if (inv.status === 'PENDING_CUSTOMER' && inv.customerRevisionRequestedAt) return 'ร้องขอแก้ไข';
+  switch (inv.status) {
+    case 'DRAFT':
+      return 'ตรวจภายใน';
+    case 'PENDING_CUSTOMER':
+      return 'รอลูกค้า';
+    case 'ISSUED':
+      return 'ยืนยันแล้ว';
+    case 'VOID':
+      return 'ยกเลิก';
+    default:
+      return inv.status;
+  }
+}
+
+function commercialWavePeriodLabel(inv: CommercialInvoice): string {
+  if (inv.waveId === QUOTATION_PO_WAVE_PLACEHOLDER) return 'ใบเสนอราคา (ไม่มี Wave)';
+  if (inv.waveId === PO_MONTH_WAVE_PLACEHOLDER) return inv.waveCode || 'PO+งวด (รวม wave)';
+  return inv.waveCode || `${inv.waveId.slice(0, 8)}…`;
+}
+
 export default function DraftInvoicesPage() {
   const router = useRouter();
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -134,6 +165,9 @@ export default function DraftInvoicesPage() {
   const [voidBusy, setVoidBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<CommercialInvoice | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [monthFilter, setMonthFilter] = useState('');
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
 
   const approvedReviewsQuery = useMemoFirebase(
     () =>
@@ -186,6 +220,84 @@ export default function DraftInvoicesPage() {
     for (const c of customers ?? []) nameById.set(c.id, c.name);
     return (customerId: string) => nameById.get(customerId) || customerId;
   }, [customers]);
+
+  const filteredInvoices = useMemo(() => {
+    const list = invoices ?? [];
+    if (!monthFilter.trim()) return list;
+    return list.filter((inv) => (inv.issueDate || '').slice(0, 7) === monthFilter);
+  }, [invoices, monthFilter]);
+
+  const buildPrintRows = useCallback(
+    (list: CommercialInvoice[]): CommercialInvoiceListPrintRow[] =>
+      list.map((inv) => ({
+        invoiceNo: inv.invoiceNo || '—',
+        customerName: customerLabel(inv.customerId),
+        issueDateLabel: formatStoredDateThaiBE(inv.issueDate),
+        wavePeriodLabel: commercialWavePeriodLabel(inv),
+        totalLabel: `฿${(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`,
+        statusLabel: commercialStatusPrintLabel(inv),
+      })),
+    [customerLabel],
+  );
+
+  const runCommercialInvoiceListPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const source = scope === 'filtered' ? filteredInvoices : invoices ?? [];
+      if (source.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบข้อมูลตามเดือนที่เลือก — ล้างเดือนหรือเลือกพิมพ์ทั้งหมด'
+              : 'ยังไม่มีใบแจ้งหนี้ในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const { rows, truncated } = capCommercialInvoiceListPrintRows(buildPrintRows(source));
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines =
+          scope === 'filtered' ? describeCommercialInvoiceListPrintFilters({ monthYyyyMm: monthFilter }) : [];
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามเดือนที่เลือก' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
+
+        const body = buildCommercialInvoiceListPrintHtml({
+          rows,
+          scopeTitle,
+          filterLines,
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Commercial-Invoice-List',
+          suggestedFileName: `Commercial-Invoice-List-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [filteredInvoices, invoices, buildPrintRows, monthFilter, currentUser?.displayName, toast],
+  );
 
   const waveById = useMemo(() => {
     const m = new Map<string, Wave>();
@@ -435,19 +547,38 @@ export default function DraftInvoicesPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 p-4 md:p-6 max-w-6xl mx-auto">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
-              <FileText className="h-7 w-7" />
-              รายการใบแจ้งหนี้ (เรียกเก็บลูกค้า)
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              สายสัญญา: จาก Wave + timesheet — สายใบเสนอราคา: จาก PO Line หรือรายการในใบเสนอราคาที่ PO อ้างอิง (ไม่ใช้ Wave) — แยกจากใบกำกับภาษี
-            </p>
-          </div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
+            <FileText className="h-7 w-7" />
+            รายการใบแจ้งหนี้ (เรียกเก็บลูกค้า)
+          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              id="draft-inv-month"
+              type="month"
+              value={monthFilter}
+              onChange={(e) => setMonthFilter(e.target.value)}
+              className="h-10 w-[11rem] shrink-0"
+              aria-label="กรองตามเดือนเอกสาร"
+              title="เดือนเอกสาร"
+            />
+            {monthFilter ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-10 shrink-0 px-2"
+                onClick={() => setMonthFilter('')}
+              >
+                ล้างเดือน
+              </Button>
+            ) : null}
+            <Button type="button" variant="outline" className="h-10 gap-2" onClick={() => setPrintDialogOpen(true)}>
+              <Printer className="h-4 w-4" /> พิมพ์รายการ
+            </Button>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2" disabled={!canCreateDoc}>
+              <Button className="h-10 gap-2" disabled={!canCreateDoc}>
                 <Plus className="h-4 w-4" />
                 สร้างใบแจ้งหนี้
               </Button>
@@ -566,15 +697,58 @@ export default function DraftInvoicesPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
-        <Alert>
-          <Info className="h-4 w-4" />
-          <AlertTitle>ไม่ใช่ใบกำกับภาษี</AlertTitle>
-          <AlertDescription>
-            เอกสารนี้เป็นใบแจ้งหนี้ทางการค้าให้ลูกค้าตรวจสอบยอดจาก timesheet — ใบกำกับภาษีออกจากเมนูบัญชีหลังได้รับเงินตามขั้นตอนที่กำหนด
-          </AlertDescription>
-        </Alert>
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการใบแจ้งหนี้</DialogTitle>
+              <DialogDescription>
+                เลือกพิมพ์ตามเดือนที่ตั้งไว้ หรือพิมพ์ทุกรายการในชุดข้อมูลล่าสุด (สูงสุด 500 รายการ)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              {monthFilter ? (
+                <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                  <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                  <ul className="list-disc list-inside text-xs text-muted-foreground">
+                    {describeCommercialInvoiceListPrintFilters({ monthYyyyMm: monthFilter }).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                  <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredInvoices.length} รายการ</p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  ยังไม่ได้เลือกเดือน — 「พิมพ์ตามเดือน」จะพิมพ์ทุกรายการในตาราง (เท่ากับพิมพ์ทั้งหมด)
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">ข้อมูลทั้งหมดในระบบ: {invoices?.length ?? 0} รายการ</p>
+            </div>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={printBusy || filteredInvoices.length === 0}
+                onClick={() => void runCommercialInvoiceListPrint('filtered')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ตามเดือน ({filteredInvoices.length})
+              </Button>
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                disabled={printBusy || !(invoices?.length)}
+                onClick={() => void runCommercialInvoiceListPrint('all')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ทั้งหมด ({invoices?.length ?? 0})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {totalMissingInvoiceCount > 0 && (
           <Card className="border-primary/30 bg-primary/5">
@@ -782,11 +956,6 @@ export default function DraftInvoicesPage() {
         <Card>
           <CardHeader>
             <CardTitle>รายการใบแจ้งหนี้</CardTitle>
-            <CardDescription>
-              เรียงตามวันที่เอกสาร — เปิดเพื่อตรวจยอด / พิมพ์ / ส่งลูกค้า —{' '}
-              <span className="text-foreground font-medium">ยกเลิก (VOID)</span> เฉพาะผู้ดูแลระบบ สำหรับใบร่างหรือรอลูกค้า — ใบที่ยืนยันแล้วยกเลิกไม่ได้ —{' '}
-              <span className="text-foreground font-medium">ลบถาวร</span> เฉพาะผู้ดูแลระบบ และไม่รวมใบที่ยืนยันแล้ว
-            </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             <Table>
@@ -801,7 +970,7 @@ export default function DraftInvoicesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(invoices ?? []).map((inv) => {
+                {(filteredInvoices ?? []).map((inv) => {
                   const cust = customers?.find((c) => c.id === inv.customerId);
                   return (
                     <TableRow key={inv.id}>
@@ -812,13 +981,7 @@ export default function DraftInvoicesPage() {
                           {cust?.name ?? inv.customerId}
                         </div>
                       </TableCell>
-                      <TableCell className="text-xs font-mono">
-                        {inv.waveId === QUOTATION_PO_WAVE_PLACEHOLDER
-                          ? 'ใบเสนอราคา (ไม่มี Wave)'
-                          : inv.waveId === PO_MONTH_WAVE_PLACEHOLDER
-                            ? inv.waveCode || 'PO+งวด (รวม wave)'
-                            : inv.waveCode || `${inv.waveId.slice(0, 8)}…`}
-                      </TableCell>
+                      <TableCell className="text-xs font-mono">{commercialWavePeriodLabel(inv)}</TableCell>
                       <TableCell className="text-right">
                         ฿{(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
                       </TableCell>
@@ -865,7 +1028,14 @@ export default function DraftInvoicesPage() {
                 {(!invoices || invoices.length === 0) && !isLoading && (
                   <TableRow>
                     <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
-                      ยังไม่มีรายการ — ใช้ปุ่มสร้างด้านบน หรือสร้างจากงวดที่อนุมัติแล้ว (กล่องสีฟ้า)
+                      ยังไม่มีรายการ — ใช้ปุ่มสร้างด้านบน หรือสร้างจากงวดที่อนุมัติแล้ว
+                    </TableCell>
+                  </TableRow>
+                )}
+                {(invoices?.length ?? 0) > 0 && filteredInvoices.length === 0 && !isLoading && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                      ไม่พบรายการในเดือนที่เลือก
                     </TableCell>
                   </TableRow>
                 )}

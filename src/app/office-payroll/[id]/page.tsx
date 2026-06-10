@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useMemo, useEffect, useRef } from 'react';
+import { useState, use, useMemo, useEffect, useRef, useCallback } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -28,7 +28,6 @@ import {
   Briefcase,
   ShieldAlert,
   Printer,
-  UserCircle,
 } from 'lucide-react';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
@@ -68,6 +67,11 @@ import {
 } from '@/lib/payroll/sync-office-run-my-profile-index';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
+import {
+  buildOfficePayrollLinesListPrintHtml,
+  capOfficePayrollLinePrintRows,
+} from '@/lib/documents/office-payroll-lines-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 export default function OfficePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
@@ -126,7 +130,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
   const isLocked = run?.status === 'LOCKED';
 
   const [isProcessing, setIsProcessing] = useState(false);
-  const [myProfileSyncBusy, setMyProfileSyncBusy] = useState(false);
+  const [listPrintBusy, setListPrintBusy] = useState(false);
   const autoMyProfileSyncDone = useRef(false);
 
   useEffect(() => {
@@ -143,34 +147,63 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
     });
   }, [firestore, canMutate, lines, id, isLocked, toast, run?.payrollMonth]);
 
-  const handleSyncMyProfileIndex = async () => {
-    if (!firestore || !lines?.length) return;
-    setMyProfileSyncBusy(true);
-    try {
-      const { synced, skipped } = await syncOfficeRunMyProfileIndex(
-        firestore,
-        id,
-        lines,
-        'office_payroll_runs',
-        run?.payrollMonth,
-      );
-      toast({
-        title: synced > 0 ? 'อัปเดต My Profile แล้ว' : 'ไม่มีรายการที่ sync',
-        description:
-          synced > 0
-            ? `พนักงาน ${synced} คนจะเห็นสลิป/ใบหักในหน้า My Profile${skipped ? ` (ข้าม ${skipped} — ไม่มี linkedUserId หรือไม่ ACTIVE)` : ''}`
-            : 'ตรวจสอบ linkedUserId และสถานะ ACTIVE ในทะเบียนพนักงาน',
-      });
-    } catch (e: unknown) {
+  const handlePrintSettlementList = useCallback(async () => {
+    if (!run || linesSorted.length === 0) {
       toast({
         variant: 'destructive',
-        title: 'อัปเดต My Profile ไม่สำเร็จ',
-        description: e instanceof Error ? e.message : String(e),
+        title: 'ไม่มีรายการให้พิมพ์',
+        description: 'ยังไม่มีบรรทัดจ่ายในงวดนี้ — คำนวณเงินเดือนก่อน',
       });
-    } finally {
-      setMyProfileSyncBusy(false);
+      return;
     }
-  };
+
+    const fmtBaht = (n: number) => `฿${Number(n || 0).toLocaleString()}`;
+    setListPrintBusy(true);
+    try {
+      const sourceRows = linesSorted.map((line) => ({
+        staffName: line.staffName || '—',
+        department: line.department || '—',
+        positionTitle: line.positionTitle || '—',
+        baseSalaryLabel: fmtBaht(line.baseSalary),
+        grossLabel: fmtBaht(line.grossPay),
+        deductionsLabel: `-${fmtBaht(line.deductions)}`,
+        netLabel: fmtBaht(line.netPay),
+      }));
+      const { rows, truncated } = capOfficePayrollLinePrintRows(sourceRows);
+      const generatedAt = new Date().toLocaleString('th-TH', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+      const body = buildOfficePayrollLinesListPrintHtml({
+        runNo: run.payrollRunNo || run.id,
+        payrollMonthLabel: formatPayrollYearMonthEnAbbrev(run.payrollMonth),
+        runStatus: run.status,
+        rows,
+        staffCountLabel: String(run.staffCount),
+        grossTotalLabel: fmtBaht(run.grossAmount),
+        deductionsTotalLabel: fmtBaht(run.totalDeductions),
+        netTotalLabel: fmtBaht(run.netAmount),
+        generatedAt,
+        printedBy: currentUser?.displayName,
+        truncated,
+      });
+      const ok = await openStandardPrintWindow({
+        windowTitle: 'Office-Payroll-Lines',
+        suggestedFileName: `Office-Payroll-${run.payrollRunNo || run.id}`,
+        bodyInnerHtml: body,
+        htmlLang: 'th',
+      });
+      if (!ok) {
+        toast({
+          variant: 'destructive',
+          title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+          description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+        });
+      }
+    } finally {
+      setListPrintBusy(false);
+    }
+  }, [run, linesSorted, currentUser?.displayName, toast]);
 
   // STRICT ENFORCEMENT: Only from 'office_staff' collection
   const staffQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'office_staff') : null), [firestore, isAuthorized]);
@@ -426,21 +459,20 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                   <CardDescription>รายชื่อและยอดเฉพาะงวด {run.payrollRunNo} — ไม่รวมงวดอื่นในเดือนเดียวกัน</CardDescription>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {canMutate && (lines?.length ?? 0) > 0 && (
+                  {linesSorted.length > 0 && (
                     <Button
                       type="button"
                       variant="outline"
-                      size="sm"
-                      onClick={() => void handleSyncMyProfileIndex()}
-                      disabled={myProfileSyncBusy}
-                      title="ให้พนักงานแต่ละคนเห็นสลิป/ใบหัก ณ ที่จ่ายในหน้า My Profile"
+                      className="h-10 gap-2"
+                      disabled={listPrintBusy}
+                      onClick={() => void handlePrintSettlementList()}
                     >
-                      {myProfileSyncBusy ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      {listPrintBusy ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
-                        <UserCircle className="h-4 w-4 mr-2" />
+                        <Printer className="h-4 w-4" />
                       )}
-                      อัปเดต My Profile
+                      พิมพ์รายการ
                     </Button>
                   )}
                   {!isLocked && canMutate && (run.status === 'DRAFT' || run.status === 'CALCULATED') && (

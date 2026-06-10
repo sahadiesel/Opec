@@ -27,7 +27,8 @@ import {
   ClipboardList,
   CheckCircle2,
   BookOpen,
-  ShieldAlert
+  ShieldAlert,
+  Loader2,
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -36,6 +37,10 @@ import { collection, query, orderBy, limit, where } from 'firebase/firestore';
 import { StoreItem, StoreTransaction, User, Assignment, Worker, OfficeStaff, formatStoreItemLabel } from '@/lib/types';
 import { netCustodyQuantityDeltaForItem } from '@/lib/store/store-custody-net';
 import { isWorkerDispatchReady } from '@/lib/worker-readiness';
+import {
+  computeStoreDemandRequirements,
+  type StoreDemandRequirementRow,
+} from '@/lib/store/store-demand-requirements';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -50,6 +55,8 @@ export default function StoreDashboardPage() {
   const firestore = useFirestore();
 
   const [custodyPage, setCustodyPage] = useState(1);
+  const [demandLoading, setDemandLoading] = useState(false);
+  const [demandRows, setDemandRows] = useState<StoreDemandRequirementRow[]>([]);
 
   const canAccess = useMemo(() => canAccessDomain(currentUser, 'store'), [currentUser]);
   const isOpsOrHR = useMemo(
@@ -258,6 +265,31 @@ export default function StoreDashboardPage() {
       return la.localeCompare(lb, 'th');
     });
   }, [transactions, mobilizations, workers, officeStaff, isOpsOrHR, items]);
+
+  useEffect(() => {
+    if (!firestore || !canAccess || !items?.length) {
+      setDemandRows([]);
+      setDemandLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDemandLoading(true);
+    void computeStoreDemandRequirements(firestore, mobilizations, items, workers)
+      .then((rows) => {
+        if (cancelled) return;
+        setDemandRows(rows);
+      })
+      .catch((e) => {
+        console.error(e);
+        if (!cancelled) setDemandRows([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDemandLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, canAccess, mobilizations, items, workers]);
 
   if (userLoading || isUserLoading) {
     return (
@@ -715,45 +747,95 @@ export default function StoreDashboardPage() {
                 <CardTitle className="text-lg flex items-center gap-2">
                   <ClipboardList className="h-5 w-5 text-blue-600" /> แผนความต้องการอุปกรณ์ (Demand Requirements)
                 </CardTitle>
-                <CardDescription>คำนวณจากจำนวนพนักงานที่กำลังเตรียมส่งตัว (Mobilization Queue)</CardDescription>
+                <CardDescription>
+                  ความต้องการ = ลูกจ้าง ACTIVE ที่ assign แล้วแต่ยังเบิกไม่ครบ (ไม่นับที่เบิกครบ/WAIVED) · แสดงชื่อเมนตามโควต้าตำแหน่ง
+                  และสต็อกแยกรุ่นย่อยให้ตัดสินใจจัดซื้อเอง
+                </CardDescription>
               </CardHeader>
               <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="font-bold pl-6">อุปกรณ์</TableHead>
-                      <TableHead className="text-center font-bold">ความต้องการ (Demand)</TableHead>
-                      <TableHead className="text-center font-bold">พร้อมใช้งาน (Available)</TableHead>
-                      <TableHead className="text-center font-bold text-red-600">ขาดแคลน (Shortage)</TableHead>
-                      <TableHead className="text-right pr-6">คำแนะนำ</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {items
-                      ?.filter(
-                        (i) =>
-                          i.active &&
-                          i.catalogGroupRole !== 'header' &&
-                          i.currentStock <= i.minimumStock,
-                      )
-                      .map((i) => (
-                      <TableRow key={i.id}>
-                        <TableCell className="pl-6 font-bold text-primary">{formatStoreItemLabel(i)}</TableCell>
-                        <TableCell className="text-center text-muted-foreground">-</TableCell>
-                        <TableCell className="text-center font-bold">{i.currentStock}</TableCell>
-                        <TableCell className="text-center font-black text-red-600">{i.minimumStock}</TableCell>
-                        <TableCell className="text-right pr-6">
-                          <Badge variant="outline" className="bg-blue-50 text-blue-700">Recommend Purchase</Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {(!items || items.length === 0) && (
+                {demandLoading ? (
+                  <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground text-sm">
+                    <Loader2 className="h-5 w-5 animate-spin" /> กำลังคำนวณความต้องการจาก mobilization…
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">ไม่มีข้อมูลความต้องการพิเศษ</TableCell>
+                        <TableHead className="font-bold pl-6 min-w-[180px]">อุปกรณ์ (เมนตำแหน่ง)</TableHead>
+                        <TableHead className="text-center font-bold w-[100px]">ความต้องการ</TableHead>
+                        <TableHead className="font-bold min-w-[200px]">สต็อกตามรุ่นย่อย</TableHead>
+                        <TableHead className="text-center font-bold text-red-600 w-[90px]">ขาดรวม</TableHead>
+                        <TableHead className="text-right pr-6 w-[120px]">คำแนะนำ</TableHead>
                       </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {demandRows.map((row) => (
+                        <TableRow key={row.requirementKey}>
+                          <TableCell className="pl-6 align-top">
+                            <span className="font-bold text-primary block">{row.displayName}</span>
+                            {row.itemCode ? (
+                              <span className="text-[10px] font-mono text-muted-foreground">{row.itemCode}</span>
+                            ) : null}
+                            {row.mobilizationHits > 0 ? (
+                              <span className="block text-[10px] text-muted-foreground mt-0.5">
+                                จาก {row.mobilizationHits} mobilization · ต้องการ {row.demand} {row.unit}
+                              </span>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="text-center font-black tabular-nums align-top">
+                            {row.demand}
+                            <span className="block text-[10px] font-normal text-muted-foreground">{row.unit}</span>
+                          </TableCell>
+                          <TableCell className="align-top">
+                            {row.variantStocks.length === 0 ? (
+                              <span className="text-xs text-muted-foreground italic">ไม่พบ SKU ในคลัง</span>
+                            ) : (
+                              <ul className="text-xs space-y-1">
+                                {row.variantStocks.map((v) => (
+                                  <li
+                                    key={v.storeItemId}
+                                    className={
+                                      v.currentStock === 0
+                                        ? 'text-red-600 font-medium'
+                                        : 'text-foreground'
+                                    }
+                                  >
+                                    {v.label}:{' '}
+                                    <span className="font-bold tabular-nums">{v.currentStock}</span> {v.unit}
+                                  </li>
+                                ))}
+                                <li className="text-[10px] text-muted-foreground pt-0.5 border-t mt-1">
+                                  รวมในคลัง {row.totalAvailable} {row.unit}
+                                </li>
+                              </ul>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-center font-black tabular-nums text-red-600 align-top">
+                            {row.aggregateShortage > 0 ? row.aggregateShortage : '—'}
+                          </TableCell>
+                          <TableCell className="text-right pr-6 align-top">
+                            {row.aggregateShortage > 0 ? (
+                              <Badge variant="outline" className="bg-blue-50 text-blue-700 whitespace-normal text-center">
+                                ตรวจสอบรุ่นย่อย / สั่งซื้อ
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="font-normal">
+                                สต็อกรวมพอ
+                              </Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {demandRows.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">
+                            ไม่มีรายการที่ยังเบิกไม่ครบจาก mobilization
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

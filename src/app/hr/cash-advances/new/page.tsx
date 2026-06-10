@@ -27,7 +27,8 @@ import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { resolveSubjectLinkedUserId } from '@/lib/hr/linked-personnel';
 import type { CashAdvanceRequest, OfficeStaff, User, Worker } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
-import { cn } from '@/lib/utils';
+import { filterActiveWorkersForSelection } from '@/lib/hr/worker-active';
+import { filterActiveOfficeStaffForSelection } from '@/lib/hr/office-staff-active';
 
 function workerPickLabel(w: Worker): string {
   return `${w.firstName ?? ''} ${w.lastName ?? ''}`.trim() + ` — ${w.workerCode ?? ''}`;
@@ -72,7 +73,7 @@ export default function NewCashAdvancePage() {
 
   const workersSorted = useMemo(() => {
     if (!workers?.length) return [];
-    return [...workers].sort((a, b) => {
+    return filterActiveWorkersForSelection(workers).sort((a, b) => {
       const na = `${a.firstName ?? ''} ${a.lastName ?? ''}`.trim();
       const nb = `${b.firstName ?? ''} ${b.lastName ?? ''}`.trim();
       const byName = na.localeCompare(nb, 'th', { sensitivity: 'base' });
@@ -85,7 +86,7 @@ export default function NewCashAdvancePage() {
 
   const staffSorted = useMemo(() => {
     if (!staff?.length) return [];
-    return [...staff].sort((a, b) => {
+    return filterActiveOfficeStaffForSelection(staff).sort((a, b) => {
       const na = (a.fullName ?? '').trim();
       const nb = (b.fullName ?? '').trim();
       const byName = na.localeCompare(nb, 'th', { sensitivity: 'base' });

@@ -161,7 +161,7 @@ export function WorkerInfoTab({
             {!readinessComplianceOk && (
               <p className="text-xs flex items-center gap-1.5 text-destructive bg-destructive/5 border border-destructive/20 rounded-md px-2 py-1.5 w-fit">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                ความพร้อมจากเอกสาร: <strong className="font-mono">{worker.readinessStatus}</strong> — แก้ที่แท็บ Cert / Medical / Drug ตามเกณฑ์
+                ความพร้อมจากเอกสาร: <strong className="font-mono">{worker.readinessStatus}</strong> — แก้ที่แท็บ เอกสาร/ใบเซอร์ / Medical / Drug ตามเกณฑ์
               </p>
             )}
             {readinessComplianceOk && !readinessOnHold && (

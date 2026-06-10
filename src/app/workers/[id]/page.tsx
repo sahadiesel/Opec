@@ -14,7 +14,6 @@ import {
   FileText,
   Stethoscope,
   AlertCircle,
-  FileSearch,
   History,
   Info,
   Package,
@@ -64,10 +63,9 @@ import {
   canViewWorkerBankPayrollFieldsFromUser,
 } from '@/lib/payroll/labor-cost-model';
 import { WorkerInfoTab } from './_components/worker-info-tab';
-import { WorkerCertsTab } from './_components/worker-certs-tab';
+import { WorkerCredentialsTab } from './_components/worker-credentials-tab';
 import { WorkerMedicalTab } from './_components/worker-medical-tab';
 import { WorkerDrugTab } from './_components/worker-drug-tab';
-import { WorkerDocsTab } from './_components/worker-docs-tab';
 import { WorkerWorklogTab } from './_components/worker-worklog-tab';
 import { WorkerPositionStoreTab } from './_components/worker-position-store-tab';
 import { WorkerMonthlyTimesheetTab } from './_components/worker-monthly-timesheet-tab';
@@ -77,20 +75,24 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const WORKER_TAB_VALUES = [
   'info',
   'monthly_timesheet',
-  'certs',
+  'credentials',
   'medical',
   'drug',
-  'docs',
   'worklog',
   'ppe_list',
   'tools_list',
 ] as const;
 type WorkerProfileTab = (typeof WORKER_TAB_VALUES)[number];
 
-/** รองรับลิงก์เก่า ?tab=attendance (Kiosk) → แท็บสรุปรายเดือน */
+/** รองรับลิงก์เก่า ?tab=attendance / certs / docs */
 function normalizeWorkerProfileTabParam(s: string | null): WorkerProfileTab | null {
   if (s == null) return null;
-  const mapped = s === 'attendance' ? 'monthly_timesheet' : s;
+  const mapped =
+    s === 'attendance'
+      ? 'monthly_timesheet'
+      : s === 'certs' || s === 'docs'
+        ? 'credentials'
+        : s;
   return (WORKER_TAB_VALUES as readonly string[]).includes(mapped) ? (mapped as WorkerProfileTab) : null;
 }
 
@@ -162,6 +164,14 @@ function WorkerDetailContent({ id }: { id: string }) {
     [firestore, dataLayerReady],
   );
   const { data: workerDocCatalog } = useCollection<WorkerDocumentCatalogItem>(workerDocCatalogQuery as any);
+
+  const positionCertsQuery = useMemoFirebase(() => {
+    if (!dataLayerReady || !worker?.currentPositionId) return null;
+    return collection(firestore!, 'positions', worker.currentPositionId, 'certificate_requirements');
+  }, [firestore, dataLayerReady, worker?.currentPositionId]);
+  const { data: positionCertRequirements } = useCollection<PositionCertificateRequirement>(
+    positionCertsQuery as any,
+  );
 
   const drugPanelRef = useMemoFirebase(
     () =>
@@ -643,17 +653,14 @@ function WorkerDetailContent({ id }: { id: string }) {
             <TabsTrigger value="monthly_timesheet" className={workerProfileTabTriggerClassName}>
               <Clock className="h-4 w-4" /> สรุปลงเวลารายเดือน
             </TabsTrigger>
-            <TabsTrigger value="certs" className={workerProfileTabTriggerClassName}>
-              <FileText className="h-4 w-4" /> ใบเซอร์ (Certs)
+            <TabsTrigger value="credentials" className={workerProfileTabTriggerClassName}>
+              <FileText className="h-4 w-4" /> เอกสาร/ใบเซอร์
             </TabsTrigger>
             <TabsTrigger value="medical" className={workerProfileTabTriggerClassName}>
               <Stethoscope className="h-4 w-4" /> ตรวจร่างกาย (Medical)
             </TabsTrigger>
             <TabsTrigger value="drug" className={workerProfileTabTriggerClassName}>
               <AlertCircle className="h-4 w-4" /> สารเสพติด (Drug Test)
-            </TabsTrigger>
-            <TabsTrigger value="docs" className={workerProfileTabTriggerClassName}>
-              <FileSearch className="h-4 w-4" /> เอกสาร (Docs)
             </TabsTrigger>
             <TabsTrigger value="worklog" className={workerProfileTabTriggerClassName}>
               <History className="h-4 w-4" /> ประวัติชั่วโมงงาน
@@ -695,13 +702,16 @@ function WorkerDetailContent({ id }: { id: string }) {
             />
           </TabsContent>
 
-          <TabsContent value="certs" className="mt-6">
-            <WorkerCertsTab
+          <TabsContent value="credentials" className="mt-6">
+            <WorkerCredentialsTab
               workerId={id}
               firestore={firestore}
               certs={certs}
               certsQuery={certsQuery as any}
+              workerDocs={workerDocs}
+              docsQuery={docsQuery as any}
               workerDocCatalog={workerDocCatalog}
+              positionCertRequirements={positionCertRequirements}
               canEdit={canEditWorker}
             />
           </TabsContent>
@@ -723,17 +733,6 @@ function WorkerDetailContent({ id }: { id: string }) {
               drugTests={drugTests}
               drugTestsQuery={drugTestsQuery as any}
               panelSubstances={panelSubstances}
-              canEdit={canEditWorker}
-            />
-          </TabsContent>
-
-          <TabsContent value="docs" className="mt-6">
-            <WorkerDocsTab
-              workerId={id}
-              firestore={firestore}
-              workerDocs={workerDocs}
-              docsQuery={docsQuery as any}
-              workerDocCatalog={workerDocCatalog}
               canEdit={canEditWorker}
             />
           </TabsContent>

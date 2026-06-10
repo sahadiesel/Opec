@@ -16,7 +16,6 @@ import {
   Inbox,
   FileText,
   PackageOpen,
-  ShieldAlert,
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -39,7 +38,14 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
@@ -58,6 +64,8 @@ import {
 import { FieldQuotaIssueCard } from '@/components/store/field-quota-issue-card';
 import type { MobilizationRequirementFulfillmentLine } from '@/lib/types';
 import { storeCatalogPickableItems } from '@/lib/store/receive-stock-select';
+import { filterActiveOfficeStaffForSelection } from '@/lib/hr/office-staff-active';
+import { isActiveWorkerForSelection } from '@/lib/hr/worker-active';
 
 type QueuePendingLine = FieldQuotaPendingLine;
 
@@ -161,6 +169,14 @@ export default function IssueItemsPage() {
     () => (allMobilizations || []).filter((m) => isMobilizationInStoreFulfillmentScope(m)),
     [allMobilizations],
   );
+
+  const topUpMobilizationOptions = useMemo(() => {
+    const workers = allWorkers || [];
+    return scopedMobilizations.filter((m) => {
+      const w = workers.find((x) => x.id === m.workerId);
+      return w != null && isActiveWorkerForSelection(w);
+    });
+  }, [scopedMobilizations, allWorkers]);
 
   useEffect(() => {
     let cancelled = false;
@@ -557,16 +573,44 @@ export default function IssueItemsPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="max-w-[1600px] mx-auto space-y-6">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" asChild><Link href="/store"><ArrowLeft className="h-5 w-5" /></Link></Button>
-          <div className="flex-1">
+        <div className="flex items-start gap-4">
+          <Button variant="ghost" size="icon" className="shrink-0 mt-1" asChild>
+            <Link href="/store"><ArrowLeft className="h-5 w-5" /></Link>
+          </Button>
+          <div className="flex-1 min-w-0">
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <PackageMinus className="h-8 w-8 text-orange-600" /> เบิกอุปกรณ์ / เครื่องมือ (Issue from Store)
+              <PackageMinus className="h-8 w-8 text-orange-600 shrink-0" /> เบิกอุปกรณ์ / เครื่องมือ (Issue from Store)
             </h1>
-            <p className="text-muted-foreground text-lg">
-              โหมดลูกจ้างหน้างาน: แสดงรายการรอเบิกจากงานที่มอบหมาย (mobilization) ตาม PPE/อุปกรณ์ของตำแหน่ง — โหมดพนักงานออฟฟิศ: เบิกจากแคตตาล็อกทั้งหมด
-            </p>
           </div>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm" className="shrink-0 gap-2 mt-1">
+                <Info className="h-4 w-4" />
+                นโยบายการเบิกจ่าย
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>นโยบายการเบิกจ่ายพัสดุ</DialogTitle>
+                <DialogDescription asChild>
+                  <div className="space-y-3 pt-2 text-sm text-foreground">
+                    {issueMode === 'field' ? (
+                      <p className="text-muted-foreground">
+                        ลูกจ้างหน้างานต้องเบิกตามรายการที่กำหนดในตำแหน่ง (PPE/เครื่องมือ) และไม่เกินโควต้า ·
+                        ใช้「เบิกเพิ่มตามโควต้า」เมื่อเคยเบิกบางส่วนแล้ว · ไม่มีรายการในโควต้า = เบิกไม่ได้ ·
+                        แก้จำนวน/รายการที่เมนูตำแหน่งงาน → PPE / อุปกรณ์
+                      </p>
+                    ) : (
+                      <p className="text-muted-foreground">
+                        พนักงานออฟฟิศสามารถเบิกยืมเครื่องมือ/อุปกรณ์ได้จากแคตตาล็อกทั้งหมด
+                        โดยไม่ต้องอ้างอิงลิสต์ตามตำแหน่งงาน
+                      </p>
+                    )}
+                  </div>
+                </DialogDescription>
+              </DialogHeader>
+            </DialogContent>
+          </Dialog>
         </div>
 
         <Tabs value={issueMode} onValueChange={onIssueModeChange} className="w-full">
@@ -575,22 +619,6 @@ export default function IssueItemsPage() {
             <TabsTrigger value="office" className="py-3">พนักงานออฟฟิศ (Office)</TabsTrigger>
           </TabsList>
         </Tabs>
-
-        <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
-          <ShieldAlert className="h-5 w-5 text-amber-600" />
-          <AlertTitle className="font-bold uppercase tracking-wider">นโยบายการเบิกจ่ายพัสดุ</AlertTitle>
-          <AlertDescription className="text-sm">
-            {issueMode === 'field' ? (
-              <>
-                ลูกจ้างหน้างานต้องเบิกตามรายการที่กำหนดในตำแหน่ง (PPE/เครื่องมือ) และไม่เกินโควต้า · ใช้「เบิกเพิ่มตามโควต้า」เมื่อเคยเบิกบางส่วนแล้ว · ไม่มีรายการในโควต้า = เบิกไม่ได้ · แก้จำนวน/รายการที่เมนูตำแหน่งงาน → PPE / อุปกรณ์
-              </>
-            ) : (
-              <>
-                พนักงานออฟฟิศสามารถเบิกยืมเครื่องมือ/อุปกรณ์ได้จากแคตตาล็อกทั้งหมด โดยไม่ต้องอ้างอิงลิสต์ตามตำแหน่งงาน
-              </>
-            )}
-          </AlertDescription>
-        </Alert>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* LEFT: Context & Catalog */}
@@ -656,7 +684,7 @@ export default function IssueItemsPage() {
                           <SelectValue placeholder="เลือก mobilization…" />
                         </SelectTrigger>
                         <SelectContent>
-                          {scopedMobilizations.map((m) => {
+                          {topUpMobilizationOptions.map((m) => {
                             const w = (allWorkers || []).find((x) => x.id === m.workerId);
                             const workerLabel = w
                               ? `${w.firstName} ${w.lastName} (${w.workerCode})`
@@ -720,9 +748,7 @@ export default function IssueItemsPage() {
                         <SelectValue placeholder="เลือกพนักงานออฟฟิศ..." />
                       </SelectTrigger>
                       <SelectContent>
-                        {officeStaffList
-                          ?.filter((s) => s.status === 'ACTIVE')
-                          .map((s) => (
+                        {filterActiveOfficeStaffForSelection(officeStaffList).map((s) => (
                             <SelectItem key={s.id} value={s.id}>
                               {s.fullName} ({s.staffCode})
                             </SelectItem>

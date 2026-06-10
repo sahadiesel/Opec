@@ -1,13 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { collection, getDocs, orderBy, query, limit } from 'firebase/firestore';
 import { AppShell } from '@/components/layout/app-shell';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -15,10 +15,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { Users, ExternalLink, Loader2, Search, Building2, Briefcase, ShieldCheck } from 'lucide-react';
+import { Users, ExternalLink, Loader2, Search, Building2, Briefcase, ShieldCheck, Printer } from 'lucide-react';
 import type {
   User,
   PayrollBatch,
@@ -34,6 +42,13 @@ import { isSystemAdmin } from '@/lib/permission-core';
 import { usePermissions } from '@/hooks/use-permissions';
 import { resolvePayrollWorkerWhtPaymentDateYmd } from '@/lib/payroll/payroll-worker-wht-model';
 import { resolveOfficePayrollWhtPaymentDateYmd } from '@/lib/payroll/payroll-office-wht-model';
+import { useToast } from '@/hooks/use-toast';
+import {
+  buildSocialSecurityPayrollListPrintHtml,
+  capSocialSecurityPayrollListPrintRows,
+  type SocialSecurityPayrollListPrintRow,
+} from '@/lib/documents/social-security-payroll-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 
 type WorkerSsoRow = { batch: PayrollBatch; line: PayrollBatchLine; sso: number; paymentYmd: string };
 type OfficeSsoRow = { run: OfficePayrollRun; line: OfficePayrollLine; sso: number; paymentYmd: string };
@@ -124,12 +139,71 @@ function officeRunStatusBadge(status: PayrollRunStatus): { label: string; varian
   return { label: 'ระหว่างทาง', variant: 'secondary' };
 }
 
+function describeSocialSecurityPrintFilters(searchTerm: string, monthFilter: string): string[] {
+  const lines: string[] = [];
+  if (monthFilter !== 'ALL') {
+    lines.push(`งวดเงินเดือน: ${ymLabelTh(monthFilter)} (${monthFilter})`);
+  }
+  if (searchTerm.trim()) {
+    lines.push(`ค้นหา: "${searchTerm.trim()}"`);
+  }
+  return lines;
+}
+
+function buildSocialSecurityPrintRows(
+  workers: WorkerSsoRow[],
+  offices: OfficeSsoRow[],
+  executives: ExecutiveSsoRow[],
+): SocialSecurityPayrollListPrintRow[] {
+  const rows: SocialSecurityPayrollListPrintRow[] = [];
+  for (const { batch, line, sso, paymentYmd } of workers) {
+    const st = workerBatchStatusBadge(batch.status);
+    rows.push({
+      section: 'ลูกจ้าง',
+      periodStatus: st.label,
+      batchLabel: batch.id,
+      earnerName: line.workerNameSnapshot || '—',
+      earnerId: line.workerId,
+      paymentDate: paymentYmd,
+      ssoLabel: fmtBaht(sso),
+    });
+  }
+  for (const { run, line, sso, paymentYmd } of offices) {
+    const st = officeRunStatusBadge(run.status);
+    rows.push({
+      section: 'ออฟฟิศ',
+      periodStatus: st.label,
+      batchLabel: run.payrollRunNo || run.id,
+      earnerName: line.staffName || '—',
+      earnerId: line.staffId,
+      paymentDate: paymentYmd,
+      ssoLabel: fmtBaht(sso),
+    });
+  }
+  for (const { run, line, sso, paymentYmd } of executives) {
+    const st = officeRunStatusBadge(run.status);
+    rows.push({
+      section: 'ผู้บริหาร',
+      periodStatus: st.label,
+      batchLabel: run.payrollRunNo || run.id,
+      earnerName: line.staffName || '—',
+      earnerId: line.staffId,
+      paymentDate: paymentYmd,
+      ssoLabel: fmtBaht(sso),
+    });
+  }
+  return rows;
+}
+
 export default function AccountingSocialSecurityPayrollHubPage() {
   const { currentUser, isLoading } = useAppUser();
   const { profile } = usePermissions(currentUser);
   const firestore = useFirestore();
+  const { toast } = useToast();
   const [q, setQ] = useState('');
   const [monthFilter, setMonthFilter] = useState<string>('ALL');
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
   const [workerRows, setWorkerRows] = useState<WorkerSsoRow[]>([]);
   const [officeRows, setOfficeRows] = useState<OfficeSsoRow[]>([]);
   const [executiveRows, setExecutiveRows] = useState<ExecutiveSsoRow[]>([]);
@@ -363,6 +437,88 @@ export default function AccountingSocialSecurityPayrollHubPage() {
   );
 
   const grandTotal = workerTotalSso + officeTotalSso + executiveTotalSso;
+  const filteredRowCount = filteredWorker.length + filteredOffice.length + filteredExecutive.length;
+  const allRowCount = workerRows.length + officeRows.length + executiveRows.length;
+
+  const runSocialSecurityPayrollListPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const workers = scope === 'filtered' ? filteredWorker : workerRows;
+      const offices = scope === 'filtered' ? filteredOffice : officeRows;
+      const executives = scope === 'filtered' ? filteredExecutive : executiveRows;
+      const sourceRows = buildSocialSecurityPrintRows(workers, offices, executives);
+
+      if (sourceRows.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
+              : 'ยังไม่มีรายการสมทบประกันสังคมในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const { rows, truncated } = capSocialSecurityPayrollListPrintRows(sourceRows);
+        const workerTotal = workers.reduce((sum, { sso }) => sum + sso, 0);
+        const officeTotal = offices.reduce((sum, { sso }) => sum + sso, 0);
+        const executiveTotal = executives.reduce((sum, { sso }) => sum + sso, 0);
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines = scope === 'filtered' ? describeSocialSecurityPrintFilters(q, monthFilter) : [];
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
+
+        const body = buildSocialSecurityPayrollListPrintHtml({
+          rows,
+          scopeTitle,
+          filterLines,
+          grandTotalLabel: fmtBaht(workerTotal + officeTotal + executiveTotal),
+          workerTotalLabel: fmtBaht(workerTotal),
+          officeTotalLabel: fmtBaht(officeTotal),
+          executiveTotalLabel: fmtBaht(executiveTotal),
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Social-Security-Payroll-List',
+          suggestedFileName: `Social-Security-Payroll-List-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [
+      filteredWorker,
+      filteredOffice,
+      filteredExecutive,
+      workerRows,
+      officeRows,
+      executiveRows,
+      q,
+      monthFilter,
+      currentUser?.displayName,
+      toast,
+    ],
+  );
 
   if (isLoading || !currentUser) {
     return (
@@ -404,22 +560,29 @@ export default function AccountingSocialSecurityPayrollHubPage() {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">ค้นหาและกรองเดือน</CardTitle>
-            <CardDescription>
-              ชื่อผู้มีเงินได้ เลขที่ชุดจ่าย / งวดออฟฟิศ / งวดผู้บริหาร รหัสบรรทัด หรือวันที่จ่าย —
-              <span className="font-semibold text-foreground">กรองเดือนใช้ “งวดเงินเดือน” (period month) ไม่ใช่วันที่จ่าย</span>
-              เช่น งวดเม.ย. ที่จ่ายต้นเดือนพ.ค. จะนับเป็นเดือนเม.ย. (สอดคล้องกับการนำส่ง สปส.1-10)
-            </CardDescription>
-            <div className="flex flex-col gap-4 pt-3 sm:flex-row sm:items-end">
-              <div className="relative max-w-md flex-1">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input className="pl-9" placeholder="พิมพ์คำค้น..." value={q} onChange={(e) => setQ(e.target.value)} />
-              </div>
-              <div className="w-full space-y-1.5 rounded-lg border bg-muted/50 p-3 sm:max-w-[260px] sm:shrink-0">
-                <Label htmlFor="sso-month-filter" className="text-xs text-muted-foreground">
-                  กรองตามเดือน
-                </Label>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <p className="text-xs text-muted-foreground mb-3">
+              กรองเดือนใช้งวดเงินเดือน (period month) ไม่ใช่วันที่จ่าย — สอดคล้องการนำส่ง สปส.1-10
+            </p>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-md">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="h-10 pl-9"
+                    placeholder="พิมพ์คำค้น..."
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    aria-label="ค้นหารายการประกันสังคม"
+                  />
+                </div>
                 <Select value={monthFilter} onValueChange={setMonthFilter}>
-                  <SelectTrigger id="sso-month-filter" className="bg-background">
+                  <SelectTrigger
+                    id="sso-month-filter"
+                    className="h-10 w-[min(100%,13rem)] shrink-0 bg-background"
+                    aria-label="กรองตามงวดเงินเดือน"
+                  >
                     <SelectValue placeholder="เลือกเดือน" />
                   </SelectTrigger>
                   <SelectContent>
@@ -432,13 +595,79 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="w-full rounded-lg border-2 border-primary/40 bg-primary/5 px-4 py-3 sm:max-w-[220px] sm:shrink-0">
-                <p className="text-xs font-medium text-muted-foreground">รวมทั้ง 3 หมวด (ในตาราง)</p>
-                <p className="text-2xl font-bold tabular-nums tracking-tight text-primary">{fmtBaht(grandTotal)}</p>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {!loadingBatches && !loadingRuns && !loadingExecutiveRuns && !loadingWorkerLines && !loadingOfficeLines && !loadingExecutiveLines ? (
+                  <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-2 min-w-[11rem]">
+                    <p className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">รวมทั้ง 3 หมวด</p>
+                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(grandTotal)}</p>
+                  </div>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 shrink-0 gap-2"
+                  onClick={() => setPrintDialogOpen(true)}
+                >
+                  <Printer className="h-4 w-4" /> พิมพ์
+                </Button>
               </div>
             </div>
-          </CardHeader>
+          </CardContent>
         </Card>
+
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการประกันสังคม</DialogTitle>
+              <DialogDescription>
+                รวมลูกจ้าง ออฟฟิศ และผู้บริหาร — สูงสุด 500 รายการต่อครั้ง
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                <ul className="list-disc list-inside text-xs text-muted-foreground">
+                  {describeSocialSecurityPrintFilters(q, monthFilter).length > 0 ? (
+                    describeSocialSecurityPrintFilters(q, monthFilter).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))
+                  ) : (
+                    <li>ทุกเดือน — ไม่มีคำค้น</li>
+                  )}
+                </ul>
+                <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredRowCount} รายการ</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                ข้อมูลทั้งหมด: {allRowCount} รายการ · สมทบรวม {fmtBaht(
+                  workerRows.reduce((s, r) => s + r.sso, 0) +
+                    officeRows.reduce((s, r) => s + r.sso, 0) +
+                    executiveRows.reduce((s, r) => s + r.sso, 0),
+                )}
+              </p>
+            </div>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={printBusy || filteredRowCount === 0}
+                onClick={() => void runSocialSecurityPayrollListPrint('filtered')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ตามตัวกรอง ({filteredRowCount})
+              </Button>
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                disabled={printBusy || allRowCount === 0}
+                onClick={() => void runSocialSecurityPayrollListPrint('all')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ทั้งหมด ({allRowCount})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {listLoadErr ? (
           <p className="text-sm text-destructive">

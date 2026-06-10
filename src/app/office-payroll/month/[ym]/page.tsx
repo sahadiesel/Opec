@@ -17,6 +17,11 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { canSubmitOfficeRunForManagerReview } from '@/lib/permission-core';
 import { useToast } from '@/hooks/use-toast';
 import { formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
+import {
+  buildOfficePayrollMonthConsolidationListPrintHtml,
+  capOfficePayrollLinePrintRows,
+} from '@/lib/documents/office-payroll-lines-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import { submitOfficeRunForManagerReview } from '@/lib/payroll/office-submit-hr-review';
 import {
   fetchOfficePayrollMonthConsolidation,
@@ -36,6 +41,7 @@ import {
   ArrowLeft,
   Search,
   Send,
+  Printer,
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -89,6 +95,7 @@ export default function OfficePayrollMonthPage({ params }: { params: Promise<{ y
   const [loading, setLoading] = useState(true);
   const [sendingAll, setSendingAll] = useState(false);
   const [lineQuery, setLineQuery] = useState('');
+  const [printBusy, setPrintBusy] = useState(false);
 
   useEffect(() => {
     if (!firestore || !ym) {
@@ -134,6 +141,74 @@ export default function OfficePayrollMonthPage({ params }: { params: Promise<{ y
         l.positionTitle.toLowerCase().includes(q)
     );
   }, [merged, lineQuery]);
+
+  const handlePrintDocument = useCallback(async () => {
+    if (!c || mergedFiltered.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีรายการให้พิมพ์',
+        description: lineQuery.trim()
+          ? 'ไม่พบรายการตามคำค้น — ล้างช่องค้นหาหรือเปลี่ยนคำค้น'
+          : 'ยังไม่มีรายการหลังคำนวณในเดือนนี้',
+      });
+      return;
+    }
+
+    const fmtBaht = (n: number) => `฿${Number(n || 0).toLocaleString()}`;
+    setPrintBusy(true);
+    try {
+      const sourceRows = mergedFiltered.map((line) => ({
+        sourceRunNos: line.sourceRunNos || '—',
+        staffName: line.staffName || '—',
+        department: line.department || '—',
+        positionTitle: line.positionTitle || '—',
+        baseSalaryLabel: fmtBaht(line.baseSalary),
+        grossLabel: fmtBaht(line.grossPay),
+        deductionsLabel: `-${fmtBaht(line.deductions)}`,
+        netLabel: fmtBaht(line.netPay),
+      }));
+      const { rows, truncated } = capOfficePayrollLinePrintRows(sourceRows);
+      const generatedAt = new Date().toLocaleString('th-TH', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+      const filterLines = lineQuery.trim() ? [`ค้นหา: ${lineQuery.trim()}`] : [];
+      const scopeTitle =
+        lineQuery.trim() ? 'พิมพ์ตามคำค้นปัจจุบัน' : 'พิมพ์รายการทั้งหมดในเดือน';
+
+      const body = buildOfficePayrollMonthConsolidationListPrintHtml({
+        payrollMonth: ym,
+        payrollMonthLabel: monthLabel,
+        scopeTitle,
+        filterLines,
+        rows,
+        staffCountLabel: String(c.uniqueStaffCount),
+        runCountLabel: String(c.runs.length),
+        grossTotalLabel: fmtBaht(c.sumGrossFromRuns),
+        deductionsTotalLabel: fmtBaht(c.sumDeductionsFromRuns),
+        netTotalLabel: fmtBaht(c.sumNetFromRuns),
+        generatedAt,
+        printedBy: currentUser?.displayName,
+        truncated,
+      });
+
+      const ok = await openStandardPrintWindow({
+        windowTitle: 'Office-Payroll-Month',
+        suggestedFileName: `Office-Payroll-Month-${ym}`,
+        bodyInnerHtml: body,
+        htmlLang: 'th',
+      });
+      if (!ok) {
+        toast({
+          variant: 'destructive',
+          title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+          description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+        });
+      }
+    } finally {
+      setPrintBusy(false);
+    }
+  }, [c, mergedFiltered, lineQuery, ym, monthLabel, currentUser?.displayName, toast]);
 
   const handleSendAllForReview = useCallback(async () => {
     if (!firestore || !currentUser || !c || calculableRuns.length === 0) return;
@@ -278,14 +353,30 @@ export default function OfficePayrollMonthPage({ params }: { params: Promise<{ y
                     รวมรายชื่อและยอดทุกงวดในเดือนเดียวกันที่คำนวณแล้ว (แสดงอ้างอิงงวดต้นทางของแต่ละบรรทัด) — หลายรายบนคนเดียวกันจะรวมยอด
                   </CardDescription>
                 </div>
-                <div className="relative max-w-md">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    className="pl-9 h-9"
-                    placeholder="ค้นหาชื่อ, เลขที่งวด, แผนก..."
-                    value={lineQuery}
-                    onChange={(e) => setLineQuery(e.target.value)}
-                  />
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                  <div className="relative min-w-0">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="h-10 w-full pl-9"
+                      placeholder="ค้นหาชื่อ, เลขที่งวด, แผนก..."
+                      value={lineQuery}
+                      onChange={(e) => setLineQuery(e.target.value)}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 w-full gap-2 whitespace-nowrap sm:w-auto"
+                    disabled={printBusy || loading || merged.length === 0}
+                    onClick={() => void handlePrintDocument()}
+                  >
+                    {printBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                    ) : (
+                      <Printer className="h-4 w-4 shrink-0" />
+                    )}
+                    พิมพ์รายการ
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent className="p-0">

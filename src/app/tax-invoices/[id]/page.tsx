@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useRef, useMemo } from 'react';
+import { useState, use, useRef, useMemo, useEffect } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -54,6 +54,10 @@ import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting } from '@/lib/simple-tier-model';
 import { canRecordTaxInvoiceBillingCustomerApproval } from '@/lib/permissions';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
+import { closeOpenCommercialArNow } from '@/lib/services/accounts-receivable-reconcile-service';
+import {
+  reconcileTaxInvoiceArIfPaid,
+} from '@/lib/services/reconcile-stale-ar-from-receipts';
 import { recordTaxInvoiceBillingCustomerApproval } from '@/lib/services/tax-invoice-billing-approval-service';
 import {
   Dialog,
@@ -123,6 +127,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const [savingInvoiceEdit, setSavingInvoiceEdit] = useState(false);
   const [printPresetOpen, setPrintPresetOpen] = useState(false);
   const [accountingPrintPreset, setAccountingPrintPreset] = useState<'p1' | 'p2' | 'p3' | 'p4'>('p1');
+  const arReconcileAttempted = useRef(false);
 
   const invRef = useMemoFirebase(() => (firestore ? doc(firestore, 'tax_invoices', id) : null), [firestore, id]);
   const { data: invoice, isLoading: isInvLoading } = useDoc<TaxInvoice>(invRef as any);
@@ -189,6 +194,46 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
 
   const isAccountingActor =
     !!currentUser && (isSystemAdmin(currentUser) || isSimpleAccounting(currentUser));
+
+  useEffect(() => {
+    if (!firestore || !invoice || !isAccountingActor || arReconcileAttempted.current) return;
+    if (invoice.status !== 'ISSUED') return;
+
+    arReconcileAttempted.current = true;
+    void (async () => {
+      try {
+        let fixedCommercial = false;
+        if (invoice.sourceCommercialInvoiceId) {
+          fixedCommercial = await closeOpenCommercialArNow(firestore, invoice.sourceCommercialInvoiceId);
+        }
+
+        if (invoice.linkedReceiptId) {
+          const { fixed, fixedTaxAr, fixedCommercialAr } = await reconcileTaxInvoiceArIfPaid(
+            firestore,
+            invoice,
+          );
+          if (fixed || fixedCommercial) {
+            toast({
+              title: 'อัปเดตลูกหนี้แล้ว',
+              description:
+                fixedTaxAr && (fixedCommercialAr || fixedCommercial)
+                  ? 'ปิด AR ใบกำกับและ AR ใบเรียกเก็บที่ค้างซ้ำ'
+                  : fixedTaxAr
+                    ? 'ปิด AR ใบกำกับตามใบเสร็จแล้ว'
+                    : 'ปิด AR ใบเรียกเก็บที่ค้างซ้ำ',
+            });
+          }
+        } else if (fixedCommercial) {
+          toast({
+            title: 'อัปเดตลูกหนี้แล้ว',
+            description: 'ปิด AR ใบเรียกเก็บที่ซ้ำกับใบกำกับแล้ว',
+          });
+        }
+      } catch (e) {
+        console.error('AR reconcile failed', e);
+      }
+    })();
+  }, [firestore, invoice, isAccountingActor, toast]);
 
   const bankAccountsQuery = useMemoFirebase(
     () => (firestore && isAccountingActor ? collection(firestore, 'bank_accounts') : null),
@@ -278,6 +323,10 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
         dueDate: dueYmd,
         updatedAt: Date.now(),
       });
+
+      if (invoice.sourceCommercialInvoiceId) {
+        await closeOpenCommercialArNow(firestore, invoice.sourceCommercialInvoiceId);
+      }
 
       toast({
         title: 'ออกเอกสารจริงแล้ว (ISSUED)',

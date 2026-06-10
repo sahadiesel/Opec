@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   collection,
@@ -44,7 +44,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ArrowLeft, CalendarOff, CheckCircle2, Loader2, MoreHorizontal, Pencil, Plus, Send, XCircle } from 'lucide-react';
+import {
+  ArrowLeft,
+  CalendarOff,
+  CheckCircle2,
+  Loader2,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Printer,
+  Send,
+  XCircle,
+} from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -75,6 +86,13 @@ import type {
   OfficeLeaveType,
 } from '@/lib/leaves/types';
 import { formatDateThaiBE } from '@/lib/date-thai';
+import {
+  buildOfficeLeaveSummaryListPrintHtml,
+  capOfficeLeaveSummaryListPrintRows,
+  describeOfficeLeaveSummaryPrintFilters,
+  type OfficeLeaveSummaryPrintRow,
+} from '@/lib/documents/office-leave-summary-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import { HrProxyLeaveDialog } from '@/components/leaves/hr-proxy-leave-dialog';
 
 const BE_YEAR_OFFSET = 543;
@@ -144,6 +162,79 @@ function leaveMatchesMonthYearFilter(
 function yearFilterSummaryLabel(yearBe: 'ALL' | number): string {
   if (yearBe === 'ALL') return 'ทุกปี (พ.ศ.)';
   return `พ.ศ. ${yearBe}`;
+}
+
+function summaryPeriodLabel(yearBe: 'ALL' | number, month: 'ALL' | number): string {
+  const yearPart = yearFilterSummaryLabel(yearBe);
+  if (month === 'ALL') return yearPart;
+  const monthLabel = THAI_MONTH_OPTIONS.find((m) => m.value === month)?.label ?? '';
+  return `${yearPart} · ${monthLabel}`;
+}
+
+type LeaveSummaryRow = {
+  staff: OfficeStaff;
+  entitlement: Record<OfficeLeaveType, number>;
+  approved: Record<OfficeLeaveType, number>;
+  pending: Record<OfficeLeaveType, number>;
+  eligibleVac: boolean;
+};
+
+function buildLeaveSummaryRows(
+  leaveRows: OfficeLeaveRequestDoc[],
+  staffList: OfficeStaff[],
+  entCfg: OfficeLeaveEntitlementsDoc | null,
+  staffFilterId: string,
+): LeaveSummaryRow[] {
+  const byStaff = new Map<
+    string,
+    { approved: Record<OfficeLeaveType, number>; pending: Record<OfficeLeaveType, number> }
+  >();
+  for (const r of leaveRows) {
+    const cur = byStaff.get(r.staffId) ?? {
+      approved: { SICK: 0, PERSONAL: 0, VACATION: 0 },
+      pending: { SICK: 0, PERSONAL: 0, VACATION: 0 },
+    };
+    const days = Number(r.days) || 0;
+    if (r.status === 'APPROVED') cur.approved[r.leaveType] += days;
+    else if (r.status === 'SUBMITTED') cur.pending[r.leaveType] += days;
+    byStaff.set(r.staffId, cur);
+  }
+  const list = staffList.map((s) => {
+    const v = byStaff.get(s.id) ?? {
+      approved: { SICK: 0, PERSONAL: 0, VACATION: 0 } as Record<OfficeLeaveType, number>,
+      pending: { SICK: 0, PERSONAL: 0, VACATION: 0 } as Record<OfficeLeaveType, number>,
+    };
+    return {
+      staff: s,
+      entitlement: entitlementForStaff(s, entCfg),
+      approved: v.approved,
+      pending: v.pending,
+      eligibleVac: isEligibleForVacation(s),
+    };
+  });
+  return staffFilterId === 'ALL' ? list : list.filter((r) => r.staff.id === staffFilterId);
+}
+
+function mapLeaveSummaryToPrintRow(row: LeaveSummaryRow): OfficeLeaveSummaryPrintRow {
+  const block = (t: OfficeLeaveType) => {
+    const ent = row.entitlement[t];
+    const used = row.approved[t];
+    const pending = row.pending[t];
+    return {
+      entitlement: ent,
+      used,
+      pending,
+      remaining: Math.max(0, ent - used - pending),
+    };
+  };
+  return {
+    staffName: row.staff.fullName || '—',
+    department: row.staff.department || '',
+    under365Days: !row.eligibleVac,
+    sick: block('SICK'),
+    personal: block('PERSONAL'),
+    vacation: block('VACATION'),
+  };
 }
 
 const STATUS_FILTER: Array<{ value: 'ALL' | OfficeLeaveStatus; label: string }> = [
@@ -239,37 +330,15 @@ export default function HrLeavesManagementPage() {
     });
   }, [leaves, yearFilter, monthFilter, statusFilter, typeFilter, staffFilter]);
 
-  const summaryRows = useMemo(() => {
-    const byStaff = new Map<
-      string,
-      { approved: Record<OfficeLeaveType, number>; pending: Record<OfficeLeaveType, number> }
-    >();
-    for (const r of filteredLeaves) {
-      const cur = byStaff.get(r.staffId) ?? {
-        approved: { SICK: 0, PERSONAL: 0, VACATION: 0 },
-        pending: { SICK: 0, PERSONAL: 0, VACATION: 0 },
-      };
-      const days = Number(r.days) || 0;
-      if (r.status === 'APPROVED') cur.approved[r.leaveType] += days;
-      else if (r.status === 'SUBMITTED') cur.pending[r.leaveType] += days;
-      byStaff.set(r.staffId, cur);
-    }
-    const list = officeStaff.map((s) => {
-      const v = byStaff.get(s.id) ?? {
-        approved: { SICK: 0, PERSONAL: 0, VACATION: 0 } as Record<OfficeLeaveType, number>,
-        pending: { SICK: 0, PERSONAL: 0, VACATION: 0 } as Record<OfficeLeaveType, number>,
-      };
-      const ent = entitlementForStaff(s, entCfg);
-      return {
-        staff: s,
-        entitlement: ent,
-        approved: v.approved,
-        pending: v.pending,
-        eligibleVac: isEligibleForVacation(s),
-      };
-    });
-    return staffFilter === 'ALL' ? list : list.filter((r) => r.staff.id === staffFilter);
-  }, [filteredLeaves, officeStaff, entCfg, staffFilter]);
+  const summaryRows = useMemo(
+    () => buildLeaveSummaryRows(filteredLeaves, officeStaff, entCfg, staffFilter),
+    [filteredLeaves, officeStaff, entCfg, staffFilter],
+  );
+
+  const summaryRowsAll = useMemo(
+    () => buildLeaveSummaryRows(leaves ?? [], officeStaff, entCfg, 'ALL'),
+    [leaves, officeStaff, entCfg],
+  );
 
   const pendingCount = useMemo(
     () => filteredLeaves.filter((r) => r.status === 'SUBMITTED').length,
@@ -283,6 +352,99 @@ export default function HrLeavesManagementPage() {
   const [proxyDialogOpen, setProxyDialogOpen] = useState(false);
   const [editingLeave, setEditingLeave] = useState<(OfficeLeaveRequestDoc & { id: string }) | null>(null);
   const [activeTab, setActiveTab] = useState<'summary' | 'requests'>('summary');
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
+
+  const selectedStaffName = useMemo(() => {
+    if (staffFilter === 'ALL') return undefined;
+    return officeStaff.find((s) => s.id === staffFilter)?.fullName;
+  }, [staffFilter, officeStaff]);
+
+  const printFilterLines = useMemo(
+    () =>
+      describeOfficeLeaveSummaryPrintFilters({
+        monthFilter,
+        monthLabel: THAI_MONTH_OPTIONS.find((m) => m.value === monthFilter)?.label,
+        yearFilter,
+        statusFilter,
+        typeFilter,
+        staffFilter,
+        staffName: selectedStaffName,
+      }),
+    [monthFilter, yearFilter, statusFilter, typeFilter, staffFilter, selectedStaffName],
+  );
+
+  const runLeaveSummaryPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const source = scope === 'filtered' ? summaryRows : summaryRowsAll;
+      if (source.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบพนักงานตามตัวกรอง — ปรับตัวกรองหรือพิมพ์ทั้งหมด'
+              : 'ยังไม่มีพนักงานออฟฟิศในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const printRows = source.map(mapLeaveSummaryToPrintRow);
+        const { rows: capped, truncated } = capOfficeLeaveSummaryListPrintRows(printRows);
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines = scope === 'filtered' ? printFilterLines : [];
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ทุกพนักงาน · ไม่ใช้ตัวกรองย่อย)';
+        const periodTitle =
+          scope === 'filtered'
+            ? summaryPeriodLabel(yearFilter, monthFilter)
+            : summaryPeriodLabel(yearFilter, 'ALL');
+
+        const body = buildOfficeLeaveSummaryListPrintHtml({
+          rows: capped,
+          scopeTitle,
+          filterLines,
+          periodTitle,
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const okPrint = await openStandardPrintWindow({
+          windowTitle: 'Office-Leave-Summary',
+          suggestedFileName: `Office-Leave-Summary-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!okPrint) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [
+      summaryRows,
+      summaryRowsAll,
+      monthFilter,
+      yearFilter,
+      printFilterLines,
+      currentUser?.displayName,
+      toast,
+    ],
+  );
 
   function openCreateLeaveDialog() {
     setEditingLeave(null);
@@ -541,17 +703,28 @@ export default function HrLeavesManagementPage() {
 
           <TabsContent value="summary" className="mt-4 space-y-4">
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">
-                  สรุปวันลา ({yearFilterSummaryLabel(yearFilter)}
-                  {monthFilter !== 'ALL'
-                    ? ` · ${THAI_MONTH_OPTIONS.find((m) => m.value === monthFilter)?.label ?? ''}`
-                    : ''}
-                  )
-                </CardTitle>
-                <CardDescription>
-                  คอลัมน์ = สิทธิ์/ใช้/รออนุมัติ/คงเหลือ ตามช่วงที่กรอง — สิทธิ์อ้างอิงตั้งค่า HR ปีปัจจุบัน
-                </CardDescription>
+              <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+                <div className="space-y-1.5">
+                  <CardTitle className="text-base">
+                    สรุปวันลา ({yearFilterSummaryLabel(yearFilter)}
+                    {monthFilter !== 'ALL'
+                      ? ` · ${THAI_MONTH_OPTIONS.find((m) => m.value === monthFilter)?.label ?? ''}`
+                      : ''}
+                    )
+                  </CardTitle>
+                  <CardDescription>
+                    คอลัมน์ = สิทธิ์/ใช้/รออนุมัติ/คงเหลือ ตามช่วงที่กรอง — สิทธิ์อ้างอิงตั้งค่า HR ปีปัจจุบัน
+                  </CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 shrink-0 gap-2"
+                  disabled={staffLoading || leavesLoading || printBusy}
+                  onClick={() => setPrintDialogOpen(true)}
+                >
+                  <Printer className="h-4 w-4" /> พิมพ์รายการ
+                </Button>
               </CardHeader>
               <CardContent className="p-0">
                 {staffLoading || leavesLoading ? (
@@ -781,6 +954,42 @@ export default function HrLeavesManagementPage() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>พิมพ์สรุปวันลา</DialogTitle>
+              <DialogDescription>
+                เลือกพิมพ์ตามตัวกรองปัจจุบัน ({summaryRows.length} คน) หรือพิมพ์ทุกพนักงานโดยไม่ใช้ตัวกรองย่อย (
+                {summaryRowsAll.length} คน)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              {printFilterLines.length > 0 ? (
+                printFilterLines.map((line) => <p key={line}>· {line}</p>)
+              ) : (
+                <p>· ไม่มีตัวกรองย่อย — แสดงทุกพนักงานตามชุดข้อมูล</p>
+              )}
+            </div>
+            <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button variant="outline" onClick={() => setPrintDialogOpen(false)} disabled={printBusy}>
+                ยกเลิก
+              </Button>
+              <Button
+                variant="outline"
+                disabled={printBusy || summaryRowsAll.length === 0}
+                onClick={() => void runLeaveSummaryPrint('all')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                พิมพ์ทั้งหมด
+              </Button>
+              <Button disabled={printBusy || summaryRows.length === 0} onClick={() => void runLeaveSummaryPrint('filtered')}>
+                {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                พิมพ์ตามตัวกรอง
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={!!approving} onOpenChange={(open) => !open && setApproving(null)}>
           <DialogContent>

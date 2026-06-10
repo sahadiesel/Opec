@@ -1,31 +1,31 @@
 
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { 
-  ArrowUpRight, 
-  Search, 
-  Filter, 
-  Building2, 
+import {
+  ArrowUpRight,
+  Search,
+  Building2,
   Calendar,
   Clock,
   Info,
   Loader2,
   Trash2,
+  Printer,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { AccountsReceivable, ARStatus, User, Customer, TaxInvoice } from '@/lib/types';
+import { AccountsReceivable, ARStatus, User, Customer, TaxInvoice, CommercialInvoice } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
-import { collection, query, orderBy, doc, getDoc } from 'firebase/firestore';
+import { collection, query, orderBy, doc, getDoc, where } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { formatStoredDateThaiBE } from '@/lib/date-thai';
+import { formatPayrollYearMonthThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { deleteAccountsReceivableEntryAsAdmin } from '@/lib/services/accounts-receivable-delete-service';
 import { useToast } from '@/hooks/use-toast';
@@ -38,10 +38,38 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  buildAccountsReceivableListPrintHtml,
+  capAccountsReceivableListPrintRows,
+  describeAccountsReceivableListPrintFilters,
+  type AccountsReceivableListPrintRow,
+} from '@/lib/documents/accounts-receivable-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
+  buildSupersededCommercialInvoiceIds,
+  filterSupersededCommercialArEntries,
+} from '@/lib/accounts-receivable/ar-list-display';
+
+function formatArMoney(amount: number): string {
+  return `฿ ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function arStatusPrintLabel(status: ARStatus): string {
+  if (status === 'PARTIALLY_PAID') return 'PARTIAL';
+  return status;
+}
 
 export default function AccountsReceivablePage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
-  const { user: firebaseUser, isUserLoading } = useUser();
+  const { isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
@@ -50,6 +78,13 @@ export default function AccountsReceivablePage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<(AccountsReceivable & { id: string }) | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [monthYm, setMonthYm] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
 
   const isAuthorized = useMemo(
     () => !!currentUser && canView(currentUser, 'accounts_receivable'),
@@ -63,17 +98,158 @@ export default function AccountsReceivablePage() {
 
   const { data: arItems, isLoading } = useCollection<AccountsReceivable>(arQuery as any);
 
+  const taxInvoicesQuery = useMemoFirebase(
+    () => (firestore && isAuthorized ? query(collection(firestore, 'tax_invoices'), where('status', '==', 'ISSUED')) : null),
+    [firestore, isAuthorized],
+  );
+  const { data: issuedTaxInvoices } = useCollection<TaxInvoice>(taxInvoicesQuery as any);
+
+  const commercialQuery = useMemoFirebase(
+    () => (firestore && isAuthorized ? collection(firestore, 'commercial_invoices') : null),
+    [firestore, isAuthorized],
+  );
+  const { data: commercialInvoices } = useCollection<CommercialInvoice>(commercialQuery as any);
+
   const customersQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'customers') : null), [firestore, isAuthorized]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
+  const customerById = useMemo(() => {
+    const m = new Map<string, Customer>();
+    for (const c of customers ?? []) m.set(c.id, c);
+    return m;
+  }, [customers]);
+
+  const supersededCommercialIds = useMemo(
+    () =>
+      buildSupersededCommercialInvoiceIds({
+        taxInvoices: issuedTaxInvoices,
+        commercialInvoices,
+      }),
+    [issuedTaxInvoices, commercialInvoices],
+  );
+
+  const visibleArItems = useMemo(
+    () => filterSupersededCommercialArEntries(arItems ?? [], supersededCommercialIds),
+    [arItems, supersededCommercialIds],
+  );
+
+  const monthFilteredItems = useMemo(() => {
+    return visibleArItems.filter((item) => String(item.issueDate || '').slice(0, 7) === monthYm);
+  }, [visibleArItems, monthYm]);
+
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return monthFilteredItems;
+    return monthFilteredItems.filter((item) => {
+      const customer = customerById.get(item.customerId);
+      const haystack = [
+        item.documentNo,
+        item.referenceId,
+        item.referenceNo,
+        item.issueDate,
+        item.dueDate,
+        item.status,
+        customer?.name,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [monthFilteredItems, searchQuery, customerById]);
+
   const stats = useMemo(() => {
-    if (!arItems) return { totalOutstanding: 0, overdue: 0, collected: 0 };
     return {
-      totalOutstanding: arItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
-      overdue: arItems.filter(item => item.status === 'OVERDUE').reduce((sum, item) => sum + item.outstandingAmount, 0),
-      collected: arItems.reduce((sum, item) => sum + item.creditAmount, 0),
+      globalOutstanding: visibleArItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
+      monthOutstanding: monthFilteredItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
+      overdue: monthFilteredItems
+        .filter((item) => item.status === 'OVERDUE')
+        .reduce((sum, item) => sum + item.outstandingAmount, 0),
+      collected: monthFilteredItems.reduce((sum, item) => sum + item.creditAmount, 0),
     };
-  }, [arItems]);
+  }, [visibleArItems, monthFilteredItems]);
+
+  const printFilterSummary = useMemo(
+    () => ({ searchTerm: searchQuery, monthYyyyMm: monthYm }),
+    [searchQuery, monthYm],
+  );
+
+  const buildPrintRows = useCallback(
+    (list: AccountsReceivable[]): AccountsReceivableListPrintRow[] =>
+      list.map((item) => {
+        const customer = customerById.get(item.customerId);
+        return {
+          customerName: customer?.name || 'N/A',
+          documentNo: item.documentNo || '—',
+          issueDateLabel: formatStoredDateThaiBE(item.issueDate),
+          dueDate: item.dueDate || '—',
+          debitLabel: formatArMoney(item.debitAmount ?? 0),
+          creditLabel: formatArMoney(item.creditAmount ?? 0),
+          outstandingLabel: formatArMoney(item.outstandingAmount ?? 0),
+          status: arStatusPrintLabel(item.status),
+        };
+      }),
+    [customerById],
+  );
+
+  const runAccountsReceivableListPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const source = scope === 'filtered' ? filteredItems : visibleArItems;
+      if (source.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
+              : 'ยังไม่มีรายการลูกหนี้ในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const { rows, truncated } = capAccountsReceivableListPrintRows(buildPrintRows(source));
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines =
+          scope === 'filtered' ? describeAccountsReceivableListPrintFilters(printFilterSummary) : [];
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
+
+        const body = buildAccountsReceivableListPrintHtml({
+          rows,
+          scopeTitle,
+          filterLines,
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Accounts-Receivable-List',
+          suggestedFileName: `Accounts-Receivable-List-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [filteredItems, visibleArItems, buildPrintRows, printFilterSummary, currentUser?.displayName, toast],
+  );
 
   const handleConfirmDeleteAr = async () => {
     if (!firestore || !currentUser || !deleteTarget) return;
@@ -150,14 +326,25 @@ export default function AccountsReceivablePage() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <Card className="border-l-8 border-l-blue-600">
             <CardHeader className="pb-2">
               <CardTitle className="text-xs font-bold uppercase text-muted-foreground">ยอดลูกหนี้ค้างชำระทั้งหมด</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black text-primary">฿ {stats.totalOutstanding.toLocaleString()}</div>
-              <p className="text-[10px] text-muted-foreground mt-1">Total Outstanding Portfolio</p>
+              <div className="text-3xl font-black text-primary">฿ {stats.globalOutstanding.toLocaleString()}</div>
+              <p className="text-[10px] text-muted-foreground mt-1">ทุกรายการในระบบ — ไม่กรองตามเดือน</p>
+            </CardContent>
+          </Card>
+          <Card className="border-l-8 border-l-indigo-600">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-bold uppercase text-muted-foreground">ยอดค้างชำระตามเดือน</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-black text-indigo-700">฿ {stats.monthOutstanding.toLocaleString()}</div>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                งวด {formatPayrollYearMonthThaiBE(monthYm)} · จากใบในเดือนที่เลือก
+              </p>
             </CardContent>
           </Card>
           <Card className="border-l-8 border-l-red-600">
@@ -166,7 +353,9 @@ export default function AccountsReceivablePage() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-black text-red-600">฿ {stats.overdue.toLocaleString()}</div>
-              <p className="text-[10px] text-muted-foreground mt-1">Needs Urgent Collection</p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                งวด {formatPayrollYearMonthThaiBE(monthYm)} · หนี้เกินกำหนดในเดือนที่เลือก
+              </p>
             </CardContent>
           </Card>
           <Card className="border-l-8 border-l-green-600">
@@ -175,7 +364,9 @@ export default function AccountsReceivablePage() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-black text-green-700">฿ {stats.collected.toLocaleString()}</div>
-              <p className="text-[10px] text-muted-foreground mt-1">Cash Collected Current Month</p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                งวด {formatPayrollYearMonthThaiBE(monthYm)} · ยอดรับแล้วในเดือนที่เลือก
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -216,15 +407,80 @@ export default function AccountsReceivablePage() {
           </AlertDialogContent>
         </AlertDialog>
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="relative w-full max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาชื่อลูกค้า หรือ เลขที่เอกสาร..." className="pl-9 h-11" />
+        <div className="flex flex-col gap-3 bg-card p-4 rounded-lg border shadow-sm lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-sm">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="ค้นหาชื่อลูกค้า หรือ เลขที่เอกสาร..."
+                className="pl-9 h-10"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                aria-label="ค้นหาลูกหนี้"
+              />
             </div>
-            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
+            <Input
+              type="month"
+              className="h-10 w-[11rem] shrink-0 font-mono"
+              value={monthYm}
+              onChange={(e) => setMonthYm(e.target.value)}
+              aria-label="กรองตามเดือนเอกสาร"
+              title="เดือนเอกสาร"
+            />
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 shrink-0 gap-2"
+            onClick={() => setPrintDialogOpen(true)}
+          >
+            <Printer className="h-4 w-4" /> พิมพ์รายการ
+          </Button>
         </div>
+
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการลูกหนี้การค้า</DialogTitle>
+              <DialogDescription>
+                เลือกพิมพ์ตามตัวกรองเดือน/ค้นหาปัจจุบัน หรือพิมพ์ทุกรายการในชุดข้อมูลล่าสุด (สูงสุด 500 รายการ)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                <ul className="list-disc list-inside text-xs text-muted-foreground">
+                  {describeAccountsReceivableListPrintFilters(printFilterSummary).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+                <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredItems.length} รายการ</p>
+              </div>
+              <p className="text-xs text-muted-foreground">ข้อมูลทั้งหมดในระบบ: {visibleArItems.length} รายการ</p>
+            </div>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={printBusy || filteredItems.length === 0}
+                onClick={() => void runAccountsReceivableListPrint('filtered')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ตามตัวกรอง ({filteredItems.length})
+              </Button>
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                disabled={printBusy || visibleArItems.length === 0}
+                onClick={() => void runAccountsReceivableListPrint('all')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์ทั้งหมด ({visibleArItems.length})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
@@ -245,8 +501,8 @@ export default function AccountsReceivablePage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {arItems?.map((item) => {
-                    const customer = customers?.find(c => c.id === item.customerId);
+                  {filteredItems.map((item) => {
+                    const customer = customerById.get(item.customerId);
                     const row = item as AccountsReceivable & { id: string };
                     const showTrash =
                       canAdminDeleteAr &&
@@ -267,9 +523,9 @@ export default function AccountsReceivablePage() {
                             <span className="flex items-center gap-1 font-bold text-red-600"><Clock className="h-2.5 w-2.5" /> Due: {item.dueDate}</span>
                           </div>
                         </TableCell>
-                        <TableCell className="text-right text-sm">฿ {item.debitAmount.toLocaleString()}</TableCell>
-                        <TableCell className="text-right text-sm text-green-600">฿ {item.creditAmount.toLocaleString()}</TableCell>
-                        <TableCell className="text-right font-black text-primary">฿ {item.outstandingAmount.toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-sm tabular-nums">฿ {item.debitAmount.toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-sm text-green-600 tabular-nums">฿ {item.creditAmount.toLocaleString()}</TableCell>
+                        <TableCell className="text-right font-black text-primary tabular-nums">฿ {item.outstandingAmount.toLocaleString()}</TableCell>
                         <TableCell>{getStatusBadge(item.status)}</TableCell>
                         <TableCell className="text-right pr-6">
                           {showTrash ? (
@@ -290,9 +546,20 @@ export default function AccountsReceivablePage() {
                       </TableRow>
                     );
                   })}
-                  {(!arItems || arItems.length === 0) && !isLoading && (
+                  {(!visibleArItems.length) && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">ไม่มีรายการลูกหนี้ค้างชำระ</TableCell>
+                      <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
+                        ไม่มีรายการลูกหนี้ในระบบ
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {visibleArItems.length > 0 && filteredItems.length === 0 && !isLoading && (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
+                        {searchQuery.trim()
+                          ? `ไม่พบรายการที่ตรงกับ "${searchQuery.trim()}" ในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`
+                          : `ไม่มีรายการลูกหนี้ในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`}
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>

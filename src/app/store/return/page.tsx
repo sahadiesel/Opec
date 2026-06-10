@@ -21,9 +21,10 @@ import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebas
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain } from '@/lib/permission-core';
 import { collection, doc, query, where, writeBatch, increment } from 'firebase/firestore';
-import { StoreItem, Worker, Assignment, StoreTransaction, OfficeStaff } from '@/lib/types';
+import { StoreItem, Worker, Assignment, StoreTransaction, OfficeStaff, formatStoreItemLabel } from '@/lib/types';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
@@ -32,10 +33,37 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { netCustodyQuantityDeltaForItem } from '@/lib/store/store-custody-net';
+import { filterActiveWorkersForSelection } from '@/lib/hr/worker-active';
+import { filterActiveOfficeStaffForSelection } from '@/lib/hr/office-staff-active';
+import {
+  STORE_RETURN_CONDITION_LABELS,
+  STORE_RETURN_CONDITIONS,
+  type StoreReturnCondition,
+  storeReturnConditionRestocksInventory,
+  storeReturnTransactionType,
+} from '@/lib/store/return-condition';
+
+type ReturnLineItem = {
+  itemId: string;
+  itemCode: string;
+  itemName: string;
+  unit: string;
+  issuedQty: number;
+  quantity: number;
+  condition: StoreReturnCondition;
+  remarks: string;
+};
 
 export default function StoreReturnPage() {
   const router = useRouter();
@@ -52,7 +80,7 @@ export default function StoreReturnPage() {
   const [selectedOfficeStaffId, setSelectedOfficeStaffId] = useState('');
   const [returnDate, setReturnDate] = useState(() => timestampToHtmlDateValue(Date.now()));
   const [notes, setNotes] = useState('');
-  const [returnList, setReturnList] = useState<any[]>([]);
+  const [returnList, setReturnList] = useState<ReturnLineItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -77,19 +105,61 @@ export default function StoreReturnPage() {
   }, [firestore, userLoading, isUserLoading, firebaseUser, canAccess]);
   const { data: allWorkers } = useCollection<Worker>(workersQuery as any);
 
-  const asgnQuery = useMemoFirebase(() => {
-    if (!firestore || !canAccess || !selectedWorkerId) return null;
-    return query(collection(firestore, 'mobilizations'), where('workerId', '==', selectedWorkerId));
-  }, [firestore, canAccess, selectedWorkerId]);
-  const { data: assignments } = useCollection<Assignment>(asgnQuery as any);
-
-  const activeAsgn = assignments?.find((a) => a.id === selectedAsgnId);
+  const workerSelectOptions = useMemo(
+    () =>
+      filterActiveWorkersForSelection(allWorkers)
+        .slice()
+        .sort((a, b) =>
+          `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`, 'th'),
+        )
+        .map((w) => {
+          const name = `${w.firstName || ''} ${w.lastName || ''}`.trim() || w.id;
+          const code = w.workerCode || '';
+          return {
+            id: w.id,
+            label: code ? `${name} (${code})` : name,
+            searchText: [name, code, w.id].filter(Boolean).join(' '),
+          };
+        }),
+    [allWorkers],
+  );
 
   const officeStaffQuery = useMemoFirebase(() => {
     if (!firestore || userLoading || isUserLoading || !firebaseUser || !canAccess) return null;
     return collection(firestore, 'office_staff');
   }, [firestore, userLoading, isUserLoading, firebaseUser, canAccess]);
   const { data: officeStaffList } = useCollection<OfficeStaff>(officeStaffQuery as any);
+
+  const officeStaffSelectOptions = useMemo(
+    () =>
+      filterActiveOfficeStaffForSelection(officeStaffList)
+        .slice()
+        .sort((a, b) => (a.fullName || '').localeCompare(b.fullName || '', 'th'))
+        .map((s) => ({
+          id: s.id,
+          label: s.fullName || s.id,
+          searchText: [s.fullName, s.staffCode, s.department, s.id].filter(Boolean).join(' '),
+        })),
+    [officeStaffList],
+  );
+
+  const asgnQuery = useMemoFirebase(() => {
+    if (!firestore || !canAccess || !selectedWorkerId) return null;
+    return query(collection(firestore, 'mobilizations'), where('workerId', '==', selectedWorkerId));
+  }, [firestore, canAccess, selectedWorkerId]);
+  const { data: assignments } = useCollection<Assignment>(asgnQuery as any);
+
+  const assignmentSelectOptions = useMemo(
+    () =>
+      (assignments || []).map((a) => ({
+        id: a.id,
+        label: `${a.projectName || 'งาน'} · ${a.assignmentNo || a.id.slice(0, 6)} (${a.deploymentStatus})`,
+        searchText: [a.projectName, a.assignmentNo, a.deploymentStatus, a.id].filter(Boolean).join(' '),
+      })),
+    [assignments],
+  );
+
+  const activeAsgn = assignments?.find((a) => a.id === selectedAsgnId);
 
   const fieldTxQuery = useMemoFirebase(() => {
     if (!firestore || !canAccess || returnMode !== 'field' || !selectedAsgnId) return null;
@@ -127,21 +197,28 @@ export default function StoreReturnPage() {
         return {
           itemId,
           itemCode: item?.itemCode || 'N/A',
-          itemName: item?.itemName || 'Unknown Item',
+          itemName: item ? formatStoreItemLabel(item) : 'Unknown Item',
           unit: item?.unit || 'EA',
           issuedQty: qty
         };
       });
   }, [transactions, allStoreItems]);
 
-  const handleAddToReturn = (item: any) => {
-    if (returnList.some(r => r.itemId === item.itemId)) return;
-    setReturnList([...returnList, { 
-      ...item, 
-      quantity: item.issuedQty, 
-      condition: 'GOOD',
-      remarks: '' 
-    }]);
+  const handleAddToReturn = (item: (typeof outstandingItems)[number]) => {
+    if (returnList.some((r) => r.itemId === item.itemId)) return;
+    setReturnList([
+      ...returnList,
+      {
+        ...item,
+        quantity: item.issuedQty,
+        condition: 'GOOD',
+        remarks: '',
+      },
+    ]);
+  };
+
+  const updateReturnLine = (idx: number, patch: Partial<ReturnLineItem>) => {
+    setReturnList((prev) => prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
   };
 
   const handleConfirmReturn = async () => {
@@ -170,6 +247,14 @@ export default function StoreReturnPage() {
     for (const ret of returnList) {
       if (ret.quantity <= 0 || ret.quantity > ret.issuedQty) {
         toast({ variant: "destructive", title: "จำนวนไม่ถูกต้อง", description: `รายการ ${ret.itemName} ระบุจำนวนคืนเกินกว่าที่เคยเบิก` });
+        return;
+      }
+      if (!STORE_RETURN_CONDITIONS.includes(ret.condition)) {
+        toast({
+          variant: 'destructive',
+          title: 'ระบุสภาพไม่ครบ',
+          description: `กรุณาเลือกสภาพของ ${ret.itemName}`,
+        });
         return;
       }
     }
@@ -228,7 +313,7 @@ export default function StoreReturnPage() {
         });
 
         // Update Master Stock (ONLY if condition is GOOD)
-        if (item.condition === 'GOOD') {
+        if (storeReturnConditionRestocksInventory(item.condition)) {
           const masterItemRef = doc(firestore, 'store_items', item.itemId);
           batch.update(masterItemRef, { currentStock: increment(item.quantity) });
         }
@@ -237,10 +322,10 @@ export default function StoreReturnPage() {
         const txRef = doc(collection(firestore, 'store_transactions'));
         batch.set(txRef, {
           itemId: item.itemId,
-          transactionType: item.condition === 'GOOD' ? 'RETURN' : item.condition,
+          transactionType: storeReturnTransactionType(item.condition),
           quantity: item.quantity,
           transactionDate: returnDate,
-          notes: `Ref Return: ${finalNo}. Condition: ${item.condition}. ${item.remarks}`,
+          notes: `Ref Return: ${finalNo}. ${STORE_RETURN_CONDITION_LABELS[item.condition]}.${item.remarks ? ` ${item.remarks}` : ''}`,
           createdAt: Date.now(),
           createdBy: currentUser.displayName,
           issueType: returnMode,
@@ -284,16 +369,39 @@ export default function StoreReturnPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="max-w-[1600px] mx-auto space-y-6">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" asChild><Link href="/store"><ArrowLeft className="h-5 w-5" /></Link></Button>
-          <div className="flex-1">
+        <div className="flex items-start gap-4">
+          <Button variant="ghost" size="icon" className="shrink-0 mt-1" asChild>
+            <Link href="/store"><ArrowLeft className="h-5 w-5" /></Link>
+          </Button>
+          <div className="flex-1 min-w-0">
             <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <PackageCheck className="h-8 w-8 text-green-600" /> รับคืนอุปกรณ์ / เครื่องมือ (Return to Store)
+              <PackageCheck className="h-8 w-8 text-green-600 shrink-0" /> รับคืนอุปกรณ์ / เครื่องมือ (Return to Store)
             </h1>
-            <p className="text-muted-foreground text-lg">
-              โหมดลูกจ้างหน้างาน: คืนตาม mobilization และประวัติเบิกของงานนั้น — โหมดพนักงานออฟฟิศ: คืนตามประวัติเบิกของผู้รับออฟฟิศ (ไม่ผูกงาน)
-            </p>
           </div>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline" size="sm" className="shrink-0 gap-2 mt-1">
+                <Info className="h-4 w-4" />
+                นโยบายการรับคืน
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>นโยบายการรับคืน (Return Policy)</DialogTitle>
+                <DialogDescription asChild>
+                  <div className="space-y-3 pt-2 text-sm text-foreground">
+                    <p>
+                      แต่ละรายการในรายการเตรียมคืนต้องเลือก <b>สภาพของ</b> ก่อนยืนยัน:
+                    </p>
+                    <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                      <li><b className="text-foreground">สภาพดี</b> — นำกลับเข้าสต็อกอัตโนมัติ</li>
+                      <li><b className="text-foreground">ชำรุด / สูญหาย</b> — รับคืนจากผู้เบิก (ปิดยอดถือครอง) แต่ <b>ไม่</b> เพิ่มสต็อก</li>
+                    </ul>
+                  </div>
+                </DialogDescription>
+              </DialogHeader>
+            </DialogContent>
+          </Dialog>
         </div>
 
         <Tabs value={returnMode} onValueChange={onReturnModeChange} className="w-full">
@@ -306,14 +414,6 @@ export default function StoreReturnPage() {
             </TabsTrigger>
           </TabsList>
         </Tabs>
-
-        <Alert className="bg-primary/5 border-primary/20 shadow-sm">
-          <Info className="h-5 w-5 text-primary" />
-          <AlertTitle className="font-bold">นโยบายการรับคืน (Return Policy)</AlertTitle>
-          <AlertDescription className="text-sm">
-            อุปกรณ์ที่คืนในสภาพ <b>GOOD</b> จะถูกนำกลับเข้าสต็อกโดยอัตโนมัติ ส่วนที่ชำรุด (DAMAGED) หรือสูญหาย (LOST) จะถูกตัดออกจากระบบถาวร
-          </AlertDescription>
-        </Alert>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* LEFT: Context & Outstanding List */}
@@ -329,77 +429,59 @@ export default function StoreReturnPage() {
                 {returnMode === 'field' ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label className="font-bold">เลือกคนงาน (Select Worker)</Label>
-                      <Select
-                        onValueChange={(v) => {
-                          setSelectedWorkerId(v);
+                      <SearchableSelect
+                        label="เลือกคนงาน (Select Worker)"
+                        labelClassName="font-bold"
+                        options={workerSelectOptions}
+                        value={selectedWorkerId || undefined}
+                        onChange={(id) => {
+                          setSelectedWorkerId(id ?? '');
                           setSelectedAsgnId('');
                           setReturnList([]);
                         }}
-                        value={selectedWorkerId}
-                      >
-                        <SelectTrigger className="h-11">
-                          <SelectValue placeholder="ค้นหาคนงาน..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {allWorkers?.map((w) => (
-                            <SelectItem key={w.id} value={w.id}>
-                              {w.firstName} {w.lastName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        placeholder="ค้นหาคนงาน..."
+                        searchPlaceholder="ค้นหาชื่อหรือรหัสคนงาน…"
+                        emptyMessage="ไม่พบคนงาน"
+                        triggerClassName="h-11"
+                      />
                     </div>
 
                     <div className="space-y-2">
-                      <Label className="font-bold">เลือกงาน (Select Assignment)</Label>
-                      <Select
-                        onValueChange={(v) => {
-                          setSelectedAsgnId(v);
+                      <SearchableSelect
+                        label="เลือกงาน (Select Assignment)"
+                        labelClassName="font-bold"
+                        options={assignmentSelectOptions}
+                        value={selectedAsgnId || undefined}
+                        onChange={(id) => {
+                          setSelectedAsgnId(id ?? '');
                           setReturnList([]);
                         }}
-                        value={selectedAsgnId}
                         disabled={!selectedWorkerId}
-                      >
-                        <SelectTrigger className="h-11">
-                          <SelectValue placeholder="เลือกงานเพื่อดูอุปกรณ์ค้างคืน..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {assignments?.map((a) => (
-                            <SelectItem key={a.id} value={a.id}>
-                              {a.projectName} ({a.deploymentStatus})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        placeholder="เลือกงานเพื่อดูอุปกรณ์ค้างคืน..."
+                        searchPlaceholder="ค้นหาโครงการหรือเลข mobilization…"
+                        emptyMessage={selectedWorkerId ? 'ไม่พบงานของคนงานนี้' : 'เลือกคนงานก่อน'}
+                        triggerClassName="h-11"
+                      />
                     </div>
                   </div>
                 ) : (
                   <div className="space-y-2 max-w-md">
-                    <Label className="font-bold">เลือกพนักงานออฟฟิศ (Office Staff)</Label>
-                    <Select
-                      onValueChange={(v) => {
-                        setSelectedOfficeStaffId(v);
+                    <SearchableSelect
+                      label="เลือกพนักงานออฟฟิศ (Office Staff)"
+                      labelClassName="font-bold"
+                      options={officeStaffSelectOptions}
+                      value={selectedOfficeStaffId || undefined}
+                      onChange={(id) => {
+                        setSelectedOfficeStaffId(id ?? '');
                         setReturnList([]);
                       }}
-                      value={selectedOfficeStaffId}
-                    >
-                      <SelectTrigger className="h-11">
-                        <SelectValue placeholder="เลือกพนักงานออฟฟิศ..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(officeStaffList ?? [])
-                          .slice()
-                          .sort((a, b) => (a.fullName || '').localeCompare(b.fullName || '', 'th'))
-                          .map((s) => (
-                            <SelectItem key={s.id} value={s.id}>
-                              {s.fullName || s.id}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
+                      placeholder="ค้นหาพนักงานออฟฟิศ..."
+                      searchPlaceholder="ค้นหาชื่อหรือรหัสพนักงาน…"
+                      emptyMessage="ไม่พบพนักงาน ACTIVE"
+                      triggerClassName="h-11"
+                    />
                     <p className="text-xs text-muted-foreground">
-                      แสดงยอดค้างคืนจากประวัติ ISSUE ของพนักงานออฟฟิศเทียบ RETURN / DAMAGED / LOST — สอดคล้องการเบิกโหมด Office
+                      แสดงเฉพาะพนักงาน ACTIVE · ยอดค้างคืนจาก ISSUE เทียบ RETURN / DAMAGED / LOST
                     </p>
                   </div>
                 )}
@@ -471,67 +553,106 @@ export default function StoreReturnPage() {
                 <CardTitle className="text-xl flex items-center gap-3">
                   <CheckCircle2 className="h-6 w-6" /> รายการเตรียมคืน (Return List)
                 </CardTitle>
-                <CardDescription className="text-primary-foreground/70">ตรวจสอบสภาพและจำนวนก่อนยืนยันรับคืน</CardDescription>
+                <CardDescription className="text-primary-foreground/70">
+                  เลือกรายการจากตารางซ้าย แล้วระบุจำนวนและสภาพของแต่ละรายการ
+                </CardDescription>
               </CardHeader>
               <CardContent className="pt-6 space-y-4">
                 {returnList.length === 0 ? (
                   <div className="py-20 text-center space-y-4 bg-muted/10 rounded-lg border-2 border-dashed border-muted">
                     <PackagePlus className="h-12 w-12 mx-auto text-muted-foreground/30" />
-                    <p className="text-sm text-muted-foreground">ยังไม่มีรายการที่เลือกคืน</p>
+                    <p className="text-sm text-muted-foreground">กด「เลือกคืน」จากตารางซ้าย แล้วระบุจำนวนและสภาพของแต่ละรายการ</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
                     {returnList.map((item, idx) => (
-                      <div key={item.itemId} className="p-3 border rounded-lg bg-card shadow-sm group">
-                        <div className="flex justify-between items-start mb-2">
-                          <p className="text-xs font-black text-primary truncate flex-1">{item.itemName}</p>
+                      <div key={item.itemId} className="p-3 border rounded-lg bg-card shadow-sm group space-y-3">
+                        <div className="flex justify-between items-start gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[10px] font-mono font-bold text-muted-foreground">{item.itemCode}</p>
+                            <p className="text-xs font-black text-primary truncate">{item.itemName}</p>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              ค้างคืน {item.issuedQty} {item.unit}
+                            </p>
+                          </div>
                           <Button 
                             variant="ghost" 
                             size="icon" 
-                            className="h-6 w-6 text-destructive"
+                            className="h-6 w-6 shrink-0 text-destructive"
                             onClick={() => setReturnList(returnList.filter((_, i) => i !== idx))}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
                         
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <Label className="text-[10px] uppercase font-bold text-muted-foreground">จำนวนที่คืน (Return)</Label>
-                            <Input 
-                              type="number" 
-                              className="h-8 text-xs font-bold" 
-                              value={item.quantity}
-                              onChange={e => {
-                                const newList = [...returnList];
-                                newList[idx].quantity = Math.min(item.issuedQty, Math.max(1, parseInt(e.target.value) || 1));
-                                setReturnList(newList);
-                              }}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-[10px] uppercase font-bold text-muted-foreground">สภาพ (Condition)</Label>
-                            <Select 
-                              onValueChange={v => {
-                                const newList = [...returnList];
-                                newList[idx].condition = v;
-                                setReturnList(newList);
-                              }} 
-                              value={item.condition}
-                            >
-                              <SelectTrigger className="h-8 text-[10px] font-bold"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="GOOD">ปกติ (GOOD)</SelectItem>
-                                <SelectItem value="DAMAGED">ชำรุด (DAMAGED)</SelectItem>
-                                <SelectItem value="LOST">สูญหาย (LOST)</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
+                        <div className="space-y-1">
+                          <Label className="text-[10px] uppercase font-bold text-muted-foreground">
+                            จำนวนที่คืน
+                          </Label>
+                          <Input 
+                            type="number" 
+                            className="h-9 text-xs font-bold" 
+                            value={item.quantity}
+                            min={1}
+                            max={item.issuedQty}
+                            onChange={(e) => {
+                              const qty = Math.min(item.issuedQty, Math.max(1, parseInt(e.target.value, 10) || 1));
+                              updateReturnLine(idx, { quantity: qty });
+                            }}
+                          />
                         </div>
-                        
+
+                        <div className="space-y-1">
+                          <Label className="text-[10px] uppercase font-bold text-muted-foreground">
+                            สภาพของ <span className="text-destructive">*</span>
+                          </Label>
+                          <Select 
+                            onValueChange={(v) => updateReturnLine(idx, { condition: v as StoreReturnCondition })} 
+                            value={item.condition}
+                          >
+                            <SelectTrigger className="h-9 text-xs font-semibold">
+                              <SelectValue placeholder="เลือกสภาพของ..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(Object.entries(STORE_RETURN_CONDITION_LABELS) as [StoreReturnCondition, string][]).map(
+                                ([value, label]) => (
+                                  <SelectItem key={value} value={value} className="text-xs">
+                                    {label}
+                                  </SelectItem>
+                                ),
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
                         {item.condition !== 'GOOD' && (
-                          <div className="mt-2 p-2 bg-destructive/5 rounded border border-destructive/10 text-[9px] text-destructive flex items-center gap-1">
-                            <AlertTriangle className="h-3 w-3" /> สต็อกจะไม่เพิ่มขึ้นสำหรับรายการนี้
+                          <>
+                            <div className="p-2 bg-destructive/5 rounded border border-destructive/10 text-[10px] text-destructive flex items-start gap-1.5">
+                              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                              <span>รับคืนจากผู้เบิกแล้ว — สต็อกคลังจะไม่เพิ่ม</span>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-[10px] uppercase font-bold text-muted-foreground">
+                                หมายเหตุ (แนะนำ)
+                              </Label>
+                              <Input
+                                className="h-9 text-xs"
+                                placeholder={
+                                  item.condition === 'LOST'
+                                    ? 'เช่น สูญหายระหว่างปฏิบัติงาน...'
+                                    : 'เช่น แตก/ชำรุดไม่สามารถใช้งานต่อได้...'
+                                }
+                                value={item.remarks}
+                                onChange={(e) => updateReturnLine(idx, { remarks: e.target.value })}
+                              />
+                            </div>
+                          </>
+                        )}
+
+                        {item.condition === 'GOOD' && (
+                          <div className="p-2 bg-green-50 dark:bg-green-950/20 rounded border border-green-200/60 text-[10px] text-green-800 dark:text-green-300 flex items-center gap-1.5">
+                            <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                            <span>จะนำกลับเข้าสต็อก {item.quantity} {item.unit}</span>
                           </div>
                         )}
                       </div>

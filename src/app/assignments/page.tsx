@@ -121,6 +121,7 @@ import {
 import { isPoRosterWaveId } from '@/lib/ops/po-roster-wave';
 import { isPoTimesheetScopeId, poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { buildMobCycleDocId } from '@/lib/ops/mob-cycle-ids';
+import { isActiveWorkerForSelection } from '@/lib/hr/worker-active';
 import { isWorkerDispatchReady } from '@/lib/worker-readiness';
 
 /** คีย์รวมใน dialog: poId + lineId — ใช้ U+001F หลีกเลี่ยงชนกับรหัส PO ที่มี "###" */
@@ -490,6 +491,7 @@ function AssignmentsPageContent() {
   const availableWorkers = useMemo(() => {
     if (!effectiveDialogPoId || !effectiveDialogLineId || !targetPositionIdForDialogLine) return [];
     return (allWorkers || []).filter((w) => {
+      if (!isActiveWorkerForSelection(w)) return false;
       if (!isWorkerDispatchReady(w)) return false;
       if ((w.currentPositionId || '').trim() !== targetPositionIdForDialogLine) return false;
       const { hasOverlap } = checkWorkerAssignmentOverlap(assignments || [], w.id);

@@ -53,6 +53,7 @@ import {
 import { Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateThaiBE } from '@/lib/date-thai';
+import { filterActiveOfficeStaffForSelection } from '@/lib/hr/office-staff-active';
 
 function todayYmdBkk(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
@@ -116,6 +117,17 @@ export function HrProxyLeaveDialog({
 
   const isEditing = !!editLeave?.id;
 
+  const staffPickerOptions = useMemo(() => {
+    const active = filterActiveOfficeStaffForSelection(officeStaff);
+    if (isEditing && editLeave) {
+      const current = officeStaff.find((s) => s.id === editLeave.staffId);
+      if (current && !active.some((s) => s.id === current.id)) {
+        return [current, ...active];
+      }
+    }
+    return active;
+  }, [officeStaff, isEditing, editLeave]);
+
   useEffect(() => {
     if (!open) return;
     if (editLeave) {
@@ -129,10 +141,10 @@ export function HrProxyLeaveDialog({
       setHalfDaySession(editLeave.halfDaySession ?? 'MORNING');
       return;
     }
-    if (!staffId && officeStaff.length) {
-      setStaffId(officeStaff[0].id);
+    if (!staffId && staffPickerOptions.length) {
+      setStaffId(staffPickerOptions[0].id);
     }
-  }, [open, editLeave, staffId, officeStaff]);
+  }, [open, editLeave, staffId, staffPickerOptions]);
 
   useEffect(() => {
     if (!allowedTypes.includes(leaveType)) setLeaveType(allowedTypes[0] ?? 'SICK');
@@ -320,7 +332,7 @@ export function HrProxyLeaveDialog({
                   <SelectValue placeholder="เลือกพนักงาน" />
                 </SelectTrigger>
                 <SelectContent className="max-h-72">
-                  {officeStaff.map((s) => (
+                  {staffPickerOptions.map((s) => (
                     <SelectItem key={s.id} value={s.id}>
                       {s.fullName} {s.department ? `· ${s.department}` : ''}
                     </SelectItem>

@@ -785,7 +785,7 @@ function addDaysToHtmlDate(issueYmd: string, days: number): string {
   return timestampToHtmlDateValue(ms + days * 86400000);
 }
 
-/** รับตั้งลูกหนี้จากใบแจ้งหนี้เรียกเก็บ หลังลูกค้า/ฝ่าย OPEC ยืนยันยอด (ISSUED) */
+/** @deprecated ไม่ใช้แล้ว — ลูกหนี้ตั้งเมื่อออกใบกำกับภาษี (ISSUED) เท่านั้น; คงไว้สำหรับ migration/legacy */
 export async function ensureAccountsReceivableForIssuedCommercial(
   db: Firestore,
   com: Pick<CommercialInvoice, 'id' | 'customerId' | 'invoiceNo' | 'totalAmount' | 'issueDate' | 'status'>,
@@ -892,18 +892,7 @@ export async function confirmCommercialInvoiceBilling(
       source === 'CLIENT_PORTAL' ? 'ลูกค้ายืนยันยอดเรียกเก็บ (portal)' : 'ผู้จัดการ/ทีม OPEC ยืนยันยอดเรียกเก็บ',
   });
 
-  await ensureAccountsReceivableForIssuedCommercial(
-    db,
-    {
-      id: invoice.id,
-      customerId: invoice.customerId,
-      invoiceNo: invoice.invoiceNo,
-      totalAmount: invoice.totalAmount,
-      issueDate: invoice.issueDate,
-      status: 'ISSUED',
-    },
-    actor,
-  );
+  /** ลูกหนี้ตั้งเมื่อออกใบกำกับภาษี (ISSUED) เท่านั้น — ไม่สร้าง AR-COM ตอนยืนยันใบเรียกเก็บ */
 }
 
 function normalizeDraftLines(lines: CommercialInvoiceLine[]): CommercialInvoiceLine[] {

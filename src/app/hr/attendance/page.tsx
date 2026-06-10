@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   collection,
@@ -8,6 +8,7 @@ import {
   where,
   orderBy,
   doc,
+  limit,
   Firestore,
 } from 'firebase/firestore';
 import { addMonths, format, startOfMonth } from 'date-fns';
@@ -31,7 +32,22 @@ import type {
 } from '@/lib/attendance/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -44,12 +60,24 @@ import { Badge } from '@/components/ui/badge';
 import {
   ArrowLeft,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Loader2,
+  Printer,
   RotateCcw,
 } from 'lucide-react';
-import { formatDateThaiBE } from '@/lib/date-thai';
+import { formatDateThaiBE, formatPayrollYearMonthThaiBE } from '@/lib/date-thai';
+import type { AttendanceDayEffectiveRow } from '@/lib/attendance/correction-merge';
+import {
+  buildOfficeAttendanceMonthlySummaryListPrintHtml,
+  capOfficeAttendanceMonthlyStaffPrintRows,
+  describeOfficeAttendanceMonthlySummaryPrintFilters,
+  officeLeaveTypeShortTh,
+  type OfficeAttendanceGridDayCell,
+  type OfficeAttendanceMonthlyStaffPrintRow,
+} from '@/lib/documents/office-attendance-monthly-summary-list-print';
+import { OFFICE_LEAVE_REQUESTS_COLLECTION } from '@/lib/leaves/policy';
+import type { OfficeLeaveRequestDoc, OfficeLeaveType } from '@/lib/leaves/types';
+import { officeStaffAppliesScanTimeDeductions } from '@/lib/payroll/office-staff-payroll-attendance-basis';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import { cn } from '@/lib/utils';
 import {
   enumerateYmDsForMonth,
@@ -98,6 +126,23 @@ function subjectKey(subjectType: AttendanceSubjectType, subjectId: string): Subj
   return `${subjectType}:${subjectId}`;
 }
 
+function parsePayrollYmToMonthStart(ym: string): Date {
+  const [y, m] = ym.split('-').map(Number);
+  return startOfMonth(new Date(y, (m || 1) - 1, 1));
+}
+
+function buildMonthSelectOptions(count = 36): string[] {
+  const opts: string[] = [];
+  let d = startOfMonth(new Date());
+  for (let i = 0; i < count; i++) {
+    opts.push(format(d, 'yyyy-MM'));
+    d = addMonths(d, -1);
+  }
+  return opts;
+}
+
+const MONTH_SELECT_OPTIONS = buildMonthSelectOptions();
+
 function groupBySubject(rows: Array<AttendancePunchDoc & { id: string }>): Map<SubjectKey, (AttendancePunchDoc & { id: string })[]> {
   const m = new Map<SubjectKey, (AttendancePunchDoc & { id: string })[]>();
   for (const r of rows) {
@@ -112,11 +157,11 @@ function groupBySubject(rows: Array<AttendancePunchDoc & { id: string }>): Map<S
   return m;
 }
 
-function dayKindBadges(
+function dayTypeTags(
   ymd: string,
   weeklyRestPattern: WeeklyRestPatternForCalendar,
   calendarHolidayLabel: string | null,
-) {
+): string[] {
   const tags: string[] = [];
   if (calendarHolidayLabel) tags.push(calendarHolidayLabel);
   const iso = bangkokIsoWeekdayFromYmd(ymd);
@@ -126,6 +171,91 @@ function dayKindBadges(
   } else if (iso === 6 && weeklyRestPattern === 'sat_sun') {
     tags.push('วันเสาร์');
   }
+  return tags;
+}
+
+function leaveOverlapsPayrollMonth(r: OfficeLeaveRequestDoc, payrollMonth: string): boolean {
+  const monthStart = `${payrollMonth}-01`;
+  const [y, m] = payrollMonth.split('-').map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  const monthEnd = `${payrollMonth}-${String(lastDay).padStart(2, '0')}`;
+  const start = r.startDate.slice(0, 10);
+  const end = r.endDate.slice(0, 10);
+  return start <= monthEnd && end >= monthStart;
+}
+
+function approvedLeaveTypeOnYmd(
+  staffId: string,
+  ymd: string,
+  leaves: OfficeLeaveRequestDoc[],
+): OfficeLeaveType | null {
+  for (const r of leaves) {
+    if (r.staffId !== staffId || r.status !== 'APPROVED') continue;
+    const start = r.startDate.slice(0, 10);
+    const end = r.endDate.slice(0, 10);
+    if (ymd >= start && ymd <= end) return r.leaveType;
+  }
+  return null;
+}
+
+function buildAttendanceGridDayCell(
+  d: AttendanceDayEffectiveRow,
+  staff: OfficeStaff,
+  ymd: string,
+  approvedLeaves: OfficeLeaveRequestDoc[],
+  weeklyRestPattern: WeeklyRestPatternForCalendar,
+  calendarHolidays: Parameters<typeof isHrSettingsCalendarHolidayYmd>[1],
+  todayBangkokYmd: string,
+): OfficeAttendanceGridDayCell {
+  const hasIn = d.effectiveInMs != null;
+  const hasOut = d.effectiveOutMs != null;
+  if (hasIn || hasOut) {
+    return {
+      inLabel: hasIn ? formatBangkokHmFromUtcMs(d.effectiveInMs!) : '—',
+      outLabel: hasOut ? formatBangkokHmFromUtcMs(d.effectiveOutMs!) : '—',
+      tone: 'time',
+    };
+  }
+
+  const staffStartYmd = staff.startDate?.slice(0, 10);
+  if (staffStartYmd && ymd < staffStartYmd) {
+    return { inLabel: '', outLabel: '', tone: 'off' };
+  }
+
+  const employmentEndYmd = staff.employmentEndDate?.slice(0, 10);
+  if (employmentEndYmd && ymd > employmentEndYmd) {
+    return { inLabel: '', outLabel: '', tone: 'off' };
+  }
+
+  if (ymd > todayBangkokYmd) {
+    return { inLabel: '', outLabel: '', tone: 'off' };
+  }
+
+  const leaveType = approvedLeaveTypeOnYmd(staff.id, ymd, approvedLeaves);
+  if (leaveType) {
+    return {
+      inLabel: officeLeaveTypeShortTh(leaveType),
+      outLabel: '',
+      tone: 'leave',
+    };
+  }
+
+  const isWorkingDay =
+    !isBangkokWeeklyRestDayYmd(ymd, weeklyRestPattern)
+    && !isHrSettingsCalendarHolidayYmd(ymd, calendarHolidays);
+  if (isWorkingDay && officeStaffAppliesScanTimeDeductions(staff)) {
+    return { inLabel: 'ขาด', outLabel: '', tone: 'absent' };
+  }
+
+  return { inLabel: '', outLabel: '', tone: 'off' };
+}
+
+function dayKindBadges(
+  ymd: string,
+  weeklyRestPattern: WeeklyRestPatternForCalendar,
+  calendarHolidayLabel: string | null,
+) {
+  const tags = dayTypeTags(ymd, weeklyRestPattern, calendarHolidayLabel);
   if (tags.length === 0) return <span className="text-muted-foreground text-xs">วันทำงาน</span>;
   return (
     <div className="flex flex-wrap gap-1">
@@ -145,6 +275,8 @@ export default function HrAttendanceManagePage() {
   const [viewMonth, setViewMonth] = useState(() => startOfMonth(new Date()));
   const [search, setSearch] = useState('');
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
 
   const [corrOpen, setCorrOpen] = useState(false);
   const [corrCtx, setCorrCtx] = useState<{
@@ -182,6 +314,10 @@ export default function HrAttendanceManagePage() {
 
   const payrollMonth = format(viewMonth, 'yyyy-MM');
   const ymDs = useMemo(() => enumerateYmDsForMonth(viewMonth), [viewMonth]);
+  const todayBangkokYmd = useMemo(
+    () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }),
+    [],
+  );
 
   /** อ่าน HR Settings — วันหยุดประจำสัปดาห์ + วันหยุดในปฏิทิน (แหล่งความจริงเดียวกับ HR Settings) */
   const workerGlobalLaborRef = useMemoFirebase(
@@ -250,6 +386,25 @@ export default function HrAttendanceManagePage() {
 
   const { data: overrideRows } = useCollection<AttendanceDayOverrideDoc>(overridesQuery as any);
 
+  const leaveRequestsQuery = useMemoFirebase(() => {
+    if (!firestore || !canUse) return null;
+    const ceYear = Number(payrollMonth.slice(0, 4));
+    if (!Number.isFinite(ceYear)) return null;
+    return query(
+      collection(firestore as Firestore, OFFICE_LEAVE_REQUESTS_COLLECTION),
+      where('year', '==', ceYear),
+      limit(2000),
+    );
+  }, [firestore, canUse, payrollMonth]);
+
+  const { data: leaveRequestRows } = useCollection<OfficeLeaveRequestDoc>(leaveRequestsQuery as any);
+
+  const approvedLeavesInMonth = useMemo(() => {
+    return (leaveRequestRows ?? []).filter(
+      (r) => r.status === 'APPROVED' && leaveOverlapsPayrollMonth(r, payrollMonth),
+    );
+  }, [leaveRequestRows, payrollMonth]);
+
   const grouped = useMemo(() => groupBySubject((punchRows ?? []) as any), [punchRows]);
 
   const overridesBySubject = useMemo(() => {
@@ -267,8 +422,7 @@ export default function HrAttendanceManagePage() {
     return (officeStaffRows ?? []).filter(isOfficeStaffOnActiveRegistry);
   }, [officeStaffRows]);
 
-  const summaryRows = useMemo(() => {
-    const q = search.trim().toLowerCase();
+  const summaryRowsAll = useMemo(() => {
     const entries = activeOfficeStaff.map((staff) => {
       const key = subjectKey('office_staff', staff.id);
       const punches = (grouped.get(key) ?? []) as (AttendancePunchDoc & { id: string })[];
@@ -278,6 +432,7 @@ export default function HrAttendanceManagePage() {
       const daysRecorded = countDaysWithEffectiveRecord(dayRows);
       return {
         key,
+        staff,
         staffId: staff.id,
         staffCode: staff.staffCode,
         name,
@@ -288,14 +443,122 @@ export default function HrAttendanceManagePage() {
       };
     });
     entries.sort((a, b) => a.name.localeCompare(b.name, 'th'));
-    if (!q) return entries;
-    return entries.filter(
+    return entries;
+  }, [activeOfficeStaff, grouped, ymDs, overridesBySubject, workingDaysInCalendarMonth]);
+
+  const summaryRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return summaryRowsAll;
+    return summaryRowsAll.filter(
       (r) =>
         r.name.toLowerCase().includes(q)
         || r.staffCode.toLowerCase().includes(q)
         || r.staffId.toLowerCase().includes(q),
     );
-  }, [activeOfficeStaff, grouped, ymDs, overridesBySubject, workingDaysInCalendarMonth, search]);
+  }, [summaryRowsAll, search]);
+
+  const mapAttendanceStaffToPrintRow = useCallback(
+    (row: (typeof summaryRowsAll)[number]): OfficeAttendanceMonthlyStaffPrintRow => {
+      const cellsByYmd: Record<string, OfficeAttendanceGridDayCell> = {};
+      for (const d of row.dayRows) {
+        cellsByYmd[d.ymd] = buildAttendanceGridDayCell(
+          d,
+          row.staff,
+          d.ymd,
+          approvedLeavesInMonth,
+          weeklyRestPattern,
+          calendarHolidays,
+          todayBangkokYmd,
+        );
+      }
+      return {
+        staffName: row.name,
+        staffCode: row.staffCode || row.staffId,
+        cellsByYmd,
+      };
+    },
+    [approvedLeavesInMonth, calendarHolidays, weeklyRestPattern, todayBangkokYmd],
+  );
+
+  const runAttendanceSummaryPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const source = scope === 'filtered' ? summaryRows : summaryRowsAll;
+      if (source.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบพนักงานตามคำค้น — ล้างช่องค้นหาหรือพิมพ์ทั้งหมด'
+              : 'ไม่มีพนักงานออฟฟิศ ACTIVE ในทะเบียน',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const printRows = source.map(mapAttendanceStaffToPrintRow);
+        const { rows: capped, truncated } = capOfficeAttendanceMonthlyStaffPrintRows(printRows);
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines =
+          scope === 'filtered'
+            ? describeOfficeAttendanceMonthlySummaryPrintFilters({
+                payrollMonth,
+                searchQuery: search,
+              })
+            : describeOfficeAttendanceMonthlySummaryPrintFilters({ payrollMonth });
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ไม่ใช้คำค้นหา)';
+
+        const body = buildOfficeAttendanceMonthlySummaryListPrintHtml({
+          staffRows: capped,
+          ymDs,
+          scopeTitle,
+          filterLines,
+          payrollMonth,
+          weeklyRestLabel: weeklyRestPatternLabelTh(weeklyRestPattern),
+          calendarHolidayCount: calendarHolidays.length,
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const okPrint = await openStandardPrintWindow({
+          windowTitle: 'Office-Attendance-Monthly-Summary',
+          suggestedFileName: `Office-Attendance-${payrollMonth}-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!okPrint) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [
+      summaryRows,
+      summaryRowsAll,
+      payrollMonth,
+      search,
+      weeklyRestPattern,
+      calendarHolidays.length,
+      currentUser?.displayName,
+      mapAttendanceStaffToPrintRow,
+      ymDs,
+      toast,
+    ],
+  );
 
   const toggleOpen = (key: string) => {
     setOpenRows((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -364,54 +627,21 @@ export default function HrAttendanceManagePage() {
     );
   }
 
-  const monthLabel = format(viewMonth, 'MMMM yyyy');
-
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="max-w-6xl mx-auto space-y-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex items-start gap-3">
-            <Button variant="ghost" size="icon" asChild className="shrink-0 mt-0.5">
-              <Link href="/timesheets">
-                <ArrowLeft className="h-5 w-5" />
-              </Link>
-            </Button>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-primary">จัดการการลงเวลา</h1>
-              <p className="text-sm text-muted-foreground mt-1">
-                สรุปการสแกน Kiosk (QR) รายเดือนของพนักงานออฟฟิศจากทะเบียนปัจจุบัน — แสดงทุกคนที่ ACTIVE ในระบบ
-                (ไม่รวมผู้ที่ถูกลบออกจากทะเบียนแล้ว แม้เคยมีบันทึกสแกน) · ใช้ประกอบงวดจ่ายเงินเดือนออฟฟิศ
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              type="button"
-              onClick={() => setViewMonth(startOfMonth(new Date()))}
-            >
-              เดือนนี้
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              type="button"
-              aria-label="เดือนก่อน"
-              onClick={() => setViewMonth((m) => addMonths(m, -1))}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <span className="text-sm font-semibold tabular-nums min-w-[9rem] text-center">{monthLabel}</span>
-            <Button
-              variant="outline"
-              size="icon"
-              type="button"
-              aria-label="เดือนถัดไป"
-              onClick={() => setViewMonth((m) => addMonths(m, 1))}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+        <div className="flex items-start gap-3">
+          <Button variant="ghost" size="icon" asChild className="shrink-0 mt-0.5">
+            <Link href="/timesheets">
+              <ArrowLeft className="h-5 w-5" />
+            </Link>
+          </Button>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-primary">จัดการการลงเวลา</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              สรุปการสแกน Kiosk (QR) รายเดือนของพนักงานออฟฟิศจากทะเบียนปัจจุบัน — แสดงทุกคนที่ ACTIVE ในระบบ
+              (ไม่รวมผู้ที่ถูกลบออกจากทะเบียนแล้ว แม้เคยมีบันทึกสแกน) · ใช้ประกอบงวดจ่ายเงินเดือนออฟฟิศ
+            </p>
           </div>
         </div>
 
@@ -423,13 +653,44 @@ export default function HrAttendanceManagePage() {
               <span className="font-semibold text-foreground">วันหยุดประจำสัปดาห์ ({weeklyRestPatternLabelTh(weeklyRestPattern)})</span>
               {' '}และวันหยุดในปฏิทิน HR Settings ({calendarHolidays.length} วัน) — ปรับได้ที่ HR Settings · วันมีบันทึก = มีเวลาเข้าและ/หรือออกที่ใช้จริง (รวมหลังแก้ไขที่อนุมัติแล้ว)
             </CardDescription>
-            <div className="pt-2 max-w-md">
+            <div className="grid gap-3 pt-2 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
               <Input
                 placeholder="ค้นหาชื่อพนักงาน…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 aria-label="ค้นหาพนักงาน"
+                className="h-10 w-full min-w-0 bg-background"
               />
+              <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,12rem)_auto] sm:items-center">
+                <Select
+                  value={payrollMonth}
+                  onValueChange={(v) => setViewMonth(parsePayrollYmToMonthStart(v))}
+                >
+                  <SelectTrigger
+                    className="h-10 w-full min-w-0 bg-background"
+                    aria-label="กรองตามเดือน"
+                  >
+                    <SelectValue placeholder="เลือกเดือน" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MONTH_SELECT_OPTIONS.map((ym) => (
+                      <SelectItem key={ym} value={ym}>
+                        {formatPayrollYearMonthThaiBE(ym)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 w-full gap-2 whitespace-nowrap sm:w-auto"
+                  disabled={punchesLoading || staffLoading || printBusy || summaryRowsAll.length === 0}
+                  onClick={() => setPrintDialogOpen(true)}
+                >
+                  <Printer className="h-4 w-4 shrink-0" />
+                  <span>พิมพ์รายการ</span>
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="pt-4">
@@ -667,6 +928,47 @@ export default function HrAttendanceManagePage() {
           </Button>
         </div>
       </div>
+
+      <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>พิมพ์สรุปการลงเวลารายเดือน</DialogTitle>
+            <DialogDescription>
+              เดือน {formatPayrollYearMonthThaiBE(payrollMonth)} — ตาราง 2 แผ่น (วันที่ 1–15 และ 16–สิ้นเดือน) · บน=เข้า ล่าง=ออก ·
+              ไม่มีเวลา: กิจ/ป่วย/พักร้อน หรือ ขาด · ตามคำค้น ({summaryRows.length} คน) หรือทุกพนักงาน (
+              {summaryRowsAll.length} คน)
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm text-muted-foreground">
+            {describeOfficeAttendanceMonthlySummaryPrintFilters({
+              payrollMonth,
+              searchQuery: search,
+            }).map((line) => (
+              <p key={line}>· {line}</p>
+            ))}
+          </div>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="outline" onClick={() => setPrintDialogOpen(false)} disabled={printBusy}>
+              ยกเลิก
+            </Button>
+            <Button
+              variant="outline"
+              disabled={printBusy || summaryRowsAll.length === 0}
+              onClick={() => void runAttendanceSummaryPrint('all')}
+            >
+              {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              พิมพ์ทั้งหมด
+            </Button>
+            <Button
+              disabled={printBusy || summaryRows.length === 0}
+              onClick={() => void runAttendanceSummaryPrint('filtered')}
+            >
+              {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              พิมพ์ตามตัวกรอง
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {corrCtx && currentUser ? (
         <AttendanceCorrectionRequestDialog
