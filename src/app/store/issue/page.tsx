@@ -178,7 +178,7 @@ export default function IssueItemsPage() {
       }
       setTopUpLoading(true);
       try {
-        const ctx = await loadFieldQuotaMobContext(firestore, mob, storeItems || []);
+        const ctx = await loadFieldQuotaMobContext(firestore, mob, storeItems || [], { mode: 'topup' });
         const worker = (allWorkers || []).find((w) => w.id === mob.workerId);
         if (!cancelled) {
           setTopUpCard({
@@ -423,6 +423,8 @@ export default function IssueItemsPage() {
           storeItemId: item.id,
           lastIssueSlipId: newIssueRef.id,
           lastIssueNo: finalNo,
+          waivedAt: null,
+          waivedBy: null,
           updatedAt: Date.now(),
           updatedBy: currentUser.displayName,
         } satisfies Partial<MobilizationRequirementFulfillmentLine>,
@@ -642,8 +644,8 @@ export default function IssueItemsPage() {
                       <Plus className="h-5 w-5 text-orange-600" /> เบิกเพิ่มตามโควต้า
                     </CardTitle>
                     <CardDescription>
-                      เลือกลูกจ้างและงาน (mobilization) — แสดงเฉพาะรายการในโควต้าตำแหน่งที่ยังเบิกไม่ครบ
-                      ไม่มีรายการ = เบิกเพิ่มไม่ได้
+                      เลือกลูกจ้างและงาน (mobilization) — แสดงรายการในโควต้าที่ยังเบิกไม่ครบ
+                      รวมรายการที่เคยกด「ไม่ประสงค์เบิก」 — ไม่มีรายการ = เบิกเพิ่มไม่ได้
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="pt-6 space-y-4">
@@ -683,6 +685,7 @@ export default function IssueItemsPage() {
                         fieldActionKey={fieldActionKey}
                         onIssue={handleFieldLineIssue}
                         onWaive={handleFieldLineWaive}
+                        showWaiveButton={false}
                       />
                     ) : topUpMobId ? (
                       <div className="py-10 text-center border border-dashed rounded-lg bg-muted/20">

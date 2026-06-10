@@ -78,6 +78,15 @@ export function fulfillmentLineSatisfied(
   return (line.quantityIssued || 0) >= quantityRequired;
 }
 
+/** ยังเบิกได้ตามโควต้า (รวมรายการที่เคยกดไม่ประสงค์เบิก) */
+export function fieldQuotaLineCanIssueMore(
+  quantityRequired: number,
+  line: MobilizationRequirementFulfillmentLine | undefined,
+): boolean {
+  const issued = Number(line?.quantityIssued) || 0;
+  return issued < quantityRequired;
+}
+
 export function nextStatusAfterIssue(
   quantityRequired: number,
   prevIssued: number,

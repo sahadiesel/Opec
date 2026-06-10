@@ -13,6 +13,7 @@ import {
   appliesToolRequirement,
   fulfillmentLineDocId,
   fulfillmentLineSatisfied,
+  fieldQuotaLineCanIssueMore,
   loadFulfillmentMap,
 } from '@/lib/store/mobilization-fulfillment';
 import {
@@ -30,6 +31,8 @@ export type FieldQuotaPendingLine = {
   lineDocId: string;
   defaultItem?: StoreItem;
   candidateItems?: StoreItem[];
+  /** เคยกดไม่ประสงค์เบิก — เบิกเพิ่มได้จนครบโควต้า */
+  wasWaived?: boolean;
 };
 
 export type FieldQuotaMobContext = {
@@ -43,7 +46,9 @@ export async function loadFieldQuotaPendingLines(
   firestore: Firestore,
   assignment: Assignment,
   storeItems: StoreItem[],
+  opts?: { mode?: 'queue' | 'topup' },
 ): Promise<FieldQuotaPendingLine[]> {
+  const mode = opts?.mode ?? 'queue';
   const list = storeItems || [];
   const ppeRef = collection(firestore, 'positions', assignment.positionId, 'ppe_requirements');
   const toolRef = collection(firestore, 'positions', assignment.positionId, 'tool_requirements');
@@ -53,37 +58,66 @@ export async function loadFieldQuotaPendingLines(
   const fmap = await loadFulfillmentMap(firestore, assignment.id);
   const pendingLines: FieldQuotaPendingLine[] = [];
 
+  const includeLine = (
+    q: number,
+    line: ReturnType<typeof fmap.get>,
+  ): boolean => {
+    if (mode === 'topup') return fieldQuotaLineCanIssueMore(q, line);
+    return !fulfillmentLineSatisfied(q, line);
+  };
+
+  const pushLine = (
+    kind: PositionRequirementKind,
+    req: PositionPPERequirement | PositionToolRequirement,
+    q: number,
+    lid: string,
+    line: ReturnType<typeof fmap.get>,
+    defaultItem: StoreItem | undefined,
+    candidateItems: StoreItem[],
+  ) => {
+    pendingLines.push({
+      kind,
+      req,
+      quantityRequired: q,
+      quantityIssued: Number(line?.quantityIssued || 0),
+      lineDocId: lid,
+      defaultItem,
+      candidateItems,
+      wasWaived: line?.status === 'WAIVED',
+    });
+  };
+
   for (const p of ppe) {
     if (!appliesPpeRequirement(p)) continue;
     const q = Number(p.quantityDefault || 1);
     const lid = fulfillmentLineDocId('ppe', p.id);
     const line = fmap.get(lid);
-    if (fulfillmentLineSatisfied(q, line)) continue;
-    pendingLines.push({
-      kind: 'ppe',
-      req: p,
-      quantityRequired: q,
-      quantityIssued: Number(line?.quantityIssued || 0),
-      lineDocId: lid,
-      defaultItem: pickDefaultStoreItemForPpe(p, list),
-      candidateItems: listStoreItemsMatchingPpeRequirement(p, list),
-    });
+    if (!includeLine(q, line)) continue;
+    pushLine(
+      'ppe',
+      p,
+      q,
+      lid,
+      line,
+      pickDefaultStoreItemForPpe(p, list),
+      listStoreItemsMatchingPpeRequirement(p, list),
+    );
   }
   for (const t of tools) {
     if (!appliesToolRequirement(t)) continue;
     const q = Number(t.quantityDefault || 1);
     const lid = fulfillmentLineDocId('tool', t.id);
     const line = fmap.get(lid);
-    if (fulfillmentLineSatisfied(q, line)) continue;
-    pendingLines.push({
-      kind: 'tool',
-      req: t,
-      quantityRequired: q,
-      quantityIssued: Number(line?.quantityIssued || 0),
-      lineDocId: lid,
-      defaultItem: pickDefaultStoreItemForTool(t, list),
-      candidateItems: listStoreItemsMatchingToolRequirement(t, list),
-    });
+    if (!includeLine(q, line)) continue;
+    pushLine(
+      'tool',
+      t,
+      q,
+      lid,
+      line,
+      pickDefaultStoreItemForTool(t, list),
+      listStoreItemsMatchingToolRequirement(t, list),
+    );
   }
 
   return pendingLines;
@@ -112,11 +146,12 @@ export async function loadFieldQuotaMobContext(
   firestore: Firestore,
   assignment: Assignment,
   storeItems: StoreItem[],
+  opts?: { mode?: 'queue' | 'topup' },
 ): Promise<FieldQuotaMobContext> {
   const posSnap = await getDoc(doc(firestore, 'positions', assignment.positionId));
   const position = posSnap.exists()
     ? ({ ...posSnap.data(), id: posSnap.id } as Position)
     : undefined;
-  const pendingLines = await loadFieldQuotaPendingLines(firestore, assignment, storeItems);
+  const pendingLines = await loadFieldQuotaPendingLines(firestore, assignment, storeItems, opts);
   return { assignment, position, pendingLines };
 }

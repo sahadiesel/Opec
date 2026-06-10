@@ -31,6 +31,8 @@ type FieldQuotaIssueCardProps = {
   fieldActionKey: string | null;
   onIssue: (assignment: Assignment, line: FieldQuotaPendingLine) => void;
   onWaive: (assignment: Assignment, line: FieldQuotaPendingLine) => void;
+  /** ซ่อนปุ่มไม่ประสงค์เบิก (ใช้ในเบิกเพิ่มตามโควต้า) */
+  showWaiveButton?: boolean;
 };
 
 export function FieldQuotaIssueCard({
@@ -43,6 +45,7 @@ export function FieldQuotaIssueCard({
   fieldActionKey,
   onIssue,
   onWaive,
+  showWaiveButton = true,
 }: FieldQuotaIssueCardProps) {
   return (
     <Card className="border-primary/15 shadow-sm">
@@ -103,6 +106,11 @@ export function FieldQuotaIssueCard({
                         ? (line.req as PositionPPERequirement).itemName
                         : (line.req as PositionToolRequirement).itemName}
                     </div>
+                    {line.wasWaived ? (
+                      <Badge variant="outline" className="mt-1 text-[10px] font-normal">
+                        เคยไม่ประสงค์เบิก — เบิกได้จนครบโควต้า
+                      </Badge>
+                    ) : null}
                     {candidates.length > 1 ? (
                       <div className="mt-2 space-y-1">
                         <Label className="text-[10px] text-muted-foreground">ตัดสต็อกจาก SKU (เลือกไซส์/เบอร์)</Label>
@@ -159,15 +167,17 @@ export function FieldQuotaIssueCard({
                         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                         เบิก
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8"
-                        disabled={busy || remaining <= 0}
-                        onClick={() => onWaive(card.assignment, line)}
-                      >
-                        ไม่ประสงค์เบิก
-                      </Button>
+                      {showWaiveButton ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8"
+                          disabled={busy || remaining <= 0}
+                          onClick={() => onWaive(card.assignment, line)}
+                        >
+                          ไม่ประสงค์เบิก
+                        </Button>
+                      ) : null}
                     </div>
                   </TableCell>
                 </TableRow>
