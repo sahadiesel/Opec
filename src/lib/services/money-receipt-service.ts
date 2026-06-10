@@ -15,14 +15,12 @@ import {
 } from 'firebase/firestore';
 import type { AccountsReceivable, ARStatus, MoneyReceipt, TaxInvoice, User } from '@/lib/types';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
+import { expectedMoneyReceiptAmountFromInvoice } from '@/lib/accounting/money-receipt-wht-amount';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 
+/** ยอดใบเสร็จ = ยอดรวมใบกำกับ (ฐานภาษี + VAT) — ไม่หัก ณ ที่จ่าย */
 export function expectedMoneyReceiptAmount(inv: TaxInvoice): number {
-  const w = Number(inv.withholdingTaxAmount) || 0;
-  if (inv.showWithholdingOnDocument === true && w > 0.005) {
-    return roundMoney2(inv.totalAmount - w);
-  }
-  return roundMoney2(inv.totalAmount);
+  return expectedMoneyReceiptAmountFromInvoice(inv);
 }
 
 export type ConfirmTaxInvoicePaymentParams = {

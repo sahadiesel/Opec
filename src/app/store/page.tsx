@@ -34,7 +34,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain } from '@/lib/permission-core';
 import { collection, query, orderBy, limit, where } from 'firebase/firestore';
 import { StoreItem, StoreTransaction, User, Assignment, Worker, OfficeStaff, formatStoreItemLabel } from '@/lib/types';
-import { netCustodyQuantityDelta } from '@/lib/store/store-custody-net';
+import { netCustodyQuantityDeltaForItem } from '@/lib/store/store-custody-net';
 import { isWorkerDispatchReady } from '@/lib/worker-readiness';
 import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
@@ -134,7 +134,7 @@ export default function StoreDashboardPage() {
     });
 
     for (const tx of chronological) {
-      const delta = netCustodyQuantityDelta(tx);
+      const delta = netCustodyQuantityDeltaForItem(tx, (itemId) => items.find((i) => i.id === itemId));
       if (!delta) continue;
       const isOffice = Boolean((tx.officeStaffId || '').trim());
       const holderId = ((tx.officeStaffId || tx.workerId || '') as string).trim();
@@ -208,7 +208,7 @@ export default function StoreDashboardPage() {
     const officeBalances: Record<string, number> = {};
 
     for (const tx of transactions) {
-      const d = netCustodyQuantityDelta(tx);
+      const d = netCustodyQuantityDeltaForItem(tx, (itemId) => items?.find((i) => i.id === itemId));
       if (!d) continue;
       const aid = (tx.assignmentId || '').trim();
       const oid = (tx.officeStaffId || '').trim();
@@ -257,7 +257,7 @@ export default function StoreDashboardPage() {
       const lb = b.kind === 'field' ? b.workerName : b.staffName;
       return la.localeCompare(lb, 'th');
     });
-  }, [transactions, mobilizations, workers, officeStaff, isOpsOrHR]);
+  }, [transactions, mobilizations, workers, officeStaff, isOpsOrHR, items]);
 
   if (userLoading || isUserLoading) {
     return (

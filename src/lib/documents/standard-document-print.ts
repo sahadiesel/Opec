@@ -1246,7 +1246,8 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
   if (showWhtOnDoc) {
     totalRows.push({
       label: printT(L, 'invoiceTotalInclVat'),
-      value: invoice.totalAmount.toLocaleString(loc, { minimumFractionDigits: 2 }),
+      value: `฿ ${invoice.totalAmount.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+      grand: true,
     });
     totalRows.push({
       label: `${printT(L, 'wht')} (${rateDoc}%)`,
@@ -1255,7 +1256,6 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
     totalRows.push({
       label: printT(L, 'netPayableAfterWht'),
       value: `฿ ${netPayable.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
-      grand: true,
     });
   } else {
     totalRows.push({
@@ -1264,7 +1264,7 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
       grand: true,
     });
   }
-  const amountForWords = showWhtOnDoc ? netPayable : invoice.totalAmount;
+  const amountForWords = invoice.totalAmount;
   const totalWords =
     L === 'en' ? amountToEnglishBahtText(amountForWords) : amountToThaiBahtText(amountForWords);
   const headerHtml = buildStandardDocumentHeaderHtml({

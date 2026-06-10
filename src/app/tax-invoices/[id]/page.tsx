@@ -793,27 +793,27 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 </div>
                 {showWhtBlock ? (
                   <>
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-muted-foreground">ยอดรวมตามใบแจ้งหนี้ (รวม VAT)</span>
-                      <span className="font-bold">
+                    <div className="flex justify-between items-center text-lg pt-2 border-t">
+                      <span className="font-black text-primary uppercase">ยอดรวมใบกำกับ (รวม VAT)</span>
+                      <span className="font-black text-2xl text-primary">
                         {invoice.currency}{' '}
                         {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </span>
                     </div>
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-muted-foreground">
-                        หัก ณ ที่จ่าย ({whtRateDisplay}% จากฐานก่อน VAT)
+                    <div className="flex justify-between items-center text-sm text-muted-foreground">
+                      <span>
+                        หัก ณ ที่จ่าย ({whtRateDisplay}% จากฐานก่อน VAT) — อ้างอิงเท่านั้น
                       </span>
-                      <span className="font-bold text-destructive">
+                      <span className="font-medium text-destructive">
                         −{invoice.currency}{' '}
                         {(Number(invoice.withholdingTaxAmount) || 0).toLocaleString(undefined, {
                           minimumFractionDigits: 2,
                         })}
                       </span>
                     </div>
-                    <div className="flex justify-between items-center text-lg pt-2 border-t">
-                      <span className="font-black text-primary uppercase">ยอดสุทธิที่ต้องชำระ</span>
-                      <span className="font-black text-2xl text-primary">
+                    <div className="flex justify-between items-center text-sm text-muted-foreground">
+                      <span>ยอดหลังหัก ณ ที่จ่าย (อ้างอิง)</span>
+                      <span className="font-medium">
                         {invoice.currency}{' '}
                         {netAfterWht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </span>
@@ -1102,19 +1102,11 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 />
                 {invoice ? (
                   <p className="text-xs text-muted-foreground">
-                    ยอดตามใบกำกับไม่เกิน{' '}
+                    ใบเสร็จออกตามยอดรวมใบกำกับ (ฐานภาษี + VAT){' '}
                     <span className="font-semibold text-foreground">
                       {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
-                    {showWhtBlock ? (
-                      <>
-                        {' '}
-                        · ถ้าชำระตามยอดสุทธิหลังหัก ณ ที่จ่าย แนะนำ{' '}
-                        <span className="font-semibold text-foreground">
-                          {netAfterWht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </span>
-                      </>
-                    ) : null}
+                    {showWhtBlock ? ' — ไม่หัก ณ ที่จ่ายในใบเสร็จ' : null}
                   </p>
                 ) : null}
               </div>

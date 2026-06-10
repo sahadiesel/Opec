@@ -2264,6 +2264,7 @@ export interface WorkerCertificate {
   issueDate: number;
   expiryDate: number;
   status: 'valid' | 'expired' | 'revoked';
+  attachment?: WaveMonthTimesheetPhotoAttachment;
   _path?: string; // Optional for internal routing
 }
 
@@ -2306,6 +2307,7 @@ export interface WorkerDocument {
   documentNo: string;
   issueDate: number;
   expiryDate: number;
+  attachment?: WaveMonthTimesheetPhotoAttachment;
   _path?: string;
 }
 
@@ -2877,6 +2879,8 @@ export interface StoreItem {
   currentStock: number;
   isPPE: boolean;
   isTool: boolean;
+  /** วัสดุสิ้นเปลือง — เบิกแล้วตัดสต็อก ไม่ติดตามรับคืน (ค่าเริ่มต้น = ต้องคืน) */
+  isConsumable?: boolean;
   active: boolean;
   createdAt: number;
   updatedAt: number;
@@ -2885,6 +2889,10 @@ export interface StoreItem {
 /** รายการที่ถือเป็น PPE ในคลัง — ใช้แยกหน้าทะเบียน PPE กับอุปกรณ์ทั่วไป */
 export function storeItemIsPpeCatalog(item: Pick<StoreItem, 'isPPE' | 'category'>): boolean {
   return item.isPPE === true || (item.category || '') === 'PPE';
+}
+
+export function storeItemIsConsumable(item: Pick<StoreItem, 'isConsumable'> | null | undefined): boolean {
+  return item?.isConsumable === true;
 }
 
 export function formatStoreItemLabel(item: Pick<StoreItem, 'itemName' | 'variantSpecification'>): string {

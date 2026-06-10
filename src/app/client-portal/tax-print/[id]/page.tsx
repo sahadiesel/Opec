@@ -373,18 +373,20 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
               {totalsPreview.showWhtOnDoc ? (
                 <>
                   <div className="flex justify-between gap-6 border-t border-dashed pt-2">
-                    <span>{printT(docL, 'invoiceTotalInclVat')}</span>
-                    <span className="tabular-nums font-semibold">{totalsPreview.fmt(invoice.totalAmount)}</span>
+                    <span className="font-bold">{printT(docL, 'invoiceTotalInclVat')}</span>
+                    <span className="font-bold tabular-nums text-primary">
+                      ฿ {totalsPreview.fmt(invoice.totalAmount)}
+                    </span>
                   </div>
-                  <div className="flex justify-between gap-6">
+                  <div className="flex justify-between gap-6 text-muted-foreground">
                     <span>{`${printT(docL, 'wht')} (${totalsPreview.rateDoc}%)`}</span>
                     <span className="tabular-nums font-medium text-destructive">
                       -{totalsPreview.fmt(totalsPreview.whtAmt)}
                     </span>
                   </div>
-                  <div className="flex justify-between gap-6 rounded-md border border-neutral-400 bg-neutral-100 px-3 py-2 dark:border-neutral-600 dark:bg-neutral-800">
-                    <span className="font-bold">{printT(docL, 'netPayableAfterWht')}</span>
-                    <span className="font-bold tabular-nums">
+                  <div className="flex justify-between gap-6 text-muted-foreground">
+                    <span>{printT(docL, 'netPayableAfterWht')}</span>
+                    <span className="tabular-nums font-medium">
                       ฿ {totalsPreview.fmt(totalsPreview.netPayable)}
                     </span>
                   </div>

@@ -64,6 +64,7 @@ import {
   syncWorkerStoreEquipmentReadinessToFirestore,
 } from '@/lib/store/mobilization-fulfillment';
 import type { MobilizationRequirementFulfillmentLine, PositionRequirementKind } from '@/lib/types';
+import { storeCatalogPickableItems } from '@/lib/store/receive-stock-select';
 
 type QueuePendingLine = {
   kind: PositionRequirementKind;
@@ -254,12 +255,14 @@ export default function IssueItemsPage() {
     }
   };
 
-  const filteredCatalogForField = useMemo(() => {
+  const filteredOfficeCatalog = useMemo(() => {
     const q = catalogSearch.trim().toLowerCase();
-    if (!storeItems) return [];
-    return storeItems.filter((i) => {
-      if (!q) return true;
+    const list = storeCatalogPickableItems(storeItems ?? []);
+    if (!q) return list;
+    return list.filter((i) => {
+      const label = formatStoreItemLabel(i).toLowerCase();
       return (
+        label.includes(q) ||
         (i.itemName || '').toLowerCase().includes(q) ||
         (i.itemCode || '').toLowerCase().includes(q) ||
         (i.variantSpecification || '').toLowerCase().includes(q) ||
@@ -808,7 +811,9 @@ export default function IssueItemsPage() {
               <Card className="shadow-md">
                 <CardHeader className="border-b bg-muted/20">
                   <CardTitle className="text-lg">พนักงานออฟฟิศผู้รับ (Office Staff)</CardTitle>
-                  <CardDescription>เลือกพนักงานแล้วเพิ่มรายการจากแคตตาล็อกทั้งหมวดด้านล่าง</CardDescription>
+                  <CardDescription>
+                    เลือกพนักงานแล้วเพิ่มรายการจากแคตตาล็อก (เฉพาะรุ่นย่อย/รายการเดี่ยว — ไม่แสดงเมนหลักที่มีรุ่นย่อย)
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="pt-6 space-y-4">
                   <div className="space-y-2">
@@ -848,7 +853,7 @@ export default function IssueItemsPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredCatalogForField.map((item) => (
+                        {filteredOfficeCatalog.map((item) => (
                           <TableRow key={item.id}>
                             <TableCell className="font-mono text-xs">{item.itemCode}</TableCell>
                             <TableCell>{formatStoreItemLabel(item)}</TableCell>
@@ -864,6 +869,13 @@ export default function IssueItemsPage() {
                             </TableCell>
                           </TableRow>
                         ))}
+                        {filteredOfficeCatalog.length === 0 && (
+                          <TableRow>
+                            <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                              ไม่พบรายการ — ลองคำค้นหาหรือเพิ่มที่ทะเบียนคลัง
+                            </TableCell>
+                          </TableRow>
+                        )}
                       </TableBody>
                     </Table>
                   </div>

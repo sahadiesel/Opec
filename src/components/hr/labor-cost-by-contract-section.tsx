@@ -68,8 +68,8 @@ export function LaborCostByContractSection({
           </Badge>
         </div>
         <CardDescription className="text-amber-950/85">
-          แสดงสัญญาหลักที่สถานะยังใช้งานได้ครบทุกฉบับ — กำหนดบาท/วัน Onshore และ Offshore ต่อสัญญาสำหรับตำแหน่งนี้ เมื่อ timesheet อ้าง{' '}
-          <code className="text-xs">contractId</code> ตรงกัน ระบบจะใช้ค่าจากแถวนี้ก่อนค่ามาตรฐานของตำแหน่งด้านบน
+          แสดงสัญญาที่มีอัตราตามตำแหน่งในแท็บสัญญาหลัก — ตัวเลขตรงกับคอลัมน์ต้นทุนค่าแรงบนหน้านั้น (ทับบนสัญญา หรือฐานมาตรฐาน OPEC ด้านบน)
+          สัญญาที่ไม่มี position rate สำหรับตำแหน่งนี้จะไม่แสดง · payroll ใช้ทะเบียน/ทับบนสัญญาก่อนฐานมาตรฐาน
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-4 space-y-4">
@@ -86,7 +86,7 @@ export function LaborCostByContractSection({
             {rows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="text-sm text-muted-foreground py-8 text-center">
-                  ยังไม่มีสัญญาหลักในระบบ — เพิ่มสัญญาที่เมนูสัญญาหลักก่อน แล้วกลับมากำหนดค่าต่อแถว
+                  ยังไม่มีสัญญาที่กำหนดอัตราตามตำแหน่งนี้ — เพิ่มที่แท็บอัตราราคาตามตำแหน่งในสัญญาหลัก หรือกดแก้ไขเพื่อกรอกทะเบียนที่นี่
                 </TableCell>
               </TableRow>
             ) : (

@@ -35,7 +35,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
-import { netCustodyQuantityDelta } from '@/lib/store/store-custody-net';
+import { netCustodyQuantityDeltaForItem } from '@/lib/store/store-custody-net';
 
 export default function StoreReturnPage() {
   const router = useRouter();
@@ -115,7 +115,7 @@ export default function StoreReturnPage() {
 
     const balance: Record<string, number> = {};
     transactions.forEach((tx) => {
-      const d = netCustodyQuantityDelta(tx);
+      const d = netCustodyQuantityDeltaForItem(tx, (itemId) => allStoreItems.find((i) => i.id === itemId));
       if (!d) return;
       balance[tx.itemId] = (balance[tx.itemId] || 0) + d;
     });

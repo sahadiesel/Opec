@@ -44,6 +44,7 @@ import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
+import { StoreItemConsumableField } from '@/components/store/store-item-consumable-field';
 
 const EQUIPMENT_CATEGORIES = STORE_ITEM_CATEGORIES.filter((c) => c !== 'PPE');
 
@@ -216,6 +217,7 @@ export default function StoreItemsPage() {
     currentStock: 0,
     isPPE: false,
     isTool: false,
+    isConsumable: false,
     active: true,
   });
 
@@ -236,6 +238,7 @@ export default function StoreItemsPage() {
       currentStock: 0,
       isPPE: false,
       isTool: false,
+      isConsumable: false,
       active: true,
     });
     setVariantParentId('');
@@ -288,6 +291,7 @@ export default function StoreItemsPage() {
             currentStock: Number(newItem.currentStock) || 0,
             isPPE: false,
             isTool: equipmentIsToolCategory(parent.category),
+            isConsumable: newItem.isConsumable === true,
             active: newItem.active !== false,
             createdAt: Date.now(),
             updatedAt: Date.now(),
@@ -400,6 +404,7 @@ export default function StoreItemsPage() {
             variantSpecification: (newItem.variantSpecification || '').trim(),
             minimumStock: Number(newItem.minimumStock) || 0,
             currentStock: Number(newItem.currentStock) || 0,
+            isConsumable: newItem.isConsumable === true,
             active: newItem.active !== false,
             updatedAt: Date.now(),
           }),
@@ -410,6 +415,7 @@ export default function StoreItemsPage() {
           sanitizeFirestorePayload({
             ...newItem,
             ...equipmentFlagsFromCategory(newItem.category),
+            isConsumable: newItem.isConsumable === true,
             updatedAt: Date.now(),
           }),
         );
@@ -455,6 +461,7 @@ export default function StoreItemsPage() {
       currentStock: item.currentStock,
       isPPE: false,
       isTool: item.isTool,
+      isConsumable: item.isConsumable === true,
       active: item.active,
     });
     setIsEditOpen(true);
@@ -727,6 +734,14 @@ export default function StoreItemsPage() {
                   </div>
                 </>
               )}
+
+              {(createMode === 'variant' || createMode === 'standalone') && (
+                <StoreItemConsumableField
+                  id="consumable-create-equipment"
+                  checked={newItem.isConsumable === true}
+                  onCheckedChange={(v) => setNewItem({ ...newItem, isConsumable: v })}
+                />
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
@@ -884,6 +899,14 @@ export default function StoreItemsPage() {
                   Active
                 </Label>
               </div>
+
+              {(editingCatalogRole === 'line' || editingCatalogRole === 'standalone') && (
+                <StoreItemConsumableField
+                  id="consumable-edit-equipment"
+                  checked={newItem.isConsumable === true}
+                  onCheckedChange={(v) => setNewItem({ ...newItem, isConsumable: v })}
+                />
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsEditOpen(false)}>

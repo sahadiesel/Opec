@@ -106,10 +106,7 @@ export function SubjectAttendanceHistory(props: {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-1 min-w-0">
             <CardTitle className="text-lg">{title ?? 'ประวัติการลงเวลา (Kiosk)'}</CardTitle>
-            <CardDescription>
-              {description ??
-                'เวลาเข้า/ออกที่ใช้จริง — รวมสแกน Kiosk และการแก้ไขที่ HR อนุมัติแล้ว (แหล่งเดียวกับเมนูจัดการการลงเวลา)'}
-            </CardDescription>
+            {description ? <CardDescription>{description}</CardDescription> : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <Button

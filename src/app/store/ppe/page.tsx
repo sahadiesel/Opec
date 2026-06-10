@@ -29,6 +29,7 @@ import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
+import { StoreItemConsumableField } from '@/components/store/store-item-consumable-field';
 
 type PpeCreateMode = 'main' | 'variant' | 'standalone';
 
@@ -202,6 +203,7 @@ export default function StorePpeCatalogPage() {
       currentStock: 0,
       isPPE: true,
       isTool: false,
+      isConsumable: false,
       active: true,
     });
     setVariantParentId('');
@@ -254,6 +256,7 @@ export default function StorePpeCatalogPage() {
             currentStock: Number(newItem.currentStock) || 0,
             isPPE: true,
             isTool: false,
+            isConsumable: newItem.isConsumable === true,
             active: newItem.active !== false,
             createdAt: Date.now(),
             updatedAt: Date.now(),
@@ -371,6 +374,7 @@ export default function StorePpeCatalogPage() {
             variantSpecification: (newItem.variantSpecification || '').trim(),
             minimumStock: Number(newItem.minimumStock) || 0,
             currentStock: Number(newItem.currentStock) || 0,
+            isConsumable: newItem.isConsumable === true,
             active: newItem.active !== false,
             updatedAt: Date.now(),
           }),
@@ -382,6 +386,7 @@ export default function StorePpeCatalogPage() {
             ...newItem,
             isPPE: true,
             isTool: false,
+            isConsumable: newItem.isConsumable === true,
             category: newItem.category || 'PPE',
             updatedAt: Date.now(),
           }),
@@ -428,6 +433,7 @@ export default function StorePpeCatalogPage() {
       currentStock: item.currentStock,
       isPPE: true,
       isTool: false,
+      isConsumable: item.isConsumable === true,
       active: item.active,
     });
     setIsEditOpen(true);
@@ -690,6 +696,14 @@ export default function StorePpeCatalogPage() {
                   </div>
                 </>
               )}
+
+              {(createMode === 'variant' || createMode === 'standalone') && (
+                <StoreItemConsumableField
+                  id="consumable-create-ppe"
+                  checked={newItem.isConsumable === true}
+                  onCheckedChange={(v) => setNewItem({ ...newItem, isConsumable: v })}
+                />
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
@@ -842,6 +856,14 @@ export default function StorePpeCatalogPage() {
                   Active
                 </Label>
               </div>
+
+              {(editingCatalogRole === 'line' || editingCatalogRole === 'standalone') && (
+                <StoreItemConsumableField
+                  id="consumable-edit-ppe"
+                  checked={newItem.isConsumable === true}
+                  onCheckedChange={(v) => setNewItem({ ...newItem, isConsumable: v })}
+                />
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsEditOpen(false)}>

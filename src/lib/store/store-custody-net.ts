@@ -1,4 +1,5 @@
-import type { StoreTransaction } from '@/lib/types';
+import type { StoreItem, StoreTransaction } from '@/lib/types';
+import { storeItemIsConsumable } from '@/lib/types';
 
 /**
  * ผลต่อยอดถือครองนอกคลัง (ISSUE เพิ่ม · RETURN/DAMAGED/LOST ลด)
@@ -11,4 +12,14 @@ export function netCustodyQuantityDelta(tx: Pick<StoreTransaction, 'transactionT
     return -q;
   }
   return 0;
+}
+
+/** วัสดุสิ้นเปลือง — ไม่นับ ISSUE เป็นยอดค้างคืน */
+export function netCustodyQuantityDeltaForItem(
+  tx: Pick<StoreTransaction, 'transactionType' | 'quantity' | 'itemId'>,
+  itemLookup: (itemId: string) => Pick<StoreItem, 'isConsumable'> | undefined,
+): number {
+  const item = itemLookup(tx.itemId);
+  if (storeItemIsConsumable(item) && tx.transactionType === 'ISSUE') return 0;
+  return netCustodyQuantityDelta(tx);
 }

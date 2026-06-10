@@ -36,7 +36,7 @@ import {
   DialogTrigger 
 } from '@/components/ui/dialog';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
-import { doc, collection, getCountFromServer, query, where, deleteField } from 'firebase/firestore';
+import { doc, collection, collectionGroup, getCountFromServer, getDocs, query, where, deleteField } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import {
   Position,
@@ -50,6 +50,7 @@ import {
   formatStoreItemLabel,
   MainContract,
   Customer,
+  PositionRate,
 } from '@/lib/types';
 
 import Link from 'next/link';
@@ -62,7 +63,7 @@ import { canView, canEdit, canDelete } from '@/lib/permissions';
 import { canViewWorkerLaborCostFromUser, canEditWorkerLaborCostFromUser } from '@/lib/payroll/labor-cost-model';
 import { LaborCostPositionSection } from '@/components/hr/labor-cost-position-section';
 import { LaborCostByContractSection } from '@/components/hr/labor-cost-by-contract-section';
-import { mergeLaborCostRowsWithMainContracts } from '@/lib/payroll/position-labor-cost-contract-rows';
+import { mainContractIdFromPositionRatePath, mergeLaborCostRowsForPersist, mergeLaborCostRowsWithMainContracts } from '@/lib/payroll/position-labor-cost-contract-rows';
 
 function isStoreVariantLine(item: StoreItem): boolean {
   return item.catalogGroupRole === 'line';
@@ -135,6 +136,57 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedPos, setEditedPos] = useState<Partial<Position>>({});
+  const [contractIdsWithPositionRate, setContractIdsWithPositionRate] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPositionRateContracts() {
+      if (!firestore || !id || !canViewPositions) {
+        if (!cancelled) setContractIdsWithPositionRate(new Set());
+        return;
+      }
+      try {
+        const snap = await getDocs(
+          query(collectionGroup(firestore, 'position_rates'), where('positionId', '==', id)),
+        );
+        if (cancelled) return;
+        const next = new Set<string>();
+        for (const d of snap.docs) {
+          const rate = d.data() as PositionRate;
+          if (rate.active === false) continue;
+          const contractId = mainContractIdFromPositionRatePath(d.ref.path);
+          if (contractId) next.add(contractId);
+        }
+        setContractIdsWithPositionRate(next);
+      } catch {
+        if (!cancelled) setContractIdsWithPositionRate(new Set());
+      }
+    }
+    void loadPositionRateContracts();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, id, canViewPositions]);
+
+  const laborPositionDefaults = useMemo(
+    () => ({
+      onshore: isEditing
+        ? (editedPos.defaultLaborCostOnshore ?? position?.defaultLaborCostOnshore)
+        : position?.defaultLaborCostOnshore,
+      offshore: isEditing
+        ? (editedPos.defaultLaborCostOffshore ?? position?.defaultLaborCostOffshore)
+        : position?.defaultLaborCostOffshore,
+    }),
+    [
+      isEditing,
+      editedPos.defaultLaborCostOnshore,
+      editedPos.defaultLaborCostOffshore,
+      position?.defaultLaborCostOnshore,
+      position?.defaultLaborCostOffshore,
+    ],
+  );
 
   const laborCostByContractRows = useMemo(
     () =>
@@ -143,8 +195,22 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
           ? (editedPos.laborCostByContract ?? position?.laborCostByContract)
           : position?.laborCostByContract,
         allMainContracts ?? [],
+        id,
+        {
+          includeEmptyRows: isEditing,
+          positionDefaults: laborPositionDefaults,
+          contractIdsWithPositionRate,
+        },
       ),
-    [isEditing, editedPos.laborCostByContract, position?.laborCostByContract, allMainContracts],
+    [
+      isEditing,
+      editedPos.laborCostByContract,
+      position?.laborCostByContract,
+      allMainContracts,
+      id,
+      laborPositionDefaults,
+      contractIdsWithPositionRate,
+    ],
   );
 
   const certsQuery = useMemoFirebase(() => (firestore && canViewPositions ? collection(firestore, 'positions', id, 'certificate_requirements') : null), [firestore, id, canViewPositions]);
@@ -286,9 +352,10 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
       delete base.defaultLaborCostOffshore;
       delete base.laborCostByContract;
     } else if (canEditLabor) {
-      base.laborCostByContract = mergeLaborCostRowsWithMainContracts(
+      base.laborCostByContract = mergeLaborCostRowsForPersist(
         editedPos.laborCostByContract ?? position.laborCostByContract,
         allMainContracts ?? [],
+        id,
       );
     }
     updateDocumentNonBlocking(posRef, base);
@@ -296,7 +363,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     setLaborSaveDialogOpen(false);
     setLaborWorkerCount(null);
     toast({ title: 'บันทึกสำเร็จ', description: 'ข้อมูลหลักของตำแหน่งงานถูกอัปเดตแล้ว' });
-  }, [posRef, position, editedPos, canViewLabor, canEditLabor, toast, allMainContracts]);
+  }, [posRef, position, editedPos, canViewLabor, canEditLabor, toast, allMainContracts, id]);
 
   const handleSaveMaster = useCallback(async () => {
     if (!canEditPositions) {

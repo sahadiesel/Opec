@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useCallback, useState } from 'react';
+import { use, useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -15,12 +15,14 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { ArrowLeft, Loader2, Printer } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Loader2, Printer, Wrench } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { doc } from 'firebase/firestore';
 import type { Customer, MoneyReceipt, TaxInvoice, User } from '@/lib/types';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
+import { isSimpleAccounting } from '@/lib/simple-tier-model';
+import { isSystemAdmin } from '@/lib/permission-core';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -30,6 +32,8 @@ import {
 } from '@/lib/documents/standard-document-print';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
+import { detectMoneyReceiptWhtUndercharge } from '@/lib/accounting/money-receipt-wht-amount';
+import { fixMoneyReceiptWhtAmount } from '@/lib/services/money-receipt-wht-fix-service';
 import Link from 'next/link';
 
 const RECEIPT_PRINT_PRESETS: Record<
@@ -50,8 +54,13 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
   const [printPresetOpen, setPrintPresetOpen] = useState(false);
   const [receiptPrintPreset, setReceiptPrintPreset] = useState<'p1' | 'p2' | 'p3'>('p1');
+  const [fixOpen, setFixOpen] = useState(false);
+  const [fixLoading, setFixLoading] = useState(false);
 
   const allowed = Boolean(currentUser && canView(currentUser, 'receipts'));
+  const canFixReceipt = Boolean(
+    currentUser && (isSystemAdmin(currentUser) || isSimpleAccounting(currentUser)),
+  );
 
   const rRef = useMemoFirebase(
     () => (firestore && allowed ? doc(firestore, 'receipts', id) : null),
@@ -64,6 +73,11 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
     [firestore, receipt?.taxInvoiceId],
   );
   const { data: taxInv } = useDoc<TaxInvoice>(tRef as any);
+
+  const whtFixPreview = useMemo(() => {
+    if (!taxInv) return null;
+    return detectMoneyReceiptWhtUndercharge(taxInv, receipt?.amount ?? 0);
+  }, [taxInv, receipt?.amount]);
 
   const cRef = useMemoFirebase(
     () => (firestore && receipt ? doc(firestore, 'customers', receipt.customerId) : null),
@@ -126,6 +140,28 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
     setPrintPresetOpen(false);
   }, [receiptPrintPreset, executeReceiptPrint]);
 
+  const handleApplyWhtFix = useCallback(async () => {
+    if (!firestore || !receipt || !taxInv || !currentUser || !whtFixPreview) return;
+    setFixLoading(true);
+    try {
+      const result = await fixMoneyReceiptWhtAmount(firestore, receipt, taxInv, currentUser as User);
+      setFixOpen(false);
+      toast({
+        title: 'แก้ยอดใบเสร็จแล้ว',
+        description: `ยอดใหม่ ${result.toAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} (รวม VAT ตามใบกำกับ)`,
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'แก้ใบเสร็จไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'ลองใหม่',
+      });
+    } finally {
+      setFixLoading(false);
+    }
+  }, [firestore, receipt, taxInv, currentUser, whtFixPreview, toast]);
+
   if (userLoading || !currentUser) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -172,6 +208,39 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
             </Button>
           </div>
         </div>
+
+        {canFixReceipt && whtFixPreview ? (
+          <Card className="border-amber-300 bg-amber-50/80 dark:bg-amber-950/20">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base text-amber-900 dark:text-amber-100">
+                <AlertTriangle className="h-4 w-4" />
+                ยอดใบเสร็จไม่ตรงใบกำกับ (หัก ณ ที่จ่าย)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <p>
+                ยอดปัจจุบัน{' '}
+                <span className="font-mono font-semibold">
+                  {receipt.currency}{' '}
+                  {whtFixPreview.currentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>{' '}
+                ควรเป็น{' '}
+                <span className="font-mono font-semibold text-primary">
+                  {receipt.currency}{' '}
+                  {whtFixPreview.expectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>{' '}
+                (ฐานภาษี + VAT)
+              </p>
+              <p className="text-xs text-muted-foreground">
+                การแก้ไขจะปรับยอดเอกสารและลูกหนี้ (AR) — ไม่แตะยอด Cashbook/ธนาคาร (เงินโอนจริง)
+              </p>
+              <Button type="button" variant="default" className="gap-2" onClick={() => setFixOpen(true)}>
+                <Wrench className="h-4 w-4" />
+                แก้ยอดใบเสร็จ
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader>
@@ -242,6 +311,28 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
               </Button>
               <Button type="button" onClick={handleConfirmPrint}>
                 พิมพ์
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={fixOpen} onOpenChange={setFixOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>แก้ยอดใบเสร็จเป็นยอดรวม (รวม VAT)</DialogTitle>
+              <DialogDescription>
+                {whtFixPreview
+                  ? `${receipt.receiptNo}: ${whtFixPreview.currentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} → ${whtFixPreview.expectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                  : '—'}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setFixOpen(false)} disabled={fixLoading}>
+                ยกเลิก
+              </Button>
+              <Button type="button" onClick={() => void handleApplyWhtFix()} disabled={fixLoading}>
+                {fixLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                ยืนยันแก้ไข
               </Button>
             </DialogFooter>
           </DialogContent>
