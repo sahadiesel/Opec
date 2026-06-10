@@ -21,14 +21,12 @@ import {
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessDomain } from '@/lib/permission-core';
-import { collection, doc, query, where, getDocs, getDoc, increment, writeBatch } from 'firebase/firestore';
+import { collection, doc, query, where, getDoc, increment, writeBatch } from 'firebase/firestore';
 import {
   StoreItem,
   Worker,
   Assignment,
   Position,
-  PositionPPERequirement,
-  PositionToolRequirement,
   OfficeStaff,
   formatStoreItemLabel,
 } from '@/lib/types';
@@ -46,55 +44,22 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import {
-  pickDefaultStoreItemForPpe,
-  pickDefaultStoreItemForTool,
-  listStoreItemsMatchingPpeRequirement,
-  listStoreItemsMatchingToolRequirement,
-} from '@/lib/store/position-issue-match';
-import {
   MOBILIZATION_FULFILLMENT_SUBCOLLECTION,
   MOBILIZATION_STATUSES_NOT_CLOSED,
-  appliesPpeRequirement,
-  appliesToolRequirement,
-  fulfillmentLineDocId,
-  fulfillmentLineSatisfied,
   isMobilizationInStoreFulfillmentScope,
-  loadFulfillmentMap,
   nextStatusAfterIssue,
   syncWorkerStoreEquipmentReadinessToFirestore,
 } from '@/lib/store/mobilization-fulfillment';
-import type { MobilizationRequirementFulfillmentLine, PositionRequirementKind } from '@/lib/types';
+import type { FieldQuotaPendingLine } from '@/lib/store/field-quota-pending-lines';
+import {
+  loadFieldQuotaMobContext,
+  resolveFieldLineStoreItem,
+} from '@/lib/store/field-quota-pending-lines';
+import { FieldQuotaIssueCard } from '@/components/store/field-quota-issue-card';
+import type { MobilizationRequirementFulfillmentLine } from '@/lib/types';
 import { storeCatalogPickableItems } from '@/lib/store/receive-stock-select';
 
-type QueuePendingLine = {
-  kind: PositionRequirementKind;
-  req: PositionPPERequirement | PositionToolRequirement;
-  quantityRequired: number;
-  quantityIssued: number;
-  lineDocId: string;
-  defaultItem?: StoreItem;
-  /** SKU ที่จับคู่โควต้านี้ได้ (หลายแถวเมื่อใช้ variantGroupKey เดียวกัน) */
-  candidateItems?: StoreItem[];
-};
-
-function resolveFieldLineStoreItem(
-  line: QueuePendingLine,
-  lineKey: string,
-  skuIdByLineKey: Record<string, string>,
-): StoreItem | undefined {
-  const candidates =
-    line.candidateItems && line.candidateItems.length > 0
-      ? line.candidateItems
-      : line.defaultItem
-        ? [line.defaultItem]
-        : [];
-  if (candidates.length === 0) return undefined;
-  const want = skuIdByLineKey[lineKey]?.trim();
-  if (want && candidates.some((c) => c.id === want)) {
-    return candidates.find((c) => c.id === want);
-  }
-  return line.defaultItem ?? candidates[0];
-}
+type QueuePendingLine = FieldQuotaPendingLine;
 
 type QueueCard = {
   assignment: Assignment;
@@ -126,6 +91,9 @@ export default function IssueItemsPage() {
   const [fieldLineSkuId, setFieldLineSkuId] = useState<Record<string, string>>({});
   const [fieldActionKey, setFieldActionKey] = useState<string | null>(null);
   const [queueRefreshTick, setQueueRefreshTick] = useState(0);
+  const [topUpMobId, setTopUpMobId] = useState('');
+  const [topUpCard, setTopUpCard] = useState<QueueCard | null>(null);
+  const [topUpLoading, setTopUpLoading] = useState(false);
 
   // STRICT ENFORCEMENT: Only workers from 'workers' collection (Field Labor)
   const workersQuery = useMemoFirebase(() => {
@@ -164,71 +132,18 @@ export default function IssueItemsPage() {
       const workers = allWorkers || [];
       setFieldQueueLoading(true);
       const cards: QueueCard[] = [];
-      const posCache = new Map<
-        string,
-        { ppe: PositionPPERequirement[]; tools: PositionToolRequirement[]; position?: Position }
-      >();
       const scoped = (allMobilizations || []).filter((m) => isMobilizationInStoreFulfillmentScope(m));
 
       for (const m of scoped) {
-        if (!posCache.has(m.positionId)) {
-          const ppeRef = collection(firestore, 'positions', m.positionId, 'ppe_requirements');
-          const toolRef = collection(firestore, 'positions', m.positionId, 'tool_requirements');
-          const posDocRef = doc(firestore, 'positions', m.positionId);
-          const [ppeSnap, toolSnap, posSnap] = await Promise.all([
-            getDocs(ppeRef),
-            getDocs(toolRef),
-            getDoc(posDocRef),
-          ]);
-          const position = posSnap.exists()
-            ? ({ ...posSnap.data(), id: posSnap.id } as Position)
-            : undefined;
-          posCache.set(m.positionId, {
-            ppe: ppeSnap.docs.map((d) => ({ ...d.data(), id: d.id } as PositionPPERequirement)),
-            tools: toolSnap.docs.map((d) => ({ ...d.data(), id: d.id } as PositionToolRequirement)),
-            position,
-          });
-        }
-        const { ppe, tools, position } = posCache.get(m.positionId)!;
-        const fmap = await loadFulfillmentMap(firestore, m.id);
-        const pendingLines: QueuePendingLine[] = [];
-
-        for (const p of ppe) {
-          if (!appliesPpeRequirement(p)) continue;
-          const q = Number(p.quantityDefault || 1);
-          const lid = fulfillmentLineDocId('ppe', p.id);
-          const line = fmap.get(lid);
-          if (fulfillmentLineSatisfied(q, line)) continue;
-          pendingLines.push({
-            kind: 'ppe',
-            req: p,
-            quantityRequired: q,
-            quantityIssued: Number(line?.quantityIssued || 0),
-            lineDocId: lid,
-            defaultItem: pickDefaultStoreItemForPpe(p, list),
-            candidateItems: listStoreItemsMatchingPpeRequirement(p, list),
-          });
-        }
-        for (const t of tools) {
-          if (!appliesToolRequirement(t)) continue;
-          const q = Number(t.quantityDefault || 1);
-          const lid = fulfillmentLineDocId('tool', t.id);
-          const line = fmap.get(lid);
-          if (fulfillmentLineSatisfied(q, line)) continue;
-          pendingLines.push({
-            kind: 'tool',
-            req: t,
-            quantityRequired: q,
-            quantityIssued: Number(line?.quantityIssued || 0),
-            lineDocId: lid,
-            defaultItem: pickDefaultStoreItemForTool(t, list),
-            candidateItems: listStoreItemsMatchingToolRequirement(t, list),
-          });
-        }
-
-        if (pendingLines.length === 0) continue;
+        const ctx = await loadFieldQuotaMobContext(firestore, m, list);
+        if (ctx.pendingLines.length === 0) continue;
         const w = workers.find((x) => x.id === m.workerId);
-        cards.push({ assignment: m, worker: w, position, pendingLines });
+        cards.push({
+          assignment: m,
+          worker: w,
+          position: ctx.position,
+          pendingLines: ctx.pendingLines,
+        });
       }
 
       if (!cancelled) {
@@ -242,12 +157,55 @@ export default function IssueItemsPage() {
     };
   }, [firestore, canAccess, issueMode, allMobilizations, storeItems, allWorkers, queueRefreshTick]);
 
+  const scopedMobilizations = useMemo(
+    () => (allMobilizations || []).filter((m) => isMobilizationInStoreFulfillmentScope(m)),
+    [allMobilizations],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadTopUp() {
+      if (!firestore || !canAccess || issueMode !== 'field' || !topUpMobId) {
+        setTopUpCard(null);
+        setTopUpLoading(false);
+        return;
+      }
+      const mob = scopedMobilizations.find((m) => m.id === topUpMobId);
+      if (!mob) {
+        setTopUpCard(null);
+        setTopUpLoading(false);
+        return;
+      }
+      setTopUpLoading(true);
+      try {
+        const ctx = await loadFieldQuotaMobContext(firestore, mob, storeItems || []);
+        const worker = (allWorkers || []).find((w) => w.id === mob.workerId);
+        if (!cancelled) {
+          setTopUpCard({
+            assignment: mob,
+            worker,
+            position: ctx.position,
+            pendingLines: ctx.pendingLines,
+          });
+        }
+      } finally {
+        if (!cancelled) setTopUpLoading(false);
+      }
+    }
+    void loadTopUp();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, canAccess, issueMode, topUpMobId, scopedMobilizations, storeItems, allWorkers, queueRefreshTick]);
+
   const onIssueModeChange = (v: string) => {
     const next = v as 'field' | 'office';
     setIssueMode(next);
     setIssueList([]);
     setFieldLineSkuId({});
     setCatalogSearch('');
+    setTopUpMobId('');
+    setTopUpCard(null);
     if (next === 'office') {
       /* field queue reloads via effect */
     } else {
@@ -622,7 +580,7 @@ export default function IssueItemsPage() {
           <AlertDescription className="text-sm">
             {issueMode === 'field' ? (
               <>
-                ลูกจ้างหน้างานต้องเบิกตามรายการที่กำหนดในตำแหน่ง (PPE/เครื่องมือ) และไม่เกินโควต้า · รายการที่ใช้รหัสกลุ่มโควต้าในคลังเดียวกันจะนับรวมหลายไซส์ได้ — เบิกทีละ SKU จนครบยอดที่ตำแหน่งกำหนด · แก้จำนวน/รายการที่เมนูตำแหน่งงาน → PPE / อุปกรณ์
+                ลูกจ้างหน้างานต้องเบิกตามรายการที่กำหนดในตำแหน่ง (PPE/เครื่องมือ) และไม่เกินโควต้า · ใช้「เบิกเพิ่มตามโควต้า」เมื่อเคยเบิกบางส่วนแล้ว · ไม่มีรายการในโควต้า = เบิกไม่ได้ · แก้จำนวน/รายการที่เมนูตำแหน่งงาน → PPE / อุปกรณ์
               </>
             ) : (
               <>
@@ -661,146 +619,82 @@ export default function IssueItemsPage() {
                       </div>
                     ) : (
                       fieldQueue.map((card) => (
-                        <Card key={card.assignment.id} className="border-primary/15 shadow-sm">
-                          <CardHeader className="py-4 bg-primary/5 border-b border-primary/10">
-                            <div className="flex flex-wrap items-start justify-between gap-2">
-                              <div>
-                                <CardTitle className="text-base">
-                                  {card.worker
-                                    ? `${card.worker.firstName} ${card.worker.lastName} (${card.worker.workerCode})`
-                                    : `Worker ${card.assignment.workerId}`}
-                                </CardTitle>
-                                <CardDescription className="mt-1">
-                                  {card.assignment.projectName} · {card.assignment.assignmentNo} ·{' '}
-                                  <Badge variant="outline" className="text-[10px]">
-                                    {card.assignment.deploymentStatus}
-                                  </Badge>
-                                </CardDescription>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  ตำแหน่ง:{' '}
-                                  <span className="font-semibold text-foreground">
-                                    {card.position?.positionNameTh || card.position?.positionName || card.assignment.positionId}
-                                  </span>
-                                </p>
-                              </div>
-                            </div>
-                          </CardHeader>
-                          <CardContent className="p-0">
-                            <Table>
-                              <TableHeader>
-                                <TableRow>
-                                  <TableHead>ประเภท</TableHead>
-                                  <TableHead>รายการ</TableHead>
-                                  <TableHead className="text-right">คงเหลือ/ต้องการ</TableHead>
-                                  <TableHead className="text-right">จำนวนเบิก</TableHead>
-                                  <TableHead className="text-right w-[220px]">จัดการ</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {card.pendingLines.map((line) => {
-                                  const lk = fieldLineInputKey(card.assignment.id, line.lineDocId);
-                                  const remaining = line.quantityRequired - line.quantityIssued;
-                                  const picked = resolveFieldLineStoreItem(line, lk, fieldLineSkuId);
-                                  const candidates = line.candidateItems?.length
-                                    ? line.candidateItems
-                                    : line.defaultItem
-                                      ? [line.defaultItem]
-                                      : [];
-                                  const busy = fieldActionKey === lk;
-                                  return (
-                                    <TableRow key={line.lineDocId}>
-                                      <TableCell>
-                                        <Badge variant="secondary">{line.kind === 'ppe' ? 'PPE' : 'อุปกรณ์'}</Badge>
-                                      </TableCell>
-                                      <TableCell className="min-w-[200px] max-w-[340px]">
-                                        <div className="font-medium text-sm">
-                                          {line.kind === 'ppe'
-                                            ? (line.req as PositionPPERequirement).itemName
-                                            : (line.req as PositionToolRequirement).itemName}
-                                        </div>
-                                        {candidates.length > 1 ? (
-                                          <div className="mt-2 space-y-1">
-                                            <Label className="text-[10px] text-muted-foreground">
-                                              ตัดสต็อกจาก SKU (เลือกไซส์/เบอร์)
-                                            </Label>
-                                            <Select
-                                              value={picked?.id ?? ''}
-                                              onValueChange={(id) =>
-                                                setFieldLineSkuId((prev) => ({ ...prev, [lk]: id }))
-                                              }
-                                            >
-                                              <SelectTrigger className="h-9 text-xs">
-                                                <SelectValue placeholder="เลือก SKU…" />
-                                              </SelectTrigger>
-                                              <SelectContent>
-                                                {candidates.map((c) => (
-                                                  <SelectItem key={c.id} value={c.id}>
-                                                    {formatStoreItemLabel(c)} · คงเหลือ {c.currentStock}
-                                                  </SelectItem>
-                                                ))}
-                                              </SelectContent>
-                                            </Select>
-                                            <p className="text-[10px] text-muted-foreground leading-snug">
-                                              เบิกหลายครั้งได้ — ยอดรวมทุก SKU ในกลุ่มนับเข้าโควต้าเดียวกัน
-                                            </p>
-                                          </div>
-                                        ) : (
-                                          <div className="text-xs text-muted-foreground mt-1">
-                                            {picked
-                                              ? `SKU: ${formatStoreItemLabel(picked)} · คงเหลือ ${picked.currentStock}`
-                                              : 'ยังไม่มี SKU ในคลังที่จับคู่ — แก้ที่ตำแหน่งงาน'}
-                                          </div>
-                                        )}
-                                      </TableCell>
-                                      <TableCell className="text-right text-sm">
-                                        เบิกแล้ว {line.quantityIssued} / {line.quantityRequired}
-                                      </TableCell>
-                                      <TableCell className="text-right">
-                                        <Input
-                                          className="h-9 w-20 ml-auto text-right"
-                                          type="number"
-                                          min={1}
-                                          max={remaining}
-                                          value={
-                                            fieldLineQty[lk] !== undefined
-                                              ? fieldLineQty[lk]
-                                              : String(Math.max(1, remaining))
-                                          }
-                                          onChange={(e) =>
-                                            setFieldLineQty((prev) => ({ ...prev, [lk]: e.target.value }))
-                                          }
-                                        />
-                                      </TableCell>
-                                      <TableCell className="text-right">
-                                        <div className="flex flex-wrap justify-end gap-2">
-                                          <Button
-                                            size="sm"
-                                            className="h-8"
-                                            disabled={busy || !picked || remaining <= 0}
-                                            onClick={() => handleFieldLineIssue(card.assignment, line)}
-                                          >
-                                            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                                            เบิก
-                                          </Button>
-                                          <Button
-                                            size="sm"
-                                            variant="outline"
-                                            className="h-8"
-                                            disabled={busy || remaining <= 0}
-                                            onClick={() => handleFieldLineWaive(card.assignment, line)}
-                                          >
-                                            ไม่ประสงค์เบิก
-                                          </Button>
-                                        </div>
-                                      </TableCell>
-                                    </TableRow>
-                                  );
-                                })}
-                              </TableBody>
-                            </Table>
-                          </CardContent>
-                        </Card>
+                        <FieldQuotaIssueCard
+                          key={card.assignment.id}
+                          card={card}
+                          lineKey={fieldLineInputKey}
+                          fieldLineQty={fieldLineQty}
+                          setFieldLineQty={setFieldLineQty}
+                          fieldLineSkuId={fieldLineSkuId}
+                          setFieldLineSkuId={setFieldLineSkuId}
+                          fieldActionKey={fieldActionKey}
+                          onIssue={handleFieldLineIssue}
+                          onWaive={handleFieldLineWaive}
+                        />
                       ))
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card className="shadow-md border-orange-200/60">
+                  <CardHeader className="border-b bg-orange-50/50 dark:bg-orange-950/20">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Plus className="h-5 w-5 text-orange-600" /> เบิกเพิ่มตามโควต้า
+                    </CardTitle>
+                    <CardDescription>
+                      เลือกลูกจ้างและงาน (mobilization) — แสดงเฉพาะรายการในโควต้าตำแหน่งที่ยังเบิกไม่ครบ
+                      ไม่มีรายการ = เบิกเพิ่มไม่ได้
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="pt-6 space-y-4">
+                    <div className="space-y-2">
+                      <Label className="font-bold">ลูกจ้าง / งานที่มอบหมาย</Label>
+                      <Select value={topUpMobId || undefined} onValueChange={setTopUpMobId}>
+                        <SelectTrigger className="h-11">
+                          <SelectValue placeholder="เลือก mobilization…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {scopedMobilizations.map((m) => {
+                            const w = (allWorkers || []).find((x) => x.id === m.workerId);
+                            const workerLabel = w
+                              ? `${w.firstName} ${w.lastName} (${w.workerCode})`
+                              : m.workerId;
+                            return (
+                              <SelectItem key={m.id} value={m.id}>
+                                {workerLabel} · {m.assignmentNo} · {m.projectName}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {topUpLoading ? (
+                      <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                        <Loader2 className="h-4 w-4 animate-spin" /> กำลังโหลดโควต้า…
+                      </div>
+                    ) : topUpMobId && topUpCard && topUpCard.pendingLines.length > 0 ? (
+                      <FieldQuotaIssueCard
+                        card={topUpCard}
+                        lineKey={fieldLineInputKey}
+                        fieldLineQty={fieldLineQty}
+                        setFieldLineQty={setFieldLineQty}
+                        fieldLineSkuId={fieldLineSkuId}
+                        setFieldLineSkuId={setFieldLineSkuId}
+                        fieldActionKey={fieldActionKey}
+                        onIssue={handleFieldLineIssue}
+                        onWaive={handleFieldLineWaive}
+                      />
+                    ) : topUpMobId ? (
+                      <div className="py-10 text-center border border-dashed rounded-lg bg-muted/20">
+                        <p className="text-sm font-medium text-muted-foreground">ไม่มีรายการในโควต้าที่เบิกเพิ่มได้</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          ครบโควต้าทุกรายการแล้ว หรือไม่มี PPE/อุปกรณ์ในตำแหน่งงาน — ต้องแก้ที่เมนูตำแหน่งก่อน
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        เลือก mobilization เพื่อดูรายการที่ยังเบิกไม่ครบ (รวมกรณีเคยเบิกบางส่วนแล้ว)
+                      </p>
                     )}
                   </CardContent>
                 </Card>
