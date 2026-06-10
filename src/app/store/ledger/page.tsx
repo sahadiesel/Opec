@@ -28,6 +28,7 @@ import {
   Wave,
   TransactionType,
   OfficeStaff,
+  formatStoreItemLabel,
 } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -142,7 +143,10 @@ export default function InventoryLedgerPage() {
       const matchesItem =
         !itemQ ||
         (item?.itemName && normalizeLedgerSearch(item.itemName).includes(itemQ)) ||
-        (item?.itemCode && normalizeLedgerSearch(item.itemCode).includes(itemQ));
+        (item?.itemCode && normalizeLedgerSearch(item.itemCode).includes(itemQ)) ||
+        (item?.variantSpecification &&
+          normalizeLedgerSearch(item.variantSpecification).includes(itemQ)) ||
+        (item && normalizeLedgerSearch(formatStoreItemLabel(item)).includes(itemQ));
 
       let matchesHolder = true;
       if (selectedHolder) {
@@ -404,7 +408,8 @@ export default function InventoryLedgerPage() {
                         <TableCell>
                           <div className="flex flex-col">
                             <span className="font-black text-sm text-primary flex items-center gap-1">
-                              <Package className="h-3 w-3 text-muted-foreground" /> {item?.itemName || 'Unknown Item'}
+                              <Package className="h-3 w-3 text-muted-foreground" />{' '}
+                              {item ? formatStoreItemLabel(item) : 'Unknown Item'}
                             </span>
                             <span className="text-[10px] font-mono text-muted-foreground">{item?.itemCode || 'N/A'}</span>
                           </div>

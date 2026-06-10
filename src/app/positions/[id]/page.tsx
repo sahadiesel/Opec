@@ -47,6 +47,9 @@ import {
   WorkerDocumentCatalogItem,
   StoreItem,
   storeItemIsPpeCatalog,
+  storeItemToPositionToolItemType,
+  resolvePositionToolRequirementItemType,
+  positionToolItemTypeLabel,
   formatStoreItemLabel,
   MainContract,
   Customer,
@@ -466,12 +469,6 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     setNewPPE({ required: true, quantityDefault: 1, storeItemId: undefined });
   };
 
-  const storeItemToToolItemType = (si: StoreItem): PositionToolRequirement['itemType'] => {
-    if (si.isTool) return 'tool';
-    if (si.isPPE) return 'equipment';
-    return 'consumable';
-  };
-
   const handleAddTool = () => {
     if (!canEditPositions) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขข้อมูลตำแหน่งงาน' });
@@ -510,7 +507,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
       storeCategory: si.category ?? '',
       itemName: si.itemName ?? '',
       itemCode: si.itemCode ?? '',
-      itemType: storeItemToToolItemType(si),
+      itemType: storeItemToPositionToolItemType(si),
       quantityDefault: newTool.quantityDefault ?? 1,
       allowed: newTool.allowed ?? true,
       notes: newTool.notes || '',
@@ -1029,7 +1026,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                               storeItemId: si.id,
                               itemCode: si.itemCode,
                               itemName: si.itemName,
-                              itemType: storeItemToToolItemType(si),
+                              itemType: storeItemToPositionToolItemType(si),
                             }));
                           }}
                           placeholder={
@@ -1043,7 +1040,9 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                           {newTool.storeItemId && (
                             <p className="text-xs text-muted-foreground">
                               ประเภทเบิก (อ้างอิงคลัง):{' '}
-                              <span className="font-medium capitalize">{newTool.itemType}</span>
+                              <span className="font-medium">
+                                {positionToolItemTypeLabel(newTool.itemType as PositionToolRequirement['itemType'])}
+                              </span>
                             </p>
                           )}
                         </div>
@@ -1105,7 +1104,9 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                             <span className="text-xs text-muted-foreground">—</span>
                           )}
                         </TableCell>
-                        <TableCell className="capitalize text-xs font-medium text-muted-foreground">{t.itemType}</TableCell>
+                        <TableCell className="text-xs font-medium text-muted-foreground">
+                          {positionToolItemTypeLabel(resolvePositionToolRequirementItemType(t, storeItems))}
+                        </TableCell>
                         <TableCell className="text-sm font-bold">{t.quantityDefault} EA</TableCell>
                         <TableCell className="text-right pr-6">
                           <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => deleteReq('tool_requirements', t.id)}><Trash2 className="h-4 w-4" /></Button>

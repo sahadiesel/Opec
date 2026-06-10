@@ -2895,6 +2895,37 @@ export function storeItemIsConsumable(item: Pick<StoreItem, 'isConsumable'> | nu
   return item?.isConsumable === true;
 }
 
+/** ประเภทเบิกในตำแหน่งงาน — อิง `isConsumable` / `isTool` จากทะเบียนคลัง (ไม่ใช่หมวด Workwear = consumable) */
+export function storeItemToPositionToolItemType(
+  item: Pick<StoreItem, 'isTool' | 'isConsumable'>,
+): PositionToolRequirement['itemType'] {
+  if (storeItemIsConsumable(item)) return 'consumable';
+  if (item.isTool) return 'tool';
+  return 'equipment';
+}
+
+export function resolvePositionToolRequirementItemType(
+  req: Pick<PositionToolRequirement, 'itemType' | 'storeItemId' | 'storeCategory'>,
+  storeItems: StoreItem[] | undefined,
+): PositionToolRequirement['itemType'] {
+  const linked = req.storeItemId ? storeItems?.find((s) => s.id === req.storeItemId) : undefined;
+  if (linked) return storeItemToPositionToolItemType(linked);
+  if (req.storeCategory === 'Tool') return 'tool';
+  if (req.storeCategory === 'Workwear') return 'equipment';
+  return req.itemType ?? 'equipment';
+}
+
+export function positionToolItemTypeLabel(type: PositionToolRequirement['itemType']): string {
+  switch (type) {
+    case 'consumable':
+      return 'วัสดุสิ้นเปลือง';
+    case 'tool':
+      return 'เครื่องมือ';
+    default:
+      return 'อุปกรณ์';
+  }
+}
+
 export function formatStoreItemLabel(item: Pick<StoreItem, 'itemName' | 'variantSpecification'>): string {
   const name = (item.itemName || '').trim();
   const spec = (item.variantSpecification || '').trim();
