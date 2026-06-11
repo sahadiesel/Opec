@@ -6,6 +6,7 @@
 /** Legacy typo on some user docs / permission_profiles rows (singular operation). */
 const BUSINESS_ROLE_KEY_ALIASES: Record<string, string> = {
   operation_manager: 'operations_manager',
+  execusive: 'executive',
 };
 
 export function normalizeBusinessRoleKey(roleKey?: string | null): string | null {
@@ -47,6 +48,7 @@ export const BUILTIN_PERMISSION_PROFILE_DOC_IDS = new Set([
   'accounting_manager',
   'accounting_officer',
   'store_officer',
+  'executive',
 ]);
 
 /**

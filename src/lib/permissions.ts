@@ -44,6 +44,7 @@ import {
   isOperationGroupMember,
   isOperationsPillarExecutive,
   isPrimaryHrOfficer,
+  isExecutiveViewer,
   canAccessOpsSchedulingModules,
   canAccessAccountingFinanceModules,
   DOMAINS_BY_ACCESS_GROUP,
@@ -107,6 +108,7 @@ export {
   isOperationGroupMember,
   isOperationsPillarExecutive,
   isPrimaryHrOfficer,
+  isExecutiveViewer,
   canAccessOpsSchedulingModules,
   canAccessAccountingFinanceModules,
   DOMAINS_BY_ACCESS_GROUP,
@@ -631,6 +633,8 @@ export function getPermissions(
 
   if (isSimpleAdmin(u)) return clonePermission(FULL_ACCESS);
 
+  if (isExecutiveViewer(u)) return clonePermission(READ_ONLY);
+
   const moduleKey = (
     MODULE_KEYS_WITHOUT_DOMAIN_ALIAS.has(rawModuleKey)
       ? rawModuleKey
@@ -1041,6 +1045,14 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
     {} as Record<string, ModulePermission>
   );
 
+  const executivePerms = SYSTEM_MODULES.reduce(
+    (acc, mod) => {
+      acc[mod.key] = clonePermission(READ_ONLY);
+      return acc;
+    },
+    {} as Record<string, ModulePermission>
+  );
+
   const internalPerms = {
     ...INITIAL_PERMISSIONS_TEMPLATE,
     ...buildPermissionMap(
@@ -1065,6 +1077,17 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       level: 'admin',
       isActive: true,
       permissions: adminPerms,
+    },
+    {
+      profileKey: 'executive',
+      profileNameEn: 'Executive (View Only)',
+      profileNameTh: 'ผู้บริหาร (ดูอย่างเดียว)',
+      departmentGroup: 'admin',
+      primaryRoleTemplateKey: 'executive',
+      department: 'admin',
+      level: 'viewer',
+      isActive: true,
+      permissions: executivePerms,
     },
     {
       profileKey: 'accounting_manager',

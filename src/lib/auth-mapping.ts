@@ -240,7 +240,7 @@ export function deriveDataAccess(roleKeys: BusinessRoleKey[]): DataAccessClass {
   const primary = roleKeys[0];
   if (!primary) return 'staff';
   if (primary === 'client_user') return 'client';
-  if (primary === 'system_admin') return 'admin';
+  if (primary === 'system_admin' || primary === 'executive') return 'admin';
   return 'staff';
 }
 

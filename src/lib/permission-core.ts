@@ -37,7 +37,8 @@ export type CorePrimaryRoleKey =
   | 'accounting_officer'
   | 'accounting_manager'
   | 'client_user'
-  | 'employee_self';
+  | 'employee_self'
+  | 'executive';
 
 /** Canonical keys for tests and future UI. */
 export const CORE_PRIMARY_ROLE_KEYS = [
@@ -49,6 +50,7 @@ export const CORE_PRIMARY_ROLE_KEYS = [
   'accounting_manager',
   'client_user',
   'employee_self',
+  'executive',
 ] as const satisfies readonly CorePrimaryRoleKey[];
 
 export const ALL_ACCESS_DOMAINS: readonly AccessDomain[] = [
@@ -102,6 +104,7 @@ const PRIMARY_ASSIGNED_ROLE_KEYS = new Set<string>([
   'accounting_manager',
   'client_user',
   'employee_self',
+  'executive',
 ]);
 
 function normalizeAssignedPrimaryRole(roleKey?: string | null): string | null {
@@ -132,6 +135,7 @@ export const BUSINESS_ROLE_TO_CORE: Record<
   operations_manager: { group: 'operations', level: 'manager', primaryKey: 'operations_manager' },
   client_user: { group: 'client', level: 'viewer', primaryKey: 'client_user' },
   employee_self: { group: 'operations', level: 'viewer', primaryKey: 'employee_self' },
+  executive: { group: 'admin', level: 'viewer', primaryKey: 'executive' },
 };
 
 /** @deprecated use BUSINESS_ROLE_TO_CORE */
@@ -258,6 +262,12 @@ export function isPrimaryHrOfficer(user: Partial<User> | null | undefined): bool
   return getPrimaryLegacyRole(user ?? null) === 'hr_officer';
 }
 
+/** Executive viewer — ดูได้ทุกเมนู ไม่มีสิทธิ์ mutating actions (sync กับ getPermissions READ_ONLY). */
+export function isExecutiveViewer(user: User | Partial<User> | null): boolean {
+  if (!user || !isActiveForApp(user) || !isInternalTypeUser(user)) return false;
+  return getPrimaryLegacyRole(user as User) === 'executive';
+}
+
 /** Effective access group: explicit User.accessGroup wins, else legacy-derived. */
 export function getEffectiveAccessGroup(user: User | null): AccessGroup | null {
   if (!user) return null;
@@ -275,6 +285,7 @@ export function getEffectiveAccessGroup(user: User | null): AccessGroup | null {
   const legacyRole = getPrimaryLegacyRole(user);
 
   if (legacyRole === 'system_admin') return 'admin';
+  if (legacyRole === 'executive') return 'admin';
   if (legacyRole === 'client_user') return 'client';
 
   if (legacyRole === 'accounting_manager' || legacyRole === 'accounting_officer') {
@@ -319,6 +330,7 @@ export function getEffectiveAccessLevel(user: User | null): CoreAccessLevel {
   if (group === 'client') return user.portalRole === 'approver' ? 'manager' : 'viewer';
 
   const legacyRole = getPrimaryLegacyRole(user);
+  if (legacyRole === 'executive') return 'viewer';
   if (
     legacyRole === 'hr_manager' ||
     legacyRole === 'sales_manager' ||
@@ -505,6 +517,7 @@ export function isOperationsPillarExecutive(user: User | null): boolean {
   if (!user) return false;
   if (!isActiveForApp(user) || !isInternalTypeUser(user)) return false;
   if (isSystemAdmin(user)) return false;
+  if (getPrimaryLegacyRole(user) === 'executive') return false;
   const rk = getPrimaryLegacyRole(user);
   if (rk === 'operations_manager' || rk === 'hr_manager' || rk === 'sales_manager') return true;
   return getEffectiveAccessGroup(user) === 'operations' && getEffectiveAccessLevel(user) === 'manager';

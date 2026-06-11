@@ -1,10 +1,10 @@
 'use client';
 
 import { useAppUser } from '@/hooks/use-app-user';
-import { isSystemAdmin } from '@/lib/permission-core';
+import { isSystemAdmin, isExecutiveViewer } from '@/lib/permission-core';
 
 /**
- * All /system-admin/* routes: system administrators only.
+ * All /system-admin/* routes: system administrators and executive viewers (read-only).
  */
 export default function SystemAdminLayout({ children }: { children: React.ReactNode }) {
   const { currentUser, isLoading } = useAppUser();
@@ -17,7 +17,7 @@ export default function SystemAdminLayout({ children }: { children: React.ReactN
     );
   }
 
-  if (!currentUser || !isSystemAdmin(currentUser)) {
+  if (!currentUser || (!isSystemAdmin(currentUser) && !isExecutiveViewer(currentUser))) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">
         คุณไม่มีสิทธิ์เข้าถึงเมนูผู้ดูแลระบบ

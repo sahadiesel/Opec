@@ -26,7 +26,8 @@ export type RoleType =
   | 'timekeeper'
   | 'store_officer'
   | 'client_user'
-  | 'employee_self'; 
+  | 'employee_self'
+  | 'executive'; 
 
 export type BusinessRoleKey = 
   | 'system_admin'
@@ -42,7 +43,8 @@ export type BusinessRoleKey =
   | 'accounting_officer'
   | 'store_officer'
   | 'client_user'
-  | 'employee_self';
+  | 'employee_self'
+  | 'executive';
 
 /** Readiness Status for Workers (ลูกจ้าง) */
 export type ReadinessStatus = 

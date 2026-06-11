@@ -18,6 +18,7 @@ import {
 } from '@/lib/permissions';
 import {
   isSystemAdmin,
+  isExecutiveViewer,
   isHrManager,
   isOperationManager,
   isPayrollOfficer,
@@ -250,8 +251,10 @@ const SORTED_PREFIXES = [...MODULE_PREFIXES].sort((a, b) => b[0].length - a[0].l
 export function userMayAccessPath(user: User, profile: PermissionProfile | null, pathname: string): boolean {
   const p = (pathname.split('?')[0] || '/').trim() || '/';
   const admin = isSystemAdmin(user) || isSimpleAdmin(user);
+  const executiveViewer = isExecutiveViewer(user);
+  const fullMenuAccess = admin || executiveViewer;
 
-  if (admin) return true;
+  if (fullMenuAccess) return true;
 
   if (isClient(user)) {
     return p.startsWith('/client-portal');

@@ -169,6 +169,18 @@ export const ROLE_CATALOG: Record<BusinessRoleKey, RoleCatalogEntry> = {
     canonicalRole: 'operations_manager',
     descriptionTh: 'ขาย/บุคคล/ปฏิบัติการ/คลัง (รวม)',
   },
+  executive: {
+    key: 'executive',
+    displayNameTh: 'ผู้บริหาร (ดูอย่างเดียว)',
+    displayNameEn: 'Executive (View Only)',
+    department: 'admin',
+    accessGroup: 'admin',
+    accessLevel: 'viewer',
+    permissionProfileKey: 'executive',
+    canonicalRole: 'executive',
+    descriptionTh:
+      'เข้าดูได้ทุกเมนูเหมือนผู้ดูแลระบบ — ไม่สามารถเพิ่ม ลบ แก้ไข หรืออนุมัติได้',
+  },
 };
 
 export const ACTIVE_BUSINESS_ROLE_KEYS: BusinessRoleKey[] = [
@@ -186,6 +198,7 @@ export const ACTIVE_BUSINESS_ROLE_KEYS: BusinessRoleKey[] = [
   'accounting_officer',
   'client_user',
   'employee_self',
+  'executive',
 ];
 
 /**

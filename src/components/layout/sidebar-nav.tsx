@@ -73,7 +73,7 @@ import {
   isTimekeeper,
   getPrimaryLegacyRole,
 } from '@/lib/permissions';
-import { isSystemAdmin } from '@/lib/permission-core';
+import { isSystemAdmin, isExecutiveViewer } from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import { UI_LABELS } from '@/lib/constants/labels';
 import { HR_NAV_SUBSECTIONS } from '@/lib/navigation/hr-nav-items';
@@ -467,12 +467,12 @@ function navGroupsForUser(user: User): NavGroup[] {
     });
 }
 
-function canSeeGroup(group: NavGroup, user: User, admin: boolean): boolean {
+function canSeeGroup(group: NavGroup, user: User, fullMenuAccess: boolean): boolean {
   const clientUser = isClient(user);
   const acct =
-    admin || isSimpleAccounting(user) || isSimpleAdmin(user);
+    fullMenuAccess || isSimpleAccounting(user) || isSimpleAdmin(user);
 
-  if (group.audience === 'admin') return admin;
+  if (group.audience === 'admin') return fullMenuAccess;
   if (group.audience === 'accounting') return acct && !clientUser;
   if (group.audience === 'client') return clientUser;
   if (group.audience === 'internal') return !clientUser;
@@ -489,6 +489,7 @@ export function SidebarNav({
 }) {
   const pathname = usePathname();
   const admin = isSystemAdmin(user);
+  const fullMenuAccess = admin || isExecutiveViewer(user);
   const profile = profiles?.[0] ?? null;
 
   return (
@@ -507,11 +508,11 @@ export function SidebarNav({
 
       <SidebarContent className="py-4">
         {navGroupsForUser(user).map((group) => {
-          if (!canSeeGroup(group, user, admin)) return null;
+          if (!canSeeGroup(group, user, fullMenuAccess)) return null;
 
           if (group.accountingStructured) {
             const filterNav = (item: NavItem) => {
-              if (admin) return true;
+              if (fullMenuAccess) return true;
               const byMatrix = sidebarMatrixVisibility(user, item);
               if (byMatrix !== null) return byMatrix;
               return canView(user, item.key, profile);
@@ -794,7 +795,7 @@ export function SidebarNav({
           }
 
           const visibleItems = group.items.filter((item) => {
-            if (admin) return true;
+            if (fullMenuAccess) return true;
             const basePath = item.href.split('?')[0];
             if (isPayrollOfficer(user) && OPS_WAREHOUSE_SUB_PATHS.some((p) => p === basePath)) {
               return false;

@@ -68,6 +68,7 @@ import {
 } from '@/lib/auth-mapping';
 import {
   SECURITY_SENSITIVE_FIELDS,
+  canView,
 } from '@/lib/permissions';
 import { Separator } from '@/components/ui/separator';
 import { sanitizeFirestorePayload } from '@/lib/utils';
@@ -109,13 +110,17 @@ export default function UsersPage() {
   }, []);
 
   const isUserAdmin = useMemo(() => isAdminUser(currentUser), [currentUser]);
+  const canViewUsers = useMemo(
+    () => !!currentUser && canView(currentUser, 'system_admin'),
+    [currentUser],
+  );
 
   const roleKeysForSelect = useMemo(() => getBusinessRoleKeysSortedForSelect(), []);
 
   const usersQuery = useMemoFirebase(() => {
-    if (!firestore || !currentUser || !isUserAdmin) return null;
+    if (!firestore || !currentUser || !canViewUsers) return null;
     return collection(firestore, 'users');
-  }, [firestore, currentUser, isUserAdmin]);
+  }, [firestore, currentUser, canViewUsers]);
 
   const { data: users, isLoading: isCollectionLoading } = useCollection<User>(usersQuery as any);
 
@@ -356,7 +361,7 @@ export default function UsersPage() {
 
   if (isUserLoading || !currentUser) return null;
 
-  if (!isUserAdmin) {
+  if (!canViewUsers) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex flex-col items-center justify-center py-20 text-center space-y-4 max-w-lg mx-auto">

@@ -134,6 +134,7 @@ const ROLE_TO_GROUP_HEADER: Record<BusinessRoleKey, string> = {
   accounting_officer: 'Accounting',
   client_user: 'Client Portal',
   employee_self: 'Self',
+  executive: 'Executive',
 };
 
 const GROUP_HEADER_COLOR: Record<string, string> = {
@@ -145,6 +146,7 @@ const GROUP_HEADER_COLOR: Record<string, string> = {
   Accounting: 'bg-cyan-100 text-cyan-900 border-cyan-300',
   'Client Portal': 'bg-slate-100 text-slate-900 border-slate-300',
   Self: 'bg-zinc-100 text-zinc-900 border-zinc-300',
+  Executive: 'bg-indigo-100 text-indigo-900 border-indigo-300',
 };
 
 interface CapabilityMeta {
