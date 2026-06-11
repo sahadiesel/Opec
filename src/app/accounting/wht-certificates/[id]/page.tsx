@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {
   collection,
   doc,
+  getDoc,
   setDoc,
   updateDoc,
   type DocumentData,
@@ -34,12 +35,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { ArrowLeft, FileCode, Loader2, Printer, ShieldCheck, Stamp } from 'lucide-react';
+import { ArrowLeft, FileCode, Loader2, Printer, RefreshCw, ShieldCheck, Stamp } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useToast } from '@/hooks/use-toast';
 import type {
   User,
+  Vendor,
+  PurchaseVendorBill,
   WithholdingCertificateCopyVariant,
   WithholdingCertificateDocument,
   WhtTaxCondition,
@@ -63,7 +66,7 @@ import {
   validateWhtCertificateForOfficialPrint,
   validateWhtCertificateForPayeeCopies12Print,
 } from '@/lib/wht/wht-certificate-validation';
-import { buildWhtElectronicDataFromDocument, stripUndefinedForFirestore } from '@/lib/wht/wht-certificate-build';
+import { buildWhtElectronicDataFromDocument, refreshWhtCertificateMasterDataPatch, stripUndefinedForFirestore } from '@/lib/wht/wht-certificate-build';
 import type { CompanyProfileWhtInput } from '@/lib/wht/wht-certificate-build';
 import { buildWhtAuditLogEntry } from '@/lib/wht/wht-certificate-audit';
 import {
@@ -107,6 +110,7 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
   const { toast } = useToast();
   const [busy, setBusy] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [refreshOpen, setRefreshOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
   const [taxConditionOtherRemark, setTaxConditionOtherRemark] = useState('');
@@ -444,6 +448,97 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
     }
   };
 
+  const refreshFromMaster = async () => {
+    if (!firestore || !currentUser || !wht || !certRef) return;
+    if (!wht.sourceVendorBillId?.trim()) {
+      toast({
+        variant: 'destructive',
+        title: 'อัปเดตไม่ได้',
+        description: 'เอกสารนี้ไม่มีอ้างอิงใบวางบิล — ไม่ทราบคู่ค้า',
+      });
+      return;
+    }
+
+    setBusy('refresh-master');
+    try {
+      const billSnap = await getDoc(doc(firestore, 'purchase_vendor_bills', wht.sourceVendorBillId));
+      if (!billSnap.exists()) {
+        toast({
+          variant: 'destructive',
+          title: 'อัปเดตไม่ได้',
+          description: 'ไม่พบใบวางบิลต้นทาง',
+        });
+        return;
+      }
+      const bill = { id: billSnap.id, ...billSnap.data() } as PurchaseVendorBill;
+      if (!bill.vendorId?.trim()) {
+        toast({
+          variant: 'destructive',
+          title: 'อัปเดตไม่ได้',
+          description: 'ใบวางบิลไม่มีรหัสคู่ค้า',
+        });
+        return;
+      }
+
+      const vendorSnap = await getDoc(doc(firestore, 'vendors', bill.vendorId));
+      if (!vendorSnap.exists()) {
+        toast({
+          variant: 'destructive',
+          title: 'อัปเดตไม่ได้',
+          description: 'ไม่พบทะเบียนคู่ค้า — ตรวจสอบว่ายัง ACTIVE อยู่',
+        });
+        return;
+      }
+      const vendor = { id: vendorSnap.id, ...vendorSnap.data() } as Vendor;
+
+      const patch = refreshWhtCertificateMasterDataPatch({
+        existing: wht,
+        vendor,
+        company: companyRaw ?? undefined,
+      });
+      const merged: WithholdingCertificateDocument = { ...wht, ...patch };
+      const validationErrs = validateWhtCertificateForOfficialIssue(merged);
+      if (validationErrs.length > 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ข้อมูลทะเบียนยังไม่ครบ',
+          description: validationErrs.join(' '),
+        });
+        return;
+      }
+
+      await updateDoc(
+        certRef,
+        stripUndefinedForFirestore({
+          ...patch,
+          updatedAt: Date.now(),
+          updatedByUid: currentUser.id,
+          updatedByName: actorName,
+        }) as DocumentData,
+      );
+      await appendAudit(firestore, wht.id, {
+        ...buildWhtAuditLogEntry({
+          documentId: wht.id,
+          action: 'REFRESH_WHT_FROM_MASTER',
+          actorId: currentUser.id,
+          actorName,
+          payloadSummary: {
+            vendorId: vendor.id,
+            payeeTaxId: merged.payee.taxId,
+            payeeName: merged.payee.displayName,
+          },
+        }),
+      });
+      setRefreshOpen(false);
+      toast({
+        title: 'อัปเดตข้อมูลเอกสารแล้ว',
+        description: 'ดึงชื่อ ที่อยู่ และเลขผู้เสียภาษีจากทะเบียนคู่ค้า/บริษัทใหม่ — ยอดเงินและเลขที่ไม่เปลี่ยน',
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (userLoading || !currentUser) return null;
   if (!canReadWhtCertificates(currentUser)) {
     return (
@@ -620,6 +715,18 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
                 </Button>
               </>
             )}
+            {canIssueWhtCertificate(currentUser) &&
+              wht.documentStatus !== 'CANCELLED' &&
+              wht.documentStatus !== 'REPLACED' && (
+                <Button variant="outline" disabled={!!busy} onClick={() => setRefreshOpen(true)}>
+                  {busy === 'refresh-master' ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                  )}
+                  Generate เอกสารใหม่
+                </Button>
+              )}
             {canCancelWhtCertificate(currentUser) &&
               wht.documentStatus !== 'CANCELLED' &&
               wht.documentStatus !== 'REPLACED' && (
@@ -629,6 +736,33 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
               )}
           </CardContent>
         </Card>
+
+        <AlertDialog open={refreshOpen} onOpenChange={setRefreshOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Generate เอกสารใหม่จากทะเบียน?</AlertDialogTitle>
+              <AlertDialogDescription className="space-y-2 text-sm">
+                <span className="block">
+                  ระบบจะดึงชื่อ ที่อยู่ และเลขประจำตัวผู้เสียภาษีของคู่ค้า (และข้อมูลผู้จ่ายจาก company profile)
+                  มาใส่ในเอกสารนี้ใหม่
+                </span>
+                <span className="block">ยอดเงิน เลขที่เอกสาร และวันที่จ่ายไม่เปลี่ยน</span>
+                {wht.xmlExportStatus === 'EXPORTED_XML' ? (
+                  <span className="block text-amber-800">
+                    เอกสารเคย export XML แล้ว — หลังอัปเดตต้อง Generate Internal XML ใหม่
+                  </span>
+                ) : null}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={busy === 'refresh-master'}>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction disabled={busy === 'refresh-master'} onClick={() => void refreshFromMaster()}>
+                {busy === 'refresh-master' ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                ยืนยันอัปเดต
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <AlertDialog open={cancelOpen} onOpenChange={setCancelOpen}>
           <AlertDialogContent>

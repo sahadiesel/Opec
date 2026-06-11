@@ -1,13 +1,21 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { collection, getDocs, orderBy, query, limit } from 'firebase/firestore';
 import { AppShell } from '@/components/layout/app-shell';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -18,7 +26,8 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { ExternalLink, Loader2, Search, Briefcase } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { ExternalLink, Loader2, Search, Briefcase, Printer } from 'lucide-react';
 import type {
   User,
   OfficePayrollRun,
@@ -31,6 +40,12 @@ import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { usePermissions } from '@/hooks/use-permissions';
 import { officePayrollLineTaxAmount, resolveOfficePayrollWhtPaymentDateYmd } from '@/lib/payroll/payroll-office-wht-model';
+import {
+  buildWithholdingExecutivePayrollListPrintHtml,
+  capWithholdingPayrollListPrintRows,
+  type WithholdingExecutivePayrollListPrintRow,
+} from '@/lib/documents/withholding-payroll-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 
 type ExecutiveWhtRow = { run: OfficePayrollRun; line: OfficePayrollLine; tax: number; paymentYmd: string };
 
@@ -67,6 +82,32 @@ function ymLabelTh(ym: string): string {
   return `${TH_MONTHS[mi - 1]} ${Number(y) + 543}`;
 }
 
+function describeExecutivePrintFilters(searchTerm: string, monthFilter: string): string[] {
+  const lines: string[] = [];
+  if (monthFilter !== 'ALL') {
+    lines.push(`เดือน: ${ymLabelTh(monthFilter)} (${monthFilter})`);
+  }
+  if (searchTerm.trim()) {
+    lines.push(`ค้นหา: "${searchTerm.trim()}"`);
+  }
+  return lines;
+}
+
+function buildExecutivePrintRows(rows: ExecutiveWhtRow[]): WithholdingExecutivePayrollListPrintRow[] {
+  return rows.map(({ run, line, tax, paymentYmd }) => {
+    const st = runStatusBadge(run.status);
+    return {
+      periodStatus: st.label,
+      runLabel: run.payrollRunNo || run.id,
+      payrollMonth: run.payrollMonth || '—',
+      earnerName: line.staffName || '—',
+      earnerId: line.staffId,
+      paymentDate: paymentYmd,
+      amountLabel: fmtBaht(tax),
+    };
+  });
+}
+
 function runStatusBadge(status: PayrollRunStatus): { label: string; variant: 'default' | 'secondary' | 'outline' } {
   if (status === 'PAID' || status === 'LOCKED') return { label: 'จ่ายแล้ว', variant: 'default' };
   if (status === 'FINANCE_APPROVED' || status === 'HR_APPROVED') return { label: 'รอจ่าย', variant: 'secondary' };
@@ -78,8 +119,11 @@ export default function AccountingWithholdingPayrollExecutivePage() {
   const { currentUser, isLoading } = useAppUser();
   const { profile } = usePermissions(currentUser);
   const firestore = useFirestore();
+  const { toast } = useToast();
   const [q, setQ] = useState('');
   const [monthFilter, setMonthFilter] = useState<string>('ALL');
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
   const [executiveRows, setExecutiveRows] = useState<ExecutiveWhtRow[]>([]);
   const [loadingExecutiveLines, setLoadingExecutiveLines] = useState(false);
   const [executiveLinesErr, setExecutiveLinesErr] = useState<string | null>(null);
@@ -166,6 +210,72 @@ export default function AccountingWithholdingPayrollExecutivePage() {
     [filteredExecutive],
   );
 
+  const allExecutiveTotalTax = useMemo(
+    () => executiveRows.reduce((sum, { tax }) => sum + tax, 0),
+    [executiveRows],
+  );
+
+  const runExecutivePrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const source = scope === 'filtered' ? filteredExecutive : executiveRows;
+      if (source.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
+              : 'ยังไม่มีรายการหัก ภงด.1 ผู้บริหารในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const printRows = buildExecutivePrintRows(source);
+        const { rows, truncated } = capWithholdingPayrollListPrintRows(printRows);
+        const totalTax = source.reduce((sum, { tax }) => sum + tax, 0);
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines = scope === 'filtered' ? describeExecutivePrintFilters(q, monthFilter) : [];
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
+
+        const body = buildWithholdingExecutivePayrollListPrintHtml({
+          rows,
+          scopeTitle,
+          filterLines,
+          totalLabel: fmtBaht(totalTax),
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Withholding-Executive-List',
+          suggestedFileName: `Withholding-Executive-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [filteredExecutive, executiveRows, q, monthFilter, currentUser?.displayName, toast],
+  );
+
   if (isLoading || !currentUser) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -204,20 +314,29 @@ export default function AccountingWithholdingPayrollExecutivePage() {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">ค้นหาและกรองเดือน</CardTitle>
-            <CardDescription>
+            <CardDescription className="sr-only">
               ชื่อผู้มีเงินได้ เลขที่งวดผู้บริหาร รหัสบรรทัด หรือวันที่จ่าย — กรองเดือนใช้เดือนอ้างอิง (วันที่จ่าย หรืองวดเงินเดือน)
             </CardDescription>
-            <div className="flex flex-col gap-4 pt-3 sm:flex-row sm:items-end">
-              <div className="relative max-w-md flex-1">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input className="pl-9" placeholder="พิมพ์คำค้น..." value={q} onChange={(e) => setQ(e.target.value)} />
-              </div>
-              <div className="w-full space-y-1.5 rounded-lg border bg-muted/50 p-3 sm:max-w-[260px] sm:shrink-0">
-                <Label htmlFor="wht-exec-month-filter" className="text-xs text-muted-foreground">
-                  กรองตามเดือน
-                </Label>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-md">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="h-10 pl-9"
+                    placeholder="พิมพ์คำค้น..."
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    aria-label="ค้นหารายการหัก ณ ที่จ่ายผู้บริหาร"
+                  />
+                </div>
                 <Select value={monthFilter} onValueChange={setMonthFilter}>
-                  <SelectTrigger id="wht-exec-month-filter" className="bg-background">
+                  <SelectTrigger
+                    id="wht-exec-month-filter"
+                    className="h-10 w-[min(100%,13rem)] shrink-0 bg-background"
+                    aria-label="กรองตามเดือน"
+                  >
                     <SelectValue placeholder="เลือกเดือน" />
                   </SelectTrigger>
                   <SelectContent>
@@ -230,9 +349,82 @@ export default function AccountingWithholdingPayrollExecutivePage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 shrink-0 gap-2 whitespace-nowrap"
+                  disabled={
+                    printBusy ||
+                    loadingExecutiveRuns ||
+                    loadingExecutiveLines ||
+                    executiveRows.length === 0
+                  }
+                  onClick={() => setPrintDialogOpen(true)}
+                >
+                  <Printer className="h-4 w-4 shrink-0" />
+                  พิมพ์รายการ
+                </Button>
+                {!loadingExecutiveRuns && !loadingExecutiveLines && !executiveLinesErr ? (
+                  <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-2 min-w-[11rem]">
+                    <p className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">
+                      ยอดหักรวม (ในตาราง)
+                    </p>
+                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(executiveTotalTax)}</p>
+                  </div>
+                ) : null}
+              </div>
             </div>
-          </CardHeader>
+          </CardContent>
         </Card>
+
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการหัก ณ ที่จ่าย (ผู้บริหาร)</DialogTitle>
+              <DialogDescription>งวดเงินเดือนผู้บริหาร — สูงสุด 500 รายการต่อครั้ง</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                <ul className="list-disc list-inside text-xs text-muted-foreground">
+                  {describeExecutivePrintFilters(q, monthFilter).length > 0 ? (
+                    describeExecutivePrintFilters(q, monthFilter).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))
+                  ) : (
+                    <li>ทุกเดือน — ไม่มีคำค้น</li>
+                  )}
+                </ul>
+                <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredExecutive.length} รายการ</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                ข้อมูลทั้งหมดในระบบ: {executiveRows.length} รายการ · รวม {fmtBaht(allExecutiveTotalTax)}
+              </p>
+            </div>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={printBusy || filteredExecutive.length === 0}
+                onClick={() => void runExecutivePrint('filtered')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Printer className="h-4 w-4 mr-2" />}
+                พิมพ์ตามตัวกรอง ({filteredExecutive.length})
+              </Button>
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                disabled={printBusy || executiveRows.length === 0}
+                onClick={() => void runExecutivePrint('all')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Printer className="h-4 w-4 mr-2" />}
+                พิมพ์ทั้งหมด ({executiveRows.length})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {executiveRunsErr ? (
           <p className="text-sm text-destructive">
@@ -242,22 +434,14 @@ export default function AccountingWithholdingPayrollExecutivePage() {
 
         <Card>
           <CardHeader>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0 space-y-1.5">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Briefcase className="h-5 w-5 shrink-0 text-muted-foreground" />
-                  ผู้บริหาร / Executive payroll
-                </CardTitle>
-                <CardDescription>
-                  แสดงเฉพาะบรรทัดที่มียอดภาษีหักในงวดเงินเดือนผู้บริหาร — เปิดเพื่อพิมพ์ใบหัก
-                </CardDescription>
-              </div>
-              {!loadingExecutiveRuns && !loadingExecutiveLines && !executiveLinesErr ? (
-                <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-3 text-right shadow-sm shrink-0 sm:min-w-[180px]">
-                  <p className="text-xs font-medium text-muted-foreground">ยอดหักรวม (ในตาราง)</p>
-                  <p className="text-xl font-bold tabular-nums tracking-tight text-primary">{fmtBaht(executiveTotalTax)}</p>
-                </div>
-              ) : null}
+            <div className="min-w-0 space-y-1.5">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Briefcase className="h-5 w-5 shrink-0 text-muted-foreground" />
+                ผู้บริหาร / Executive payroll
+              </CardTitle>
+              <CardDescription>
+                แสดงเฉพาะบรรทัดที่มียอดภาษีหักในงวดเงินเดือนผู้บริหาร — เปิดเพื่อพิมพ์ใบหัก
+              </CardDescription>
             </div>
           </CardHeader>
           <CardContent>

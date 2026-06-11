@@ -500,6 +500,15 @@ export default function AccountingWithholdingPayrollHubPage() {
                 </Select>
               </div>
               <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 shrink-0 gap-2 whitespace-nowrap"
+                  onClick={() => setPrintDialogOpen(true)}
+                >
+                  <Printer className="h-4 w-4 shrink-0" />
+                  พิมพ์รายการ
+                </Button>
                 {!loadingBatches && !loadingRuns && !loadingWorkerLines && !loadingOfficeLines ? (
                   <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-2 min-w-[11rem]">
                     <p className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">
@@ -508,14 +517,6 @@ export default function AccountingWithholdingPayrollHubPage() {
                     <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(grandTotalPit)}</p>
                   </div>
                 ) : null}
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 shrink-0 gap-2"
-                  onClick={() => setPrintDialogOpen(true)}
-                >
-                  <Printer className="h-4 w-4" /> พิมพ์
-                </Button>
               </div>
             </div>
           </CardContent>

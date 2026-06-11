@@ -139,6 +139,97 @@ function mapVendorTypeToPayee(vt: VendorType | undefined): WithholdingCertificat
   }
 }
 
+export function buildWhtPayerSnapshotFromCompany(
+  company: CompanyProfileWhtInput | null | undefined,
+): WithholdingCertificateDocument['payer'] {
+  const payerBranchIsHead = company?.branchType !== 'branch';
+  const payerAddr = payerAddressesForWhtCertificate(company ?? undefined);
+  return {
+    legalNameTh: (company?.companyNameTh || '').trim() || '—',
+    legalNameEn: (company?.companyNameEn || '').trim() || undefined,
+    taxId: (company?.taxId || '').trim(),
+    branchType: payerBranchIsHead ? ('HEAD_OFFICE' as const) : ('BRANCH' as const),
+    branchNo: payerBranchIsHead ? undefined : (company?.branchNo || '').trim() || undefined,
+    addressTh: payerAddr.addressTh,
+    addressEn: payerAddr.addressEn,
+    phone: (company?.phone || '').trim() || undefined,
+    email: (company?.email || '').trim() || undefined,
+    taxpayerType: company?.taxpayerType ?? 'COMPANY',
+  };
+}
+
+export function buildWhtPayeeSnapshotFromVendor(vendor: Vendor): WithholdingCertificateDocument['payee'] {
+  const payeeBranchIsHead = isVendorNaturalPerson(vendor) || vendor.branchType !== 'branch';
+  const payeeCat = vendorPayeeCategory(vendor);
+  const payeeAddr = vendorAddressForWhtCertificate(vendor.address);
+  return {
+    displayName: (vendor.vendorName || '').trim() || '—',
+    taxId: (vendor.taxId || '').trim() || undefined,
+    branchType: payeeBranchIsHead ? ('HEAD_OFFICE' as const) : ('BRANCH' as const),
+    branchNo: payeeBranchIsHead ? undefined : (vendor.branchNo || '').trim() || undefined,
+    addressTh: payeeAddr.addressTh,
+    addressEn: payeeAddr.addressEn,
+    vendorCategory: payeeCat === 'OTHER' ? mapVendorTypeToPayee(vendor.vendorType) : payeeCat,
+    countryCode: 'TH',
+  };
+}
+
+/** อัปเดต snapshot ผู้จ่าย/ผู้ถูกหัก + ข้อมูลพิมพ์/XML จากทะเบียนปัจจุบัน — ไม่แตะยอดเงิน เลขที่ หรือสถานะเอกสาร */
+export function refreshWhtCertificateMasterDataPatch(params: {
+  existing: WithholdingCertificateDocument;
+  vendor: Vendor;
+  company: CompanyProfileWhtInput | null | undefined;
+}): Partial<WithholdingCertificateDocument> {
+  const { existing, vendor, company } = params;
+  const payer = buildWhtPayerSnapshotFromCompany(company);
+  const payee = buildWhtPayeeSnapshotFromVendor(vendor);
+  const disp = company?.whtCertificateDisplay;
+
+  const mergedForElectronic: WithholdingCertificateDocument = {
+    ...existing,
+    payer,
+    payee,
+  };
+
+  const electronic = buildWhtElectronicDataFromDocument({
+    ...mergedForElectronic,
+    certificateNo: existing.certificateNo,
+    paymentIssueDate: existing.paymentIssueDate,
+  });
+
+  const hadExportedXml =
+    existing.xmlExportStatus === 'EXPORTED_XML' ||
+    existing.whtElectronicData?.xmlExportStatus === 'EXPORTED_XML';
+
+  const patch: Partial<WithholdingCertificateDocument> = {
+    payer,
+    payee,
+    authorizedSignerName: disp?.authorizedSignerName,
+    signerPosition: disp?.signerPosition,
+    signatureImageUrl: disp?.showSignatureImage ? disp?.signatureImageUrl : undefined,
+    companyStampImageUrl: disp?.showCompanyStamp ? disp?.companyStampImageUrl : undefined,
+    whtElectronicData: stripFirestoreUndefined({
+      ...existing.whtElectronicData,
+      ...electronic,
+      xmlExportStatus: hadExportedXml ? 'NOT_EXPORTED' : existing.whtElectronicData?.xmlExportStatus ?? 'NOT_EXPORTED',
+      xmlGeneratedAt: hadExportedXml ? undefined : existing.whtElectronicData?.xmlGeneratedAt,
+      xmlGeneratedBy: hadExportedXml ? undefined : existing.whtElectronicData?.xmlGeneratedBy,
+    }),
+  };
+
+  if (hadExportedXml) {
+    patch.xmlExportStatus = 'NOT_EXPORTED';
+  }
+
+  const payeeTax = (payee.taxId || '').trim();
+  if (payeeTax && /^\d{13}$/.test(payeeTax)) {
+    patch.payeeTaxIdMissingOverride = false;
+    patch.payeeTaxIdMissingReason = null;
+  }
+
+  return stripFirestoreUndefined(patch);
+}
+
 export function buildWhtElectronicDataFromDocument(
   d: Pick<
     WithholdingCertificateDocument,
@@ -243,37 +334,9 @@ export function buildWithholdingCertificateDraft(params: BuildWhtDraftParams): O
 
   const income = incomeTypeForVendorBillWht(bill, purchase);
 
-  const payerBranchIsHead = company?.branchType !== 'branch';
-  const payeeBranchIsHead = isVendorNaturalPerson(vendor) || vendor.branchType !== 'branch';
-
   const disp = company?.whtCertificateDisplay;
-
-  const payerAddr = payerAddressesForWhtCertificate(company ?? undefined);
-  const payer = {
-    legalNameTh: (company?.companyNameTh || '').trim() || '—',
-    legalNameEn: (company?.companyNameEn || '').trim() || undefined,
-    taxId: (company?.taxId || '').trim(),
-    branchType: payerBranchIsHead ? ('HEAD_OFFICE' as const) : ('BRANCH' as const),
-    branchNo: payerBranchIsHead ? undefined : (company?.branchNo || '').trim() || undefined,
-    addressTh: payerAddr.addressTh,
-    addressEn: payerAddr.addressEn,
-    phone: (company?.phone || '').trim() || undefined,
-    email: (company?.email || '').trim() || undefined,
-    taxpayerType: company?.taxpayerType ?? 'COMPANY',
-  };
-
-  const payeeCat = vendorPayeeCategory(vendor);
-  const payeeAddr = vendorAddressForWhtCertificate(vendor.address);
-  const payee = {
-    displayName: (vendor.vendorName || '').trim() || '—',
-    taxId: (vendor.taxId || '').trim() || undefined,
-    branchType: payeeBranchIsHead ? ('HEAD_OFFICE' as const) : ('BRANCH' as const),
-    branchNo: payeeBranchIsHead ? undefined : (vendor.branchNo || '').trim() || undefined,
-    addressTh: payeeAddr.addressTh,
-    addressEn: payeeAddr.addressEn,
-    vendorCategory: payeeCat === 'OTHER' ? mapVendorTypeToPayee(vendor.vendorType) : payeeCat,
-    countryCode: 'TH',
-  };
+  const payer = buildWhtPayerSnapshotFromCompany(company);
+  const payee = buildWhtPayeeSnapshotFromVendor(vendor);
 
   const bankLast4 = bank?.accountNumber ? String(bank.accountNumber).replace(/\s/g, '').slice(-4) : undefined;
   const bankName = bank?.bankName?.trim();

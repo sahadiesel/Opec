@@ -2644,7 +2644,8 @@ export type WhtCertificateAuditAction =
   | 'PRINT_WHT'
   | 'GENERATE_WHT_XML'
   | 'CANCEL_WHT'
-  | 'REPLACE_WHT';
+  | 'REPLACE_WHT'
+  | 'REFRESH_WHT_FROM_MASTER';
 
 /** เอกสารหนังสือรับรองหัก ณ ที่จ่าย — collection `withholding_certificate_documents` */
 export interface WithholdingCertificateDocument {

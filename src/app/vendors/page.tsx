@@ -1,10 +1,18 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
   Plus, 
@@ -15,7 +23,8 @@ import {
   Info, 
   Phone,
   Tag,
-  Building2
+  Printer,
+  Loader2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Vendor, User } from '@/lib/types';
@@ -28,6 +37,13 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, canDelete } from '@/lib/permissions';
+import {
+  buildVendorListPrintHtml,
+  capVendorListPrintRows,
+  describeVendorListPrintFilters,
+  mapVendorToListPrintRow,
+} from '@/lib/documents/vendor-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 
 export default function VendorsPage() {
   const router = useRouter();
@@ -39,6 +55,8 @@ export default function VendorsPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
 
   const canAccessVendors = canView(currentUser, 'vendors');
   const canCreateVendors = canCreate(currentUser, 'vendors');
@@ -63,6 +81,73 @@ export default function VendorsPage() {
       return matchesSearch && matchesType && matchesStatus;
     });
   }, [vendors, searchTerm, typeFilter, statusFilter]);
+
+  const allVendors = useMemo(() => vendors ?? [], [vendors]);
+
+  const printFilterSummary = useMemo(
+    () => ({ searchTerm, typeFilter, statusFilter }),
+    [searchTerm, typeFilter, statusFilter],
+  );
+
+  const runVendorListPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const source = scope === 'filtered' ? filteredVendors : allVendors;
+      if (source.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบคู่ค้าตามตัวกรอง — ล้างตัวกรองหรือพิมพ์ทั้งหมด'
+              : 'ยังไม่มีคู่ค้าในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const printRows = source.map(mapVendorToListPrintRow);
+        const { rows: capped, truncated } = capVendorListPrintRows(printRows);
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines =
+          scope === 'filtered' ? describeVendorListPrintFilters(printFilterSummary) : [];
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
+
+        const body = buildVendorListPrintHtml({
+          rows: capped,
+          scopeTitle,
+          filterLines,
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Vendor-List',
+          suggestedFileName: `Vendors-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [filteredVendors, allVendors, printFilterSummary, currentUser?.displayName, toast],
+  );
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -142,14 +227,26 @@ export default function VendorsPage() {
               </SelectContent>
             </Select>
           </div>
-          
-          <Button
-            className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold"
-            onClick={() => router.push('/vendors/new')}
-            disabled={!canCreateVendors}
-          >
-            <Plus className="h-5 w-5" /> เพิ่มคู่ค้าใหม่ (Add Vendor)
-          </Button>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-10 gap-2 whitespace-nowrap"
+              disabled={!canAccessVendors || isLoading || printBusy || allVendors.length === 0}
+              onClick={() => setPrintDialogOpen(true)}
+            >
+              <Printer className="h-4 w-4 shrink-0" />
+              พิมพ์รายการ
+            </Button>
+            <Button
+              className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold"
+              onClick={() => router.push('/vendors/new')}
+              disabled={!canCreateVendors}
+            >
+              <Plus className="h-5 w-5" /> เพิ่มคู่ค้าใหม่ (Add Vendor)
+            </Button>
+          </div>
         </div>
 
         <Card className="shadow-lg border-none overflow-hidden">
@@ -217,6 +314,55 @@ export default function VendorsPage() {
             )}
           </CardContent>
         </Card>
+
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการคู่ค้า</DialogTitle>
+              <DialogDescription>
+                เลือกพิมพ์ตามตัวกรองปัจจุบัน หรือพิมพ์ทุกรายการในชุดข้อมูลล่าสุด (สูงสุด 500 รายการ)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div className="space-y-1 rounded-md border bg-muted/30 p-3">
+                <p className="text-xs font-semibold uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                <ul className="list-inside list-disc text-xs text-muted-foreground">
+                  {describeVendorListPrintFilters(printFilterSummary).length > 0 ? (
+                    describeVendorListPrintFilters(printFilterSummary).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))
+                  ) : (
+                    <li>ไม่มีตัวกรอง — แสดงทุกรายการ</li>
+                  )}
+                </ul>
+                <p className="pt-1 text-xs font-medium">จะพิมพ์ {filteredVendors.length} รายการ</p>
+              </div>
+              <p className="text-xs text-muted-foreground">ข้อมูลทั้งหมดในระบบ: {allVendors.length} รายการ</p>
+            </div>
+            <DialogFooter className="flex-col gap-2 sm:flex-row">
+              <Button variant="outline" onClick={() => setPrintDialogOpen(false)} disabled={printBusy}>
+                ยกเลิก
+              </Button>
+              <Button
+                variant="outline"
+                className="gap-2"
+                disabled={printBusy || filteredVendors.length === 0}
+                onClick={() => void runVendorListPrint('filtered')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                พิมพ์ตามตัวกรอง ({filteredVendors.length})
+              </Button>
+              <Button
+                className="gap-2"
+                disabled={printBusy || allVendors.length === 0}
+                onClick={() => void runVendorListPrint('all')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                พิมพ์ทั้งหมด ({allVendors.length})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Card className="bg-primary/5 border-primary/10 border-dashed">
           <CardHeader className="pb-3">
