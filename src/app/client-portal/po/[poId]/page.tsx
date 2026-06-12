@@ -9,8 +9,15 @@ import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { formatCustomerPoNumberForPortal } from '@/lib/client-portal/timesheet-portal-utils';
+import {
+  portalPoWorkModeLabel,
+  resolvePortalPoLineSellRate,
+  resolvePortalPoLineWorkLocation,
+  resolvePortalPoWorkMode,
+} from '@/lib/client-portal/po-line-portal-display';
 import { formatDateRangeThaiBE, formatStoredDateRangeThaiBE } from '@/lib/date-thai';
-import type { POLine, Position, PurchaseOrder } from '@/lib/types';
+import { CustomerQueryService } from '@/lib/services/customer-query-service';
+import type { Assignment, POLine, Position, PurchaseOrder } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -80,6 +87,20 @@ export default function ClientPortalPoDetailPage() {
   );
   const { data: poLinesRaw, isLoading: linesLoading } = useCollection<POLine>(linesQuery as any);
 
+  const queryService = useMemo(
+    () => (firestore ? new CustomerQueryService(firestore) : null),
+    [firestore],
+  );
+  const scopedMobQuery = useMemoFirebase(
+    () => queryService?.getScopedAssignmentsQuery(currentUser) ?? null,
+    [queryService, currentUser],
+  );
+  const { data: scopedAssignmentsRaw } = useCollection<Assignment>(scopedMobQuery as any);
+  const poAssignments = useMemo(
+    () => (scopedAssignmentsRaw ?? []).filter((a) => a.poId === poId),
+    [scopedAssignmentsRaw, poId],
+  );
+
   const poLines = useMemo(() => {
     const list = (poLinesRaw ?? []).filter((l) => l.status !== 'cancelled');
     const label = (pid: string) => positionLabels[pid] || pid;
@@ -118,6 +139,7 @@ export default function ClientPortalPoDetailPage() {
 
   const customerPo = formatCustomerPoNumberForPortal(po, po.id);
   const nf = locale === 'th' ? 'th-TH' : 'en-US';
+  const poWorkMode = resolvePortalPoWorkMode(po);
 
   return (
     <div className="space-y-4">
@@ -147,6 +169,12 @@ export default function ClientPortalPoDetailPage() {
             <span className="font-mono">{po.poCode || '—'}</span>
             <span className="text-muted-foreground">{t('contractsPoDetailProject')}</span>
             <span>{po.projectName?.trim() || po.title?.trim() || '—'}</span>
+            <span className="text-muted-foreground">{t('contractsPoLineColWorkMode')}</span>
+            <span>
+              <Badge variant="outline" className="text-[10px] font-semibold bg-blue-50 text-blue-900 border-blue-300 dark:bg-blue-950/40 dark:text-blue-100 dark:border-blue-700">
+                {portalPoWorkModeLabel(poWorkMode, locale)}
+              </Badge>
+            </span>
             <span className="text-muted-foreground">{t('poPeriod')}</span>
             <span>{formatStoredDateRangeThaiBE(po.startDate, po.endDate)}</span>
           </div>
@@ -164,38 +192,53 @@ export default function ClientPortalPoDetailPage() {
               …
             </p>
           ) : (
-            <Table>
+            <Table className="table-fixed w-full">
               <TableHeader>
                 <TableRow className="bg-muted/30">
-                  <TableHead className="pl-4">{t('contractsPoLineColPosition')}</TableHead>
-                  <TableHead>{t('contractsPoLineColLocation')}</TableHead>
-                  <TableHead className="text-center w-[88px]">{t('contractsPoLineColQuota')}</TableHead>
-                  <TableHead className="text-right pr-4">{t('contractsPoLineColPrice')}</TableHead>
+                  <TableHead className="w-1/5 px-3 align-middle">{t('contractsPoLineColPosition')}</TableHead>
+                  <TableHead className="w-1/5 px-3 align-middle whitespace-nowrap bg-blue-50/80 text-blue-950 dark:bg-blue-950/30 dark:text-blue-100">
+                    {t('contractsPoLineColWorkMode')}
+                  </TableHead>
+                  <TableHead className="w-1/5 px-3 align-middle">{t('contractsPoLineColLocation')}</TableHead>
+                  <TableHead className="w-1/5 px-3 align-middle text-center">{t('contractsPoLineColQuota')}</TableHead>
+                  <TableHead className="w-1/5 px-3 align-middle text-right">{t('contractsPoLineColPrice')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {poLines.map((line) => {
                   const posName = positionLabels[line.positionId] || line.positionId;
                   const unit = (line.billingUnitSnapshot || '').trim();
+                  const workLocation = resolvePortalPoLineWorkLocation(line, poAssignments);
+                  const sellRate = resolvePortalPoLineSellRate(line, po);
                   return (
                     <TableRow key={line.id}>
-                      <TableCell className="pl-4 align-top">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="font-semibold text-foreground">{posName}</span>
+                      <TableCell className="w-1/5 px-3 align-top">
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <span className="font-semibold text-foreground break-words">{posName}</span>
                           <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
                             <Calendar className="h-3 w-3 shrink-0" />
                             {formatDateRangeThaiBE(line.startDate, line.endDate)}
                           </span>
                         </div>
                       </TableCell>
-                      <TableCell className="align-top text-muted-foreground">
-                        {(line.workLocation || '').trim() || '—'}
+                      <TableCell className="w-1/5 px-3 align-top">
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] font-semibold whitespace-nowrap bg-blue-50 text-blue-900 border-blue-300 dark:bg-blue-950/40 dark:text-blue-100 dark:border-blue-700"
+                        >
+                          {portalPoWorkModeLabel(poWorkMode, locale)}
+                        </Badge>
                       </TableCell>
-                      <TableCell className="text-center align-top font-semibold tabular-nums">{line.quantity}</TableCell>
-                      <TableCell className="text-right align-top pr-4">
+                      <TableCell className="w-1/5 px-3 align-top text-muted-foreground break-words">
+                        {workLocation || '—'}
+                      </TableCell>
+                      <TableCell className="w-1/5 px-3 text-center align-top font-semibold tabular-nums">
+                        {line.quantity}
+                      </TableCell>
+                      <TableCell className="w-1/5 px-3 text-right align-top">
                         <div className="flex flex-col items-end gap-0.5">
                           <span className="font-bold text-emerald-800 dark:text-emerald-400">
-                            ฿{Number(line.sellRateSnapshot ?? 0).toLocaleString(nf)}
+                            ฿{Number(sellRate).toLocaleString(nf)}
                           </span>
                           {unit ? (
                             <span className="text-[10px] uppercase text-muted-foreground">
@@ -210,7 +253,7 @@ export default function ClientPortalPoDetailPage() {
                 })}
                 {poLines.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="py-10 text-center text-muted-foreground">
+                    <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
                       {locale === 'en' ? 'No line items on this purchase order.' : 'ไม่มีรายการบรรทัดในใบสั่งซื้อนี้'}
                     </TableCell>
                   </TableRow>
