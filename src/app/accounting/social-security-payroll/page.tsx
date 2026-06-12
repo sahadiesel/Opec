@@ -1,12 +1,10 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { collection, getDocs, orderBy, query, limit } from 'firebase/firestore';
+import { collection, getDocs, orderBy, query, limit, where } from 'firebase/firestore';
 import { AppShell } from '@/components/layout/app-shell';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -23,25 +21,30 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { PayrollSsoSectionCard } from '@/components/accounting/payroll-sso-section-card';
+import { fmtBaht } from '@/components/accounting/withholding-wht-pay-tax-ui';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { Users, ExternalLink, Loader2, Search, Building2, Briefcase, ShieldCheck, Printer } from 'lucide-react';
-import type {
-  User,
-  PayrollBatch,
-  PayrollBatchLine,
-  PayrollBatchStatus,
-  OfficePayrollRun,
-  OfficePayrollLine,
-  PayrollRunStatus,
-} from '@/lib/types';
-import { canSeeAccountingPillarUi } from '@/lib/permissions';
+import { Users, Loader2, Search, Building2, Briefcase, ShieldCheck, Printer } from 'lucide-react';
+import type { User, PayrollBatch, PayrollBatchLine, OfficePayrollRun, OfficePayrollLine, BankAccount } from '@/lib/types';
+import { canSeeAccountingPillarUi, canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { canViewHrPayrollFlowSubsection } from '@/lib/navigation/nav-access';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { usePermissions } from '@/hooks/use-permissions';
 import { resolvePayrollWorkerWhtPaymentDateYmd } from '@/lib/payroll/payroll-worker-wht-model';
 import { resolveOfficePayrollWhtPaymentDateYmd } from '@/lib/payroll/payroll-office-wht-model';
+import {
+  employerContribStatusLabel,
+  isOfficeEmployerContribPaid,
+  isOfficePayrollWagePaid,
+  isOfficeSsoRemitPaid,
+  isWorkerEmployerContribPaid,
+  isWorkerPayrollWagePaid,
+  isWorkerSsoRemitPaid,
+  officeWageStatusLabel,
+  ssoRemitStatusLabel,
+  workerWageStatusLabel,
+} from '@/lib/payroll/payroll-sso-payment-model';
 import { useToast } from '@/hooks/use-toast';
 import {
   buildSocialSecurityPayrollListPrintHtml,
@@ -49,23 +52,24 @@ import {
   type SocialSecurityPayrollListPrintRow,
 } from '@/lib/documents/social-security-payroll-list-print';
 import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
+  type WorkerSsoRow,
+  type OfficeSsoRow,
+  type ExecutiveSsoRow,
+  workerRowsToSsoTable,
+  officeRowsToSsoTable,
+  executiveRowsToSsoTableFixed,
+  workerLinePaidAmount,
+  officeLinePaidAmount,
+} from '@/app/accounting/social-security-payroll/sso-section-utils';
+import { employerSsoContribAmount } from '@/lib/payroll/payroll-sso-payment-model';
 
-type WorkerSsoRow = { batch: PayrollBatch; line: PayrollBatchLine; sso: number; paymentYmd: string };
-type OfficeSsoRow = { run: OfficePayrollRun; line: OfficePayrollLine; sso: number; paymentYmd: string };
-type ExecutiveSsoRow = { run: OfficePayrollRun; line: OfficePayrollLine; sso: number; paymentYmd: string };
-
-function fmtBaht(n: number): string {
-  return `฿${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+export type { WorkerSsoRow, OfficeSsoRow, ExecutiveSsoRow };
 
 function round2(n: number): number {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
 
-/**
- * เงินสมทบประกันสังคมฝั่งลูกจ้างจากบรรทัด payroll batch
- * อ่านจาก deductionsBreakdown ก่อน (ค่าใช้งานจริง) → fallback ไปที่ d8Snapshot.deductions เผื่อบรรทัดเก่า
- */
 function workerLineSsoAmount(line: PayrollBatchLine): number {
   const db = line.deductionsBreakdown || {};
   const snap = line.d8Snapshot?.deductions || {};
@@ -126,19 +130,6 @@ function ymLabelTh(ym: string): string {
   return `${TH_MONTHS[mi - 1]} ${Number(y) + 543}`;
 }
 
-function workerBatchStatusBadge(status: PayrollBatchStatus): { label: string; variant: 'default' | 'secondary' } {
-  if (status === 'PAID' || status === 'LOCKED') return { label: 'จ่ายแล้ว', variant: 'default' };
-  if (status === 'FINANCE_PREPARED' || status === 'PAYMENT_EXPORTED') return { label: 'รอจ่าย', variant: 'secondary' };
-  return { label: 'ระหว่างทาง', variant: 'secondary' };
-}
-
-function officeRunStatusBadge(status: PayrollRunStatus): { label: string; variant: 'default' | 'secondary' | 'outline' } {
-  if (status === 'PAID' || status === 'LOCKED') return { label: 'จ่ายแล้ว', variant: 'default' };
-  if (status === 'FINANCE_APPROVED' || status === 'HR_APPROVED') return { label: 'รอจ่าย', variant: 'secondary' };
-  if (status === 'CANCELLED') return { label: 'ยกเลิก', variant: 'outline' };
-  return { label: 'ระหว่างทาง', variant: 'secondary' };
-}
-
 function describeSocialSecurityPrintFilters(searchTerm: string, monthFilter: string): string[] {
   const lines: string[] = [];
   if (monthFilter !== 'ALL') {
@@ -157,39 +148,51 @@ function buildSocialSecurityPrintRows(
 ): SocialSecurityPayrollListPrintRow[] {
   const rows: SocialSecurityPayrollListPrintRow[] = [];
   for (const { batch, line, sso, paymentYmd } of workers) {
-    const st = workerBatchStatusBadge(batch.status);
+    const wagePaid = isWorkerPayrollWagePaid(batch, line);
     rows.push({
       section: 'ลูกจ้าง',
-      periodStatus: st.label,
+      wageStatus: workerWageStatusLabel(batch.status),
+      ssoStatus: ssoRemitStatusLabel(wagePaid, isWorkerSsoRemitPaid(line)),
+      employerStatus: employerContribStatusLabel(wagePaid, isWorkerEmployerContribPaid(line)),
       batchLabel: batch.id,
       earnerName: line.workerNameSnapshot || '—',
       earnerId: line.workerId,
       paymentDate: paymentYmd,
+      paidLabel: fmtBaht(workerLinePaidAmount(line)),
       ssoLabel: fmtBaht(sso),
+      employerLabel: fmtBaht(employerSsoContribAmount(sso)),
     });
   }
   for (const { run, line, sso, paymentYmd } of offices) {
-    const st = officeRunStatusBadge(run.status);
+    const wagePaid = isOfficePayrollWagePaid(run, line);
     rows.push({
       section: 'ออฟฟิศ',
-      periodStatus: st.label,
+      wageStatus: officeWageStatusLabel(run.status),
+      ssoStatus: ssoRemitStatusLabel(wagePaid, isOfficeSsoRemitPaid(line)),
+      employerStatus: employerContribStatusLabel(wagePaid, isOfficeEmployerContribPaid(line)),
       batchLabel: run.payrollRunNo || run.id,
       earnerName: line.staffName || '—',
       earnerId: line.staffId,
       paymentDate: paymentYmd,
+      paidLabel: fmtBaht(officeLinePaidAmount(line)),
       ssoLabel: fmtBaht(sso),
+      employerLabel: fmtBaht(employerSsoContribAmount(sso)),
     });
   }
   for (const { run, line, sso, paymentYmd } of executives) {
-    const st = officeRunStatusBadge(run.status);
+    const wagePaid = isOfficePayrollWagePaid(run, line);
     rows.push({
       section: 'ผู้บริหาร',
-      periodStatus: st.label,
+      wageStatus: officeWageStatusLabel(run.status),
+      ssoStatus: ssoRemitStatusLabel(wagePaid, isOfficeSsoRemitPaid(line)),
+      employerStatus: employerContribStatusLabel(wagePaid, isOfficeEmployerContribPaid(line)),
       batchLabel: run.payrollRunNo || run.id,
       earnerName: line.staffName || '—',
       earnerId: line.staffId,
       paymentDate: paymentYmd,
+      paidLabel: fmtBaht(officeLinePaidAmount(line)),
       ssoLabel: fmtBaht(sso),
+      employerLabel: fmtBaht(employerSsoContribAmount(sso)),
     });
   }
   return rows;
@@ -213,6 +216,22 @@ export default function AccountingSocialSecurityPayrollHubPage() {
   const [workerLinesErr, setWorkerLinesErr] = useState<string | null>(null);
   const [officeLinesErr, setOfficeLinesErr] = useState<string | null>(null);
   const [executiveLinesErr, setExecutiveLinesErr] = useState<string | null>(null);
+
+  const canPaySso = useMemo(() => canExecuteBankCashbookPayments(currentUser), [currentUser]);
+
+  const bankAccountsQuery = useMemoFirebase(
+    () =>
+      firestore && canPaySso
+        ? query(collection(firestore, 'bank_accounts'), where('status', '==', 'ACTIVE'))
+        : null,
+    [firestore, canPaySso],
+  );
+  const { data: bankAccounts } = useCollection<BankAccount>(bankAccountsQuery as any);
+  const operatingBankOptions = useMemo(() => {
+    const list = (bankAccounts ?? []).filter((a) => String(a.accountType) !== 'PETTY_CASH');
+    list.sort((a, b) => (a.accountCode || '').localeCompare(b.accountCode || '', 'th', { numeric: true }));
+    return list;
+  }, [bankAccounts]);
 
   const batchesQuery = useMemoFirebase(() => {
     if (!firestore) return null;
@@ -440,6 +459,19 @@ export default function AccountingSocialSecurityPayrollHubPage() {
   const filteredRowCount = filteredWorker.length + filteredOffice.length + filteredExecutive.length;
   const allRowCount = workerRows.length + officeRows.length + executiveRows.length;
 
+  const workerTableRows = useMemo(() => workerRowsToSsoTable(filteredWorker), [filteredWorker]);
+  const officeTableRows = useMemo(
+    () =>
+      officeRowsToSsoTable(filteredOffice, (runId, staffId) =>
+        `/office-payroll/${encodeURIComponent(runId)}/staff/${encodeURIComponent(staffId)}`,
+      ),
+    [filteredOffice],
+  );
+  const executiveTableRows = useMemo(
+    () => executiveRowsToSsoTableFixed(filteredExecutive),
+    [filteredExecutive],
+  );
+
   const runSocialSecurityPayrollListPrint = useCallback(
     async (scope: 'filtered' | 'all') => {
       const workers = scope === 'filtered' ? filteredWorker : workerRows;
@@ -545,7 +577,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
 
   return (
     <AppShell user={user} onLogout={() => {}}>
-      <div className="max-w-6xl mx-auto space-y-6 py-6 px-4">
+      <div className="w-full max-w-[min(100%,96rem)] mx-auto space-y-6 py-6">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <ShieldCheck className="h-7 w-7 shrink-0 text-primary" />
@@ -676,251 +708,75 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           </p>
         ) : null}
 
-        <Card>
-          <CardHeader>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0 space-y-1.5">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Users className="h-5 w-5 shrink-0" />
-                  ลูกจ้าง / Worker payroll
-                </CardTitle>
-                <CardDescription>
-                  เฉพาะบรรทัดที่มียอดหักประกันสังคมในงวด — กดเปิดเพื่อดูสลิปเงินเดือนของคนนั้น (ดูรายละเอียดประกอบ)
-                </CardDescription>
-              </div>
-              {!loadingBatches && !loadingWorkerLines && !workerLinesErr ? (
-                <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-3 text-right shadow-sm shrink-0 sm:min-w-[180px]">
-                  <p className="text-xs font-medium text-muted-foreground">ยอดสมทบรวม (ในตาราง)</p>
-                  <p className="text-xl font-bold tabular-nums tracking-tight text-primary">{fmtBaht(workerTotalSso)}</p>
-                </div>
-              ) : null}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {workerLinesErr ? (
-              <p className="text-sm text-destructive">{workerLinesErr}</p>
-            ) : loadingBatches || loadingWorkerLines ? (
-              <div className="flex justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : filteredWorker.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-8 text-center">
-                {workerRows.length === 0
-                  ? 'ยังไม่มีบรรทัดที่มียอดสมทบประกันสังคมในงวดล่าสุด (หรือยังไม่มีข้อมูลชุดจ่าย)'
-                  : 'ไม่พบรายการที่ตรงกับคำค้นหรือเดือนที่เลือก'}
-              </p>
-            ) : (
-              <div className="rounded-md border overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>สถานะงวด</TableHead>
-                      <TableHead>ชุดจ่าย</TableHead>
-                      <TableHead>ผู้มีเงินได้</TableHead>
-                      <TableHead>วันที่จ่าย</TableHead>
-                      <TableHead className="text-right">ยอดสมทบ</TableHead>
-                      <TableHead className="w-[100px]" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredWorker.map(({ batch, line, sso, paymentYmd }) => {
-                      const st = workerBatchStatusBadge(batch.status);
-                      return (
-                        <TableRow key={`${batch.id}-${line.id}`}>
-                          <TableCell>
-                            <Badge variant={st.variant === 'default' ? 'default' : 'secondary'}>{st.label}</Badge>
-                          </TableCell>
-                          <TableCell className="font-mono text-sm">{batch.id}</TableCell>
-                          <TableCell className="max-w-[240px]">
-                            <div className="truncate font-medium">{line.workerNameSnapshot || '—'}</div>
-                            <div className="text-xs text-muted-foreground font-mono">{line.workerId}</div>
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtBaht(sso)}</TableCell>
-                          <TableCell>
-                            <Link
-                              href={`/payroll/batches/${encodeURIComponent(batch.id)}/workers/${encodeURIComponent(line.workerId)}`}
-                              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                            >
-                              เปิด
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </Link>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardHeader>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0 space-y-1.5">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Building2 className="h-5 w-5 shrink-0 text-muted-foreground" />
-                  พนักงานออฟฟิศ / Office payroll
-                </CardTitle>
-                <CardDescription>
-                  เฉพาะบรรทัดที่มียอดหักประกันสังคมในงวดเงินเดือนออฟฟิศ — เปิดเพื่อดูสลิปประกอบ
-                </CardDescription>
-              </div>
-              {!loadingRuns && !loadingOfficeLines && !officeLinesErr ? (
-                <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-3 text-right shadow-sm shrink-0 sm:min-w-[180px]">
-                  <p className="text-xs font-medium text-muted-foreground">ยอดสมทบรวม (ในตาราง)</p>
-                  <p className="text-xl font-bold tabular-nums tracking-tight text-primary">{fmtBaht(officeTotalSso)}</p>
-                </div>
-              ) : null}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {officeLinesErr ? (
-              <p className="text-sm text-destructive">{officeLinesErr}</p>
-            ) : loadingRuns || loadingOfficeLines ? (
-              <div className="flex justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : filteredOffice.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-8 text-center">
-                {officeRows.length === 0
-                  ? 'ยังไม่มีบรรทัดที่มียอดสมทบประกันสังคมในงวดพนักงานออฟฟิศล่าสุด'
-                  : 'ไม่พบรายการที่ตรงกับคำค้นหรือเดือนที่เลือก'}
-              </p>
-            ) : (
-              <div className="rounded-md border overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>สถานะงวด</TableHead>
-                      <TableHead>งวด</TableHead>
-                      <TableHead>ผู้มีเงินได้</TableHead>
-                      <TableHead>วันที่จ่าย</TableHead>
-                      <TableHead className="text-right">ยอดสมทบ</TableHead>
-                      <TableHead className="w-[100px]" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredOffice.map(({ run, line, sso, paymentYmd }) => {
-                      const st = officeRunStatusBadge(run.status);
-                      return (
-                        <TableRow key={`${run.id}-${line.id}`}>
-                          <TableCell>
-                            <Badge variant={st.variant === 'default' ? 'default' : 'secondary'}>{st.label}</Badge>
-                          </TableCell>
-                          <TableCell className="text-sm">
-                            <div className="font-mono">{run.payrollRunNo || run.id}</div>
-                            <div className="text-xs text-muted-foreground">{run.payrollMonth || '—'}</div>
-                          </TableCell>
-                          <TableCell className="max-w-[240px]">
-                            <div className="truncate font-medium">{line.staffName || '—'}</div>
-                            <div className="text-xs text-muted-foreground font-mono">{line.staffId}</div>
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtBaht(sso)}</TableCell>
-                          <TableCell>
-                            <Link
-                              href={`/office-payroll/${encodeURIComponent(run.id)}/staff/${encodeURIComponent(line.staffId)}`}
-                              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                            >
-                              เปิด
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </Link>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <PayrollSsoSectionCard
+          title="ลูกจ้าง / Worker payroll"
+          description="เฉพาะบรรทัดที่มียอดหักประกันสังคมในงวด — กดเปิดเพื่อดูสลิปเงินเดือนของคนนั้น"
+          icon={<Users className="h-5 w-5 shrink-0" />}
+          loading={loadingBatches || loadingWorkerLines}
+          error={workerLinesErr}
+          emptyFiltered={
+            workerRows.length === 0
+              ? 'ยังไม่มีบรรทัดที่มียอดสมทบประกันสังคมในงวดล่าสุด (หรือยังไม่มีข้อมูลชุดจ่าย)'
+              : 'ไม่พบรายการที่ตรงกับคำค้นหหรือเดือนที่เลือก'
+          }
+          emptyAll=""
+          tableRows={workerTableRows}
+          totalSsoLabel={fmtBaht(workerTotalSso)}
+          canPay={canPaySso}
+          firestore={firestore}
+          currentUser={user}
+          operatingBankOptions={operatingBankOptions}
+          sectionKind="worker"
+          workerRows={workerRows}
+          onWorkerRowsChange={setWorkerRows}
+        />
 
-        <Card>
-          <CardHeader>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0 space-y-1.5">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Briefcase className="h-5 w-5 shrink-0 text-muted-foreground" />
-                  ผู้บริหาร / Executive payroll
-                </CardTitle>
-                <CardDescription>
-                  เฉพาะบรรทัดที่มียอดหักประกันสังคมในงวดเงินเดือนผู้บริหาร — เปิดเพื่อดูสลิปประกอบ
-                </CardDescription>
-              </div>
-              {!loadingExecutiveRuns && !loadingExecutiveLines && !executiveLinesErr ? (
-                <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-3 text-right shadow-sm shrink-0 sm:min-w-[180px]">
-                  <p className="text-xs font-medium text-muted-foreground">ยอดสมทบรวม (ในตาราง)</p>
-                  <p className="text-xl font-bold tabular-nums tracking-tight text-primary">{fmtBaht(executiveTotalSso)}</p>
-                </div>
-              ) : null}
-            </div>
-          </CardHeader>
-          <CardContent>
-            {executiveLinesErr ? (
-              <p className="text-sm text-destructive">{executiveLinesErr}</p>
-            ) : loadingExecutiveRuns || loadingExecutiveLines ? (
-              <div className="flex justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : filteredExecutive.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-8 text-center">
-                {executiveRows.length === 0
-                  ? 'ยังไม่มีบรรทัดที่มียอดสมทบประกันสังคมในงวดผู้บริหารล่าสุด'
-                  : 'ไม่พบรายการที่ตรงกับคำค้นหรือเดือนที่เลือก'}
-              </p>
-            ) : (
-              <div className="rounded-md border overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>สถานะงวด</TableHead>
-                      <TableHead>งวด</TableHead>
-                      <TableHead>ผู้มีเงินได้</TableHead>
-                      <TableHead>วันที่จ่าย</TableHead>
-                      <TableHead className="text-right">ยอดสมทบ</TableHead>
-                      <TableHead className="w-[100px]" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredExecutive.map(({ run, line, sso, paymentYmd }) => {
-                      const st = officeRunStatusBadge(run.status);
-                      return (
-                        <TableRow key={`${run.id}-${line.id}`}>
-                          <TableCell>
-                            <Badge variant={st.variant === 'default' ? 'default' : 'secondary'}>{st.label}</Badge>
-                          </TableCell>
-                          <TableCell className="text-sm">
-                            <div className="font-mono">{run.payrollRunNo || run.id}</div>
-                            <div className="text-xs text-muted-foreground">{run.payrollMonth || '—'}</div>
-                          </TableCell>
-                          <TableCell className="max-w-[240px]">
-                            <div className="truncate font-medium">{line.staffName || '—'}</div>
-                            <div className="text-xs text-muted-foreground font-mono">{line.staffId}</div>
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtBaht(sso)}</TableCell>
-                          <TableCell>
-                            <Link
-                              href={`/accounting/executive-payroll/${encodeURIComponent(run.id)}/staff/${encodeURIComponent(line.staffId)}`}
-                              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                            >
-                              เปิด
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </Link>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <PayrollSsoSectionCard
+          title="พนักงานออฟฟิศ / Office payroll"
+          description="เฉพาะบรรทัดที่มียอดหักประกันสังคมในงวดเงินเดือนออฟฟิศ — เปิดเพื่อดูสลิปประกอบ"
+          icon={<Building2 className="h-5 w-5 shrink-0 text-muted-foreground" />}
+          loading={loadingRuns || loadingOfficeLines}
+          error={officeLinesErr}
+          emptyFiltered={
+            officeRows.length === 0
+              ? 'ยังไม่มีบรรทัดที่มียอดสมทบประกันสังคมในงวดพนักงานออฟฟิศล่าสุด'
+              : 'ไม่พบรายการที่ตรงกับคำค้นหหรือเดือนที่เลือก'
+          }
+          emptyAll=""
+          tableRows={officeTableRows}
+          totalSsoLabel={fmtBaht(officeTotalSso)}
+          canPay={canPaySso}
+          firestore={firestore}
+          currentUser={user}
+          operatingBankOptions={operatingBankOptions}
+          sectionKind="office"
+          officeRows={officeRows}
+          onOfficeRowsChange={setOfficeRows}
+        />
+
+        <PayrollSsoSectionCard
+          title="ผู้บริหาร / Executive payroll"
+          description="เฉพาะบรรทัดที่มียอดหักประกันสังคมในงวดเงินเดือนผู้บริหาร — เปิดเพื่อดูสลิปประกอบ"
+          icon={<Briefcase className="h-5 w-5 shrink-0 text-muted-foreground" />}
+          loading={loadingExecutiveRuns || loadingExecutiveLines}
+          error={executiveLinesErr}
+          emptyFiltered={
+            executiveRows.length === 0
+              ? 'ยังไม่มีบรรทัดที่มียอดสมทบประกันสังคมในงวดผู้บริหารล่าสุด'
+              : 'ไม่พบรายการที่ตรงกับคำค้นหหรือเดือนที่เลือก'
+          }
+          emptyAll=""
+          tableRows={executiveTableRows}
+          totalSsoLabel={fmtBaht(executiveTotalSso)}
+          canPay={canPaySso}
+          firestore={firestore}
+          currentUser={user}
+          operatingBankOptions={operatingBankOptions}
+          sectionKind="executive"
+          executiveRows={executiveRows}
+          onExecutiveRowsChange={setExecutiveRows}
+        />
       </div>
     </AppShell>
   );

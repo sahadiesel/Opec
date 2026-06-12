@@ -577,10 +577,12 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
             <PayrollScopeTag scope="worker" showHint={false} className="mt-2" />
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" className="h-11" onClick={() => { setEditedPos(position); setIsEditing(!isEditing); }}>
-              {isEditing ? 'ยกเลิก (Cancel)' : 'แก้ไขข้อมูลหลัก (Edit Info)'}
-            </Button>
-            {isEditing && (
+            {canEditPositions && (
+              <Button variant="outline" className="h-11" onClick={() => { setEditedPos(position); setIsEditing(!isEditing); }}>
+                {isEditing ? 'ยกเลิก (Cancel)' : 'แก้ไขข้อมูลหลัก (Edit Info)'}
+              </Button>
+            )}
+            {isEditing && canEditPositions && (
               <Button className="h-11 gap-2 bg-primary font-bold shadow-md" onClick={handleSaveMaster}>
                 <Save className="h-4 w-4" /> บันทึก (Save)
               </Button>
@@ -790,6 +792,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                   </CardTitle>
                   <CardDescription>ใบเซอร์ที่คนงานต้องมีและยังไม่หมดอายุเพื่อผ่านเกณฑ์ READY</CardDescription>
                 </div>
+                {canEditPositions ? (
                 <Dialog open={isAddCertOpen} onOpenChange={setIsAddCertOpen}>
                     <DialogTrigger asChild>
                       <Button className="h-10 bg-primary font-bold shadow-md"><Plus className="h-4 w-4 mr-2" /> เพิ่มเกณฑ์ (Add)</Button>
@@ -828,6 +831,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
+                ) : null}
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -884,6 +888,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     <HardHat className="h-5 w-5" /> อุปกรณ์ PPE บังคับ (Standard PPE)</CardTitle>
                   <CardDescription>รายการชุดและอุปกรณ์ป้องกันภัยที่บริษัทต้องจัดเตรียมให้ตำแหน่งนี้</CardDescription>
                 </div>
+                {canEditPositions ? (
                 <Dialog
                     open={isAddPPEOpen}
                     onOpenChange={(open) => {
@@ -943,6 +948,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
+                ) : null}
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -1002,6 +1008,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                   </CardTitle>
                   <CardDescription>รายการเครื่องมือช่างพื้นฐานที่อนุญาตให้เบิกได้ตามตำแหน่งงาน</CardDescription>
                 </div>
+                {canEditPositions ? (
                 <Dialog
                     open={isAddToolOpen}
                     onOpenChange={(open) => {
@@ -1070,6 +1077,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                       </DialogFooter>
                     </DialogContent>
                   </Dialog>
+                ) : null}
               </CardHeader>
               <CardContent className="p-0">
                 <Table>

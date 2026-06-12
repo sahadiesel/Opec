@@ -31,6 +31,7 @@ import { useToast } from '@/hooks/use-toast';
 import { canCreate } from '@/lib/permissions';
 import { syncBankCurrentBalanceIfDrift } from '@/lib/services/bank-balance-reconcile';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
+import { computeOdBalanceDelta, formatSignedBahtDelta, isCurrentBankAccount } from '@/lib/bank-account-od';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import Link from 'next/link';
@@ -96,6 +97,11 @@ function BankAccountDetailContent({ id }: { id: string }) {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const odBalanceDelta = useMemo(
+    () => computeOdBalanceDelta(formData.currentBalance, formData.odLimit),
+    [formData.currentBalance, formData.odLimit],
+  );
+
   useEffect(() => {
     const stored = localStorage.getItem('opsflow_user');
     if (stored) setCurrentUser(JSON.parse(stored));
@@ -152,6 +158,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
 
   const resolvedAccountType = accData?.accountType ?? formData.accountType;
   const isPettyAccount = resolvedAccountType === 'PETTY_CASH';
+  const isCurrentAccount = isCurrentBankAccount(formData.accountType);
 
   const cashbookForAccountQ = useMemoFirebase(() => {
     if (!firestore || isNew) return null;
@@ -320,6 +327,14 @@ function BankAccountDetailContent({ id }: { id: string }) {
 
     setIsSubmitting(true);
     const now = Date.now();
+    const openingBalance = roundMoney2(Number(formData.openingBalance ?? 0));
+    const currentBalance = roundMoney2(Number(formData.currentBalance ?? 0));
+    const odLimit =
+      isCurrentBankAccount(formData.accountType) &&
+      formData.odLimit != null &&
+      Number.isFinite(Number(formData.odLimit))
+        ? roundMoney2(Number(formData.odLimit))
+        : undefined;
     
     try {
       if (isNew) {
@@ -331,8 +346,9 @@ function BankAccountDetailContent({ id }: { id: string }) {
           ...formData,
           accountCode: finalCode,
           id: newRef.id,
-          openingBalance: roundMoney2(Number(formData.openingBalance ?? 0)),
-          currentBalance: roundMoney2(Number(formData.currentBalance ?? 0)),
+          openingBalance,
+          currentBalance,
+          ...(odLimit != null ? { odLimit } : {}),
           createdAt: now,
           updatedAt: now
         });
@@ -344,8 +360,9 @@ function BankAccountDetailContent({ id }: { id: string }) {
       } else {
         await updateDoc(accRef!, {
           ...formData,
-          openingBalance: roundMoney2(Number(formData.openingBalance ?? 0)),
-          currentBalance: roundMoney2(Number(formData.currentBalance ?? 0)),
+          openingBalance,
+          currentBalance,
+          odLimit: odLimit ?? null,
           updatedAt: now
         });
         toast({ title: "อัปเดตข้อมูลสำเร็จ" });
@@ -454,7 +471,16 @@ function BankAccountDetailContent({ id }: { id: string }) {
                 )}
                 <div className="space-y-2">
                   <Label>ประเภทบัญชี</Label>
-                  <Select onValueChange={(v: BankAccountType) => setFormData({...formData, accountType: v})} value={formData.accountType}>
+                  <Select
+                    onValueChange={(v: BankAccountType) =>
+                      setFormData({
+                        ...formData,
+                        accountType: v,
+                        ...(v !== 'CURRENT' ? { odLimit: undefined } : {}),
+                      })
+                    }
+                    value={formData.accountType}
+                  >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="SAVINGS">ออมทรัพย์ (SAVINGS)</SelectItem>
@@ -518,6 +544,47 @@ function BankAccountDetailContent({ id }: { id: string }) {
                     className="text-xl font-black text-primary"
                   />
                 </div>
+                {!isPettyAccount && isCurrentAccount ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label>วงเงิน OD</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={formData.odLimit ?? ''}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === '') {
+                            setFormData({ ...formData, odLimit: undefined });
+                            return;
+                          }
+                          const n = parseFloat(raw);
+                          setFormData({ ...formData, odLimit: Number.isFinite(n) ? n : undefined });
+                        }}
+                        className="text-lg font-bold"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>ยอดเทียบวงเงิน OD</Label>
+                      <div className="rounded-md border-2 border-orange-400/80 bg-orange-50/90 px-3 py-2.5 dark:border-orange-600/60 dark:bg-orange-950/30">
+                        <p
+                          className={`text-xl font-black tabular-nums tracking-tight ${
+                            odBalanceDelta < 0
+                              ? 'text-red-600 dark:text-red-400'
+                              : 'text-emerald-900 dark:text-emerald-300'
+                          }`}
+                        >
+                          {formatSignedBahtDelta(odBalanceDelta)}
+                        </p>
+                        <p className="mt-1 text-[11px] text-muted-foreground leading-snug">
+                          ยอดเงินปัจจุบัน − วงเงิน OD · ติดลบ (แดง) = ต่ำกว่าวงเงิน OD · บวก (เขียว) = สูงกว่าวงเงิน OD
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
                 <div className="p-3 bg-white rounded border text-xs text-muted-foreground italic">
                   {isPettyAccount
                     ? '* ยอดอัปเดตเมื่อโอนเข้า-ออกผ่าน Cashbook และรายการ Petty หน้างาน (ไม่ใช่เลขบัญชีธนาคารโดยตรง)'

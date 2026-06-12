@@ -137,6 +137,10 @@ export default function CashbookPage() {
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
+    if (!canWriteCashbook) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'บทบาทนี้ดูข้อมูลได้อย่างเดียว — ไม่สามารถบันทึกรายการใหม่ได้' });
+      return;
+    }
     if (!newEntry.bankAccountId || !newEntry.amount || !newEntry.description) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุบัญชีธนาคาร ยอดเงิน และรายละเอียด" });
       return;

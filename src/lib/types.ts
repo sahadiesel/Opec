@@ -1592,6 +1592,8 @@ export interface BankAccount {
   currency: string;
   openingBalance: number;
   currentBalance: number;
+  /** วงเงิน OD — ใช้กับบัญชีกระแสรายวัน (CURRENT) */
+  odLimit?: number;
   status: BankAccountStatus;
   notes?: string;
   createdAt: number;
@@ -1851,6 +1853,18 @@ export type PaymentMethod = 'TRANSFER' | 'CASH' | 'CHEQUE' | 'OTHER';
 /** โหมดภาษีหัก ณ ที่จ่ายรายบรรทัดงวดออฟฟิศ/ผู้บริหาร */
 export type OfficePayrollPitMode = 'SYSTEM' | 'MANUAL_PERCENT' | 'MANUAL_AMOUNT';
 
+/** หลักฐานการโอนภาษีหัก ณ ที่จ่าย (ภงด.1) — แนบตอนจ่ายภาษี */
+export interface WhtTaxPaymentProofAttachment {
+  id: string;
+  storagePath: string;
+  downloadUrl: string;
+  fileName: string;
+  contentType?: string;
+  uploadedAt: number;
+  uploadedByUid?: string;
+  uploadedByName?: string;
+}
+
 /** ปรับยอดรายคนงวดพนักงานออฟฟิศ — รายรับเพิ่ม / หักเพิ่ม (คู่กับ D8 manual_ded_*) */
 export interface OfficePayrollLineHrAdjustments {
   allowanceItems: Array<{ label: string; amount: number }>;
@@ -1930,6 +1944,29 @@ export interface OfficePayrollLine {
   attendanceSummary?: OfficePayrollLineAttendanceSummary | null;
   /** หักก่อนคำนวณภาษีจากสาย/ขาด/ลา — เก็บเพื่อคงยอดเมื่อ HR ปรับรายคน */
   periodPreStatutoryDeductions?: Array<{ code: string; amount: number }>;
+  /** จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) แล้ว — ref cashbook */
+  whtTaxCashbookEntryId?: string;
+  whtTaxCashbookEntryNo?: string;
+  whtTaxPaidAt?: number;
+  whtTaxPaidByUid?: string;
+  whtTaxPaidByName?: string;
+  whtTaxPaymentBankAccountId?: string;
+  /** หลักฐานการโอนภาษีหัก ณ ที่จ่าย — แนบตอนจ่ายภาษี */
+  whtTaxPaymentProofAttachments?: WhtTaxPaymentProofAttachment[];
+  /** นำส่งประกันสังคม (ฝั่งลูกจ้าง) แล้ว — ref cashbook */
+  ssoRemitCashbookEntryId?: string;
+  ssoRemitCashbookEntryNo?: string;
+  ssoRemitPaidAt?: number;
+  ssoRemitPaidByUid?: string;
+  ssoRemitPaidByName?: string;
+  ssoRemitPaymentBankAccountId?: string;
+  /** จ่ายเงินสมทบฝั่งนายจ้างแล้ว — ref cashbook */
+  ssoEmployerContribCashbookEntryId?: string;
+  ssoEmployerContribCashbookEntryNo?: string;
+  ssoEmployerContribPaidAt?: number;
+  ssoEmployerContribPaidByUid?: string;
+  ssoEmployerContribPaidByName?: string;
+  ssoEmployerContribPaymentBankAccountId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -2130,6 +2167,29 @@ export interface PayrollBatchLine {
   financePayoutCashbookEntryId?: string;
   financePayoutBankAccountId?: string;
   financePaidAt?: number;
+  /** จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) แล้ว — ref cashbook */
+  whtTaxCashbookEntryId?: string;
+  whtTaxCashbookEntryNo?: string;
+  whtTaxPaidAt?: number;
+  whtTaxPaidByUid?: string;
+  whtTaxPaidByName?: string;
+  whtTaxPaymentBankAccountId?: string;
+  /** หลักฐานการโอนภาษีหัก ณ ที่จ่าย — แนบตอนจ่ายภาษี */
+  whtTaxPaymentProofAttachments?: WhtTaxPaymentProofAttachment[];
+  /** นำส่งประกันสังคม (ฝั่งลูกจ้าง) แล้ว — ref cashbook */
+  ssoRemitCashbookEntryId?: string;
+  ssoRemitCashbookEntryNo?: string;
+  ssoRemitPaidAt?: number;
+  ssoRemitPaidByUid?: string;
+  ssoRemitPaidByName?: string;
+  ssoRemitPaymentBankAccountId?: string;
+  /** จ่ายเงินสมทบฝั่งนายจ้างแล้ว — ref cashbook */
+  ssoEmployerContribCashbookEntryId?: string;
+  ssoEmployerContribCashbookEntryNo?: string;
+  ssoEmployerContribPaidAt?: number;
+  ssoEmployerContribPaidByUid?: string;
+  ssoEmployerContribPaidByName?: string;
+  ssoEmployerContribPaymentBankAccountId?: string;
 }
 
 /**
@@ -2730,6 +2790,15 @@ export interface WithholdingCertificateDocument {
   cancelledAt?: number;
   cancelledByUid?: string;
   cancelledByName?: string;
+
+  /** บันทึกนำส่งภาษีหัก ณ ที่จ่าย (ภงด.53) — cashbook OUT */
+  whtTaxCashbookEntryId?: string;
+  whtTaxCashbookEntryNo?: string;
+  whtTaxPaidAt?: number;
+  whtTaxPaidByUid?: string;
+  whtTaxPaidByName?: string;
+  whtTaxPaymentBankAccountId?: string;
+  whtTaxPaymentProofAttachments?: WhtTaxPaymentProofAttachment[];
 }
 
 export interface WhtCertificateAuditLogEntry {

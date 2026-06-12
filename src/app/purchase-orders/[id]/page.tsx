@@ -410,13 +410,15 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
             <Button
               variant="outline"
               onClick={() => {
+                if (!canEditPo) return;
                 setEditedPO(po ? { ...po, poWorkMode: po.poWorkMode ?? 'OFFSHORE' } : {});
                 setIsEditing(!isEditing);
               }}
+              disabled={!canEditPo}
             >
               {isEditing ? 'ยกเลิก' : 'แก้ไขข้อมูล'}
             </Button>
-            {isEditing && (
+            {isEditing && canEditPo && (
               <Button className="gap-2 bg-primary font-bold shadow-md h-10 px-6" onClick={handleSaveMaster}>
                 <Save className="h-4 w-4" /> บันทึกการเปลี่ยนแปลง
               </Button>

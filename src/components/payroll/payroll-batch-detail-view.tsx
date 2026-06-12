@@ -48,7 +48,7 @@ import {
   isPayrollOfficer,
   isSystemAdmin,
 } from '@/lib/permission-core';
-import { workerPayrollBatchStatusLabelTh } from '@/lib/payroll/worker-batch-status-display';
+import { workerPayrollBatchStatusLabelTh, payrollLineExportStatusLabelTh } from '@/lib/payroll/worker-batch-status-display';
 import { isSimpleAdmin, isSimpleAccounting } from '@/lib/simple-tier-model';
 import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -298,16 +298,17 @@ export function PayrollBatchDetailView({
 
     const sourceRows: WorkerPayrollBatchLinePrintRow[] = linesSorted.map((line) => {
       const financePaid = !!(line as PayrollBatchLine).financePayoutCashbookEntryId;
-      const statusParts = [line.exportStatus || '—'];
-      if (financePaid) statusParts.push('บัญชี: จ่ายแล้ว');
+      let accountingStatusLabel = '—';
+      if (financePaid) accountingStatusLabel = 'จ่ายแล้ว';
       else if (batch.status === 'FINANCE_PREPARED' || batch.status === 'PAYMENT_EXPORTED') {
-        statusParts.push('บัญชี: รอตัด');
+        accountingStatusLabel = 'รอตัด';
       }
       return {
         workerName: line.workerNameSnapshot || '—',
         workerId: line.workerId,
         paymentMethod: line.workerPaymentProfileSnapshot?.paymentMethod || 'CASH',
-        statusLabel: statusParts.join(' · '),
+        exportStatusLabel: payrollLineExportStatusLabelTh(line.exportStatus),
+        accountingStatusLabel,
         grossLabel: fmtBaht(safeNum(line.grossAmount)),
         deductionsLabel: fmtBaht(lineDeductionsTotal(line)),
         netLabel: fmtBaht(safeNum(line.netAmount)),
@@ -864,7 +865,7 @@ export function PayrollBatchDetailView({
           <TabsContent value="lines" className="mt-6">
             <Card className="shadow-lg border-none overflow-hidden">
               <CardContent className="p-0 overflow-x-auto">
-                <Table className="table-fixed min-w-[860px] w-full">
+                <Table className="table-fixed min-w-[980px] w-full">
                   <TableHeader className="bg-muted/30">
                     <TableRow>
                       {showAccountingConfirm ? (
@@ -889,7 +890,8 @@ export function PayrollBatchDetailView({
                         Worker (Snapshot)
                       </TableHead>
                       <TableHead className="w-[118px] whitespace-nowrap align-middle">Payment Method</TableHead>
-                      <TableHead className="w-[96px] align-middle">Status</TableHead>
+                      <TableHead className="w-[108px] whitespace-nowrap align-middle">Export ธนาคาร</TableHead>
+                      <TableHead className="w-[108px] whitespace-nowrap align-middle">สถานะบัญชี</TableHead>
                       <TableHead className="w-[92px] text-right tabular-nums align-middle">Gross</TableHead>
                       <TableHead className="w-[96px] text-right tabular-nums align-middle">Deductions</TableHead>
                       <TableHead className="w-[100px] text-right font-bold tabular-nums align-middle">Net Amount</TableHead>
@@ -961,27 +963,29 @@ export function PayrollBatchDetailView({
                           </div>
                         </TableCell>
                         <TableCell className="align-middle py-3">
-                          <div className="flex flex-col gap-1 items-start">
-                            <Badge variant="outline" className="text-[9px] uppercase font-bold whitespace-nowrap">
-                              {line.exportStatus}
+                          <Badge variant="outline" className="text-[9px] font-semibold whitespace-nowrap">
+                            {payrollLineExportStatusLabelTh(line.exportStatus)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="align-middle py-3">
+                          {(showAccountingConfirm || !!(line as PayrollBatchLine).financePayoutCashbookEntryId) &&
+                          (line as PayrollBatchLine).financePayoutCashbookEntryId ? (
+                            <Badge
+                              variant="default"
+                              className="text-[9px] bg-emerald-700 hover:bg-emerald-700 whitespace-nowrap font-semibold"
+                            >
+                              จ่ายแล้ว
                             </Badge>
-                            {(showAccountingConfirm || !!(line as PayrollBatchLine).financePayoutCashbookEntryId) &&
-                            (line as PayrollBatchLine).financePayoutCashbookEntryId ? (
-                              <Badge
-                                variant="default"
-                                className="text-[9px] bg-emerald-700 hover:bg-emerald-700 whitespace-nowrap font-semibold"
-                              >
-                                บัญชี: จ่ายแล้ว
-                              </Badge>
-                            ) : showAccountingConfirm ? (
-                              <Badge
-                                variant="outline"
-                                className="text-[9px] text-amber-900 border-amber-600 whitespace-nowrap font-semibold dark:text-amber-100"
-                              >
-                                บัญชี: รอตัด
-                              </Badge>
-                            ) : null}
-                          </div>
+                          ) : showAccountingConfirm ? (
+                            <Badge
+                              variant="outline"
+                              className="text-[9px] text-amber-900 border-amber-600 whitespace-nowrap font-semibold dark:text-amber-100"
+                            >
+                              รอตัด
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-right text-xs font-medium tabular-nums align-middle py-3">
                           ฿{safeNum(line.grossAmount).toLocaleString()}

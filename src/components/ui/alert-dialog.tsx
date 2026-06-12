@@ -5,6 +5,8 @@ import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog"
 
 import { cn } from "@/lib/utils"
 import { buttonVariants } from "@/components/ui/button"
+import { useMutationAccess } from "@/contexts/mutation-access-context"
+import { looksLikeMutationButton } from "@/lib/mutation-button-detect"
 
 const AlertDialog = AlertDialogPrimitive.Root
 
@@ -100,14 +102,25 @@ AlertDialogDescription.displayName =
 
 const AlertDialogAction = React.forwardRef<
   React.ElementRef<typeof AlertDialogPrimitive.Action>,
-  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Action>
->(({ className, ...props }, ref) => (
-  <AlertDialogPrimitive.Action
-    ref={ref}
-    className={cn(buttonVariants(), className)}
-    {...props}
-  />
-))
+  React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Action> & { mutation?: boolean }
+>(({ className, mutation, disabled, type, children, ...props }, ref) => {
+  const { isReadOnlyExecutive } = useMutationAccess()
+  const blockExecutive =
+    isReadOnlyExecutive &&
+    mutation !== false &&
+    looksLikeMutationButton(children, type, mutation ?? true)
+  return (
+    <AlertDialogPrimitive.Action
+      ref={ref}
+      className={cn(buttonVariants(), className)}
+      disabled={disabled || blockExecutive}
+      type={type}
+      {...props}
+    >
+      {children}
+    </AlertDialogPrimitive.Action>
+  )
+})
 AlertDialogAction.displayName = AlertDialogPrimitive.Action.displayName
 
 const AlertDialogCancel = React.forwardRef<

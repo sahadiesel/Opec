@@ -42,6 +42,7 @@ import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { recordInterBankTransfer } from '@/lib/services/cashbook-bank-movement';
 import { syncBankCurrentBalanceIfDrift } from '@/lib/services/bank-balance-reconcile';
+import { computeOdBalanceDelta, formatSignedBahtDelta, hasConfiguredOdLimit, isCurrentBankAccount } from '@/lib/bank-account-od';
 
 function accountTypeLabel(t: BankAccountType | string): string {
   switch (t) {
@@ -320,6 +321,7 @@ export default function BankAccountsPage() {
                     <TableHead className="font-bold">ธนาคาร & ชื่อบัญชี</TableHead>
                     <TableHead className="font-bold">เลขที่บัญชี</TableHead>
                     <TableHead className="font-bold">ประเภท</TableHead>
+                    <TableHead className="font-bold text-right">ยอดเทียบ OD</TableHead>
                     <TableHead className="font-bold text-right">ยอดเงินปัจจุบัน</TableHead>
                     <TableHead className="font-bold">สถานะ</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
@@ -345,6 +347,30 @@ export default function BankAccountsPage() {
                           {accountTypeLabel(acc.accountType)}
                         </Badge>
                       </TableCell>
+                      <TableCell className="text-right">
+                        {isCurrentBankAccount(acc.accountType) ? (
+                          hasConfiguredOdLimit(acc.odLimit) ? (
+                            (() => {
+                              const delta = computeOdBalanceDelta(acc.currentBalance, acc.odLimit);
+                              return (
+                                <span
+                                  className={`inline-block rounded-md border px-2 py-1 text-sm font-black tabular-nums ${
+                                    delta < 0
+                                      ? 'border-orange-300/80 bg-orange-50 text-red-600 dark:border-orange-700/60 dark:bg-orange-950/30 dark:text-red-400'
+                                      : 'border-orange-300/80 bg-orange-50 text-emerald-900 dark:border-orange-700/60 dark:bg-orange-950/30 dark:text-emerald-300'
+                                  }`}
+                                >
+                                  {formatSignedBahtDelta(delta)}
+                                </span>
+                              );
+                            })()
+                          ) : (
+                            <span className="text-xs text-muted-foreground">ยังไม่ตั้งวงเงิน OD</span>
+                          )
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right font-black text-primary">
                         {acc.currency} {acc.currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </TableCell>
@@ -365,7 +391,7 @@ export default function BankAccountsPage() {
                   ))}
                   {(!accounts || accounts.length === 0) && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่มีข้อมูลบัญชีธนาคารในระบบ</TableCell>
+                      <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">ไม่มีข้อมูลบัญชีธนาคารในระบบ</TableCell>
                     </TableRow>
                   )}
                 </TableBody>

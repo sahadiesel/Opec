@@ -2,7 +2,8 @@ import { escapeHtmlDoc } from '@/lib/documents/standard-document-print';
 
 export type WithholdingPayrollListPrintRow = {
   section: string;
-  periodStatus: string;
+  wageStatus: string;
+  taxStatus: string;
   batchLabel: string;
   earnerName: string;
   earnerId: string;
@@ -48,7 +49,8 @@ export function buildWithholdingPayrollListPrintHtml(params: {
           .map(
             (r) => `<tr>
               <td>${escapeHtmlDoc(r.section)}</td>
-              <td>${escapeHtmlDoc(r.periodStatus)}</td>
+              <td>${escapeHtmlDoc(r.wageStatus)}</td>
+              <td>${escapeHtmlDoc(r.taxStatus)}</td>
               <td class="wpl-mono">${escapeHtmlDoc(r.batchLabel)}</td>
               <td>${escapeHtmlDoc(r.earnerName)}<br /><span class="wpl-sub">${escapeHtmlDoc(r.earnerId)}</span></td>
               <td>${escapeHtmlDoc(r.paymentDate)}</td>
@@ -96,7 +98,8 @@ export function buildWithholdingPayrollListPrintHtml(params: {
     <thead>
       <tr>
         <th>ประเภท</th>
-        <th>สถานะงวด</th>
+        <th>สถานะจ่ายค่าจ้าง</th>
+        <th>สถานะจ่ายภาษี</th>
         <th>ชุดจ่าย / งวด</th>
         <th>ผู้มีเงินได้</th>
         <th>วันที่จ่าย</th>
@@ -119,12 +122,14 @@ export function capWithholdingPayrollListPrintRows<T>(rows: T[]): { rows: T[]; t
 }
 
 export type WithholdingExecutivePayrollListPrintRow = {
-  periodStatus: string;
+  wageStatus: string;
+  taxStatus: string;
   runLabel: string;
   payrollMonth: string;
   earnerName: string;
   earnerId: string;
   paymentDate: string;
+  paidLabel: string;
   amountLabel: string;
 };
 
@@ -146,14 +151,16 @@ export function buildWithholdingExecutivePayrollListPrintHtml(params: {
 
   const tableRows =
     rows.length === 0
-      ? '<tr><td colspan="5" class="wpl-empty">ไม่มีรายการ</td></tr>'
+      ? '<tr><td colspan="8" class="wpl-empty">ไม่มีรายการ</td></tr>'
       : rows
           .map(
             (r) => `<tr>
-              <td>${escapeHtmlDoc(r.periodStatus)}</td>
+              <td>${escapeHtmlDoc(r.wageStatus)}</td>
+              <td>${escapeHtmlDoc(r.taxStatus)}</td>
               <td class="wpl-mono">${escapeHtmlDoc(r.runLabel)}<br /><span class="wpl-sub">${escapeHtmlDoc(r.payrollMonth)}</span></td>
               <td>${escapeHtmlDoc(r.earnerName)}<br /><span class="wpl-sub">${escapeHtmlDoc(r.earnerId)}</span></td>
               <td>${escapeHtmlDoc(r.paymentDate)}</td>
+              <td class="wpl-num">${escapeHtmlDoc(r.paidLabel)}</td>
               <td class="wpl-num">${escapeHtmlDoc(r.amountLabel)}</td>
             </tr>`,
           )
@@ -194,10 +201,12 @@ export function buildWithholdingExecutivePayrollListPrintHtml(params: {
   <table class="wpl-table">
     <thead>
       <tr>
-        <th>สถานะงวด</th>
+        <th>สถานะจ่ายเงินเดือน</th>
+        <th>สถานะจ่ายภาษี</th>
         <th>งวด</th>
         <th>ผู้มีเงินได้</th>
         <th>วันที่จ่าย</th>
+        <th class="wpl-num">ยอดจ่าย</th>
         <th class="wpl-num">ยอดหัก</th>
       </tr>
     </thead>

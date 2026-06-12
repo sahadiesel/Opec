@@ -15,3 +15,15 @@ const WORKER_BATCH_STATUS_LABEL_TH: Record<PayrollBatchStatus, string> = {
 export function workerPayrollBatchStatusLabelTh(status: PayrollBatchStatus | string): string {
   return WORKER_BATCH_STATUS_LABEL_TH[status as PayrollBatchStatus] ?? String(status);
 }
+
+const PAYROLL_LINE_EXPORT_STATUS_LABEL_TH: Record<'pending' | 'exported' | 'failed', string> = {
+  pending: 'รอ export',
+  exported: 'export แล้ว',
+  failed: 'export ไม่สำเร็จ',
+};
+
+/** ป้ายภาษาไทยสำหรับ exportStatus บรรทัด settlement */
+export function payrollLineExportStatusLabelTh(status: string | undefined | null): string {
+  if (!status) return '—';
+  return PAYROLL_LINE_EXPORT_STATUS_LABEL_TH[status as keyof typeof PAYROLL_LINE_EXPORT_STATUS_LABEL_TH] ?? status;
+}

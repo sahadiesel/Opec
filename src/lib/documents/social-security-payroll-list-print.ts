@@ -2,12 +2,16 @@ import { escapeHtmlDoc } from '@/lib/documents/standard-document-print';
 
 export type SocialSecurityPayrollListPrintRow = {
   section: string;
-  periodStatus: string;
+  wageStatus: string;
+  ssoStatus: string;
+  employerStatus: string;
   batchLabel: string;
   earnerName: string;
   earnerId: string;
   paymentDate: string;
+  paidLabel: string;
   ssoLabel: string;
+  employerLabel: string;
 };
 
 const PRINT_ROW_LIMIT = 500;
@@ -44,16 +48,20 @@ export function buildSocialSecurityPayrollListPrintHtml(params: {
 
   const tableRows =
     rows.length === 0
-      ? '<tr><td colspan="6" class="ssl-empty">ไม่มีรายการ</td></tr>'
+      ? '<tr><td colspan="10" class="ssl-empty">ไม่มีรายการ</td></tr>'
       : rows
           .map(
             (r) => `<tr>
               <td>${escapeHtmlDoc(r.section)}</td>
-              <td>${escapeHtmlDoc(r.periodStatus)}</td>
+              <td>${escapeHtmlDoc(r.wageStatus)}</td>
+              <td class="ssl-num">${escapeHtmlDoc(r.paidLabel)}</td>
+              <td class="ssl-num">${escapeHtmlDoc(r.ssoLabel)}</td>
+              <td>${escapeHtmlDoc(r.ssoStatus)}</td>
+              <td class="ssl-num">${escapeHtmlDoc(r.employerLabel)}</td>
+              <td>${escapeHtmlDoc(r.employerStatus)}</td>
               <td class="ssl-mono">${escapeHtmlDoc(r.batchLabel)}</td>
               <td>${escapeHtmlDoc(r.earnerName)}<br /><span class="ssl-sub">${escapeHtmlDoc(r.earnerId)}</span></td>
               <td>${escapeHtmlDoc(r.paymentDate)}</td>
-              <td class="ssl-num">${escapeHtmlDoc(r.ssoLabel)}</td>
             </tr>`,
           )
           .join('');
@@ -109,11 +117,15 @@ export function buildSocialSecurityPayrollListPrintHtml(params: {
     <thead>
       <tr>
         <th>ประเภท</th>
-        <th>สถานะงวด</th>
+        <th>สถานะจ่ายค่าจ้าง</th>
+        <th class="ssl-num">ยอดจ่าย</th>
+        <th class="ssl-num">ยอด ปส.</th>
+        <th>สถานะ ปส.</th>
+        <th class="ssl-num">ยอดสมทบ</th>
+        <th>สถานะสมทบ</th>
         <th>ชุดจ่าย / งวด</th>
         <th>ผู้มีเงินได้</th>
         <th>วันที่จ่าย</th>
-        <th class="ssl-num">ยอดสมทบ</th>
       </tr>
     </thead>
     <tbody>${tableRows}</tbody>

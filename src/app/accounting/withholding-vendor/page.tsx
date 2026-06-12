@@ -1,13 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { collection, orderBy, query } from 'firebase/firestore';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { collection, orderBy, query, where } from 'firebase/firestore';
 import { AppShell } from '@/components/layout/app-shell';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -24,13 +25,29 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
+import {
+  fmtBaht,
+  mergeUniqueProofAttachments,
+  ProofAttachmentZone,
+  renderTaxStatusBadge,
+  renderWageStatusBadge,
+  VENDOR_WHT_LIST_TABLE_COLGROUP,
+} from '@/components/accounting/withholding-wht-pay-tax-ui';
+import { useFirestore, useCollection, useMemoFirebase, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canSeeAccountingPillarUi } from '@/lib/permissions';
+import { canSeeAccountingPillarUi, canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { usePermissions } from '@/hooks/use-permissions';
-import type { User, WithholdingCertificateDocument } from '@/lib/types';
-import { Building2, ExternalLink, Loader2, Search, Printer } from 'lucide-react';
+import type { User, WithholdingCertificateDocument, BankAccount, WhtTaxPaymentProofAttachment } from '@/lib/types';
+import { Building2, ExternalLink, Loader2, Search, Printer, Banknote, Paperclip } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import {
+  isVendorWhtRowPayable,
+  isVendorWhtSourcePaid,
+  isVendorWhtTaxRemitted,
+  vendorPaymentStatusLabel,
+} from '@/lib/wht/vendor-wht-tax-payment-model';
+import { recordVendorWhtTaxPayment } from '@/lib/services/vendor-wht-tax-payment-service';
+import { uploadPayrollWhtTaxPaymentProof } from '@/lib/storage/payroll-wht-tax-payment-proofs';
 import {
   buildWithholdingVendorListPrintHtml,
   capWithholdingVendorListPrintRows,
@@ -42,25 +59,16 @@ function isVendorPartnerWhtDoc(d: WithholdingCertificateDocument): boolean {
   return typeof d.sourceVendorBillId === 'string' && d.sourceVendorBillId.trim().length > 0;
 }
 
-function statusLabel(s: WithholdingCertificateDocument['documentStatus']): string {
-  if (s === 'ISSUED') return 'ออกแล้ว';
-  if (s === 'VERIFIED') return 'ตรวจแล้ว';
-  if (s === 'CANCELLED') return 'ยกเลิก';
-  if (s === 'REPLACED') return 'แทนที่';
-  return 'ร่าง';
-}
-
-function fmtBaht(n: number): string {
-  return `฿${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-/** ยอดจ่ายก่อนหัก — ใช้ gross หรือ net + ภาษีหัก */
 function vendorWhtPaidAmount(d: WithholdingCertificateDocument): number {
   const gross = Number(d.grossAmount) || 0;
   if (gross > 0.005) return gross;
   const net = Number(d.netPaidAmount) || 0;
   const wht = Number(d.withholdingTaxAmount) || 0;
   return net + wht;
+}
+
+function vendorDocKey(id: string): string {
+  return id;
 }
 
 const TH_MONTHS = [
@@ -85,7 +93,6 @@ function ymLabelTh(ym: string): string {
   return `${TH_MONTHS[mi - 1]} ${Number(y) + 543}`;
 }
 
-/** YYYY-MM จากวันที่จ่าย หรือจากวันที่สร้างเอกสาร (Bangkok) */
 function vendorWhtDocYm(d: WithholdingCertificateDocument): string | null {
   const pd = (d.paymentDate || '').trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(pd)) return pd.slice(0, 7);
@@ -115,42 +122,63 @@ function describeWithholdingVendorPrintFilters(searchTerm: string, monthFilter: 
 }
 
 function buildWithholdingVendorPrintRows(list: WithholdingCertificateDocument[]): WithholdingVendorListPrintRow[] {
-  return list.map((d) => ({
-    status: statusLabel(d.documentStatus),
-    certificateNo: d.certificateNo?.trim() || '—',
-    vendorName: d.payee?.displayName?.trim() || '—',
-    vendorTaxId: d.payee?.taxId?.trim() || '',
-    paymentDate: d.paymentDate || '—',
-    paidLabel: fmtBaht(vendorWhtPaidAmount(d)),
-    withholdingLabel: fmtBaht(Number(d.withholdingTaxAmount) || 0),
-    billRef: d.referenceVendorBillNo || '—',
-    poRef: d.referencePurchaseNo?.trim() || '',
-  }));
+  return list.map((d) => {
+    const sourcePaid = isVendorWhtSourcePaid(d);
+    return {
+      paymentStatus: vendorPaymentStatusLabel(d),
+      taxStatus: sourcePaid
+        ? isVendorWhtTaxRemitted(d)
+          ? 'จ่ายแล้ว'
+          : 'รอจ่าย'
+        : '—',
+      certificateNo: d.certificateNo?.trim() || '—',
+      vendorName: d.payee?.displayName?.trim() || '—',
+      vendorTaxId: d.payee?.taxId?.trim() || '',
+      paymentDate: d.paymentDate || '—',
+      paidLabel: fmtBaht(vendorWhtPaidAmount(d)),
+      withholdingLabel: fmtBaht(Number(d.withholdingTaxAmount) || 0),
+      billRef: d.referenceVendorBillNo || '—',
+      poRef: d.referencePurchaseNo?.trim() || '',
+    };
+  });
 }
-
-const VENDOR_WHT_TABLE_COLGROUP = (
-  <colgroup>
-    <col className="w-[8%]" />
-    <col className="w-[14%]" />
-    <col className="w-[22%]" />
-    <col className="w-[10%]" />
-    <col className="w-[11%]" />
-    <col className="w-[11%]" />
-    <col className="w-[16%]" />
-    <col className="w-[72px]" />
-  </colgroup>
-);
 
 export default function AccountingWithholdingVendorDocumentsPage() {
   const { currentUser, isLoading } = useAppUser();
   const { profile } = usePermissions(currentUser);
   const firestore = useFirestore();
+  const firebaseApp = useFirebaseApp();
   const { toast } = useToast();
+  const payTaxProofInputRef = useRef<HTMLInputElement>(null);
   const [q, setQ] = useState('');
-  /** 'ALL' | YYYY-MM */
   const [monthFilter, setMonthFilter] = useState<string>('ALL');
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
+  const [vendorDocs, setVendorDocs] = useState<WithholdingCertificateDocument[]>([]);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+  const [payTaxOpen, setPayTaxOpen] = useState(false);
+  const [payTaxBankId, setPayTaxBankId] = useState('');
+  const [payTaxDate, setPayTaxDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [payTaxBusy, setPayTaxBusy] = useState(false);
+  const [payTaxAttachments, setPayTaxAttachments] = useState<WhtTaxPaymentProofAttachment[]>([]);
+  const [attachProofBusy, setAttachProofBusy] = useState(false);
+  const [sessionProofAttachments, setSessionProofAttachments] = useState<WhtTaxPaymentProofAttachment[]>([]);
+
+  const canPayWhtTax = useMemo(() => canExecuteBankCashbookPayments(currentUser), [currentUser]);
+
+  const bankAccountsQuery = useMemoFirebase(
+    () =>
+      firestore && canPayWhtTax
+        ? query(collection(firestore, 'bank_accounts'), where('status', '==', 'ACTIVE'))
+        : null,
+    [firestore, canPayWhtTax],
+  );
+  const { data: bankAccounts } = useCollection<BankAccount>(bankAccountsQuery as any);
+  const operatingBankOptions = useMemo(() => {
+    const list = (bankAccounts ?? []).filter((a) => String(a.accountType) !== 'PETTY_CASH');
+    list.sort((a, b) => (a.accountCode || '').localeCompare(b.accountCode || '', 'th', { numeric: true }));
+    return list;
+  }, [bankAccounts]);
 
   const whtQuery = useMemoFirebase(() => {
     if (!firestore) return null;
@@ -159,7 +187,9 @@ export default function AccountingWithholdingVendorDocumentsPage() {
 
   const { data: rows, isLoading: loadingDocs, error } = useCollection<WithholdingCertificateDocument>(whtQuery as any);
 
-  const vendorDocs = useMemo(() => (rows || []).filter(isVendorPartnerWhtDoc), [rows]);
+  useEffect(() => {
+    setVendorDocs((rows || []).filter(isVendorPartnerWhtDoc));
+  }, [rows]);
 
   const monthOptions = useMemo(() => {
     const set = new Set<string>();
@@ -193,13 +223,40 @@ export default function AccountingWithholdingVendorDocumentsPage() {
     return vendorDocsBySearch.filter((d) => vendorWhtDocYm(d) === monthFilter);
   }, [vendorDocsBySearch, monthFilter]);
 
-  const totalWithholding = useMemo(
-    () => filtered.reduce((sum, d) => sum + (Number(d.withholdingTaxAmount) || 0), 0),
-    [filtered],
+  const payableRows = useMemo(() => filtered.filter(isVendorWhtRowPayable), [filtered]);
+
+  const payableKeySig = useMemo(
+    () => payableRows.map((d) => vendorDocKey(d.id)).sort().join('|'),
+    [payableRows],
   );
 
-  const totalPaid = useMemo(
-    () => filtered.reduce((sum, d) => sum + vendorWhtPaidAmount(d), 0),
+  useEffect(() => {
+    const keys = payableKeySig ? payableKeySig.split('|') : [];
+    setSelectedKeys(new Set(keys));
+  }, [payableKeySig]);
+
+  const selectedPayRows = useMemo(
+    () => payableRows.filter((d) => selectedKeys.has(vendorDocKey(d.id))),
+    [payableRows, selectedKeys],
+  );
+
+  const selectedTaxTotal = useMemo(
+    () => selectedPayRows.reduce((sum, d) => sum + (Number(d.withholdingTaxAmount) || 0), 0),
+    [selectedPayRows],
+  );
+
+  const displayedProofAttachments = useMemo(() => {
+    const fromRows = vendorDocs.flatMap((d) => d.whtTaxPaymentProofAttachments ?? []);
+    return mergeUniqueProofAttachments(fromRows, sessionProofAttachments);
+  }, [vendorDocs, sessionProofAttachments]);
+
+  const removableProofIds = useMemo(
+    () => new Set(sessionProofAttachments.map((a) => a.id)),
+    [sessionProofAttachments],
+  );
+
+  const totalWithholding = useMemo(
+    () => filtered.reduce((sum, d) => sum + (Number(d.withholdingTaxAmount) || 0), 0),
     [filtered],
   );
 
@@ -277,6 +334,184 @@ export default function AccountingWithholdingVendorDocumentsPage() {
     [filtered, vendorDocs, q, monthFilter, currentUser?.displayName, toast],
   );
 
+  const openPayTaxDialog = useCallback(() => {
+    if (payableRows.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีรายการที่พร้อมจ่ายภาษี',
+        description: 'ต้องจ่ายคู่ค้าและออกหนังสือรับรองแล้ว และยังไม่ได้นำส่งภาษีหัก ณ ที่จ่าย',
+      });
+      return;
+    }
+    setSelectedKeys((prev) => {
+      const payableIds = new Set(payableRows.map((d) => vendorDocKey(d.id)));
+      const kept = [...prev].filter((id) => payableIds.has(id));
+      return kept.length > 0 ? new Set(kept) : new Set(payableIds);
+    });
+    setPayTaxOpen(true);
+    setPayTaxBankId((prev) =>
+      prev && operatingBankOptions.some((b) => b.id === prev) ? prev : (operatingBankOptions[0]?.id ?? ''),
+    );
+    setPayTaxDate(new Date().toISOString().slice(0, 10));
+    setPayTaxAttachments([...sessionProofAttachments]);
+  }, [payableRows, operatingBankOptions, sessionProofAttachments, toast]);
+
+  const handleAttachPayTaxProof = useCallback(
+    async (files: FileList | null) => {
+      if (!files?.length || !firebaseApp || !currentUser) return;
+      setAttachProofBusy(true);
+      try {
+        const uploaded: WhtTaxPaymentProofAttachment[] = [];
+        for (const file of Array.from(files)) {
+          const attachment = await uploadPayrollWhtTaxPaymentProof(
+            firebaseApp,
+            'vendor',
+            currentUser.id,
+            file,
+            currentUser.displayName || currentUser.email || currentUser.id,
+          );
+          uploaded.push(attachment);
+        }
+        setPayTaxAttachments((prev) => {
+          const next = [...prev];
+          for (const a of uploaded) {
+            if (!next.some((x) => x.id === a.id)) next.push(a);
+          }
+          setSessionProofAttachments(next);
+          return next;
+        });
+        toast({
+          title: 'แนบเอกสารแล้ว',
+          description: uploaded.length > 1 ? `อัปโหลด ${uploaded.length} ไฟล์` : uploaded[0]?.fileName,
+        });
+      } catch (e) {
+        toast({
+          variant: 'destructive',
+          title: 'แนบเอกสารไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setAttachProofBusy(false);
+        if (payTaxProofInputRef.current) payTaxProofInputRef.current.value = '';
+      }
+    },
+    [firebaseApp, currentUser, toast],
+  );
+
+  const handleRemovePayTaxProof = useCallback((attachmentId: string) => {
+    setPayTaxAttachments((prev) => {
+      const next = prev.filter((a) => a.id !== attachmentId);
+      setSessionProofAttachments(next);
+      return next;
+    });
+  }, []);
+
+  const handleRemoveSectionProof = useCallback((attachmentId: string) => {
+    setSessionProofAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+    setPayTaxAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+  }, []);
+
+  const handleConfirmPayWhtTax = useCallback(async () => {
+    if (!firestore || !currentUser) return;
+    if (!payTaxBankId.trim()) {
+      toast({ variant: 'destructive', title: 'กรุณาเลือกบัญชีธนาคาร' });
+      return;
+    }
+    if (selectedPayRows.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่ได้เลือกรายการ',
+        description: 'ติ๊กเลือกรายการที่ต้องการจ่ายภาษีอย่างน้อย 1 รายการ',
+      });
+      return;
+    }
+    if (payTaxAttachments.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่ได้แนบเอกสาร',
+        description: 'กรุณาแนบหลักฐานการโอนก่อนยืนยันจ่ายภาษี',
+      });
+      return;
+    }
+
+    setPayTaxBusy(true);
+    let success = 0;
+    const errors: string[] = [];
+    const paidKeys = new Set<string>();
+    const docUpdates = new Map<string, Partial<WithholdingCertificateDocument>>();
+
+    try {
+      for (const docRow of selectedPayRows) {
+        try {
+          const tax = Number(docRow.withholdingTaxAmount) || 0;
+          const result = await recordVendorWhtTaxPayment(firestore, currentUser as User, {
+            doc: docRow,
+            taxAmount: tax,
+            bankAccountId: payTaxBankId,
+            entryDate: payTaxDate,
+            proofAttachments: payTaxAttachments,
+          });
+          const key = vendorDocKey(docRow.id);
+          paidKeys.add(key);
+          const now = Date.now();
+          docUpdates.set(key, {
+            whtTaxCashbookEntryId: result.cashbookEntryId,
+            whtTaxCashbookEntryNo: result.entryNo,
+            whtTaxPaidAt: now,
+            whtTaxPaymentBankAccountId: payTaxBankId,
+            whtTaxPaymentProofAttachments: mergeUniqueProofAttachments(
+              docRow.whtTaxPaymentProofAttachments ?? [],
+              payTaxAttachments,
+            ),
+          });
+          success += 1;
+        } catch (e) {
+          const name = docRow.payee?.displayName || docRow.certificateNo || docRow.id;
+          errors.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+
+      if (paidKeys.size > 0) {
+        setVendorDocs((prev) =>
+          prev.map((d) => {
+            const patch = docUpdates.get(vendorDocKey(d.id));
+            if (!patch) return d;
+            return { ...d, ...patch };
+          }),
+        );
+        setSelectedKeys((prev) => {
+          const next = new Set(prev);
+          for (const key of paidKeys) next.delete(key);
+          return next;
+        });
+      }
+
+      if (errors.length === 0) {
+        toast({
+          title: 'บันทึกจ่ายภาษีหัก ณ ที่จ่ายแล้ว',
+          description: `จ่ายสำเร็จ ${success} รายการ · ตัดบัญชีและบันทึก cashbook เรียบร้อย`,
+        });
+        setSessionProofAttachments([]);
+        setPayTaxAttachments([]);
+        setPayTaxOpen(false);
+      } else if (success > 0) {
+        toast({
+          variant: 'destructive',
+          title: `จ่ายสำเร็จ ${success} รายการ · ล้มเหลว ${errors.length} รายการ`,
+          description: errors.slice(0, 3).join(' · '),
+        });
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'จ่ายภาษีไม่สำเร็จ',
+          description: errors.slice(0, 3).join(' · '),
+        });
+      }
+    } finally {
+      setPayTaxBusy(false);
+    }
+  }, [firestore, currentUser, payTaxBankId, payTaxDate, selectedPayRows, payTaxAttachments, toast]);
+
   if (isLoading || !currentUser) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -296,7 +531,7 @@ export default function AccountingWithholdingVendorDocumentsPage() {
 
   return (
     <AppShell user={user} onLogout={() => {}}>
-      <div className="max-w-6xl mx-auto space-y-6 py-6 px-4">
+      <div className="w-full max-w-[min(100%,96rem)] mx-auto space-y-6 py-6">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <Building2 className="h-7 w-7 text-muted-foreground" />
@@ -413,7 +648,32 @@ export default function AccountingWithholdingVendorDocumentsPage() {
         </Dialog>
 
         <Card>
-          <CardContent className="pt-6">
+          <CardHeader className="pb-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <CardTitle className="text-base">รายการหัก ณ ที่จ่ายจากคู่ค้า</CardTitle>
+              {!loadingDocs && !error ? (
+                <div className="flex flex-wrap items-stretch gap-2 shrink-0">
+                  {canPayWhtTax && payableRows.length > 0 ? (
+                    <Button
+                      type="button"
+                      className="h-auto bg-emerald-600 hover:bg-emerald-700 text-white gap-2 px-4"
+                      onClick={openPayTaxDialog}
+                    >
+                      <Banknote className="h-4 w-4 shrink-0" />
+                      จ่ายภาษี ({selectedPayRows.length})
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <ProofAttachmentZone
+              attachments={displayedProofAttachments}
+              onRemove={canPayWhtTax ? handleRemoveSectionProof : undefined}
+              removableIds={canPayWhtTax ? removableProofIds : undefined}
+              label="เอกสารแนบการโอน (ภงด.53)"
+            />
             {error ? (
               <p className="text-sm text-destructive">โหลดข้อมูลไม่สำเร็จ — {String((error as Error)?.message || error)}</p>
             ) : loadingDocs ? (
@@ -427,70 +687,236 @@ export default function AccountingWithholdingVendorDocumentsPage() {
                   : 'ไม่พบรายการที่ตรงกับคำค้นหรือเดือนที่เลือก'}
               </p>
             ) : (
-              <div className="rounded-md border overflow-x-auto">
-                <Table className="table-fixed w-full min-w-[880px]">
-                  {VENDOR_WHT_TABLE_COLGROUP}
+              <div className="rounded-md border">
+                <Table className="table-fixed w-full">
+                  {VENDOR_WHT_LIST_TABLE_COLGROUP(canPayWhtTax)}
                   <TableHeader>
                     <TableRow>
-                      <TableHead>สถานะ</TableHead>
+                      {canPayWhtTax ? (
+                        <TableHead className="w-11 pl-3">
+                          <Checkbox
+                            checked={
+                              payableRows.length > 0 &&
+                              payableRows.every((d) => selectedKeys.has(vendorDocKey(d.id)))
+                            }
+                            onCheckedChange={(v) => {
+                              if (v === true) {
+                                setSelectedKeys(new Set(payableRows.map((d) => vendorDocKey(d.id))));
+                              } else {
+                                setSelectedKeys(new Set());
+                              }
+                            }}
+                            aria-label="เลือกทั้งหมดที่พร้อมจ่ายภาษี"
+                          />
+                        </TableHead>
+                      ) : null}
                       <TableHead>เลขที่หนังสือ</TableHead>
                       <TableHead>คู่ค้า</TableHead>
                       <TableHead>วันที่จ่าย</TableHead>
                       <TableHead className="text-right">ยอดจ่าย</TableHead>
+                      <TableHead>สถานะจ่ายคู่ค้า</TableHead>
                       <TableHead className="text-right">ยอดหัก</TableHead>
+                      <TableHead>สถานะจ่ายภาษี</TableHead>
                       <TableHead>ใบวางบิล / PO</TableHead>
                       <TableHead className="text-right pr-3"> </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filtered.map((d) => (
-                      <TableRow key={d.id}>
-                        <TableCell>
-                          <Badge variant={d.documentStatus === 'ISSUED' ? 'default' : 'secondary'}>
-                            {statusLabel(d.documentStatus)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs truncate" title={d.certificateNo?.trim() || '—'}>
-                          {d.certificateNo?.trim() || '—'}
-                        </TableCell>
-                        <TableCell className="max-w-0">
-                          <div className="truncate font-medium" title={d.payee?.displayName?.trim() || '—'}>
-                            {d.payee?.displayName?.trim() || '—'}
-                          </div>
-                          {d.payee?.taxId ? (
-                            <div className="truncate text-xs text-muted-foreground font-mono">{d.payee.taxId}</div>
+                    {filtered.map((d) => {
+                      const sourcePaid = isVendorWhtSourcePaid(d);
+                      const taxPaid = isVendorWhtTaxRemitted(d);
+                      const paymentLabel = vendorPaymentStatusLabel(d);
+                      const rowKey = vendorDocKey(d.id);
+                      const payable = isVendorWhtRowPayable(d);
+                      return (
+                        <TableRow key={rowKey}>
+                          {canPayWhtTax ? (
+                            <TableCell className="w-11 pl-3 align-middle">
+                              {taxPaid ? (
+                                <span className="text-muted-foreground text-xs" title="จ่ายภาษีแล้ว">
+                                  ✓
+                                </span>
+                              ) : payable ? (
+                                <Checkbox
+                                  checked={selectedKeys.has(rowKey)}
+                                  onCheckedChange={(v) => {
+                                    const on = v === true;
+                                    setSelectedKeys((prev) => {
+                                      const next = new Set(prev);
+                                      if (on) next.add(rowKey);
+                                      else next.delete(rowKey);
+                                      return next;
+                                    });
+                                  }}
+                                  aria-label={`เลือก ${d.payee?.displayName || d.certificateNo || d.id}`}
+                                />
+                              ) : (
+                                <span className="text-muted-foreground text-xs">—</span>
+                              )}
+                            </TableCell>
                           ) : null}
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm">{d.paymentDate || '—'}</TableCell>
-                        <TableCell className="text-right tabular-nums text-sm">{fmtBaht(vendorWhtPaidAmount(d))}</TableCell>
-                        <TableCell className="text-right tabular-nums text-sm font-semibold text-primary">
-                          {fmtBaht(Number(d.withholdingTaxAmount) || 0)}
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          <div className="font-mono truncate" title={d.referenceVendorBillNo || '—'}>
-                            {d.referenceVendorBillNo || '—'}
-                          </div>
-                          {d.referencePurchaseNo ? (
-                            <div className="truncate text-muted-foreground">PO {d.referencePurchaseNo}</div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell className="text-right pr-3">
-                          <Link
-                            href={`/accounting/wht-certificates/${d.id}`}
-                            className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-                          >
-                            เปิด
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </Link>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                          <TableCell className="font-mono text-xs truncate" title={d.certificateNo?.trim() || '—'}>
+                            {d.certificateNo?.trim() || '—'}
+                          </TableCell>
+                          <TableCell className="max-w-0">
+                            <div className="truncate font-medium" title={d.payee?.displayName?.trim() || '—'}>
+                              {d.payee?.displayName?.trim() || '—'}
+                            </div>
+                            {d.payee?.taxId ? (
+                              <div className="truncate text-xs text-muted-foreground font-mono">{d.payee.taxId}</div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">{d.paymentDate || '—'}</TableCell>
+                          <TableCell className="text-right tabular-nums text-sm">{fmtBaht(vendorWhtPaidAmount(d))}</TableCell>
+                          <TableCell>{renderWageStatusBadge(paymentLabel, sourcePaid)}</TableCell>
+                          <TableCell className="text-right tabular-nums text-sm font-semibold text-primary">
+                            {fmtBaht(Number(d.withholdingTaxAmount) || 0)}
+                          </TableCell>
+                          <TableCell>{renderTaxStatusBadge(sourcePaid, taxPaid)}</TableCell>
+                          <TableCell className="text-xs">
+                            <div className="font-mono truncate" title={d.referenceVendorBillNo || '—'}>
+                              {d.referenceVendorBillNo || '—'}
+                            </div>
+                            {d.referencePurchaseNo ? (
+                              <div className="truncate text-muted-foreground">PO {d.referencePurchaseNo}</div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell className="text-right pr-3">
+                            <Link
+                              href={`/accounting/wht-certificates/${d.id}`}
+                              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                            >
+                              เปิด
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </Link>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
             )}
           </CardContent>
         </Card>
+
+        <Dialog open={payTaxOpen} onOpenChange={(open) => !open && !payTaxBusy && setPayTaxOpen(false)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>จ่ายภาษีหัก ณ ที่จ่าย (ภงด.53) — คู่ค้า</DialogTitle>
+              <DialogDescription>
+                เลือกบัญชีธนาคารสำหรับตัดจ่ายภาษี — ระบบจะบันทึกรายการ cashbook แยกตามรายการที่เลือก
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 text-sm">
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                <p className="font-medium">รายการที่เลือก {selectedPayRows.length} รายการ</p>
+                <p className="text-muted-foreground">
+                  ยอดภาษีหัก ณ ที่จ่ายรวม{' '}
+                  <span className="font-semibold text-primary tabular-nums">{fmtBaht(selectedTaxTotal)}</span>
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="wht-vendor-pay-bank">บัญชีธนาคารที่ตัดจ่าย</Label>
+                <Select value={payTaxBankId} onValueChange={setPayTaxBankId}>
+                  <SelectTrigger id="wht-vendor-pay-bank">
+                    <SelectValue placeholder="เลือกบัญชี ACTIVE" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {operatingBankOptions.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.bankName} · {b.accountName} [{b.accountCode}]
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="wht-vendor-pay-date">วันที่ตัดบัญชี</Label>
+                <Input
+                  id="wht-vendor-pay-date"
+                  type="date"
+                  value={payTaxDate}
+                  onChange={(e) => setPayTaxDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>เอกสารการโอน (บังคับแนบ)</Label>
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  แนบสลิปหรือหลักฐานการโอนภาษีหัก ณ ที่จ่าย — รองรับ PDF หรือรูปภาพ (สูงสุด 10 MB ต่อไฟล์)
+                </p>
+                <input
+                  ref={payTaxProofInputRef}
+                  type="file"
+                  multiple
+                  accept="application/pdf,image/jpeg,image/jpg,image/png,image/webp,image/gif,.pdf,.jpg,.jpeg,.png,.webp,.gif"
+                  className="hidden"
+                  onChange={(e) => void handleAttachPayTaxProof(e.target.files)}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  disabled={attachProofBusy || payTaxBusy}
+                  onClick={() => payTaxProofInputRef.current?.click()}
+                >
+                  {attachProofBusy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Paperclip className="h-4 w-4" />
+                  )}
+                  แนบเอกสาร
+                </Button>
+                {payTaxAttachments.length > 0 ? (
+                  <ul className="rounded-md border bg-muted/20 px-3 py-2 space-y-1.5">
+                    {payTaxAttachments.map((a) => (
+                      <li key={a.id} className="flex items-center gap-2 min-w-0 text-xs">
+                        <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate" title={a.fileName}>
+                          {a.fileName}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 shrink-0 px-2"
+                          disabled={attachProofBusy || payTaxBusy}
+                          onClick={() => handleRemovePayTaxProof(a.id)}
+                        >
+                          ลบ
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-amber-800 dark:text-amber-200/90">
+                    ยังไม่มีเอกสารแนบ — ต้องแนบก่อนจึงจะกดยืนยันจ่ายได้
+                  </p>
+                )}
+              </div>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button type="button" variant="outline" disabled={payTaxBusy} onClick={() => setPayTaxOpen(false)}>
+                ยกเลิก
+              </Button>
+              <Button
+                type="button"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                disabled={
+                  payTaxBusy ||
+                  attachProofBusy ||
+                  !payTaxBankId ||
+                  selectedPayRows.length === 0 ||
+                  payTaxAttachments.length === 0
+                }
+                onClick={() => void handleConfirmPayWhtTax()}
+              >
+                {payTaxBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                ยืนยันจ่ายภาษี ({selectedPayRows.length})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppShell>
   );

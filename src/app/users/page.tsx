@@ -72,6 +72,7 @@ import {
 } from '@/lib/permissions';
 import { Separator } from '@/components/ui/separator';
 import { sanitizeFirestorePayload } from '@/lib/utils';
+import { fixExecutiveSpelling } from '@/lib/executive-display-fix';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getBusinessRoleKeysSortedForSelect, getRoleCatalogEntry } from '@/lib/roles/role-catalog';
 import {
@@ -182,7 +183,7 @@ export default function UsersPage() {
 
   const handleOpenDetailsEdit = (user: User) => {
     setDetailsEditUser(user);
-    setEditDisplayName(user.displayName || '');
+    setEditDisplayName(fixExecutiveSpelling(user.displayName || ''));
     setEditEmail(user.email || '');
     setEditPhone(user.phone || '');
     setIsDetailsDialogOpen(true);
@@ -222,7 +223,7 @@ export default function UsersPage() {
       const userRef = doc(firestore, 'users', detailsEditUser.id);
       const phoneTrim = editPhone.trim();
       const payload = sanitizeFirestorePayload({
-        displayName: dn,
+        displayName: fixExecutiveSpelling(dn),
         email: em,
         phone: phoneTrim ? phoneTrim : deleteField(),
         updatedAt: Date.now(),
@@ -332,7 +333,7 @@ export default function UsersPage() {
         setSelectedUser(null);
         toast({
           title: 'บันทึกข้อมูลสำเร็จ (Saved)',
-          description: `อัปเดตข้อมูลของ ${selectedUser.displayName} แล้ว — แนะนำให้ผู้ใช้คนนั้นออกจากระบบแล้วเข้าใหม่ (หรือรีเฟรช) เพื่อให้สิทธิ์ในเครื่องตรงกับฐานข้อมูล`,
+          description: `อัปเดตข้อมูลของ ${fixExecutiveSpelling(selectedUser.displayName)} แล้ว — แนะนำให้ผู้ใช้คนนั้นออกจากระบบแล้วเข้าใหม่ (หรือรีเฟรช) เพื่อให้สิทธิ์ในเครื่องตรงกับฐานข้อมูล`,
         });
       }, 150);
 
@@ -456,7 +457,7 @@ export default function UsersPage() {
                       <TableRow key={u.id} className="hover:bg-muted/30 group transition-all">
                         <TableCell className="py-4 pl-6">
                           <div className="flex flex-col">
-                            <span className="font-bold text-base text-primary">{u.displayName}</span>
+                            <span className="font-bold text-base text-primary">{fixExecutiveSpelling(u.displayName)}</span>
                             <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium">
                               <Mail className="h-2.5 w-2.5" /> {u.email}
                             </span>
@@ -612,7 +613,7 @@ export default function UsersPage() {
           <DialogContent className="max-w-3xl border-t-8 border-t-primary max-h-[96vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-2xl flex items-center gap-3">
-                <UserCog className="h-7 w-7 text-primary" /> จัดการสิทธิ์การเข้าถึง: {selectedUser?.displayName}
+                <UserCog className="h-7 w-7 text-primary" /> จัดการสิทธิ์การเข้าถึง: {fixExecutiveSpelling(selectedUser?.displayName)}
               </DialogTitle>
               <DialogDescription>
                 เลือกบทบาทหน้าที่หนึ่งรายการ — ระบบบันทึกเฉพาะ{' '}

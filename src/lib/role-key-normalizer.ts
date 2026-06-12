@@ -6,6 +6,8 @@
 /** Legacy typo on some user docs / permission_profiles rows (singular operation). */
 const BUSINESS_ROLE_KEY_ALIASES: Record<string, string> = {
   operation_manager: 'operations_manager',
+  /** Legacy typos on user docs / permission_profiles rows */
+  excutive: 'executive',
   execusive: 'executive',
 };
 

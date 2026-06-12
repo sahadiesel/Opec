@@ -353,10 +353,15 @@ function emitCoreHelpers(): string {
       );
     }
 
-    /** Single role source — assignedRoleKey only; normalize 'operation_manager' typo */
+    /** Single role source — assignedRoleKey only; normalize legacy typos */
+    function normalizeAssignedRoleKeyAlias(k) {
+      return k == 'operation_manager' ? 'operations_manager'
+        : (k == 'excutive' || k == 'execusive') ? 'executive'
+        : k;
+    }
     function canonicalAssignedRoleKey(d) {
       return d != null && 'assignedRoleKey' in d && d.assignedRoleKey is string && d.assignedRoleKey.size() > 0
-        ? (d.assignedRoleKey.lower() == 'operation_manager' ? 'operations_manager' : d.assignedRoleKey.lower())
+        ? normalizeAssignedRoleKeyAlias(d.assignedRoleKey.lower())
         : '';
     }
 

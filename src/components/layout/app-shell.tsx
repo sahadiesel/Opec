@@ -18,6 +18,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { userMayAccessPath } from '@/lib/navigation/nav-access';
 import { isClient } from '@/lib/permissions';
+import { fixExecutiveSpelling } from '@/lib/executive-display-fix';
 import { Badge } from '@/components/ui/badge';
 import {
   AlertDialog,
@@ -121,7 +122,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
             <div className="flex items-center gap-4">
               <div className="hidden md:flex flex-col items-end max-w-[250px]">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-black truncate text-primary">{user.displayName}</span>
+                  <span className="text-sm font-black truncate text-primary">{fixExecutiveSpelling(user.displayName)}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-[9px] text-muted-foreground font-bold tracking-tighter flex items-center gap-1 max-w-[220px] justify-end text-right leading-tight">

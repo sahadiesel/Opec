@@ -1,7 +1,8 @@
 import { escapeHtmlDoc } from '@/lib/documents/standard-document-print';
 
 export type WithholdingVendorListPrintRow = {
-  status: string;
+  paymentStatus: string;
+  taxStatus: string;
   certificateNo: string;
   vendorName: string;
   vendorTaxId: string;
@@ -42,11 +43,12 @@ export function buildWithholdingVendorListPrintHtml(params: {
 
   const tableRows =
     rows.length === 0
-      ? '<tr><td colspan="8" class="wvl-empty">ไม่มีรายการ</td></tr>'
+      ? '<tr><td colspan="9" class="wvl-empty">ไม่มีรายการ</td></tr>'
       : rows
           .map(
             (r) => `<tr>
-              <td>${escapeHtmlDoc(r.status)}</td>
+              <td>${escapeHtmlDoc(r.paymentStatus)}</td>
+              <td>${escapeHtmlDoc(r.taxStatus)}</td>
               <td class="wvl-mono">${escapeHtmlDoc(r.certificateNo)}</td>
               <td>${escapeHtmlDoc(r.vendorName)}${r.vendorTaxId ? `<br /><span class="wvl-sub">${escapeHtmlDoc(r.vendorTaxId)}</span>` : ''}</td>
               <td>${escapeHtmlDoc(r.paymentDate)}</td>
@@ -93,7 +95,8 @@ export function buildWithholdingVendorListPrintHtml(params: {
   <table class="wvl-table">
     <thead>
       <tr>
-        <th>สถานะ</th>
+        <th>สถานะจ่ายคู่ค้า</th>
+        <th>สถานะจ่ายภาษี</th>
         <th>เลขที่หนังสือ</th>
         <th>คู่ค้า</th>
         <th>วันที่จ่าย</th>

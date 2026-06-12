@@ -631,9 +631,9 @@ export function getPermissions(
 
   if (!isInternalTypeUser(u)) return clonePermission(NO_ACCESS);
 
-  if (isSimpleAdmin(u)) return clonePermission(FULL_ACCESS);
-
   if (isExecutiveViewer(u)) return clonePermission(READ_ONLY);
+
+  if (isSimpleAdmin(u)) return clonePermission(FULL_ACCESS);
 
   const moduleKey = (
     MODULE_KEYS_WITHOUT_DOMAIN_ALIAS.has(rawModuleKey)
@@ -788,6 +788,7 @@ export function canAccess(
   module: string,
   action: BasePermissionAction = 'view'
 ): boolean {
+  if (action !== 'view' && isExecutiveViewer(user as User)) return false;
   const p = getPermissions(user as User, module, null);
   return Boolean(p[action]);
 }
@@ -797,25 +798,29 @@ export function isMatrixControlledRole(_user: Partial<User> | null | undefined):
 }
 
 export function canPreparePayroll(user: User | null): boolean {
+  if (isExecutiveViewer(user)) return false;
   return isSimpleInternalEligible(normalizeCurrentUserPermissions(user));
 }
 
 export function canGeneratePayslips(user: User | null, _payrollStatus?: string | null): boolean {
+  if (isExecutiveViewer(user)) return false;
   return isSimpleInternalEligible(normalizeCurrentUserPermissions(user));
 }
 
 export function canApprovePayroll(user: User | null): boolean {
+  if (isExecutiveViewer(user)) return false;
   return isSimpleInternalEligible(normalizeCurrentUserPermissions(user));
 }
 
 export function canExportPayroll(user: User | null, _payrollStatus?: string | null): boolean {
+  if (isExecutiveViewer(user)) return false;
   return isSimpleInternalEligible(normalizeCurrentUserPermissions(user));
 }
 
 /** ส่งงวดลูกจ้างต่อบัญชี (FINANCE_PREPARED) — payroll officer / ผู้จัดการ HR-Ops เป็นหลัก */
 export function canHandoffWorkerPayrollToAccounting(user: User | null): boolean {
   const u = normalizeCurrentUserPermissions(user);
-  if (!u || !isSimpleInternalEligible(u)) return false;
+  if (!u || !isSimpleInternalEligible(u) || isExecutiveViewer(u)) return false;
   if (isSimpleAdmin(u)) return true;
   if (isPayrollOfficer(u)) return true;
   if (isHrManager(u) || isOperationManager(u)) return true;
@@ -825,7 +830,7 @@ export function canHandoffWorkerPayrollToAccounting(user: User | null): boolean 
 /** บัญชียืนยันจ่ายงวดลูกจ้าง + บันทึก cashbook */
 export function canConfirmWorkerPayrollPaid(user: User | null): boolean {
   const u = normalizeCurrentUserPermissions(user);
-  if (!u || !isActiveForApp(u)) return false;
+  if (!u || !isActiveForApp(u) || isExecutiveViewer(u)) return false;
   if (isSimpleAdmin(u)) return true;
   return canExecuteBankCashbookPayments(u);
 }
@@ -915,16 +920,16 @@ export const canView = (user: User | null, moduleKey: string, profile?: Permissi
   getPermissions(user, moduleKey, profile).view;
 
 export const canCreate = (user: User | null, moduleKey: string, profile?: PermissionProfile | null) =>
-  getPermissions(user, moduleKey, profile).create;
+  !isExecutiveViewer(user) && getPermissions(user, moduleKey, profile).create;
 
 export const canEdit = (user: User | null, moduleKey: string, profile?: PermissionProfile | null) =>
-  getPermissions(user, moduleKey, profile).edit;
+  !isExecutiveViewer(user) && getPermissions(user, moduleKey, profile).edit;
 
 export const canDelete = (user: User | null, moduleKey: string, profile?: PermissionProfile | null) =>
-  getPermissions(user, moduleKey, profile).delete;
+  !isExecutiveViewer(user) && getPermissions(user, moduleKey, profile).delete;
 
 export const canApprove = (user: User | null, moduleKey: string, profile?: PermissionProfile | null) =>
-  getPermissions(user, moduleKey, profile).approve;
+  !isExecutiveViewer(user) && getPermissions(user, moduleKey, profile).approve;
 
 export function canSeeHrPillarUi(user: User | null, profile?: PermissionProfile | null): boolean {
   if (!user) return false;
@@ -966,14 +971,14 @@ export const isInternalStaff = (user: User | null) => isSimpleInternalEligible(n
 
 /** อนุมัติใบสั่งซื้อภายใน (คลังส่งขอ) — ผู้จัดการปฏิบัติการ / หัวหน้าแนวเดียวกับ admin ธุรกิจ */
 export function canApprovePurchaseAsManager(user: User | null): boolean {
-  if (!user) return false;
+  if (!user || isExecutiveViewer(user)) return false;
   if (isSystemAdmin(user)) return true;
   return isOperationManager(user) || isOperationsPillarExecutive(user);
 }
 
 /** ตัดจ่ายผ่านบัญชีธนาคาร / cashbook — ผู้จัดการบัญชีหรือแอดมิน (ไม่รวม accounting_officer) */
 export function canExecuteBankCashbookPayments(user: User | null): boolean {
-  if (!user) return false;
+  if (!user || isExecutiveViewer(user)) return false;
   if (isSystemAdmin(user)) return true;
   return isAccountingManager(user);
 }
@@ -981,6 +986,7 @@ export function canExecuteBankCashbookPayments(user: User | null): boolean {
 /** เห็นเลขบัญชีและยอดคงเหลือ — ผู้จัดการบัญชี / แอดมิน / ops (Petty Cash) */
 export function canViewBankAccountSensitiveDetails(user: User | null): boolean {
   if (!user) return false;
+  if (isExecutiveViewer(user)) return true;
   if (isSystemAdmin(user)) return true;
   if (isAccountingManager(user)) return true;
   return isOperationManager(user);
@@ -1000,7 +1006,7 @@ export function canReadWhtCertificates(user: User | null, profile?: PermissionPr
 
 /** สร้าง / ตรวจสอบ / พิมพ์ร่าง — เจ้าหน้าที่หรือผู้จัดการบัญชี */
 export function canCreateVerifyPrintWhtCertificate(user: User | null): boolean {
-  if (!user) return false;
+  if (!user || isExecutiveViewer(user)) return false;
   if (isSystemAdmin(user)) return true;
   return isSimpleAccounting(user);
 }
@@ -1022,7 +1028,7 @@ export function canVerifyWhtCertificate(user: User | null): boolean {
 
 /** ออกเลขที่ (ISSUED) / ยกเลิก — ผู้จัดการบัญชีหรือแอดมินเท่านั้น */
 export function canIssueWhtCertificate(user: User | null): boolean {
-  if (!user) return false;
+  if (!user || isExecutiveViewer(user)) return false;
   if (isSystemAdmin(user)) return true;
   return getEffectiveSimpleRole(user) === 'accounting_manager';
 }

@@ -4,7 +4,8 @@ export type WorkerPayrollBatchLinePrintRow = {
   workerName: string;
   workerId: string;
   paymentMethod: string;
-  statusLabel: string;
+  exportStatusLabel: string;
+  accountingStatusLabel: string;
   grossLabel: string;
   deductionsLabel: string;
   netLabel: string;
@@ -41,13 +42,14 @@ export function buildWorkerPayrollBatchLinesListPrintHtml(params: {
 
   const tableRows =
     rows.length === 0
-      ? '<tr><td colspan="6" class="wpbl-empty">ไม่มีรายการ</td></tr>'
+      ? '<tr><td colspan="7" class="wpbl-empty">ไม่มีรายการ</td></tr>'
       : rows
           .map(
             (r) => `<tr>
               <td>${escapeHtmlDoc(r.workerName)}<br /><span class="wpbl-sub">${escapeHtmlDoc(r.workerId)}</span></td>
               <td>${escapeHtmlDoc(r.paymentMethod)}</td>
-              <td>${escapeHtmlDoc(r.statusLabel)}</td>
+              <td>${escapeHtmlDoc(r.exportStatusLabel)}</td>
+              <td>${escapeHtmlDoc(r.accountingStatusLabel)}</td>
               <td class="wpbl-num">${escapeHtmlDoc(r.grossLabel)}</td>
               <td class="wpbl-num">${escapeHtmlDoc(r.deductionsLabel)}</td>
               <td class="wpbl-num">${escapeHtmlDoc(r.netLabel)}</td>
@@ -102,7 +104,8 @@ export function buildWorkerPayrollBatchLinesListPrintHtml(params: {
       <tr>
         <th>ลูกจ้าง</th>
         <th>ช่องทางจ่าย</th>
-        <th>สถานะ</th>
+        <th>Export ธนาคาร</th>
+        <th>สถานะบัญชี</th>
         <th class="wpbl-num">Gross</th>
         <th class="wpbl-num">หัก</th>
         <th class="wpbl-num">สุทธิ</th>

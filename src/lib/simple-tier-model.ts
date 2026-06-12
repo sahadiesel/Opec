@@ -6,14 +6,17 @@
  */
 import type { User } from '@/lib/types';
 import { getPrimaryLegacyRole } from '@/lib/permission-core';
+import { normalizeBusinessRoleKey } from '@/lib/role-key-normalizer';
 
 /** Prefer explicit legacy `role` scalar ก่อน `assignedRoleKey` — ใช้เฉพาะ isSimpleAdmin; อย่าใช้กับ isSimpleAccounting (ต้องสอดคล้องกฎ Firestore) */
 export function getEffectiveSimpleRole(user: Partial<User> | null | undefined): string | null {
   if (!user) return null;
   const r = (user as { role?: string }).role;
-  if (typeof r === 'string' && r.trim()) return r.trim().toLowerCase();
+  if (typeof r === 'string' && r.trim()) {
+    return normalizeBusinessRoleKey(r.trim()) ?? r.trim().toLowerCase();
+  }
   if (user.assignedRoleKey && String(user.assignedRoleKey).trim()) {
-    return String(user.assignedRoleKey).trim().toLowerCase();
+    return normalizeBusinessRoleKey(String(user.assignedRoleKey).trim()) ?? String(user.assignedRoleKey).trim().toLowerCase();
   }
   return null;
 }
@@ -49,6 +52,7 @@ export function isInternalTypeUser(user: Partial<User> | null | undefined): bool
 
 export function isSimpleAdmin(user: Partial<User> | null | undefined): boolean {
   if (!user || !isActiveForApp(user) || !isInternalTypeUser(user)) return false;
+  if (getPrimaryLegacyRole(user as User) === 'executive') return false;
   const rk = getEffectiveSimpleRole(user);
   if (rk === 'system_admin') return true;
   return false;

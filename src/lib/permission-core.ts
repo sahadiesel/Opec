@@ -448,6 +448,8 @@ function userReferencesAdminPermissionProfile(user: User): boolean {
  */
 export function isSystemAdmin(user: User | null): boolean {
   if (!user) return false;
+  /** Executive uses accessGroup admin for menu visibility — not a system administrator. */
+  if (getPrimaryLegacyRole(user) === 'executive') return false;
   if (typeof user.role === 'string' && normalizeBusinessRoleKey(user.role) === 'system_admin') return true;
   if (getPrimaryLegacyRole(user) === 'system_admin') return true;
   if (user.accessGroup === 'admin') return true;

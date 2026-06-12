@@ -25,7 +25,7 @@ import type { SsoHospitalCatalogItem, User } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
+import { canEdit, canView } from '@/lib/permissions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,8 +42,12 @@ export default function HospitalRegistryPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  const canManage = useMemo(
+  const canViewPage = useMemo(
     () => canView(currentUser, 'office_staff') || canView(currentUser, 'workers'),
+    [currentUser],
+  );
+  const canManage = useMemo(
+    () => canEdit(currentUser, 'office_staff') || canEdit(currentUser, 'workers'),
     [currentUser],
   );
 
@@ -51,7 +55,7 @@ export default function HospitalRegistryPage() {
   const loadingHospitals = hospitals === null;
 
   const loadHospitals = useCallback(async () => {
-    if (!firestore || !canManage) {
+    if (!firestore || !canViewPage) {
       setHospitals([]);
       return;
     }
@@ -63,15 +67,15 @@ export default function HospitalRegistryPage() {
       console.error(e);
       setHospitals([]);
     }
-  }, [firestore, canManage]);
+  }, [firestore, canViewPage]);
 
   useEffect(() => {
-    if (!canManage || !firestore) {
+    if (!canViewPage || !firestore) {
       setHospitals([]);
       return;
     }
     void loadHospitals();
-  }, [canManage, firestore, loadHospitals]);
+  }, [canViewPage, firestore, loadHospitals]);
 
   const [hospitalDialogOpen, setHospitalDialogOpen] = useState(false);
   const [hospitalForm, setHospitalForm] = useState<
@@ -161,7 +165,7 @@ export default function HospitalRegistryPage() {
 
   if (userLoading || !currentUser) return null;
 
-  if (!canManage) {
+  if (!canViewPage) {
     return (
       <AppShell user={currentUser as User} onLogout={() => {}}>
         <div className="max-w-lg mx-auto py-20 text-center text-muted-foreground">ไม่มีสิทธิ์เข้าถึงทะเบียนนี้</div>
@@ -188,9 +192,11 @@ export default function HospitalRegistryPage() {
               <CardTitle>โรงพยาบาลประกันสังคม</CardTitle>
               <CardDescription>เรียงลำดับอัตโนมัติตามการเพิ่มรายการ · ใช้เลือกโรงพยาบาลหลักที่แจ้ง สปส.</CardDescription>
             </div>
-            <Button type="button" className="gap-2" onClick={openNewHospital}>
-              <Plus className="h-4 w-4" /> เพิ่ม
-            </Button>
+            {canManage && (
+              <Button type="button" className="gap-2" onClick={openNewHospital}>
+                <Plus className="h-4 w-4" /> เพิ่ม
+              </Button>
+            )}
           </CardHeader>
           <CardContent className="p-0">
             {loadingHospitals ? (
@@ -226,19 +232,23 @@ export default function HospitalRegistryPage() {
                         )}
                       </TableCell>
                       <TableCell className="text-right space-x-1 align-top">
-                        <Button type="button" variant="ghost" size="icon" onClick={() => openEditHospital(h)} title="แก้ไข">
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive"
-                          onClick={() => setDeleteHospitalId(h.id)}
-                          title="ลบ"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {canManage && (
+                          <>
+                            <Button type="button" variant="ghost" size="icon" onClick={() => openEditHospital(h)} title="แก้ไข">
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              onClick={() => setDeleteHospitalId(h.id)}
+                              title="ลบ"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
