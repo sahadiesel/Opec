@@ -57,6 +57,7 @@ import {
   PurchaseOrder,
   MainContract,
   POLine,
+  DrugTestPanelSubstance,
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -107,7 +108,13 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { computeMobDrugTestChecklistStatus, resolveMobReferenceDateYmd } from '@/lib/drug-test-panel';
+import {
+  computeDrugPanelMobDrugOk,
+  computeMobDrugTestChecklistStatus,
+  DRUG_TEST_PANEL_DOC_PATH,
+  MOB_DRUG_TEST_GATE_MESSAGE_TH,
+  resolveMobReferenceDateYmd,
+} from '@/lib/drug-test-panel';
 import { formatPoLineSiteOptionLabel } from '@/lib/ops/po-line-display';
 
 export default function MobilizationDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -168,11 +175,30 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   );
   const { data: workerDrugTests } = useCollection<WorkerDrugTest>(workerDrugTestsQuery as any);
 
+  const panelDocRef = useMemoFirebase(
+    () => (firestore ? doc(firestore, DRUG_TEST_PANEL_DOC_PATH[0], DRUG_TEST_PANEL_DOC_PATH[1]) : null),
+    [firestore],
+  );
+  const { data: drugPanelDoc } = useDoc<{ substances?: DrugTestPanelSubstance[] }>(panelDocRef as any);
+  const panelSubstances = useMemo(
+    () => (drugPanelDoc?.substances ?? []).filter((s) => s?.id && (s.label || '').trim()),
+    [drugPanelDoc?.substances],
+  );
+
+  const mobReferenceYmd = useMemo(() => {
+    if (!assignment) return thailandTodayYmd();
+    return resolveMobReferenceDateYmd(assignment);
+  }, [assignment]);
+
+  const mobDrugOk = useMemo(() => {
+    if (isFinalClearanceStep3Done(assignment ?? ({} as Assignment))) return true;
+    return computeDrugPanelMobDrugOk(panelSubstances, workerDrugTests || [], mobReferenceYmd);
+  }, [assignment, panelSubstances, workerDrugTests, mobReferenceYmd]);
+
   const drugTestChecklistStatus = useMemo((): ChecklistItemStatus => {
-    if (!assignment) return 'missing';
-    const mobYmd = resolveMobReferenceDateYmd(assignment);
-    return computeMobDrugTestChecklistStatus(workerDrugTests || [], mobYmd);
-  }, [assignment, workerDrugTests]);
+    if (isFinalClearanceStep3Done(assignment ?? ({} as Assignment))) return 'pass';
+    return computeMobDrugTestChecklistStatus(panelSubstances, workerDrugTests || [], mobReferenceYmd);
+  }, [assignment, panelSubstances, workerDrugTests, mobReferenceYmd]);
 
   const posRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'positions', assignment.positionId) : null), [firestore, assignment?.positionId]);
   const { data: position } = useDoc<Position>(posRef as any);
@@ -252,7 +278,11 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   const runFinalClearanceStep1 = () => {
     if (!assignment || !currentUser?.id) return;
-    const gate = canRunFinalClearanceStep(assignment, 1, { readinessOk: assignment.readinessStatus === 'ready' });
+    const gate = canRunFinalClearanceStep(assignment, 1, {
+      readinessOk: assignment.readinessStatus === 'ready',
+      drugOk: mobDrugOk,
+      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+    });
     if (!gate.ok) {
       toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
       return;
@@ -274,15 +304,23 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   const step2SaveGate = useMemo(() => {
     if (!assignment) return { ok: false as const, message: '' };
-    if (clearanceEditMode === 2) return canSaveFinalClearanceStandby(assignment, { editingExisting: true });
-    return canRunFinalClearanceStep(assignment, 2);
-  }, [assignment, clearanceEditMode]);
+    const drugOpts = { drugOk: mobDrugOk, drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH };
+    if (clearanceEditMode === 2) return canSaveFinalClearanceStandby(assignment, { editingExisting: true, ...drugOpts });
+    return canRunFinalClearanceStep(assignment, 2, {
+      readinessOk: true,
+      ...drugOpts,
+    });
+  }, [assignment, clearanceEditMode, mobDrugOk]);
 
   const step3SaveGate = useMemo(() => {
     if (!assignment) return { ok: false as const, message: '' };
-    if (clearanceEditMode === 3) return canSaveFinalClearanceWorkStart(assignment, { editingExisting: true });
-    return canRunFinalClearanceStep(assignment, 3);
-  }, [assignment, clearanceEditMode]);
+    const drugOpts = { drugOk: mobDrugOk, drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH };
+    if (clearanceEditMode === 3) return canSaveFinalClearanceWorkStart(assignment, { editingExisting: true, ...drugOpts });
+    return canRunFinalClearanceStep(assignment, 3, {
+      readinessOk: true,
+      ...drugOpts,
+    });
+  }, [assignment, clearanceEditMode, mobDrugOk]);
 
   const cancelClearanceEdit = () => setClearanceEditMode(0);
 
@@ -387,7 +425,11 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       return;
     }
     const editing = clearanceEditMode === 2;
-    const gate = canSaveFinalClearanceStandby(assignment, { editingExisting: editing });
+    const gate = canSaveFinalClearanceStandby(assignment, {
+      editingExisting: editing,
+      drugOk: mobDrugOk,
+      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+    });
     if (!gate.ok) {
       toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
       return;
@@ -474,7 +516,11 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       return;
     }
     const editing = clearanceEditMode === 3;
-    const gate = canSaveFinalClearanceWorkStart(assignment, { editingExisting: editing });
+    const gate = canSaveFinalClearanceWorkStart(assignment, {
+      editingExisting: editing,
+      drugOk: mobDrugOk,
+      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+    });
     if (!gate.ok) {
       toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
       return;
@@ -683,8 +729,15 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   };
 
   const step1Gate = useMemo(
-    () => (assignment ? canRunFinalClearanceStep(assignment, 1, { readinessOk: assignment.readinessStatus === 'ready' }) : { ok: false as const, message: '' }),
-    [assignment],
+    () =>
+      assignment
+        ? canRunFinalClearanceStep(assignment, 1, {
+            readinessOk: assignment.readinessStatus === 'ready',
+            drugOk: mobDrugOk,
+            drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+          })
+        : { ok: false as const, message: '' },
+    [assignment, mobDrugOk],
   );
   if (userLoading || !currentUser) return null;
   if (!canViewMobilization) {
@@ -856,8 +909,17 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                         </TableRow>
                         <TableRow>
                           <TableCell>{getChecklistIcon(drugTestChecklistStatus)}</TableCell>
-                          <TableCell className="font-medium text-sm">ผลตรวจสารเสพติด (Drug test)</TableCell>
-                          <TableCell className="text-left capitalize text-xs">{drugTestChecklistStatus}</TableCell>
+                          <TableCell className="font-medium text-sm">
+                            ผลตรวจสารเสพติด (Drug test)
+                            <span className="block text-[10px] font-normal text-muted-foreground">
+                              ครบแผง negative · valid ภายใน 10 วันหลังวันตรวจ
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-left capitalize text-xs">
+                            {isFinalClearanceStep3Done(assignment)
+                              ? 'pass (mob แล้ว — ไม่บังคับซ้ำ)'
+                              : drugTestChecklistStatus}
+                          </TableCell>
                           <TableCell className="text-right p-2">
                             <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="เปิดทะเบียน — สารเสพติด">
                               <Link href={workerManageHref('drug')}>

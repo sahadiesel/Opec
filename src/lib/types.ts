@@ -462,7 +462,8 @@ export interface Worker {
   drugPanelSummaryKind?: 'pending' | 'partial' | 'pass' | 'positive' | 'none_panel';
   drugPanelSummaryText?: string;
   drugPanelPassedCount?: number;
-  drugPanelTotalCount?: number;
+  /** ผลตรวจสารเสพติด valid สำหรับ mob (อัปเดตจากหน้ารายละเอียดคนงาน) */
+  drugPanelMobValid?: boolean;
   totalWorkedHours?: number;
   firstWorkedAt?: number | null;
   lastWorkedAt?: number | null;
@@ -1096,7 +1097,7 @@ export interface Assignment {
     toolsIssued: ChecklistItemStatus;
     overlapClear: ChecklistItemStatus;
     clientApproved: ChecklistItemStatus;
-    /** ผลตรวจสารเสพติด — negative ภายใน 7 วันก่อน mob (คำนวณสดจาก drug_tests) */
+    /** ผลตรวจสารเสพติด — negative ครบแผง + valid ภายใน 10 วันหลังวันตรวจ (เช็คตอน mob) */
     drugTestValid?: ChecklistItemStatus;
   };
   clientComments?: string;

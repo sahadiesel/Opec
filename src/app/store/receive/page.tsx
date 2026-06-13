@@ -18,7 +18,6 @@ import {
   Info,
   Loader2,
   Calculator,
-  Search,
   FileText,
   TrendingUp
 } from 'lucide-react';
@@ -31,13 +30,11 @@ import { computePurchaseTotalsFromLines } from '@/lib/purchase/pr-totals';
 import {
   receiveLineFromStoreItem,
   resolveReceiveStockPick,
-  storeCatalogHeaders,
-  storeCatalogStandalone,
   variantLinesForParent,
 } from '@/lib/store/receive-stock-select';
 import { purchaseLineToReceivableStoreItem, resolvePurchaseLineStoreItem } from '@/lib/purchase/purchase-line-store-link';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
@@ -50,6 +47,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { VendorSearchSelect } from '@/components/store/vendor-search-select';
+import { StoreStockSearchSelect } from '@/components/store/store-stock-search-select';
 
 interface ReceiveLine {
   id: string;
@@ -71,34 +69,18 @@ interface ReceiveLine {
   mappingHeaderId?: string;
 }
 
-function ReceiveStockSelectOptions({ items }: { items: StoreItem[] }) {
-  const headers = storeCatalogHeaders(items);
-  const standalone = storeCatalogStandalone(items);
-  return (
-    <>
-      {standalone.map((i) => (
-        <SelectItem key={i.id} value={i.id}>
-          {i.itemCode} | {formatStoreItemLabel(i)}
-        </SelectItem>
-      ))}
-      {headers.map((h) => {
-        const variants = variantLinesForParent(h.id, items);
-        if (variants.length === 0) return null;
-        return (
-          <SelectGroup key={h.id}>
-            <SelectLabel className="text-xs font-semibold text-muted-foreground">
-              {h.itemCode} | {h.itemName}
-            </SelectLabel>
-            {variants.map((v) => (
-              <SelectItem key={v.id} value={v.id}>
-                ↳ {formatStoreItemLabel(v)} ({v.itemCode})
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        );
-      })}
-    </>
-  );
+function emptyReceiveLine(): ReceiveLine {
+  return {
+    id: Math.random().toString(36).slice(2, 11),
+    itemId: '',
+    itemName: '',
+    itemCode: '',
+    quantity: 1,
+    unit: 'หน่วย',
+    unitCost: 0,
+    currentStock: 0,
+    needsStockMapping: true,
+  };
 }
 
 function poLineToReceiveLine(pl: PurchaseLine, storeItems: StoreItem[]): ReceiveLine {
@@ -305,23 +287,8 @@ export default function StoreReceivePage() {
     );
   };
 
-  const handleAddItem = (itemId: string) => {
-    const pick = resolveReceiveStockPick(allStoreItems ?? [], itemId);
-    if (!pick || pick.kind !== 'ready') return;
-    const item = pick.item;
-    if (receiveLines.some((l) => l.itemId === item.id)) return;
-
-    setReceiveLines([
-      ...receiveLines,
-      receiveLineFromStoreItem(
-        {
-          id: Math.random().toString(36).substr(2, 9),
-          quantity: 1,
-          unitCost: 0,
-        },
-        item,
-      ),
-    ]);
+  const handleAddEmptyLine = () => {
+    setReceiveLines((prev) => [...prev, emptyReceiveLine()]);
   };
 
   const handleRemoveLine = (id: string) => {
@@ -524,24 +491,19 @@ export default function StoreReceivePage() {
             </Card>
 
             <Card className="shadow-md overflow-hidden">
-              <CardHeader className="bg-muted/20 border-b flex flex-row items-center justify-between">
+              <CardHeader className="bg-muted/20 border-b flex flex-row items-center justify-between gap-4">
                 <div>
                   <CardTitle className="text-lg">รายการสินค้าที่รับเข้า (Inventory Items)</CardTitle>
                   <CardDescription>
                     {refPurchaseId
                       ? 'ดึงรายการจาก PO — บรรทัดที่ยังไม่ผูกสต็อกให้เลือกสินค้าคลัง (ราคาต่อหน่วยจาก PO)'
-                      : 'ระบุจำนวนและต้นทุนต่อหน่วยของแต่ละรายการ'}
+                      : 'กด «เพิ่มรายการ» แล้วเลือกสินค้า — รับเข้าได้หลายรายการในครั้งเดียว'}
                   </CardDescription>
                 </div>
-                <div className="w-72 relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Select onValueChange={handleAddItem}>
-                    <SelectTrigger className="h-10 pl-9"><SelectValue placeholder="ค้นหาและเพิ่มอุปกรณ์..." /></SelectTrigger>
-                    <SelectContent className="max-h-72">
-                      {allStoreItems && <ReceiveStockSelectOptions items={allStoreItems} />}
-                    </SelectContent>
-                  </Select>
-                </div>
+                <Button type="button" variant="default" className="shrink-0 gap-2" onClick={handleAddEmptyLine}>
+                  <Plus className="h-4 w-4" />
+                  เพิ่มรายการ
+                </Button>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -561,35 +523,30 @@ export default function StoreReceivePage() {
                       <TableRow key={line.id} className="hover:bg-muted/10">
                         <TableCell className="pl-6">
                           {line.needsStockMapping && !line.itemId ? (
-                            <div className="flex flex-col gap-2 max-w-sm">
+                            <div className="flex flex-col gap-2 max-w-md">
                               <Badge variant="outline" className="w-fit text-[10px] border-amber-300 text-amber-800 bg-amber-50">
-                                {line.needsVariantSelection ? 'เลือกรุ่นย่อย' : 'จาก PO — เลือกสต็อก'}
+                                {line.needsVariantSelection
+                                  ? 'เลือกรุ่นย่อย'
+                                  : line.purchaseLineId
+                                    ? 'จาก PO — เลือกสต็อก'
+                                    : 'เลือกสินค้า'}
                               </Badge>
                               {line.poDescription && (
                                 <p className="text-xs text-muted-foreground leading-snug">PO: {line.poDescription}</p>
                               )}
                               {line.needsVariantSelection && line.mappingHeaderId ? (
-                                <Select onValueChange={(v) => handlePickVariant(line.id, v)}>
-                                  <SelectTrigger className="h-9">
-                                    <SelectValue placeholder="เลือกรุ่นย่อย / ไซส์..." />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {variantLinesForParent(line.mappingHeaderId, allStoreItems ?? []).map((v) => (
-                                      <SelectItem key={v.id} value={v.id}>
-                                        ↳ {formatStoreItemLabel(v)} ({v.itemCode})
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                <StoreStockSearchSelect
+                                  items={allStoreItems ?? []}
+                                  variantParentId={line.mappingHeaderId}
+                                  onPick={(v) => handlePickVariant(line.id, v)}
+                                  placeholder="ค้นหารุ่นย่อย / ไซส์…"
+                                />
                               ) : (
-                                <Select onValueChange={(v) => handleMapPoLineToStock(line.id, v)}>
-                                  <SelectTrigger className="h-9">
-                                    <SelectValue placeholder="เลือกสินค้าคลัง..." />
-                                  </SelectTrigger>
-                                  <SelectContent className="max-h-72">
-                                    {allStoreItems && <ReceiveStockSelectOptions items={allStoreItems} />}
-                                  </SelectContent>
-                                </Select>
+                                <StoreStockSearchSelect
+                                  items={allStoreItems ?? []}
+                                  onPick={(v) => handleMapPoLineToStock(line.id, v)}
+                                  placeholder="ค้นหารหัส / ชื่อสินค้า…"
+                                />
                               )}
                             </div>
                           ) : (
@@ -667,13 +624,29 @@ export default function StoreReceivePage() {
                           <div className="bg-muted/20 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
                             <Plus className="h-8 w-8 text-muted-foreground/40" />
                           </div>
-                          <p className="text-sm text-muted-foreground italic">ยังไม่มีรายการสินค้า กรุณาค้นหาและเลือกอุปกรณ์ด้านบน</p>
+                          <p className="text-sm text-muted-foreground italic">
+                            {refPurchaseId
+                              ? 'รอโหลดรายการจาก PO หรือกด «เพิ่มรายการ» เพื่อรับเข้าเพิ่ม'
+                              : 'ยังไม่มีรายการ — กด «เพิ่มรายการ» แล้วเลือกสินค้าในแต่ละแถว'}
+                          </p>
+                          <Button type="button" variant="outline" className="gap-2" onClick={handleAddEmptyLine}>
+                            <Plus className="h-4 w-4" />
+                            เพิ่มรายการ
+                          </Button>
                         </TableCell>
                       </TableRow>
                     )}
                   </TableBody>
                 </Table>
               </CardContent>
+              {receiveLines.length > 0 && (
+                <CardFooter className="border-t bg-muted/10 py-3">
+                  <Button type="button" variant="outline" className="gap-2" onClick={handleAddEmptyLine}>
+                    <Plus className="h-4 w-4" />
+                    เพิ่มรายการ
+                  </Button>
+                </CardFooter>
+              )}
             </Card>
           </div>
 

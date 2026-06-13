@@ -70,6 +70,7 @@ import {
   canAccess,
   isStoreOfficer,
   isPayrollOfficer,
+  isOperationsOfficer,
   isTimekeeper,
   getPrimaryLegacyRole,
 } from '@/lib/permissions';
@@ -415,7 +416,7 @@ function navGroupsForUser(user: User): NavGroup[] {
   if (isTimekeeper(user)) {
     return navGroupsForTimekeeper();
   }
-  if (isPayrollOfficer(user)) {
+  if (isPayrollOfficer(user) || isOperationsOfficer(user)) {
     return patchOverviewDashboardForHrPillar(
       user,
       navGroups.filter((g) => !g.label.startsWith('งานขายและสัญญา'))

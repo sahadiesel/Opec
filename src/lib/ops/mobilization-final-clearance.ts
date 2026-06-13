@@ -92,11 +92,11 @@ export function assignmentHasMobLocationForPhase1(a: Assignment): boolean {
 
 export type FinalClearanceGate = { ok: true } | { ok: false; message: string };
 
-/** เฟส 3: ปุ่ม 1→2→3 ห้ามข้าม */
+/** เฟส 3: ปุ่ม 1→2→3 ห้ามข้าม — ตรวจสารเสพติดเฉพาะก่อนเริ่มงานจริง (หลัง mob แล้วไม่บังคับซ้ำ) */
 export function canRunFinalClearanceStep(
   a: Assignment,
   step: 1 | 2 | 3,
-  options?: { readinessOk: boolean },
+  options?: { readinessOk: boolean; drugOk?: boolean; drugMessage?: string },
 ): FinalClearanceGate {
   if (isMobUnassigned(a)) {
     return { ok: false, message: 'รายการนี้ Unassign แล้ว — ไม่สามารถดำเนินการ Final clearance ต่อได้' };
@@ -112,6 +112,12 @@ export function canRunFinalClearanceStep(
     if (options && !options.readinessOk) {
       return { ok: false, message: 'ความพร้อมยังไม่ครบ — แก้ checklist ก่อนยืนยันเดินทาง' };
     }
+    if (!isFinalClearanceStep3Done(a) && options?.drugOk === false) {
+      return {
+        ok: false,
+        message: options.drugMessage || 'ผลตรวจสารเสพติดหมดอายุหรือยังไม่ครบ — ตรวจใหม่ก่อนยืนยันเดินทาง',
+      };
+    }
     return { ok: true };
   }
   if (step === 2) {
@@ -119,12 +125,24 @@ export function canRunFinalClearanceStep(
       return { ok: false, message: 'ต้องยืนยัน «พร้อมเดินทาง» (ขั้นที่ 1) ก่อนบันทึกวัน Standby' };
     }
     if (isFinalClearanceStep2Done(a)) return { ok: false, message: 'บันทึก Standby แล้ว' };
+    if (!isFinalClearanceStep3Done(a) && options?.drugOk === false) {
+      return {
+        ok: false,
+        message: options.drugMessage || 'ผลตรวจสารเสพติดหมดอายุหรือยังไม่ครบ — ตรวจใหม่ก่อน mob',
+      };
+    }
     return { ok: true };
   }
   if (!isFinalClearanceStep2Done(a)) {
     return { ok: false, message: 'ต้องบันทึกวัน Standby (ขั้นที่ 2) ก่อนเริ่มวันทำงาน' };
   }
   if (isFinalClearanceStep3Done(a)) return { ok: false, message: 'เริ่มวันทำงานแล้ว' };
+  if (!isFinalClearanceStep3Done(a) && options?.drugOk === false) {
+    return {
+      ok: false,
+      message: options.drugMessage || 'ผลตรวจสารเสพติดหมดอายุหรือยังไม่ครบ — ตรวจใหม่ก่อนเริ่มงาน',
+    };
+  }
   return { ok: true };
 }
 
@@ -145,7 +163,7 @@ export function shouldAutoFillPrefixWorkDaysBeforeStandby(
 /** บันทึก Standby (ครั้งแรกหรือแก้ไข) */
 export function canSaveFinalClearanceStandby(
   a: Assignment,
-  opts?: { editingExisting: boolean },
+  opts?: { editingExisting: boolean; drugOk?: boolean; drugMessage?: string },
 ): FinalClearanceGate {
   if (isMobUnassigned(a)) {
     return { ok: false, message: 'รายการนี้ Unassign แล้ว — ไม่สามารถดำเนินการ Final clearance ต่อได้' };
@@ -156,13 +174,19 @@ export function canSaveFinalClearanceStandby(
   if (isFinalClearanceStep2Done(a) && !opts?.editingExisting) {
     return { ok: false, message: 'บันทึก Standby แล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่' };
   }
+  if (!isFinalClearanceStep3Done(a) && opts?.drugOk === false) {
+    return {
+      ok: false,
+      message: opts.drugMessage || 'ผลตรวจสารเสพติดหมดอายุหรือยังไม่ครบ — ตรวจใหม่ก่อน mob',
+    };
+  }
   return { ok: true };
 }
 
 /** เริ่มวันทำงาน (ครั้งแรกหรือแก้ไข) */
 export function canSaveFinalClearanceWorkStart(
   a: Assignment,
-  opts?: { editingExisting: boolean },
+  opts?: { editingExisting: boolean; drugOk?: boolean; drugMessage?: string },
 ): FinalClearanceGate {
   if (isMobUnassigned(a)) {
     return { ok: false, message: 'รายการนี้ Unassign แล้ว — ไม่สามารถดำเนินการ Final clearance ต่อได้' };
@@ -172,6 +196,12 @@ export function canSaveFinalClearanceWorkStart(
   }
   if (isFinalClearanceStep3Done(a) && !opts?.editingExisting) {
     return { ok: false, message: 'เริ่มวันทำงานแล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่' };
+  }
+  if (!isFinalClearanceStep3Done(a) && opts?.drugOk === false) {
+    return {
+      ok: false,
+      message: opts.drugMessage || 'ผลตรวจสารเสพติดหมดอายุหรือยังไม่ครบ — ตรวจใหม่ก่อนเริ่มงาน',
+    };
   }
   return { ok: true };
 }

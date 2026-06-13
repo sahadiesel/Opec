@@ -158,7 +158,7 @@ service cloud.firestore {
     function blockExecutiveWrite() { return !isExecutiveViewer(); }
     function internalWriteOk() { return isInternalUser() && blockExecutiveWrite(); }
     function rs0() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
-    function rs1() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
+    function rs1() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'operations_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
     function rs2() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
     function rs3() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'sales_manager', 'operations_manager', 'accounting_manager']); }
     function rs4() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
@@ -837,6 +837,8 @@ service cloud.firestore {
     // quotes, workers, positions, vendors, POs, assignments, etc.).
     // These blocks are evaluated independently from the matrix blocks;
     // either passing grants read. Writes remain matrix-constrained.
+    match /customers/{id} { allow read: if isInternalUser(); }
+    match /po_active_bundles/{id} { allow read: if isInternalUser(); }
     match /main_contracts/{id} { allow read: if isInternalUser(); }
     match /main_contracts/{contractId}/position_rates/{rateId} { allow read: if isInternalUser(); }
     match /main_contracts/{contractId}/{document=**} { allow read: if isInternalUser(); }

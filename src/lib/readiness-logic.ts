@@ -9,7 +9,6 @@ import {
   DrugTestPanelSubstance,
 } from './types';
 import { getPolicy } from './policy/engine';
-import { computeDrugPanelWorkerFields } from './drug-test-panel';
 
 /**
  * Calculates a worker's readiness status based on their records and position-level policy.
@@ -21,7 +20,7 @@ export async function calculateWorkerReadiness(
   drugTests: WorkerDrugTest[],
   mandatoryReqs: PositionCertificateRequirement[],
   mode: JobMode,
-  /** ถ้ามีรายการสารจาก settings และยังไม่ครบผล negative จะไม่ READY */
+  /** รายการสารจาก settings — ไม่บล็อก readiness (ตรวจที่ mobilization) */
   drugPanelSubstances: DrugTestPanelSubstance[] = []
 ): Promise<ReadinessStatus> {
   const now = Date.now();
@@ -54,11 +53,7 @@ export async function calculateWorkerReadiness(
   const medExpiry = new Date(latestMedical.expiryDate).getTime();
   if (medExpiry < now) return 'MEDICAL_EXPIRED';
 
-  // 3. Drug panel (ไม่ใช้วันหมดอายุ — ตาม settings ที่ system/drug_test_panel)
-  if (drugPanelSubstances.length > 0) {
-    const { readinessDrugOk } = computeDrugPanelWorkerFields(drugPanelSubstances, drugTests);
-    if (!readinessDrugOk) return 'DRUG_TEST_EXPIRED';
-  }
+  // Drug panel: ไม่บล็อก readiness/assign — ตรวจที่ขั้น mobilization แทน
 
   return 'READY';
 }

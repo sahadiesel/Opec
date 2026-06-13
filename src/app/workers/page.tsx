@@ -368,10 +368,11 @@ export default function WorkersPage() {
   const renderReadinessCell = (worker: Worker) => {
     const kind = worker.drugPanelSummaryKind ?? 'none_panel';
     const drugText = (worker.drugPanelSummaryText ?? '').trim();
+    const mobDrugExpired = worker.drugPanelMobValid === false;
     const showDrugHint =
-      worker.readinessStatus === 'DRUG_TEST_EXPIRED' ||
+      mobDrugExpired ||
       kind === 'positive' ||
-      kind === 'partial';
+      (kind === 'partial' && drugText);
     return (
       <div className="flex flex-col gap-1 items-start max-w-[240px]">
         {worker.readinessManualHold && worker.readinessStatus === 'READY' ? (
@@ -382,7 +383,11 @@ export default function WorkersPage() {
           getReadinessBadge(worker.readinessStatus)
         )}
         {showDrugHint && drugText ? (
-          <span className="text-[10px] leading-snug text-destructive font-medium">{drugText}</span>
+          <span className="text-[10px] leading-snug text-destructive font-medium">
+            {mobDrugExpired ? 'รอตรวจใหม่ (mob)' : drugText}
+          </span>
+        ) : mobDrugExpired ? (
+          <span className="text-[10px] leading-snug text-orange-700 font-medium">รอตรวจใหม่ (mob)</span>
         ) : null}
         {isWorkerDispatchReady(worker) && worker.storeEquipmentReadiness === 'pending' ? (
           <Link

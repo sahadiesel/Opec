@@ -8,7 +8,6 @@ import {
   type ModuleKey,
   canView,
   canApprovePurchaseAsManager,
-  canSeeHrPillarUi,
   canSeeSalesPillarUi,
   canSeeOperationsPillarUi,
   canSeeStorePillarUi,
@@ -104,7 +103,7 @@ export function isHrManagerOnlyApprovalPath(p: string): boolean {
   );
 }
 
-/** เมนูเตรียมจ่าย / อนุมัติ payroll — ไม่แสดงให้ hr_officer */
+/** เมนูเตรียมจ่าย / อนุมัติ payroll — ไม่แสดงให้ hr_officer (ไม่มี worker_payroll) */
 function hrOfficerExcludedFromHrNavItem(user: User, item: HrNavItem): boolean {
   if (!isPrimaryHrOfficer(user)) return false;
   const full = item.href;
@@ -112,9 +111,6 @@ function hrOfficerExcludedFromHrNavItem(user: User, item: HrNavItem): boolean {
   if (full.includes('#hr-action-queue')) return true;
   if (base.startsWith('/hr/payroll-workbench')) return true;
   if (base.startsWith('/hr/payroll-approval')) return true;
-  if (base.startsWith('/hr/approval-center')) return true;
-  if (base.startsWith('/hr/timesheet-month-approval')) return true;
-  if (base.startsWith('/timesheets')) return true;
   if (base.startsWith('/payroll/')) return true;
   if (base === '/office-payroll' || base.startsWith('/office-payroll/')) return true;
   return false;
@@ -174,11 +170,7 @@ export function canViewHrHubItem(
   }
   const byMatrix = sidebarMatrixVisibilityForPath(user, item.href.split('#')[0]);
   if (byMatrix !== null) return byMatrix;
-  if (canView(user, item.key, profile)) return true;
-  if (item.href.startsWith('/hr/')) {
-    return canSeeHrPillarUi(user, profile);
-  }
-  return false;
+  return canView(user, item.key, profile);
 }
 
 /** เข้าหน้าจัดการลงเวลา / Kiosk QR — Payroll lead หรือ Timekeeper (มีโมดูล timesheets) */
@@ -282,6 +274,23 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     }
   }
 
+  /** เจ้าหน้าที่ปฏิบัติการ — ไม่เปิดหน้า Commercial (อ่านข้อมูล PO/สัญญาในคิว PO Active ผ่าน Firestore โดยตรง) */
+  if (!admin && denyWarehouseDocsRole === 'operations_officer') {
+    const deniedCommercial = [
+      '/billing-client',
+      '/customers',
+      '/quotations',
+      '/main-contracts',
+      '/purchase-orders',
+      '/sales-terms',
+      '/labor-cost-terms',
+      '/sales/dashboard',
+    ] as const;
+    if (deniedCommercial.some((pre) => p === pre || p.startsWith(`${pre}/`))) {
+      return false;
+    }
+  }
+
   if (p.startsWith('/users') || p.startsWith('/system-admin')) {
     return false;
   }
@@ -332,7 +341,6 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
   }
 
   if (p === '/' || p === '') {
-    if (isSimpleInternalEligible(user)) return true;
     return canView(user, 'overview_dashboard', profile);
   }
 
@@ -400,6 +408,14 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
       if (byMatrix !== null) return byMatrix;
       return canView(user, key, profile);
     }
+  }
+
+  /** path อ้างอิงใน menu-permission-map (ไม่มี route แยก — map ตาม module) */
+  if (p === '/hr/payroll') {
+    return canView(user, 'worker_payroll', profile);
+  }
+  if (p === '/hr/approval') {
+    return canView(user, 'hr_hub', profile);
   }
 
   return true;

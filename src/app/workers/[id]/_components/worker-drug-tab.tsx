@@ -16,7 +16,8 @@ import { addDoc, doc, deleteField, type Firestore, type CollectionReference } fr
 import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { useFirebaseApp } from '@/firebase';
-import { displayLocation, sortDrugTestsNewestFirst } from '@/lib/drug-test-panel';
+import { displayLocation, sortDrugTestsNewestFirst, computeDrugTestRowValidityStatus, drugTestRowValidityLabelTh } from '@/lib/drug-test-panel';
+import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { uploadWorkerDrugTestPhoto } from '@/lib/storage/worker-drug-test-photos';
 import Link from 'next/link';
 import type {
@@ -235,6 +236,7 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
                 <TableHead className="font-bold">วันที่ตรวจ</TableHead>
                 <TableHead className="font-bold">สถานที่ตรวจ</TableHead>
                 <TableHead className="font-bold">ผลตรวจ</TableHead>
+                <TableHead className="font-bold">สถานะ</TableHead>
                 <TableHead className="font-bold text-center">เอกสารแนบ</TableHead>
                 {canEdit ? <TableHead className="text-right pr-6 font-bold">จัดการ</TableHead> : null}
               </TableRow>
@@ -243,6 +245,8 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
               {sortedRecords.map((row) => {
                 const res = row.result;
                 const resLabel = res === 'negative' ? 'NEGATIVE' : res === 'positive' ? 'POSITIVE' : 'NONE';
+                const validity = computeDrugTestRowValidityStatus(row, thailandTodayYmd());
+                const validityLabel = drugTestRowValidityLabelTh(validity);
                 const thumbUrl = row.attachment?.downloadUrl;
                 return (
                   <TableRow key={row.id}>
@@ -264,6 +268,19 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
                       >
                         {resLabel}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {validity === 'valid' ? (
+                        <Badge variant="outline" className="bg-emerald-50 text-emerald-800 border-emerald-400 font-semibold">
+                          Valid
+                        </Badge>
+                      ) : validity === 'expired' ? (
+                        <Badge variant="outline" className="bg-orange-50 text-orange-800 border-orange-400 font-semibold">
+                          Expired
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-center">
                       {thumbUrl ? (

@@ -281,13 +281,17 @@ const MODULE_KEY_SET = new Set<ModuleKey>(SYSTEM_MODULES.map((m) => m.key));
 const MODULE_KEYS_WITHOUT_DOMAIN_ALIAS: ReadonlySet<string> = new Set(['payroll_runs', 'payslips']);
 
 /**
- * HR Officer: ทะเบียนลูกจ้าง สร้าง/แก้ไขได้ — ไม่มี commercial / payroll run / ทะเบียนพนักงานออฟฟิศ
+ * HR Officer: ทะเบียนลูกจ้าง สร้าง/แก้ไขได้ — ไม่มี commercial write / payroll run / ทะเบียนพนักงานออฟฟิศ
+ * อ่าน customers / contracts / PO ได้เพื่อคิว PO Active (Manpower)
  */
-const HR_OFFICER_BLOCKED_MODULE_KEYS = new Set<ModuleKey>([
+const HR_OFFICER_PO_STAFFING_READ_KEYS = new Set<ModuleKey>([
   'customers',
-  'quotations',
   'main_contracts',
   'customer_pos',
+]);
+
+const HR_OFFICER_BLOCKED_MODULE_KEYS = new Set<ModuleKey>([
+  'quotations',
   'sales_contract_terms',
   'rate_conditions',
   'profit_estimates',
@@ -526,16 +530,10 @@ export function getAccountingOfficerModulePermission(moduleKey: ModuleKey): Modu
   return { ...NO_ACCESS };
 }
 
-/** สิทธิ์โมดูลสำหรับ `timekeeper` — เน้นลงเวลา + ดูทะเบียนประกอบ (ไม่มีคลัง/จัดซื้อ/manpower) */
+/** สิทธิ์โมดูลสำหรับ `timekeeper` — สอดคล้อง sidebar (ลงเวลา / Kiosk เท่านั้น) */
 export function getTimekeeperModulePermission(moduleKey: ModuleKey): ModulePermission {
-  if (moduleKey === 'overview_dashboard') {
-    return { ...READ_ONLY };
-  }
   if (moduleKey === 'timesheets') {
     return { ...FULL_ACCESS };
-  }
-  if (moduleKey === 'workers' || moduleKey === 'worker_documents' || moduleKey === 'positions') {
-    return { ...READ_ONLY };
   }
   return { ...NO_ACCESS };
 }
@@ -706,9 +704,10 @@ export function getPermissions(
     return clonePermission(NO_ACCESS);
   }
 
-  /** พอร์ทัลโปรไฟล์ — ทุกพนักงานภายในที่ล็อกอินได้เข้าเมนูได้ (หน้าตรวจสอบการเชื่อมทะเบียน) */
+  /** พอร์ทัลโปรไฟล์ — พนักงานภายใน (ยกเว้น timekeeper — sidebar มีแค่ลงเวลา) */
   if (moduleKey === 'employee_self_profile') {
     if (!isSimpleInternalEligible(u)) return clonePermission(NO_ACCESS);
+    if (isTimekeeper(u)) return clonePermission(NO_ACCESS);
     return clonePermission({ ...READ_ONLY, create: true, edit: true });
   }
 
@@ -758,6 +757,11 @@ export function getPermissions(
   /** HR Officer: ลงเวลา / แนบเอกสาร timesheet — ไม่ submit/verify (manager) */
   if (isPrimaryHrOfficer(u) && moduleKey === 'timesheets') {
     return clonePermission({ view: true, create: true, edit: true, delete: false, approve: false });
+  }
+
+  /** HR Officer: อ่านลูกค้า/สัญญา/PO สำหรับคิว PO Active — ไม่แก้ commercial */
+  if (isPrimaryHrOfficer(u) && HR_OFFICER_PO_STAFFING_READ_KEYS.has(moduleKey)) {
+    return clonePermission(READ_ONLY);
   }
 
   if (isPrimaryHrOfficer(u) && HR_OFFICER_BLOCKED_MODULE_KEYS.has(moduleKey)) {
@@ -882,8 +886,6 @@ const HR_PILLAR_UI_KEYS: ModuleKey[] = [
 const SALES_PILLAR_UI_KEYS: ModuleKey[] = [
   'customers',
   'quotations',
-  'main_contracts',
-  'customer_pos',
   'rate_conditions',
   'profit_estimates',
 ];
@@ -1104,7 +1106,11 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       department: 'accounting',
       level: 'manager',
       isActive: true,
-      permissions: accountingPerms,
+      permissions: {
+        ...accountingPerms,
+        employee_self_profile: clonePermission({ ...READ_ONLY, create: true, edit: true }),
+        operations_petty_cash: clonePermission(NO_ACCESS),
+      },
     },
     {
       profileKey: 'accounting_officer',

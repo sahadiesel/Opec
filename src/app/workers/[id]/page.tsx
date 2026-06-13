@@ -50,8 +50,10 @@ import {
 } from '@/lib/types';
 import {
   computeDrugPanelWorkerFields,
+  computeDrugPanelMobDrugOk,
   DRUG_TEST_PANEL_DOC_PATH,
 } from '@/lib/drug-test-panel';
+import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -455,10 +457,11 @@ function WorkerDetailContent({ id }: { id: string }) {
     }
 
     const drugFields = computeDrugPanelWorkerFields(panelSubstances, drugTests || []);
-
-    if (newStatus === 'READY' && panelSubstances.length > 0 && !drugFields.readinessDrugOk) {
-      newStatus = 'DRUG_TEST_EXPIRED';
-    }
+    const drugPanelMobValid = computeDrugPanelMobDrugOk(
+      panelSubstances,
+      drugTests || [],
+      thailandTodayYmd(),
+    );
 
     if (newStatus === 'READY') {
       const hasExpiredIdentityDoc = (workerDocs || []).some((d) =>
@@ -515,6 +518,7 @@ function WorkerDetailContent({ id }: { id: string }) {
       worker.drugPanelSummaryText !== drugFields.drugPanelSummaryText ||
       Number(worker.drugPanelPassedCount ?? -1) !== drugFields.drugPanelPassedCount ||
       Number(worker.drugPanelTotalCount ?? -1) !== drugFields.drugPanelTotalCount ||
+      worker.drugPanelMobValid !== drugPanelMobValid ||
       (worker.storeEquipmentReadiness || 'na') !== storeEquipmentReadiness
     ) {
       updateDocumentNonBlocking(workerRef!, {
@@ -526,6 +530,7 @@ function WorkerDetailContent({ id }: { id: string }) {
         drugPanelSummaryText: drugFields.drugPanelSummaryText,
         drugPanelPassedCount: drugFields.drugPanelPassedCount,
         drugPanelTotalCount: drugFields.drugPanelTotalCount,
+        drugPanelMobValid,
         storeEquipmentReadiness,
       });
     }
