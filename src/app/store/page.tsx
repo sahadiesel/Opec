@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -29,6 +29,7 @@ import {
   BookOpen,
   ShieldAlert,
   Loader2,
+  Printer,
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -46,6 +47,18 @@ import Link from 'next/link';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useToast } from '@/hooks/use-toast';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
+  buildStoreDashboardListPrintHtml,
+  capStoreDashboardPrintRows,
+  mapDemandRequirementPrintRows,
+  mapPendingReturnPrintRows,
+  mapRecentTransactionPrintRows,
+  mapStockAlertPrintRows,
+  STORE_DASHBOARD_PRINT_FILE,
+  type StoreDashboardPrintTab,
+} from '@/lib/store/store-dashboard-list-print';
 
 const CUSTODY_PAGE_SIZE = 10;
 
@@ -53,10 +66,12 @@ export default function StoreDashboardPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { user: firebaseUser, isUserLoading } = useUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
 
   const [custodyPage, setCustodyPage] = useState(1);
   const [demandLoading, setDemandLoading] = useState(false);
   const [demandRows, setDemandRows] = useState<StoreDemandRequirementRow[]>([]);
+  const [printBusy, setPrintBusy] = useState(false);
 
   const canAccess = useMemo(() => canAccessDomain(currentUser, 'store'), [currentUser]);
   const isOpsOrHR = useMemo(
@@ -265,6 +280,115 @@ export default function StoreDashboardPage() {
       return la.localeCompare(lb, 'th');
     });
   }, [transactions, mobilizations, workers, officeStaff, isOpsOrHR, items]);
+
+  const workerNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const w of workers ?? []) {
+      m.set(w.id, `${w.firstName || ''} ${w.lastName || ''}`.trim() || w.id);
+    }
+    return m;
+  }, [workers]);
+
+  const officeNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const o of officeStaff ?? []) {
+      m.set(o.id, (o.fullName || '').trim() || o.id);
+    }
+    return m;
+  }, [officeStaff]);
+
+  const runDashboardPrint = useCallback(
+    async (tab: StoreDashboardPrintTab) => {
+      let rawRows: string[][] = [];
+      let totalCount = 0;
+
+      if (tab === 'alerts') {
+        if (stockAlerts.length === 0) {
+          toast({ variant: 'destructive', title: 'ไม่มีรายการให้พิมพ์', description: 'ไม่มีการแจ้งเตือนสต็อกในขณะนี้' });
+          return;
+        }
+        rawRows = mapStockAlertPrintRows(stockAlerts);
+        totalCount = stockAlerts.length;
+      } else if (tab === 'returns') {
+        if (pendingReturns.length === 0) {
+          toast({ variant: 'destructive', title: 'ไม่มีรายการให้พิมพ์', description: 'ไม่มีรายการค้างคืนในขณะนี้' });
+          return;
+        }
+        rawRows = mapPendingReturnPrintRows(pendingReturns);
+        totalCount = pendingReturns.length;
+      } else if (tab === 'recent') {
+        if (!transactions?.length) {
+          toast({ variant: 'destructive', title: 'ไม่มีรายการให้พิมพ์', description: 'ยังไม่มีความเคลื่อนไหวในระบบ' });
+          return;
+        }
+        rawRows = mapRecentTransactionPrintRows({
+          transactions,
+          items,
+          workerNameById,
+          officeNameById,
+          isOpsOrHR,
+        });
+        totalCount = transactions.length;
+      } else {
+        if (demandLoading) return;
+        if (demandRows.length === 0) {
+          toast({
+            variant: 'destructive',
+            title: 'ไม่มีรายการให้พิมพ์',
+            description: 'ไม่มีรายการที่ยังเบิกไม่ครบจาก mobilization',
+          });
+          return;
+        }
+        rawRows = mapDemandRequirementPrintRows(demandRows);
+        totalCount = demandRows.length;
+      }
+
+      setPrintBusy(true);
+      try {
+        const { rows, truncated } = capStoreDashboardPrintRows(rawRows);
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const body = buildStoreDashboardListPrintHtml({
+          tab,
+          rows,
+          rowCount: totalCount,
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+        const ok = await openStandardPrintWindow({
+          windowTitle: STORE_DASHBOARD_PRINT_FILE[tab],
+          suggestedFileName: STORE_DASHBOARD_PRINT_FILE[tab],
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+        }
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [
+      stockAlerts,
+      pendingReturns,
+      transactions,
+      items,
+      workerNameById,
+      officeNameById,
+      isOpsOrHR,
+      demandRows,
+      demandLoading,
+      currentUser,
+      toast,
+    ],
+  );
 
   useEffect(() => {
     if (!firestore || !canAccess || !items?.length) {
@@ -539,9 +663,16 @@ export default function StoreDashboardPage() {
                       </CardTitle>
                       <CardDescription>รายการสินค้าที่มีจำนวนคงเหลือต่ำกว่าเกณฑ์มาตรฐาน</CardDescription>
                     </div>
-                    <Button variant="outline" className="text-red-700 border-red-200 hover:bg-red-100" asChild>
-                      <Link href="/store/receive">สั่งซื้อ/รับเข้า <ArrowRight className="h-4 w-4 ml-2" /></Link>
-                    </Button>
+                    <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+                      <StoreTabPrintButton
+                        busy={printBusy}
+                        disabled={stockAlerts.length === 0}
+                        onClick={() => void runDashboardPrint('alerts')}
+                      />
+                      <Button variant="outline" className="text-red-700 border-red-200 hover:bg-red-100" asChild>
+                        <Link href="/store/receive">สั่งซื้อ/รับเข้า <ArrowRight className="h-4 w-4 ml-2" /></Link>
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
@@ -609,12 +740,21 @@ export default function StoreDashboardPage() {
             )}
             <Card className="shadow-lg overflow-hidden border-none">
               <CardHeader className="bg-amber-50/50 border-b">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Users className="h-5 w-5 text-amber-600" /> รายการค้างคืน (Pending Returns)
-                </CardTitle>
-                <CardDescription>
-                  ลูกจ้างหน้างานตาม mobilization และพนักงานออฟฟิศตามประวัติเบิกยืม — ยอดคำนวณจาก ISSUE หัก RETURN / DAMAGED / LOST
-                </CardDescription>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Users className="h-5 w-5 text-amber-600" /> รายการค้างคืน (Pending Returns)
+                    </CardTitle>
+                    <CardDescription>
+                      ลูกจ้างหน้างานตาม mobilization และพนักงานออฟฟิศตามประวัติเบิกยืม — ยอดคำนวณจาก ISSUE หัก RETURN / DAMAGED / LOST
+                    </CardDescription>
+                  </div>
+                  <StoreTabPrintButton
+                    busy={printBusy}
+                    disabled={pendingReturns.length === 0}
+                    onClick={() => void runDashboardPrint('returns')}
+                  />
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -679,9 +819,16 @@ export default function StoreDashboardPage() {
           <TabsContent value="recent" className="mt-6">
             <Card className="shadow-lg border-none overflow-hidden">
               <CardHeader className="bg-muted/30 border-b">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <History className="h-5 w-5 text-primary" /> ประวัติการทำรายการ (Recent Transactions)
-                </CardTitle>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <History className="h-5 w-5 text-primary" /> ประวัติการทำรายการ (Recent Transactions)
+                  </CardTitle>
+                  <StoreTabPrintButton
+                    busy={printBusy}
+                    disabled={!(transactions?.length)}
+                    onClick={() => void runDashboardPrint('recent')}
+                  />
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 <Table>
@@ -744,13 +891,22 @@ export default function StoreDashboardPage() {
           <TabsContent value="requirements" className="mt-6">
             <Card className="shadow-lg border-none overflow-hidden">
               <CardHeader className="bg-blue-50/50 border-b">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <ClipboardList className="h-5 w-5 text-blue-600" /> แผนความต้องการอุปกรณ์ (Demand Requirements)
-                </CardTitle>
-                <CardDescription>
-                  ความต้องการ = ลูกจ้าง ACTIVE ที่ assign แล้วแต่ยังเบิกไม่ครบ (ไม่นับที่เบิกครบ/WAIVED) · แสดงชื่อเมนตามโควต้าตำแหน่ง
-                  และสต็อกแยกรุ่นย่อยให้ตัดสินใจจัดซื้อเอง
-                </CardDescription>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <ClipboardList className="h-5 w-5 text-blue-600" /> แผนความต้องการอุปกรณ์ (Demand Requirements)
+                    </CardTitle>
+                    <CardDescription>
+                      ความต้องการ = ลูกจ้าง ACTIVE ที่ assign แล้วแต่ยังเบิกไม่ครบ (ไม่นับที่เบิกครบ/WAIVED) · แสดงชื่อเมนตามโควต้าตำแหน่ง
+                      และสต็อกแยกรุ่นย่อยให้ตัดสินใจจัดซื้อเอง
+                    </CardDescription>
+                  </div>
+                  <StoreTabPrintButton
+                    busy={printBusy}
+                    disabled={demandLoading || demandRows.length === 0}
+                    onClick={() => void runDashboardPrint('requirements')}
+                  />
+                </div>
               </CardHeader>
               <CardContent className="p-0">
                 {demandLoading ? (
@@ -842,6 +998,29 @@ export default function StoreDashboardPage() {
         </Tabs>
       </div>
     </AppShell>
+  );
+}
+
+function StoreTabPrintButton({
+  disabled,
+  busy,
+  onClick,
+}: {
+  disabled?: boolean;
+  busy?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      className="gap-2 h-10 border-amber-400 bg-amber-100 text-amber-950 hover:bg-amber-200 font-semibold shrink-0"
+      disabled={disabled || busy}
+      onClick={onClick}
+    >
+      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+      พิมพ์รายการ
+    </Button>
   );
 }
 

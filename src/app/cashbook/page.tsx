@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -19,7 +19,8 @@ import {
   TrendingUp,
   TrendingDown,
   Info,
-  Loader2
+  Loader2,
+  Printer,
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
@@ -46,6 +47,14 @@ import { recordCashbookMovementWithBalance } from '@/lib/services/cashbook-bank-
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate } from '@/lib/permissions';
 import { cashbookPnlFromEntries } from '@/lib/cashbook-pnl-stats';
+import {
+  buildCashbookListPrintHtml,
+  buildCashbookListPrintRow,
+  capCashbookListPrintRows,
+  describeCashbookListPrintFilters,
+  fmtCashbookPrintBaht,
+} from '@/lib/documents/cashbook-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 
 export default function CashbookPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -68,6 +77,8 @@ export default function CashbookPage() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [monthYm, setMonthYm] = useState(() => {
     const d = new Date();
@@ -134,6 +145,87 @@ export default function CashbookPage() {
       return haystack.includes(q);
     });
   }, [monthFilteredEntries, searchQuery, bankById]);
+
+  const printFilterLines = useMemo(
+    () => describeCashbookListPrintFilters(searchQuery, monthYm),
+    [searchQuery, monthYm],
+  );
+
+  const runCashbookListPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const source = scope === 'filtered' ? filteredEntries : monthFilteredEntries;
+      if (source.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งเดือน'
+              : `ยังไม่มีรายการในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`,
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const printRows = source.map((entry) => {
+          const bank = bankById.get(entry.bankAccountId);
+          const bankLabel = bank?.accountCode || bank?.bankName || '—';
+          return buildCashbookListPrintRow(entry, bankLabel);
+        });
+        const { rows, truncated } = capCashbookListPrintRows(printRows);
+        const printStats = cashbookPnlFromEntries(source, bankAccounts);
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines = scope === 'filtered' ? printFilterLines : describeCashbookListPrintFilters('', monthYm);
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งเดือนที่เลือก';
+
+        const body = buildCashbookListPrintHtml({
+          rows,
+          scopeTitle,
+          filterLines,
+          pnlInLabel: fmtCashbookPrintBaht(printStats.pnlIn),
+          pnlOutLabel: fmtCashbookPrintBaht(printStats.pnlOut),
+          netLabel: fmtCashbookPrintBaht(printStats.net),
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Cashbook-List',
+          suggestedFileName: `Cashbook-List-${scope === 'filtered' ? 'Filtered' : 'Month'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [
+      filteredEntries,
+      monthFilteredEntries,
+      bankById,
+      bankAccounts,
+      printFilterLines,
+      monthYm,
+      currentUser?.displayName,
+      toast,
+    ],
+  );
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -254,8 +346,66 @@ export default function CashbookPage() {
               />
             </div>
           </div>
-          
-          <Dialog open={canWriteCashbook && isDialogOpen} onOpenChange={setIsDialogOpen}>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 gap-2 px-4"
+              disabled={isLoading || monthFilteredEntries.length === 0}
+              onClick={() => setPrintDialogOpen(true)}
+            >
+              <Printer className="h-4 w-4" />
+              พิมพ์รายการ
+            </Button>
+
+            <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>พิมพ์รายการรายรับรายจ่าย</DialogTitle>
+                  <DialogDescription>
+                    เลือกพิมพ์ตามคำค้นหาในเดือนที่เลือก หรือพิมพ์ทุกรายการในเดือนนั้น (สูงสุด 500 รายการ)
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-3 text-sm">
+                  <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                    <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                    <ul className="list-disc list-inside text-xs text-muted-foreground">
+                      {printFilterLines.length > 0 ? (
+                        printFilterLines.map((line) => <li key={line}>{line}</li>)
+                      ) : (
+                        <li>เดือน: {formatPayrollYearMonthThaiBE(monthYm)} ({monthYm})</li>
+                      )}
+                    </ul>
+                    <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredEntries.length} รายการ</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    ทั้งเดือน {formatPayrollYearMonthThaiBE(monthYm)}: {monthFilteredEntries.length} รายการ
+                  </p>
+                </div>
+                <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={printBusy || filteredEntries.length === 0}
+                    onClick={() => void runCashbookListPrint('filtered')}
+                  >
+                    {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    พิมพ์ตามตัวกรอง ({filteredEntries.length})
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={printBusy || monthFilteredEntries.length === 0}
+                    onClick={() => void runCashbookListPrint('all')}
+                  >
+                    {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    พิมพ์ทั้งเดือน ({monthFilteredEntries.length})
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={canWriteCashbook && isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!canWriteCashbook}>
                 <Plus className="h-5 w-5" /> บันทึกรายการใหม่ (Manual Entry)
@@ -329,6 +479,7 @@ export default function CashbookPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         <Card className="shadow-lg border-none overflow-hidden">

@@ -123,6 +123,111 @@ export function describeLedgerPrintFilters(f: LedgerPrintFilterSummary): string[
   return lines;
 }
 
+const IL_PRINT_STYLES = `
+  @page { size: A4 landscape; margin: 8mm; }
+  .il-wrap {
+    font-family: Sarabun, sans-serif;
+    font-size: 10pt;
+    color: #111;
+    width: 100%;
+    max-width: 100%;
+  }
+  .il-head-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .il-head-left { flex: 1 1 58%; min-width: 0; }
+  .il-head-right {
+    flex: 0 1 42%;
+    margin: 0;
+    font-size: 9pt;
+    color: #555;
+    text-align: right;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+  }
+  .il-title { font-size: 16pt; font-weight: 800; margin: 0; color: #0f3d5c; }
+  .il-scope { font-weight: 700; margin: 0; }
+  .il-filters { margin: 0 0 8px; padding-left: 18px; font-size: 9pt; color: #333; }
+  .il-table {
+    width: 100%;
+    max-width: 100%;
+    border-collapse: collapse;
+    font-size: 9pt;
+    table-layout: fixed;
+  }
+  .il-table th, .il-table td {
+    border: 1px solid #ccc;
+    padding: 5px 6px;
+    vertical-align: top;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
+  }
+  .il-table th { background: #f3f4f6; font-weight: 700; text-align: left; }
+  .il-num { text-align: center; font-weight: 700; white-space: nowrap; }
+  .il-sub { font-size: 8pt; color: #666; }
+  .il-empty { text-align: center; padding: 24px; color: #666; font-style: italic; }
+  .il-foot { margin-top: 4px; font-size: 8pt; color: #666; }
+  @media print {
+    .il-wrap { overflow: visible !important; }
+    .il-title { font-size: 14pt; }
+    .il-table { font-size: 8.5pt; }
+    .sd-list-report.il-wrap .il-table th,
+    .sd-list-report.il-wrap .il-table td {
+      padding: 5px 6px;
+      line-height: 1.38;
+    }
+    .il-sub { font-size: 7.5pt; }
+    .il-foot {
+      page-break-before: auto !important;
+      break-before: auto !important;
+    }
+  }
+`;
+
+function buildIlFilterBlock(filterLines: string[]): {
+  filterBlock: string;
+  periodLine?: string;
+  scopeRightNote?: string;
+} {
+  const periodLine = filterLines.find((l) => l.startsWith('เดือน:'));
+  const otherFilterLines = filterLines.filter((l) => !l.startsWith('เดือน:'));
+  const filterBlock =
+    otherFilterLines.length > 0
+      ? `<ul class="il-filters">${otherFilterLines.map((l) => `<li>${escapeHtmlDoc(l)}</li>`).join('')}</ul>`
+      : '';
+  const scopeRightNote =
+    !periodLine && filterLines.length === 0 ? 'ไม่มีตัวกรอง — แสดงทุกรายการในชุดข้อมูล' : undefined;
+  return { filterBlock, periodLine, scopeRightNote };
+}
+
+function buildIlHeader(params: {
+  scopeTitle: string;
+  rowCount: number;
+  generatedAt: string;
+  printedBy?: string;
+  periodLine?: string;
+  scopeRightNote?: string;
+  filterBlock: string;
+}): string {
+  const printedMeta = `พิมพ์เมื่อ ${escapeHtmlDoc(params.generatedAt)}${params.printedBy ? ` · โดย ${escapeHtmlDoc(params.printedBy)}` : ''}`;
+  const scopeRight = params.periodLine ?? params.scopeRightNote;
+  return `
+  <div class="il-head-row">
+    <h1 class="il-title il-head-left">ประวัติการเคลื่อนไหวสินค้า (Inventory Ledger)</h1>
+    <p class="il-head-right">${printedMeta}</p>
+  </div>
+  <div class="il-head-row">
+    <p class="il-scope il-head-left">${escapeHtmlDoc(params.scopeTitle)} — ${params.rowCount} รายการ</p>
+    ${scopeRight ? `<p class="il-head-right">${escapeHtmlDoc(scopeRight)}</p>` : '<span class="il-head-right" aria-hidden="true"></span>'}
+  </div>
+  ${params.filterBlock}`;
+}
+
 export function buildInventoryLedgerPrintHtml(params: {
   rows: StoreTransaction[];
   ctx: LedgerPrintContext;
@@ -133,10 +238,7 @@ export function buildInventoryLedgerPrintHtml(params: {
 }): string {
   const { rows, ctx, scopeTitle, filterLines, generatedAt, printedBy } = params;
 
-  const filterBlock =
-    filterLines.length > 0
-      ? `<ul class="il-filters">${filterLines.map((l) => `<li>${escapeHtmlDoc(l)}</li>`).join('')}</ul>`
-      : '<p class="il-muted">ไม่มีตัวกรอง — แสดงทุกรายการในชุดข้อมูล</p>';
+  const { filterBlock, periodLine, scopeRightNote } = buildIlFilterBlock(filterLines);
 
   const tableRows =
     rows.length === 0
@@ -154,11 +256,11 @@ export function buildInventoryLedgerPrintHtml(params: {
             const refId = tx.referenceId?.substring(0, 12) || '—';
 
             return `<tr>
-              <td>${escapeHtmlDoc(dateStr)}<br/><span class="il-sub">${escapeHtmlDoc(timeStr)}</span></td>
+              <td>${escapeHtmlDoc(dateStr)} <span class="il-sub">${escapeHtmlDoc(timeStr)}</span></td>
               <td>${escapeHtmlDoc(typeLabel)}</td>
-              <td><strong>${escapeHtmlDoc(itemLabel)}</strong><br/><span class="il-sub">${escapeHtmlDoc(itemCode)}</span></td>
+              <td><strong>${escapeHtmlDoc(itemLabel)}</strong> <span class="il-sub">(${escapeHtmlDoc(itemCode)})</span></td>
               <td class="il-num">${escapeHtmlDoc(quantityDisplay(tx, unit))}</td>
-              <td>${escapeHtmlDoc(refType)}<br/><span class="il-sub">${escapeHtmlDoc(refId)}</span></td>
+              <td>${escapeHtmlDoc(refType)} <span class="il-sub">${escapeHtmlDoc(refId)}</span></td>
               <td>${escapeHtmlDoc(detailLines(tx, ctx) || '—')}</td>
               <td>${escapeHtmlDoc(tx.createdBy || '—')}</td>
             </tr>`;
@@ -166,27 +268,27 @@ export function buildInventoryLedgerPrintHtml(params: {
           .join('');
 
   return `
-<style>
-  .il-wrap { font-family: Sarabun, sans-serif; font-size: 10pt; color: #111; }
-  .il-title { font-size: 16pt; font-weight: 800; margin: 0 0 4px; color: #0f3d5c; }
-  .il-meta { font-size: 9pt; color: #555; margin-bottom: 12px; }
-  .il-scope { font-weight: 700; margin-bottom: 6px; }
-  .il-filters { margin: 0 0 12px; padding-left: 18px; font-size: 9pt; color: #333; }
-  .il-muted { font-size: 9pt; color: #666; margin: 0 0 12px; }
-  .il-table { width: 100%; border-collapse: collapse; font-size: 9pt; }
-  .il-table th, .il-table td { border: 1px solid #ccc; padding: 6px 8px; vertical-align: top; }
-  .il-table th { background: #f3f4f6; font-weight: 700; text-align: left; }
-  .il-num { text-align: center; font-weight: 700; white-space: nowrap; }
-  .il-sub { font-size: 8pt; color: #666; }
-  .il-empty { text-align: center; padding: 24px; color: #666; font-style: italic; }
-  .il-foot { margin-top: 10px; font-size: 8pt; color: #666; }
-</style>
-<div class="il-wrap">
-  <h1 class="il-title">ประวัติการเคลื่อนไหวสินค้า (Inventory Ledger)</h1>
-  <p class="il-meta">พิมพ์เมื่อ ${escapeHtmlDoc(generatedAt)}${printedBy ? ` · โดย ${escapeHtmlDoc(printedBy)}` : ''}</p>
-  <p class="il-scope">${escapeHtmlDoc(scopeTitle)} — ${rows.length} รายการ</p>
-  ${filterBlock}
+<style>${IL_PRINT_STYLES}</style>
+<div class="sd-list-report il-wrap">
+  ${buildIlHeader({
+    scopeTitle,
+    rowCount: rows.length,
+    generatedAt,
+    printedBy,
+    periodLine,
+    scopeRightNote,
+    filterBlock,
+  })}
   <table class="il-table">
+    <colgroup>
+      <col style="width:12%" />
+      <col style="width:13%" />
+      <col style="width:18%" />
+      <col style="width:8%" />
+      <col style="width:12%" />
+      <col style="width:25%" />
+      <col style="width:12%" />
+    </colgroup>
     <thead>
       <tr>
         <th>วันที่ / เวลา</th>

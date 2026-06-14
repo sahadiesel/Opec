@@ -602,15 +602,17 @@ service cloud.firestore {
       allow write: if isAccountingManagerOrAdmin();
     }
     match /executive_payroll_runs/{id} {
-      allow read: if rs19();
+      allow read: if rs0();
       allow write: if blockExecutiveWrite() && rs19();
     }
     match /executive_payroll_runs/{runId}/lines/{lineId} {
-      allow read: if rs19();
+      allow read: if rs0()
+        || isInternalUser()
+        || (isSignedIn() && resource.data.subjectLinkedUserId == request.auth.uid);
       allow write: if blockExecutiveWrite() && rs19();
     }
     match /executive_payroll_runs/{runId}/{document=**} {
-      allow read: if rs19();
+      allow read: if rs0();
       allow write: if blockExecutiveWrite() && rs19();
     }
     match /executive_payroll_staff/{id} {

@@ -437,7 +437,7 @@ export default function InventoryLedgerPage() {
                 <div className="relative">
                   <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none z-[1]" />
                   <Input
-                    placeholder="พิมพ์ชื่อ — เลือกจากรายการที่โผล่..."
+                    placeholder="พิมพ์ชื่อ — เลือกจากรายการที่แสดง..."
                     className="pl-9"
                     autoComplete="off"
                     value={holderSearchInput}
@@ -557,16 +557,16 @@ export default function InventoryLedgerPage() {
             {isTxLoading ? (
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลประวัติ...</div>
             ) : (
-              <Table>
+              <Table className="table-fixed w-full">
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4 pl-6 w-[150px]">วันที่ / เวลา</TableHead>
-                    <TableHead className="font-bold">ประเภท</TableHead>
-                    <TableHead className="font-bold">รหัส & ชื่ออุปกรณ์</TableHead>
-                    <TableHead className="font-bold text-center">จำนวน</TableHead>
-                    <TableHead className="font-bold">อ้างอิง (Ref)</TableHead>
-                    <TableHead className="font-bold">ผู้เบิก / รายละเอียด</TableHead>
-                    <TableHead className="text-right pr-6">ผู้บันทึก</TableHead>
+                    <TableHead className="font-bold py-4 pl-6 w-[132px]">วันที่ / เวลา</TableHead>
+                    <TableHead className="font-bold w-[88px]">ประเภท</TableHead>
+                    <TableHead className="font-bold w-[168px]">รหัส & ชื่ออุปกรณ์</TableHead>
+                    <TableHead className="font-bold text-center w-[72px]">จำนวน</TableHead>
+                    <TableHead className="font-bold w-[96px]">อ้างอิง (Ref)</TableHead>
+                    <TableHead className="font-bold w-[38%] min-w-[300px]">ผู้เบิก / รายละเอียด</TableHead>
+                    <TableHead className="text-right pr-6 w-[96px]">ผู้บันทึก</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -596,13 +596,15 @@ export default function InventoryLedgerPage() {
                         <TableCell>
                           {getTransactionBadge(tx.transactionType)}
                         </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-black text-sm text-primary flex items-center gap-1">
-                              <Package className="h-3 w-3 text-muted-foreground" />{' '}
-                              {item ? formatStoreItemLabel(item) : 'Unknown Item'}
+                        <TableCell className="max-w-[168px]">
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-black text-sm text-primary flex items-center gap-1 min-w-0">
+                              <Package className="h-3 w-3 shrink-0 text-muted-foreground" />
+                              <span className="truncate" title={item ? formatStoreItemLabel(item) : undefined}>
+                                {item ? formatStoreItemLabel(item) : 'Unknown Item'}
+                              </span>
                             </span>
-                            <span className="text-[10px] font-mono text-muted-foreground">{item?.itemCode || 'N/A'}</span>
+                            <span className="text-[10px] font-mono text-muted-foreground truncate">{item?.itemCode || 'N/A'}</span>
                           </div>
                         </TableCell>
                         <TableCell className="text-center font-black text-lg">
@@ -617,16 +619,16 @@ export default function InventoryLedgerPage() {
                             <span className="font-mono text-primary font-bold">{tx.referenceId?.substring(0, 12) || '-'}</span>
                           </div>
                         </TableCell>
-                        <TableCell className="max-w-[280px]">
-                          <div className="flex flex-col gap-0.5">
+                        <TableCell className="min-w-0 align-top">
+                          <div className="flex flex-col gap-0.5 min-w-0">
                             {requesterName ? (
-                              <span className="font-bold text-sm text-primary flex items-center gap-1.5">
+                              <span className="font-bold text-sm text-primary flex items-center gap-1.5 min-w-0">
                                 {(tx.officeStaffId || '').trim() ? (
                                   <Building2 className="h-3.5 w-3.5 shrink-0 text-sky-700" aria-hidden />
                                 ) : (
                                   <User className="h-3.5 w-3.5 shrink-0" aria-hidden />
                                 )}
-                                <span className="leading-tight">{requesterName}</span>
+                                <span className="leading-tight break-words">{requesterName}</span>
                               </span>
                             ) : (
                               <span className="text-xs text-muted-foreground italic">— ไม่มีผู้เบิกในบรรทัด (เช่น รับเข้า/ตัดยอดคลัง)</span>
@@ -646,11 +648,11 @@ export default function InventoryLedgerPage() {
                               </span>
                             ) : null}
                             {slipNote ? (
-                              <span className="text-[10px] text-muted-foreground truncate" title={tx.notes}>
+                              <span className="text-[10px] text-muted-foreground break-words" title={tx.notes}>
                                 {slipNote}
                               </span>
                             ) : tx.notes ? (
-                              <span className="text-[10px] text-muted-foreground truncate max-w-[260px]" title={tx.notes}>
+                              <span className="text-[10px] text-muted-foreground break-words" title={tx.notes}>
                                 {tx.notes}
                               </span>
                             ) : null}

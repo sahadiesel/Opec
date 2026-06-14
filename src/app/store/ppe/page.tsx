@@ -1,10 +1,10 @@
 'use client';
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, useCallback } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Plus, Search, Filter, ArrowLeft, HardHat, Trash2, Edit2, Layers } from 'lucide-react';
+import { Plus, Search, Filter, ArrowLeft, HardHat, Trash2, Edit2, Layers, Printer, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { StoreItem, StoreTransaction, storeItemIsPpeCatalog } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -38,6 +38,13 @@ import Link from 'next/link';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { StoreItemConsumableField } from '@/components/store/store-item-consumable-field';
+import {
+  buildStoreCatalogListPrintHtml,
+  capStoreCatalogListPrintRows,
+  describeStoreCatalogPrintFilters,
+  flattenStoreCatalogDisplayRows,
+} from '@/lib/store/store-catalog-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 
 type PpeCreateMode = 'main' | 'variant' | 'standalone';
 
@@ -170,6 +177,85 @@ export default function StorePpeCatalogPage() {
   const filteredDisplayRows = useMemo(
     () => filterPpeDisplayRows(displayRows, searchQuery, categoryFilter),
     [displayRows, searchQuery, categoryFilter],
+  );
+
+  const filteredPrintRowCount = useMemo(
+    () => flattenStoreCatalogDisplayRows(filteredDisplayRows).length,
+    [filteredDisplayRows],
+  );
+  const allPrintRowCount = useMemo(
+    () => flattenStoreCatalogDisplayRows(displayRows).length,
+    [displayRows],
+  );
+  const printFilterLines = useMemo(
+    () => describeStoreCatalogPrintFilters(searchQuery, categoryFilter),
+    [searchQuery, categoryFilter],
+  );
+  const hasActiveFilters = useMemo(
+    () => searchQuery.trim() !== '' || categoryFilter !== 'all',
+    [searchQuery, categoryFilter],
+  );
+
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
+
+  const runPpePrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const sourceRows = scope === 'filtered' ? filteredDisplayRows : displayRows;
+      const flat = flattenStoreCatalogDisplayRows(sourceRows);
+      if (flat.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
+              : 'ยังไม่มีรายการ PPE ในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const { rows, truncated } = capStoreCatalogListPrintRows(flat);
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines = scope === 'filtered' ? printFilterLines : [];
+        const scopeTitle = scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (PPE)';
+
+        const body = buildStoreCatalogListPrintHtml({
+          variant: 'ppe',
+          rows,
+          scopeTitle,
+          filterLines,
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Store-PPE-Registry',
+          suggestedFileName: `Store-PPE-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [filteredDisplayRows, displayRows, printFilterLines, currentUser, toast],
   );
 
   const { isVariantExpanded, toggleVariantExpanded } = useStoreCatalogVariantExpansion();
@@ -889,6 +975,56 @@ export default function StorePpeCatalogPage() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการทะเบียน PPE</DialogTitle>
+              <DialogDescription>
+                พิมพ์ตามตัวกรองปัจจุบัน หรือทั้งทะเบียน PPE — รวมรุ่นย่อยทุกเมน
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              {hasActiveFilters ? (
+                <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                  <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                  <ul className="list-disc list-inside text-xs text-muted-foreground space-y-0.5">
+                    {printFilterLines.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                  <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredPrintRowCount} แถว</p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  ยังไม่ได้ตั้งตัวกรอง — 「พิมพ์ตามตัวกรอง」จะพิมพ์ทุกแถวที่แสดง (เท่ากับพิมพ์ทั้งหมด)
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">ทั้งทะเบียน PPE: {allPrintRowCount} แถว (รวมรุ่นย่อย)</p>
+            </div>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={printBusy || filteredPrintRowCount === 0}
+                onClick={() => void runPpePrint('filtered')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Printer className="h-4 w-4 mr-2" />}
+                พิมพ์ตามตัวกรอง ({filteredPrintRowCount})
+              </Button>
+              <Button
+                type="button"
+                className="w-full sm:w-auto bg-orange-600 hover:bg-orange-700"
+                disabled={printBusy || allPrintRowCount === 0}
+                onClick={() => void runPpePrint('all')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Printer className="h-4 w-4 mr-2" />}
+                พิมพ์ทั้งหมด ({allPrintRowCount})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <Card className="shadow-lg border-none overflow-hidden">
           <CardHeader className="bg-muted/30">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -902,6 +1038,15 @@ export default function StorePpeCatalogPage() {
                 />
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 gap-2 shrink-0"
+                  onClick={() => setPrintDialogOpen(true)}
+                >
+                  <Printer className="h-4 w-4" />
+                  พิมพ์รายการ
+                </Button>
                 <Filter className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden />
                 <Select value={categoryFilter} onValueChange={setCategoryFilter}>
                   <SelectTrigger className="h-10 w-[200px]">

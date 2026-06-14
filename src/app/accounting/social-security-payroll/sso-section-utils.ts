@@ -118,15 +118,15 @@ export function executiveRowsToSsoTableFixed(rows: ExecutiveSsoRow[]): PayrollSs
   });
 }
 
-export function countSelectedForKind(
-  tableRows: PayrollSsoTableRow[],
-  selectedKeys: Set<string>,
-  kind: 'sso_remit' | 'employer_contrib',
-): number {
-  return tableRows.filter((r) => {
-    if (!selectedKeys.has(r.rowKey)) return false;
-    return kind === 'sso_remit' ? r.ssoPayable : r.employerPayable;
-  }).length;
+export function countSelectedPayable(tableRows: PayrollSsoTableRow[], selectedKeys: Set<string>): number {
+  return tableRows.filter((r) => selectedKeys.has(r.rowKey) && (r.ssoPayable || r.employerPayable)).length;
+}
+
+export function payAmountForRow(row: PayrollSsoTableRow): number {
+  let sum = 0;
+  if (row.ssoPayable) sum += row.sso;
+  if (row.employerPayable) sum += row.employerContrib;
+  return sum;
 }
 
 export function selectableKeySig(tableRows: PayrollSsoTableRow[]): string {

@@ -26,6 +26,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 import { useFirestore, useCollection, useMemoFirebase, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { Users, ExternalLink, Loader2, Search, Building2, Printer, Banknote, Paperclip } from 'lucide-react';
@@ -138,17 +139,27 @@ function officePayrollLinePaidAmount(line: OfficePayrollLine): number {
   return Number(line.netPay) || 0;
 }
 
+const WHT_BATCH_COL_WIDTH = '11%';
+const WHT_NAME_COL_WIDTH = '15%';
+const WHT_DATE_COL_WIDTH = '8%';
+/** 5 equal columns: ยอดจ่าย → เปิด */
+const WHT_EQUAL_FIVE_COL_WIDTH = '13%';
+
+const WHT_EQUAL_COL_HEAD =
+  'px-2 py-2 text-xs font-medium leading-snug align-middle whitespace-normal break-words';
+const WHT_EQUAL_COL_CELL = 'px-2 py-3 align-middle max-w-0';
+
 const WHT_PAYROLL_TABLE_COLGROUP = (showSelect: boolean) => (
   <colgroup>
-    {showSelect ? <col className="w-[44px]" /> : null}
-    <col className="w-[13%]" />
-    <col className="w-[22%]" />
-    <col className="w-[10%]" />
-    <col className="w-[11%]" />
-    <col className="w-[9%]" />
-    <col className="w-[11%]" />
-    <col className="w-[9%]" />
-    <col className="w-[72px]" />
+    {showSelect ? <col style={{ width: 44 }} /> : null}
+    <col style={{ width: WHT_BATCH_COL_WIDTH }} />
+    <col style={{ width: WHT_NAME_COL_WIDTH }} />
+    <col style={{ width: WHT_DATE_COL_WIDTH }} />
+    <col style={{ width: WHT_EQUAL_FIVE_COL_WIDTH }} />
+    <col style={{ width: WHT_EQUAL_FIVE_COL_WIDTH }} />
+    <col style={{ width: WHT_EQUAL_FIVE_COL_WIDTH }} />
+    <col style={{ width: WHT_EQUAL_FIVE_COL_WIDTH }} />
+    <col style={{ width: WHT_EQUAL_FIVE_COL_WIDTH }} />
   </colgroup>
 );
 
@@ -1158,14 +1169,14 @@ export default function AccountingWithholdingPayrollHubPage() {
                           />
                         </TableHead>
                       ) : null}
-                      <TableHead>ชุดจ่าย</TableHead>
+                      <TableHead>ชุดจ่าย / งวด</TableHead>
                       <TableHead>ผู้มีเงินได้</TableHead>
-                      <TableHead>วันที่จ่าย</TableHead>
-                      <TableHead className="text-right">ยอดจ่าย</TableHead>
-                      <TableHead>สถานะจ่ายค่าจ้าง</TableHead>
-                      <TableHead className="text-right">ยอดหัก</TableHead>
-                      <TableHead>สถานะจ่ายภาษี</TableHead>
-                      <TableHead className="text-right pr-3"> </TableHead>
+                      <TableHead className="whitespace-nowrap">วันที่จ่าย</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-right')}>ยอดจ่าย</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-center')}>สถานะจ่ายค่าจ้าง</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-right')}>ยอดหัก</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-center')}>สถานะจ่ายภาษี</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-center')}> </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1202,8 +1213,10 @@ export default function AccountingWithholdingPayrollHubPage() {
                               )}
                             </TableCell>
                           ) : null}
-                          <TableCell className="font-mono text-xs truncate" title={batch.id}>
-                            {batch.id}
+                          <TableCell className="text-xs">
+                            <div className="font-mono truncate" title={batch.id}>
+                              {batch.id}
+                            </div>
                           </TableCell>
                           <TableCell className="max-w-0">
                             <div className="truncate font-medium" title={line.workerNameSnapshot || '—'}>
@@ -1212,19 +1225,27 @@ export default function AccountingWithholdingPayrollHubPage() {
                             <div className="truncate text-xs text-muted-foreground font-mono">{line.workerId}</div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtBaht(paid)}</TableCell>
-                          <TableCell>{renderWageStatusBadge(wageLabel, wagePaid)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm font-semibold text-primary">
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>
+                            {fmtBaht(paid)}
+                          </TableCell>
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
+                            {renderWageStatusBadge(wageLabel, wagePaid)}
+                          </TableCell>
+                          <TableCell
+                            className={cn(WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm font-semibold text-primary')}
+                          >
                             {fmtBaht(pit)}
                           </TableCell>
-                          <TableCell>{renderTaxStatusBadge(wagePaid, taxPaid)}</TableCell>
-                          <TableCell className="text-right pr-3">
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
+                            {renderTaxStatusBadge(wagePaid, taxPaid)}
+                          </TableCell>
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
                             <Link
                               href={`/accounting/withholding-payroll/worker/${encodeURIComponent(batch.id)}/${encodeURIComponent(line.id)}`}
-                              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                              className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
                             >
                               เปิด
-                              <ExternalLink className="h-3.5 w-3.5" />
+                              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                             </Link>
                           </TableCell>
                         </TableRow>
@@ -1317,12 +1338,12 @@ export default function AccountingWithholdingPayrollHubPage() {
                       ) : null}
                       <TableHead>งวด</TableHead>
                       <TableHead>ผู้มีเงินได้</TableHead>
-                      <TableHead>วันที่จ่าย</TableHead>
-                      <TableHead className="text-right">ยอดจ่าย</TableHead>
-                      <TableHead>สถานะจ่ายค่าจ้าง</TableHead>
-                      <TableHead className="text-right">ยอดหัก</TableHead>
-                      <TableHead>สถานะจ่ายภาษี</TableHead>
-                      <TableHead className="text-right pr-3"> </TableHead>
+                      <TableHead className="whitespace-nowrap">วันที่จ่าย</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-right')}>ยอดจ่าย</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-center')}>สถานะจ่ายค่าจ้าง</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-right')}>ยอดหัก</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-center')}>สถานะจ่ายภาษี</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-center')}> </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1372,19 +1393,27 @@ export default function AccountingWithholdingPayrollHubPage() {
                             <div className="truncate text-xs text-muted-foreground font-mono">{line.staffId}</div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtBaht(paid)}</TableCell>
-                          <TableCell>{renderWageStatusBadge(wageLabel, wagePaid)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm font-semibold text-primary">
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>
+                            {fmtBaht(paid)}
+                          </TableCell>
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
+                            {renderWageStatusBadge(wageLabel, wagePaid)}
+                          </TableCell>
+                          <TableCell
+                            className={cn(WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm font-semibold text-primary')}
+                          >
                             {fmtBaht(tax)}
                           </TableCell>
-                          <TableCell>{renderTaxStatusBadge(wagePaid, taxPaid)}</TableCell>
-                          <TableCell className="text-right pr-3">
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
+                            {renderTaxStatusBadge(wagePaid, taxPaid)}
+                          </TableCell>
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
                             <Link
                               href={`/accounting/withholding-payroll/office/${encodeURIComponent(run.id)}/${encodeURIComponent(line.id)}`}
-                              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                              className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
                             >
                               เปิด
-                              <ExternalLink className="h-3.5 w-3.5" />
+                              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                             </Link>
                           </TableCell>
                         </TableRow>

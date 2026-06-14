@@ -32,7 +32,10 @@ import {
   renderTaxStatusBadge,
   renderWageStatusBadge,
   VENDOR_WHT_LIST_TABLE_COLGROUP,
+  VENDOR_WHT_EQUAL_COL_HEAD,
+  VENDOR_WHT_EQUAL_COL_CELL,
 } from '@/components/accounting/withholding-wht-pay-tax-ui';
+import { cn } from '@/lib/utils';
 import { useFirestore, useCollection, useMemoFirebase, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canSeeAccountingPillarUi, canExecuteBankCashbookPayments } from '@/lib/permissions';
@@ -712,13 +715,13 @@ export default function AccountingWithholdingVendorDocumentsPage() {
                       ) : null}
                       <TableHead>เลขที่หนังสือ</TableHead>
                       <TableHead>คู่ค้า</TableHead>
-                      <TableHead>วันที่จ่าย</TableHead>
-                      <TableHead className="text-right">ยอดจ่าย</TableHead>
-                      <TableHead>สถานะจ่ายคู่ค้า</TableHead>
-                      <TableHead className="text-right">ยอดหัก</TableHead>
-                      <TableHead>สถานะจ่ายภาษี</TableHead>
-                      <TableHead>ใบวางบิล / PO</TableHead>
-                      <TableHead className="text-right pr-3"> </TableHead>
+                      <TableHead className="whitespace-nowrap">วันที่จ่าย</TableHead>
+                      <TableHead className={cn(VENDOR_WHT_EQUAL_COL_HEAD, 'text-right')}>ยอดจ่าย</TableHead>
+                      <TableHead className={cn(VENDOR_WHT_EQUAL_COL_HEAD, 'text-center')}>สถานะจ่ายคู่ค้า</TableHead>
+                      <TableHead className={cn(VENDOR_WHT_EQUAL_COL_HEAD, 'text-right')}>ยอดหัก</TableHead>
+                      <TableHead className={cn(VENDOR_WHT_EQUAL_COL_HEAD, 'text-center')}>สถานะจ่ายภาษี</TableHead>
+                      <TableHead className={cn(VENDOR_WHT_EQUAL_COL_HEAD, 'text-center')}>ใบวางบิล / PO</TableHead>
+                      <TableHead className={cn(VENDOR_WHT_EQUAL_COL_HEAD, 'text-center')}> </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -767,13 +770,21 @@ export default function AccountingWithholdingVendorDocumentsPage() {
                             ) : null}
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{d.paymentDate || '—'}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm">{fmtBaht(vendorWhtPaidAmount(d))}</TableCell>
-                          <TableCell>{renderWageStatusBadge(paymentLabel, sourcePaid)}</TableCell>
-                          <TableCell className="text-right tabular-nums text-sm font-semibold text-primary">
+                          <TableCell className={cn(VENDOR_WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>
+                            {fmtBaht(vendorWhtPaidAmount(d))}
+                          </TableCell>
+                          <TableCell className={cn(VENDOR_WHT_EQUAL_COL_CELL, 'text-center')}>
+                            {renderWageStatusBadge(paymentLabel, sourcePaid)}
+                          </TableCell>
+                          <TableCell
+                            className={cn(VENDOR_WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm font-semibold text-primary')}
+                          >
                             {fmtBaht(Number(d.withholdingTaxAmount) || 0)}
                           </TableCell>
-                          <TableCell>{renderTaxStatusBadge(sourcePaid, taxPaid)}</TableCell>
-                          <TableCell className="text-xs">
+                          <TableCell className={cn(VENDOR_WHT_EQUAL_COL_CELL, 'text-center')}>
+                            {renderTaxStatusBadge(sourcePaid, taxPaid)}
+                          </TableCell>
+                          <TableCell className={cn(VENDOR_WHT_EQUAL_COL_CELL, 'text-xs')}>
                             <div className="font-mono truncate" title={d.referenceVendorBillNo || '—'}>
                               {d.referenceVendorBillNo || '—'}
                             </div>
@@ -781,13 +792,13 @@ export default function AccountingWithholdingVendorDocumentsPage() {
                               <div className="truncate text-muted-foreground">PO {d.referencePurchaseNo}</div>
                             ) : null}
                           </TableCell>
-                          <TableCell className="text-right pr-3">
+                          <TableCell className={cn(VENDOR_WHT_EQUAL_COL_CELL, 'text-center')}>
                             <Link
                               href={`/accounting/wht-certificates/${d.id}`}
-                              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                              className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
                             >
                               เปิด
-                              <ExternalLink className="h-3.5 w-3.5" />
+                              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                             </Link>
                           </TableCell>
                         </TableRow>

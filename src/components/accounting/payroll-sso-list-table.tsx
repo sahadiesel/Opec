@@ -7,9 +7,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ExternalLink } from 'lucide-react';
 import Link from 'next/link';
 import { fmtBaht, renderWageStatusBadge } from '@/components/accounting/withholding-wht-pay-tax-ui';
+import { cn } from '@/lib/utils';
 import {
   employerContribStatusLabel,
-  ssoRemitStatusLabel,
+  ssoCombinedRemitAmount,
 } from '@/lib/payroll/payroll-sso-payment-model';
 
 export type PayrollSsoTableRow = {
@@ -33,47 +34,57 @@ export type PayrollSsoTableRow = {
 
 export type PayrollSsoPayKind = 'sso_remit' | 'employer_contrib';
 
-export function renderSsoRemitStatusBadge(wagePaid: boolean, remitPaid: boolean) {
-  const label = ssoRemitStatusLabel(wagePaid, remitPaid);
+export function renderEmployerContribStatusBadge(wagePaid: boolean, contribPaid: boolean, ssoRemitPaid: boolean) {
+  const bothPaid = contribPaid && ssoRemitPaid;
+  const label = bothPaid
+    ? 'จ่ายแล้ว'
+    : !wagePaid
+      ? '—'
+      : contribPaid || ssoRemitPaid
+        ? 'จ่ายบางส่วน'
+        : employerContribStatusLabel(wagePaid, false);
   if (!wagePaid) return <span className="text-xs text-muted-foreground">—</span>;
-  if (remitPaid) {
-    return <Badge className="bg-red-600 hover:bg-red-600 text-white border-transparent">{label}</Badge>;
-  }
-  return (
-    <Badge variant="outline" className="border-red-300 text-red-700 bg-red-50">
-      {label}
-    </Badge>
-  );
-}
-
-export function renderEmployerContribStatusBadge(wagePaid: boolean, contribPaid: boolean) {
-  const label = employerContribStatusLabel(wagePaid, contribPaid);
-  if (!wagePaid) return <span className="text-xs text-muted-foreground">—</span>;
-  if (contribPaid) {
+  if (bothPaid) {
     return (
       <Badge className="bg-amber-500 hover:bg-amber-500 text-white border-transparent">{label}</Badge>
     );
   }
+  if (contribPaid || ssoRemitPaid) {
+    return (
+      <Badge variant="outline" className="border-amber-400 text-amber-800 bg-amber-50">
+        {label}
+      </Badge>
+    );
+  }
   return (
     <Badge variant="outline" className="border-amber-400 text-amber-800 bg-amber-50">
-      {label}
+      {employerContribStatusLabel(wagePaid, false)}
     </Badge>
   );
 }
 
+const SSO_BATCH_COL_WIDTH = '11%';
+const SSO_NAME_COL_WIDTH = '15%';
+const SSO_DATE_COL_WIDTH = '8%';
+/** 6 equal columns: ยอดจ่าย → เปิด */
+const SSO_EQUAL_SIX_COL_WIDTH = '11%';
+
+const SSO_EQUAL_COL_HEAD =
+  'px-2 py-2 text-xs font-medium leading-snug align-middle whitespace-normal break-words';
+const SSO_EQUAL_COL_CELL = 'px-2 py-3 align-middle max-w-0';
+
 export const SSO_LIST_TABLE_COLGROUP = (showSelect: boolean) => (
   <colgroup>
-    {showSelect ? <col className="w-[44px]" /> : null}
-    <col className="w-[11%]" />
-    <col className="w-[16%]" />
-    <col className="w-[9%]" />
-    <col className="w-[8%]" />
-    <col className="w-[8%]" />
-    <col className="w-[8%]" />
-    <col className="w-[8%]" />
-    <col className="w-[8%]" />
-    <col className="w-[8%]" />
-    <col className="w-[56px]" />
+    {showSelect ? <col style={{ width: 44 }} /> : null}
+    <col style={{ width: SSO_BATCH_COL_WIDTH }} />
+    <col style={{ width: SSO_NAME_COL_WIDTH }} />
+    <col style={{ width: SSO_DATE_COL_WIDTH }} />
+    <col style={{ width: SSO_EQUAL_SIX_COL_WIDTH }} />
+    <col style={{ width: SSO_EQUAL_SIX_COL_WIDTH }} />
+    <col style={{ width: SSO_EQUAL_SIX_COL_WIDTH }} />
+    <col style={{ width: SSO_EQUAL_SIX_COL_WIDTH }} />
+    <col style={{ width: SSO_EQUAL_SIX_COL_WIDTH }} />
+    <col style={{ width: SSO_EQUAL_SIX_COL_WIDTH }} />
   </colgroup>
 );
 
@@ -116,14 +127,13 @@ export function PayrollSsoListTable({
             ) : null}
             <TableHead>ชุดจ่าย / งวด</TableHead>
             <TableHead>ผู้มีเงินได้</TableHead>
-            <TableHead>วันที่จ่าย</TableHead>
-            <TableHead className="text-right">ยอดจ่าย</TableHead>
-            <TableHead>สถานะจ่ายค่าจ้าง</TableHead>
-            <TableHead className="text-right">ยอด ปส.</TableHead>
-            <TableHead>สถานะ ปส.</TableHead>
-            <TableHead className="text-right">ยอดสมทบ</TableHead>
-            <TableHead>สถานะสมทบ</TableHead>
-            <TableHead className="text-right pr-2"> </TableHead>
+            <TableHead className="whitespace-nowrap">วันที่จ่าย</TableHead>
+            <TableHead className={cn(SSO_EQUAL_COL_HEAD, 'text-right')}>ยอดจ่าย</TableHead>
+            <TableHead className={cn(SSO_EQUAL_COL_HEAD, 'text-center')}>สถานะจ่ายค่าจ้าง</TableHead>
+            <TableHead className={cn(SSO_EQUAL_COL_HEAD, 'text-right')}>ยอด ปกส.</TableHead>
+            <TableHead className={cn(SSO_EQUAL_COL_HEAD, 'text-right')}>ปกส.+สมทบ</TableHead>
+            <TableHead className={cn(SSO_EQUAL_COL_HEAD, 'text-center')}>สถานะ ปกส.+สมทบ</TableHead>
+            <TableHead className={cn(SSO_EQUAL_COL_HEAD, 'text-center')}> </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -174,23 +184,32 @@ export function PayrollSsoListTable({
                   <div className="truncate text-xs text-muted-foreground font-mono">{r.earnerId}</div>
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm">{r.paymentYmd}</TableCell>
-                <TableCell className="text-right tabular-nums text-sm">{fmtBaht(r.paid)}</TableCell>
-                <TableCell>{renderWageStatusBadge(r.wageLabel, r.wagePaid)}</TableCell>
-                <TableCell className="text-right tabular-nums text-sm font-medium text-red-700">
+                <TableCell className={cn(SSO_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>
+                  {fmtBaht(r.paid)}
+                </TableCell>
+                <TableCell className={cn(SSO_EQUAL_COL_CELL, 'text-center')}>
+                  {renderWageStatusBadge(r.wageLabel, r.wagePaid)}
+                </TableCell>
+                <TableCell
+                  className={cn(SSO_EQUAL_COL_CELL, 'text-right tabular-nums text-sm font-medium text-red-700')}
+                >
                   {fmtBaht(r.sso)}
                 </TableCell>
-                <TableCell>{renderSsoRemitStatusBadge(r.wagePaid, r.ssoRemitPaid)}</TableCell>
-                <TableCell className="text-right tabular-nums text-sm font-medium text-amber-800">
-                  {fmtBaht(r.employerContrib)}
+                <TableCell
+                  className={cn(SSO_EQUAL_COL_CELL, 'text-right tabular-nums text-sm font-semibold text-amber-900')}
+                >
+                  {fmtBaht(ssoCombinedRemitAmount(r.sso))}
                 </TableCell>
-                <TableCell>{renderEmployerContribStatusBadge(r.wagePaid, r.employerContribPaid)}</TableCell>
-                <TableCell className="text-right pr-2">
+                <TableCell className={cn(SSO_EQUAL_COL_CELL, 'text-center')}>
+                  {renderEmployerContribStatusBadge(r.wagePaid, r.employerContribPaid, r.ssoRemitPaid)}
+                </TableCell>
+                <TableCell className={cn(SSO_EQUAL_COL_CELL, 'text-center')}>
                   <Link
                     href={r.openHref}
-                    className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                    className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
                   >
                     เปิด
-                    <ExternalLink className="h-3.5 w-3.5" />
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                   </Link>
                 </TableCell>
               </TableRow>
@@ -202,40 +221,25 @@ export function PayrollSsoListTable({
   );
 }
 
-export function PayrollSsoPayButtons({
+export function PayrollSsoPayButton({
   canPay,
-  selectedSsoCount,
-  selectedEmployerCount,
-  onPaySso,
-  onPayEmployer,
+  selectedCount,
+  onPay,
 }: {
   canPay: boolean;
-  selectedSsoCount: number;
-  selectedEmployerCount: number;
-  onPaySso: () => void;
-  onPayEmployer: () => void;
+  selectedCount: number;
+  onPay: () => void;
 }) {
   if (!canPay) return null;
   return (
-    <div className="flex flex-wrap items-center gap-2 shrink-0">
-      <Button
-        type="button"
-        variant="secondary"
-        className="h-auto gap-2 px-4 py-3"
-        disabled={selectedSsoCount === 0}
-        onClick={onPaySso}
-      >
-        จ่ายประกันสังคม ({selectedSsoCount})
-      </Button>
-      <Button
-        type="button"
-        variant="secondary"
-        className="h-auto gap-2 px-4 py-3"
-        disabled={selectedEmployerCount === 0}
-        onClick={onPayEmployer}
-      >
-        จ่ายเงินสมทบ ({selectedEmployerCount})
-      </Button>
-    </div>
+    <Button
+      type="button"
+      variant="secondary"
+      className="h-auto shrink-0 gap-2 px-4 py-3"
+      disabled={selectedCount === 0}
+      onClick={onPay}
+    >
+      จ่าย ปกส.+สมทบ ({selectedCount})
+    </Button>
   );
 }

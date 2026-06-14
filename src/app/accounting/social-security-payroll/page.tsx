@@ -42,6 +42,7 @@ import {
   isWorkerPayrollWagePaid,
   isWorkerSsoRemitPaid,
   officeWageStatusLabel,
+  ssoCombinedRemitAmount,
   ssoRemitStatusLabel,
   workerWageStatusLabel,
 } from '@/lib/payroll/payroll-sso-payment-model';
@@ -62,7 +63,6 @@ import {
   workerLinePaidAmount,
   officeLinePaidAmount,
 } from '@/app/accounting/social-security-payroll/sso-section-utils';
-import { employerSsoContribAmount } from '@/lib/payroll/payroll-sso-payment-model';
 
 export type { WorkerSsoRow, OfficeSsoRow, ExecutiveSsoRow };
 
@@ -160,7 +160,7 @@ function buildSocialSecurityPrintRows(
       paymentDate: paymentYmd,
       paidLabel: fmtBaht(workerLinePaidAmount(line)),
       ssoLabel: fmtBaht(sso),
-      employerLabel: fmtBaht(employerSsoContribAmount(sso)),
+      employerLabel: fmtBaht(ssoCombinedRemitAmount(sso)),
     });
   }
   for (const { run, line, sso, paymentYmd } of offices) {
@@ -176,7 +176,7 @@ function buildSocialSecurityPrintRows(
       paymentDate: paymentYmd,
       paidLabel: fmtBaht(officeLinePaidAmount(line)),
       ssoLabel: fmtBaht(sso),
-      employerLabel: fmtBaht(employerSsoContribAmount(sso)),
+      employerLabel: fmtBaht(ssoCombinedRemitAmount(sso)),
     });
   }
   for (const { run, line, sso, paymentYmd } of executives) {
@@ -192,7 +192,7 @@ function buildSocialSecurityPrintRows(
       paymentDate: paymentYmd,
       paidLabel: fmtBaht(officeLinePaidAmount(line)),
       ssoLabel: fmtBaht(sso),
-      employerLabel: fmtBaht(employerSsoContribAmount(sso)),
+      employerLabel: fmtBaht(ssoCombinedRemitAmount(sso)),
     });
   }
   return rows;
@@ -443,15 +443,15 @@ export default function AccountingSocialSecurityPayrollHubPage() {
   }, [executiveRowsBySearch, monthFilter]);
 
   const workerTotalSso = useMemo(
-    () => filteredWorker.reduce((sum, { sso }) => sum + sso, 0),
+    () => filteredWorker.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0),
     [filteredWorker],
   );
   const officeTotalSso = useMemo(
-    () => filteredOffice.reduce((sum, { sso }) => sum + sso, 0),
+    () => filteredOffice.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0),
     [filteredOffice],
   );
   const executiveTotalSso = useMemo(
-    () => filteredExecutive.reduce((sum, { sso }) => sum + sso, 0),
+    () => filteredExecutive.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0),
     [filteredExecutive],
   );
 
@@ -494,9 +494,9 @@ export default function AccountingSocialSecurityPayrollHubPage() {
       setPrintBusy(true);
       try {
         const { rows, truncated } = capSocialSecurityPayrollListPrintRows(sourceRows);
-        const workerTotal = workers.reduce((sum, { sso }) => sum + sso, 0);
-        const officeTotal = offices.reduce((sum, { sso }) => sum + sso, 0);
-        const executiveTotal = executives.reduce((sum, { sso }) => sum + sso, 0);
+        const workerTotal = workers.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0);
+        const officeTotal = offices.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0);
+        const executiveTotal = executives.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0);
         const generatedAt = new Date().toLocaleString('th-TH', {
           dateStyle: 'medium',
           timeStyle: 'short',
@@ -573,7 +573,12 @@ export default function AccountingSocialSecurityPayrollHubPage() {
     );
   }
 
-  const listLoadErr = batchesErr || runsErr || executiveRunsErr;
+  const listLoadErr = batchesErr;
+  const officeLoadErr = runsErr || officeLinesErr;
+  const executiveLoadErr = executiveRunsErr || executiveLinesErr;
+
+  const formatLoadErr = (err: unknown) =>
+    err ? String((err as Error)?.message || err) : null;
 
   return (
     <AppShell user={user} onLogout={() => {}}>
@@ -639,7 +644,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                 </Button>
                 {!loadingBatches && !loadingRuns && !loadingExecutiveRuns && !loadingWorkerLines && !loadingOfficeLines && !loadingExecutiveLines ? (
                   <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-2 min-w-[11rem]">
-                    <p className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">รวมทั้ง 3 หมวด</p>
+                    <p className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">รวม ปกส.+สมทบ (3 หมวด)</p>
                     <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(grandTotal)}</p>
                   </div>
                 ) : null}
@@ -737,7 +742,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           description="เฉพาะบรรทัดที่มียอดหักประกันสังคมในงวดเงินเดือนออฟฟิศ — เปิดเพื่อดูสลิปประกอบ"
           icon={<Building2 className="h-5 w-5 shrink-0 text-muted-foreground" />}
           loading={loadingRuns || loadingOfficeLines}
-          error={officeLinesErr}
+          error={formatLoadErr(officeLoadErr)}
           emptyFiltered={
             officeRows.length === 0
               ? 'ยังไม่มีบรรทัดที่มียอดสมทบประกันสังคมในงวดพนักงานออฟฟิศล่าสุด'
@@ -760,7 +765,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           description="เฉพาะบรรทัดที่มียอดหักประกันสังคมในงวดเงินเดือนผู้บริหาร — เปิดเพื่อดูสลิปประกอบ"
           icon={<Briefcase className="h-5 w-5 shrink-0 text-muted-foreground" />}
           loading={loadingExecutiveRuns || loadingExecutiveLines}
-          error={executiveLinesErr}
+          error={formatLoadErr(executiveLoadErr)}
           emptyFiltered={
             executiveRows.length === 0
               ? 'ยังไม่มีบรรทัดที่มียอดสมทบประกันสังคมในงวดผู้บริหารล่าสุด'

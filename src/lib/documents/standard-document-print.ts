@@ -528,7 +528,7 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
       padding-top: 2mm;
     }
   }
-  /** รายงานรายการ (list print) — ไม่ใช้ sd-page; ลด padding และกันหน้าว่างท้ายเอกสาร */
+  /** รายงานรายการ (list print) — ไม่ใช้ sd-page; ลด padding; หลีกเลี่ยง page-break-after:avoid ที่ทำให้เกิดหน้าว่าง */
   body:has(.sd-list-report) {
     padding: 8mm 10mm 8mm 10mm;
     line-height: 1.35;
@@ -538,10 +538,12 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     body:has(.sd-list-report) {
       height: auto !important;
       min-height: 0 !important;
+      max-height: none !important;
       overflow: visible !important;
     }
     body:has(.sd-list-report) {
-      padding: 4mm 6mm 4mm 6mm !important;
+      padding: 0 !important;
+      margin: 0 !important;
     }
     body:has(.sd-list-report) script,
     body:has(.sd-list-report) textarea {
@@ -551,12 +553,32 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
       visibility: hidden !important;
     }
     .sd-list-report {
-      page-break-after: avoid;
-      break-after: avoid-page;
+      page-break-after: auto;
+      break-after: auto;
+      overflow: visible !important;
+      max-height: none !important;
     }
     .sd-list-report > :last-child {
-      page-break-after: avoid;
-      break-after: avoid-page;
+      page-break-after: auto;
+      break-after: auto;
+    }
+    .sd-list-report [class$="-wrap"] {
+      overflow: visible !important;
+      max-height: none !important;
+    }
+    /** ตาราง list print — ห้าม break-inside:avoid บน tr (Chrome สร้างหน้าว่างคั่น) */
+    .sd-list-report table,
+    .sd-list-report thead,
+    .sd-list-report tbody,
+    .sd-list-report tfoot,
+    .sd-list-report tr,
+    .sd-list-report td,
+    .sd-list-report th {
+      page-break-inside: auto !important;
+      break-inside: auto !important;
+    }
+    .sd-list-report thead {
+      display: table-header-group;
     }
     .sd-list-report [class$="-totals"] {
       gap: 6px;
@@ -575,8 +597,8 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     }
     .sd-list-report [class$="-foot"] {
       margin-top: 4px;
-      page-break-before: avoid;
-      break-before: avoid-page;
+      page-break-before: auto;
+      break-before: auto;
     }
   }
 `;
@@ -796,6 +818,19 @@ export function assembleStandardPrintPageHtml(params: {
 `;
 }
 
+/** ย้าย `<style>` นำหน้าใน bodyInnerHtml ของ list print ไป `<head>` — ลดหน้าว่างจาก Chrome print */
+function hoistLeadingBodyStyleTag(bodyHtml: string): { bodyHtml: string; extraHeadCss: string } {
+  const trimmed = bodyHtml.trimStart();
+  const styleMatch = trimmed.match(/^<style>\s*([\s\S]*?)\s*<\/style>\s*/i);
+  if (!styleMatch) {
+    return { bodyHtml, extraHeadCss: '' };
+  }
+  return {
+    bodyHtml: trimmed.slice(styleMatch[0].length),
+    extraHeadCss: styleMatch[1],
+  };
+}
+
 export function wrapStandardPrintDocument(
   title: string,
   bodyHtml: string,
@@ -803,16 +838,21 @@ export function wrapStandardPrintDocument(
 ): string {
   const lang = options?.lang === 'en' ? 'en' : 'th';
   const safeTitle = sanitizePrintFileBaseName(title);
-  /** ตั้งชื่อแท็บ + คัดลอกชื่อไฟล์อีกครั้งก่อนพิมพ์ (ใกล้เวลาเปิดไดอะล็อก Windows มากกว่าตอนกดในแอปหลัก) */
-  const titleHoldScript = `<script>(function(){var base=${JSON.stringify(safeTitle)};var fn=base+".pdf";function docTitle(){try{document.title=base}catch(e){}}function syncCopy(){try{var ta=document.createElement("textarea");ta.value=fn;ta.readOnly=true;ta.style.cssText="position:fixed;top:4px;left:4px;width:280px;height:44px;opacity:0.1;z-index:2147483647;font:12px monospace;padding:6px;border:1px solid #999";document.body.appendChild(ta);ta.focus();ta.select();if(ta.setSelectionRange)ta.setSelectionRange(0,fn.length);document.execCommand("copy");document.body.removeChild(ta);}catch(e){}}docTitle();addEventListener("beforeprint",function(){docTitle();syncCopy();},{capture:true});})();</script>`;
+  const isListReport = bodyHtml.includes('sd-list-report');
+  const { bodyHtml: normalizedBodyHtml, extraHeadCss } = hoistLeadingBodyStyleTag(bodyHtml);
+  /** รายงานรายการ: ไม่ใส่สคริปต์ท้าย body (beforeprint + textarea ทำให้ Chrome นับหน้าว่าง) — ชื่อไฟล์ตั้งใน openStandardPrintWindow แล้ว */
+  const titleHoldScript = isListReport
+    ? ''
+    : `<script>(function(){var base=${JSON.stringify(safeTitle)};var fn=base+".pdf";function docTitle(){try{document.title=base}catch(e){}}function syncCopy(){try{var ta=document.createElement("textarea");ta.value=fn;ta.readOnly=true;ta.style.cssText="position:fixed;top:4px;left:4px;width:280px;height:44px;opacity:0.1;z-index:2147483647;font:12px monospace;padding:6px;border:1px solid #999";document.body.appendChild(ta);ta.focus();ta.select();if(ta.setSelectionRange)ta.setSelectionRange(0,fn.length);document.execCommand("copy");document.body.removeChild(ta);}catch(e){}}docTitle();addEventListener("beforeprint",function(){docTitle();syncCopy();},{capture:true});})();</script>`;
+  const extraCssBlock = extraHeadCss ? `\n    <style>${extraHeadCss}</style>` : '';
   return `<!DOCTYPE html><html lang="${lang}"><head>
     <meta charset="utf-8"/>
     <title>${escapeHtmlDoc(safeTitle)}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com"/>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700;800&display=swap" rel="stylesheet"/>
-    <style>${STANDARD_DOCUMENT_PRINT_CSS}</style>
-  </head><body>${bodyHtml}${titleHoldScript}</body></html>`;
+    <style>${STANDARD_DOCUMENT_PRINT_CSS}</style>${extraCssBlock}
+  </head><body>${normalizedBodyHtml}${titleHoldScript}</body></html>`;
 }
 
 /**
@@ -858,12 +898,21 @@ export async function openStandardPrintWindow(params: {
   const runPrint = () => {
     if (didPrint || w.closed) return;
     didPrint = true;
-    try {
-      w.document.title = printFileTitle;
-      w.focus();
-      w.print();
-    } finally {
-      scheduleClose();
+    const doPrint = () => {
+      if (w.closed) return;
+      try {
+        w.document.title = printFileTitle;
+        w.focus();
+        w.print();
+      } finally {
+        scheduleClose();
+      }
+    };
+    const fontsReady = w.document.fonts?.ready;
+    if (fontsReady) {
+      fontsReady.then(() => window.setTimeout(doPrint, 80)).catch(() => doPrint());
+    } else {
+      window.setTimeout(doPrint, 150);
     }
   };
   try {

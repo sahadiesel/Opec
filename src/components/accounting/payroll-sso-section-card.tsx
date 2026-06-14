@@ -23,13 +23,14 @@ import {
 import { Loader2 } from 'lucide-react';
 import {
   PayrollSsoListTable,
-  PayrollSsoPayButtons,
+  PayrollSsoPayButton,
   type PayrollSsoPayKind,
   type PayrollSsoTableRow,
 } from '@/components/accounting/payroll-sso-list-table';
 import { fmtBaht } from '@/components/accounting/withholding-wht-pay-tax-ui';
 import {
-  countSelectedForKind,
+  countSelectedPayable,
+  payAmountForRow,
   selectableKeySig,
   type ExecutiveSsoRow,
   type OfficeSsoRow,
@@ -46,7 +47,7 @@ import { useToast } from '@/hooks/use-toast';
 
 export type SsoSectionKind = 'worker' | 'office' | 'executive';
 
-type PayDialogState = { kind: PayrollSsoPayKind } | null;
+type PayDialogState = true | null;
 
 export function PayrollSsoSectionCard({
   title,
@@ -105,54 +106,38 @@ export function PayrollSsoSectionCard({
     setSelectedKeys(new Set(keys));
   }, [keySig]);
 
-  const selectedSsoCount = useMemo(
-    () => countSelectedForKind(tableRows, selectedKeys, 'sso_remit'),
-    [tableRows, selectedKeys],
-  );
-  const selectedEmployerCount = useMemo(
-    () => countSelectedForKind(tableRows, selectedKeys, 'employer_contrib'),
+  const selectedPayCount = useMemo(
+    () => countSelectedPayable(tableRows, selectedKeys),
     [tableRows, selectedKeys],
   );
 
   const payTargets = useMemo(() => {
     if (!payDialog) return [];
-    return tableRows.filter((r) => {
-      if (!selectedKeys.has(r.rowKey)) return false;
-      return payDialog.kind === 'sso_remit' ? r.ssoPayable : r.employerPayable;
-    });
+    return tableRows.filter(
+      (r) => selectedKeys.has(r.rowKey) && (r.ssoPayable || r.employerPayable),
+    );
   }, [payDialog, tableRows, selectedKeys]);
 
   const payDialogTotal = useMemo(
-    () =>
-      payTargets.reduce(
-        (sum, r) => sum + (payDialog?.kind === 'sso_remit' ? r.sso : r.employerContrib),
-        0,
-      ),
-    [payTargets, payDialog],
+    () => payTargets.reduce((sum, r) => sum + payAmountForRow(r), 0),
+    [payTargets],
   );
 
-  const openPayDialog = useCallback(
-    (kind: PayrollSsoPayKind) => {
-      const count = kind === 'sso_remit' ? selectedSsoCount : selectedEmployerCount;
-      if (count === 0) {
-        toast({
-          variant: 'destructive',
-          title: 'ไม่มีรายการที่พร้อมจ่าย',
-          description:
-            kind === 'sso_remit'
-              ? 'ต้องจ่ายค่าจ้างแล้วและยังไม่ได้จ่ายประกันสังคม'
-              : 'ต้องจ่ายค่าจ้างแล้วและยังไม่ได้จ่ายเงินสมทบ',
-        });
-        return;
-      }
-      setPayDialog({ kind });
-      setPayBankId((prev) =>
-        prev && operatingBankOptions.some((b) => b.id === prev) ? prev : (operatingBankOptions[0]?.id ?? ''),
-      );
-      setPayDate(new Date().toISOString().slice(0, 10));
-    },
-    [selectedSsoCount, selectedEmployerCount, operatingBankOptions, toast],
-  );
+  const openPayDialog = useCallback(() => {
+    if (selectedPayCount === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีรายการที่พร้อมจ่าย',
+        description: 'ต้องจ่ายค่าจ้างแล้วและยังไม่ได้จ่าย ปกส.+สมทบ ครบ',
+      });
+      return;
+    }
+    setPayDialog(true);
+    setPayBankId((prev) =>
+      prev && operatingBankOptions.some((b) => b.id === prev) ? prev : (operatingBankOptions[0]?.id ?? ''),
+    );
+    setPayDate(new Date().toISOString().slice(0, 10));
+  }, [selectedPayCount, operatingBankOptions, toast]);
 
   const patchLineAfterPay = useCallback(
     (rowKey: string, kind: PayrollSsoPayKind, result: { cashbookEntryId: string; entryNo: string }, bankId: string) => {
@@ -219,46 +204,52 @@ export function PayrollSsoSectionCard({
 
     try {
       for (const target of payTargets) {
+        const kinds: PayrollSsoPayKind[] = [];
+        if (target.ssoPayable) kinds.push('sso_remit');
+        if (target.employerPayable) kinds.push('employer_contrib');
+
         try {
-          if (sectionKind === 'worker' && workerRows) {
-            const row = workerRows.find((r) => `worker::${r.batch.id}::${r.line.id}` === target.rowKey);
-            if (!row) continue;
-            const result = await recordWorkerPayrollSsoPayment(firestore, currentUser, {
-              batch: row.batch,
-              line: row.line,
-              kind: payDialog.kind,
-              employeeSsoAmount: row.sso,
-              bankAccountId: payBankId,
-              entryDate: payDate,
-              earnerName: row.line.workerNameSnapshot || row.line.workerId,
-            });
-            patchLineAfterPay(target.rowKey, payDialog.kind, result, payBankId);
-          } else if (sectionKind === 'office' && officeRows) {
-            const row = officeRows.find((r) => `office::${r.run.id}::${r.line.id}` === target.rowKey);
-            if (!row) continue;
-            const result = await recordOfficePayrollSsoPayment(firestore, currentUser, {
-              run: row.run,
-              line: row.line,
-              kind: payDialog.kind,
-              employeeSsoAmount: row.sso,
-              bankAccountId: payBankId,
-              entryDate: payDate,
-              earnerName: row.line.staffName || row.line.staffId,
-            });
-            patchLineAfterPay(target.rowKey, payDialog.kind, result, payBankId);
-          } else if (sectionKind === 'executive' && executiveRows) {
-            const row = executiveRows.find((r) => `executive::${r.run.id}::${r.line.id}` === target.rowKey);
-            if (!row) continue;
-            const result = await recordExecutivePayrollSsoPayment(firestore, currentUser, {
-              run: row.run,
-              line: row.line,
-              kind: payDialog.kind,
-              employeeSsoAmount: row.sso,
-              bankAccountId: payBankId,
-              entryDate: payDate,
-              earnerName: row.line.staffName || row.line.staffId,
-            });
-            patchLineAfterPay(target.rowKey, payDialog.kind, result, payBankId);
+          for (const kind of kinds) {
+            if (sectionKind === 'worker' && workerRows) {
+              const row = workerRows.find((r) => `worker::${r.batch.id}::${r.line.id}` === target.rowKey);
+              if (!row) continue;
+              const result = await recordWorkerPayrollSsoPayment(firestore, currentUser, {
+                batch: row.batch,
+                line: row.line,
+                kind,
+                employeeSsoAmount: row.sso,
+                bankAccountId: payBankId,
+                entryDate: payDate,
+                earnerName: row.line.workerNameSnapshot || row.line.workerId,
+              });
+              patchLineAfterPay(target.rowKey, kind, result, payBankId);
+            } else if (sectionKind === 'office' && officeRows) {
+              const row = officeRows.find((r) => `office::${r.run.id}::${r.line.id}` === target.rowKey);
+              if (!row) continue;
+              const result = await recordOfficePayrollSsoPayment(firestore, currentUser, {
+                run: row.run,
+                line: row.line,
+                kind,
+                employeeSsoAmount: row.sso,
+                bankAccountId: payBankId,
+                entryDate: payDate,
+                earnerName: row.line.staffName || row.line.staffId,
+              });
+              patchLineAfterPay(target.rowKey, kind, result, payBankId);
+            } else if (sectionKind === 'executive' && executiveRows) {
+              const row = executiveRows.find((r) => `executive::${r.run.id}::${r.line.id}` === target.rowKey);
+              if (!row) continue;
+              const result = await recordExecutivePayrollSsoPayment(firestore, currentUser, {
+                run: row.run,
+                line: row.line,
+                kind,
+                employeeSsoAmount: row.sso,
+                bankAccountId: payBankId,
+                entryDate: payDate,
+                earnerName: row.line.staffName || row.line.staffId,
+              });
+              patchLineAfterPay(target.rowKey, kind, result, payBankId);
+            }
           }
           paidKeys.add(target.rowKey);
           success += 1;
@@ -277,7 +268,7 @@ export function PayrollSsoSectionCard({
 
       if (errors.length === 0) {
         toast({
-          title: payDialog.kind === 'sso_remit' ? 'บันทึกจ่ายประกันสังคมแล้ว' : 'บันทึกจ่ายเงินสมทบแล้ว',
+          title: 'บันทึกจ่าย ปกส.+สมทบ แล้ว',
           description: `จ่ายสำเร็จ ${success} รายการ · ตัดบัญชีและบันทึก cashbook เรียบร้อย`,
         });
         setPayDialog(null);
@@ -328,15 +319,13 @@ export function PayrollSsoSectionCard({
             </div>
             {!loading && !error ? (
               <div className="flex flex-wrap items-stretch gap-2 shrink-0">
-                <PayrollSsoPayButtons
+                <PayrollSsoPayButton
                   canPay={canPay}
-                  selectedSsoCount={selectedSsoCount}
-                  selectedEmployerCount={selectedEmployerCount}
-                  onPaySso={() => openPayDialog('sso_remit')}
-                  onPayEmployer={() => openPayDialog('employer_contrib')}
+                  selectedCount={selectedPayCount}
+                  onPay={openPayDialog}
                 />
                 <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-3 text-right shadow-sm sm:min-w-[180px]">
-                  <p className="text-xs font-medium text-muted-foreground">ยอด ปส. รวม (ในตาราง)</p>
+                  <p className="text-xs font-medium text-muted-foreground">ยอด ปกส.+สมทบ รวม (ในตาราง)</p>
                   <p className="text-xl font-bold tabular-nums tracking-tight text-primary">{totalSsoLabel}</p>
                 </div>
               </div>
@@ -366,11 +355,9 @@ export function PayrollSsoSectionCard({
       <Dialog open={!!payDialog} onOpenChange={(open) => !open && !payBusy && setPayDialog(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              {payDialog?.kind === 'sso_remit' ? 'จ่ายประกันสังคม' : 'จ่ายเงินสมทบนายจ้าง'}
-            </DialogTitle>
+            <DialogTitle>จ่าย ปกส.+สมทบ</DialogTitle>
             <DialogDescription>
-              เลือกบัญชีธนาคารสำหรับตัดจ่าย — ระบบจะบันทึกรายการ cashbook แยกตามรายการที่เลือก
+              ตัดจ่ายประกันสังคมและเงินสมทบนายจ้างพร้อมกัน — ระบบบันทึก cashbook แยก 2 รายการต่อคน (ถ้ายังไม่จ่ายครบ)
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 text-sm">

@@ -35,6 +35,11 @@ export function employerSsoContribAmount(employeeSsoAmount: number): number {
   return Math.round((Number(employeeSsoAmount) || 0) * 100) / 100;
 }
 
+/** ยอดนำส่งรวม ปกส.+สมทบ (ลูกจ้าง + นายจ้าง) — แสดงในตารางและสรุปยอด */
+export function ssoCombinedRemitAmount(employeeSsoAmount: number): number {
+  return Math.round((Number(employeeSsoAmount) || 0) * 2 * 100) / 100;
+}
+
 export function ssoRemitStatusLabel(wagePaid: boolean, remitPaid: boolean): string {
   return whtTaxStatusLabel(wagePaid, remitPaid);
 }

@@ -106,16 +106,26 @@ export const WHT_LIST_TABLE_COLGROUP = (showSelect: boolean) => (
   </colgroup>
 );
 
+export const VENDOR_WHT_CERT_COL_WIDTH = '11%';
+export const VENDOR_WHT_NAME_COL_WIDTH = '15%';
+export const VENDOR_WHT_DATE_COL_WIDTH = '8%';
+export const VENDOR_WHT_EQUAL_COL_WIDTH = '11%';
+
+export const VENDOR_WHT_EQUAL_COL_HEAD =
+  'px-2 py-2 text-xs font-medium leading-snug align-middle whitespace-normal break-words';
+export const VENDOR_WHT_EQUAL_COL_CELL = 'px-2 py-3 align-middle max-w-0';
+
 export const VENDOR_WHT_LIST_TABLE_COLGROUP = (showSelect: boolean) => (
   <colgroup>
-    {showSelect ? <col className="w-[44px]" /> : null}
-    <col className="w-[12%]" />
-    <col className="w-[20%]" />
-    <col className="w-[10%]" />
-    <col className="w-[10%]" />
-    <col className="w-[9%]" />
-    <col className="w-[10%]" />
-    <col className="w-[14%]" />
-    <col className="w-[72px]" />
+    {showSelect ? <col style={{ width: 44 }} /> : null}
+    <col style={{ width: VENDOR_WHT_CERT_COL_WIDTH }} />
+    <col style={{ width: VENDOR_WHT_NAME_COL_WIDTH }} />
+    <col style={{ width: VENDOR_WHT_DATE_COL_WIDTH }} />
+    <col style={{ width: VENDOR_WHT_EQUAL_COL_WIDTH }} />
+    <col style={{ width: VENDOR_WHT_EQUAL_COL_WIDTH }} />
+    <col style={{ width: VENDOR_WHT_EQUAL_COL_WIDTH }} />
+    <col style={{ width: VENDOR_WHT_EQUAL_COL_WIDTH }} />
+    <col style={{ width: VENDOR_WHT_EQUAL_COL_WIDTH }} />
+    <col style={{ width: VENDOR_WHT_EQUAL_COL_WIDTH }} />
   </colgroup>
 );
