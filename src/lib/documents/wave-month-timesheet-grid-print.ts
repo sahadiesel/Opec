@@ -97,7 +97,7 @@ export function buildWaveMonthTimesheetGridPrintHtml(params: {
     <tbody>${tableRows}</tbody>
   </table>
   <p class="wm-legend">
-    <strong>คีย์:</strong> W=ทำงาน · SB=สแตนด์บาย · T=เดินทาง · M=Mob · D=Demob · «-»=ยังไม่มีบันทึก
+    <strong>คีย์:</strong> W=ทำงาน · SB=สแตนด์บาย · T=เดินทาง · M1=Mob · D1=Demob · «-»=ยังไม่มีบันทึก
   </p>
   <p class="wm-foot">OPEC OpsFlow — ตารางสรุปลงเวลารายเดือน</p>
 </div>`;

@@ -1709,7 +1709,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                     </Table>
                     <div className="border-t px-4 py-3 text-xs text-muted-foreground space-y-1">
                       <p>
-                        <strong>คีย์:</strong> ตัวอักษร = ประเภทวัน (W ทำงาน, SB สแตนด์บาย, T เดินทาง, M Mob, D Demob ฯลฯ) · เซลล์ «-» = ยังไม่มีบันทึกหรือวันไม่จ่าย —{' '}
+                        <strong>คีย์:</strong> ตัวอักษร = ประเภทวัน (W ทำงาน, SB สแตนด์บาย, T เดินทาง, M1 Mob, D1 Demob ฯลฯ) · เซลล์ «-» = ยังไม่มีบันทึกหรือวันไม่จ่าย —{' '}
                         <strong className="text-emerald-700">เขียว</strong>=ทำงาน{' '}
                         <strong className="text-sky-700">ฟ้า</strong>=สแตนด์บาย{' '}
                         <strong className="text-violet-700">ม่วง</strong>=เดินทาง{' '}
