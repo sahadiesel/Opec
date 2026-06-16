@@ -9,6 +9,7 @@ import {
   ModulePermission,
   RoleType,
   BusinessRoleKey,
+  PurchaseRequest,
 } from './types';
 import { resolvePermissionModuleKey } from './permission-module-map';
 import {
@@ -420,7 +421,16 @@ export function getPayrollOfficerModulePermission(moduleKey: ModuleKey): ModuleP
   return { ...NO_ACCESS };
 }
 
-/** VCEA ไม่ลบ — manpower / invoice ของเจ้าหน้าที่บัญชี (คลังใช้ FULL_ACCESS แยก — เทียบ store_officer) */
+/** คลัง/จัดซื้อ — สร้างและส่ง PR ได้ แต่ไม่อนุมัติ PR (อนุมัติโดยผู้จัดการปฏิบัติการ) */
+const ACCOUNTING_OFFICER_STORE_ACCESS: ModulePermission = {
+  view: true,
+  create: true,
+  edit: true,
+  delete: true,
+  approve: false,
+};
+
+/** VCEA ไม่ลบ — manpower / invoice ของเจ้าหน้าที่บัญชี */
 const ACCOUNTING_OFFICER_OPS_ACCESS: ModulePermission = {
   view: true,
   create: true,
@@ -470,8 +480,7 @@ export function getAccountingOfficerModulePermission(moduleKey: ModuleKey): Modu
     moduleKey === 'purchases' ||
     moduleKey === 'store_inventory'
   ) {
-    /** คลัง/จัดซื้อ — สิทธิ์เทียบ store_officer (VCEDA) */
-    return { ...FULL_ACCESS };
+    return { ...ACCOUNTING_OFFICER_STORE_ACCESS };
   }
 
   if (
@@ -971,11 +980,23 @@ export const isAccountingStaff = (user: User | null) =>
 export const isStoreStaff = (user: User | null) => isSimpleInternalEligible(normalizeCurrentUserPermissions(user));
 export const isInternalStaff = (user: User | null) => isSimpleInternalEligible(normalizeCurrentUserPermissions(user));
 
-/** อนุมัติใบสั่งซื้อภายใน (คลังส่งขอ) — ผู้จัดการปฏิบัติการ / หัวหน้าแนวเดียวกับ admin ธุรกิจ */
+/** อนุมัติใบสั่งซื้อภายใน (คลังส่งขอ) — ผู้จัดการปฏิบัติการ / หัวหน้าแนวเดียวกับ admin ธุรกิจ (ไม่รวมฝ่ายบัญชี) */
 export function canApprovePurchaseAsManager(user: User | null): boolean {
   if (!user || isExecutiveViewer(user)) return false;
+  if (isAccountingOfficer(user) || isAccountingManager(user)) return false;
   if (isSystemAdmin(user)) return true;
   return isOperationManager(user) || isOperationsPillarExecutive(user);
+}
+
+/** อนุมัติ/ไม่อนุมัติ PR — ห้ามผู้ขออนุมัติเอง */
+export function canDecidePurchaseRequest(
+  user: User | null,
+  pr: Pick<PurchaseRequest, 'requestedByUid'> | null | undefined,
+): boolean {
+  if (!canApprovePurchaseAsManager(user) || !user) return false;
+  const requesterUid = pr?.requestedByUid?.trim();
+  if (requesterUid && requesterUid === user.id) return false;
+  return true;
 }
 
 /** ตัดจ่ายผ่านบัญชีธนาคาร / cashbook — ผู้จัดการบัญชีหรือแอดมิน (ไม่รวม accounting_officer) */

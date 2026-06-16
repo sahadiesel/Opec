@@ -164,6 +164,26 @@ service cloud.firestore {
     function rs4() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'operations_manager', 'accounting_manager']); }
     function rs5() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'operations_manager']); }
     function rs6() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    /** PR: อนุมัติ/ไม่อนุมัติ — ผู้จัดการปฏิบัติการ (ไม่รวม accounting_officer / accounting_manager) */
+    function canDecidePurchaseRequestMatrix() {
+      return isInternalUser() && userRole() in ['system_admin', 'operations_manager', 'hr_manager', 'sales_manager'];
+    }
+    function isPurchaseRequestDecisionTransition() {
+      return resource.data.status == 'PENDING_APPROVAL'
+        && request.resource.data.status in ['APPROVED', 'REJECTED'];
+    }
+    function purchaseRequestDecisionWriteOk() {
+      return isPurchaseRequestDecisionTransition()
+        && canDecidePurchaseRequestMatrix()
+        && (
+          !('requestedByUid' in resource.data)
+          || resource.data.requestedByUid == null
+          || request.auth.uid != resource.data.requestedByUid
+        );
+    }
+    function purchaseRequestUpdateOk() {
+      return !isPurchaseRequestDecisionTransition() || purchaseRequestDecisionWriteOk();
+    }
     function rs7() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'store_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
     function rs8() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'timekeeper', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
     function rs9() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
@@ -344,7 +364,9 @@ service cloud.firestore {
     }
     match /purchase_requests/{id} {
       allow read: if rs6();
-      allow write: if blockExecutiveWrite() && rs6();
+      allow create: if blockExecutiveWrite() && rs6();
+      allow update: if blockExecutiveWrite() && rs6() && purchaseRequestUpdateOk();
+      allow delete: if blockExecutiveWrite() && rs6();
     }
     match /purchase_requests/{prId}/{document=**} {
       allow read: if rs6();

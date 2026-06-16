@@ -13,7 +13,7 @@ import { ArrowLeft, CheckCircle, Loader2, XCircle, PackageSearch, Send, Ban } fr
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { collection, doc, getDocs, updateDoc, type UpdateData } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canApprovePurchaseAsManager } from '@/lib/permissions';
+import { canView, canDecidePurchaseRequest, canApprovePurchaseAsManager } from '@/lib/permissions';
 import type {
   PurchaseRequest,
   User,
@@ -103,14 +103,19 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     () => !!currentUser && canView(currentUser, 'store_inventory'),
     [currentUser]
   );
-  const canApprove = useMemo(() => canApprovePurchaseAsManager(currentUser), [currentUser]);
-  const ok = okStore || canApprove;
+  const canApproveAsManager = useMemo(() => canApprovePurchaseAsManager(currentUser), [currentUser]);
+  const ok = okStore || canApproveAsManager;
 
   const prRef = useMemoFirebase(
     () => (firestore && ok ? doc(firestore, 'purchase_requests', id) : null),
     [firestore, id, ok]
   );
   const { data: pr, isLoading } = useDoc<PurchaseRequest>(prRef as any);
+
+  const canDecidePr = useMemo(
+    () => canDecidePurchaseRequest(currentUser, pr ?? undefined),
+    [currentUser, pr?.requestedByUid, pr?.status],
+  );
 
   const linesQuery = useMemoFirebase(
     () => (firestore && ok ? collection(firestore, 'purchase_requests', id, 'lines') : null),
@@ -348,6 +353,8 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         paymentInstallmentsEnabled: purchasePaymentType === 'CREDIT' ? paymentInstallmentsEnabled : false,
         paymentMilestoneDrafts: milestonePayload ?? undefined,
         status: 'PENDING_APPROVAL' as PurchaseRequestStatus,
+        requestedByUid: pr.requestedByUid || currentUser.id,
+        requestedByName: pr.requestedByName || currentUser.displayName || currentUser.email || '',
         submittedAt: now,
         updatedAt: now,
       });
@@ -362,6 +369,16 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
 
   const approve = async () => {
     if (!firestore || !pr || pr.status !== 'PENDING_APPROVAL' || !prRef || !currentUser) return;
+    if (!canDecidePurchaseRequest(currentUser, pr)) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีสิทธิ์อนุมัติ',
+        description: pr.requestedByUid === currentUser.id
+          ? 'ผู้จัดทำ PR ไม่สามารถอนุมัติเอกสารของตนเองได้'
+          : 'อนุมัติ PR ได้เฉพาะผู้จัดการปฏิบัติการ',
+      });
+      return;
+    }
     const lineSnap = await getDocs(collection(firestore, 'purchase_requests', id, 'lines'));
     if (lineSnap.empty) {
       toast({
@@ -393,6 +410,16 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
 
   const reject = async () => {
     if (!firestore || !pr || pr.status !== 'PENDING_APPROVAL' || !prRef || !currentUser) return;
+    if (!canDecidePurchaseRequest(currentUser, pr)) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีสิทธิ์',
+        description: pr.requestedByUid === currentUser.id
+          ? 'ผู้จัดทำ PR ไม่สามารถพิจารณาเอกสารของตนเองได้'
+          : 'พิจารณา PR ได้เฉพาะผู้จัดการปฏิบัติการ',
+      });
+      return;
+    }
     const r = rejectReason.trim();
     if (r.length < 3) {
       toast({ variant: 'destructive', title: 'ระบุเหตุผล' });
@@ -790,7 +817,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           </div>
         )}
 
-        {pr.status === 'PENDING_APPROVAL' && canApprove && (
+        {pr.status === 'PENDING_APPROVAL' && canDecidePr && (
           <div className="flex flex-wrap gap-2">
             <Button className="bg-green-600 font-bold hover:bg-green-700" onClick={() => void approve()} disabled={saving}>
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
@@ -802,7 +829,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           </div>
         )}
 
-        {pr.status === 'PENDING_APPROVAL' && canApprove && (
+        {pr.status === 'PENDING_APPROVAL' && canDecidePr && (
           <p className="text-xs text-muted-foreground">คุณกำลังอนุมัติในฐานะผู้จัดการฝ่ายปฏิบัติการ</p>
         )}
       </div>
