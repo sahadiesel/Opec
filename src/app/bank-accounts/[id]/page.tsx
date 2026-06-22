@@ -244,6 +244,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
       source: 'cashbook' | 'petty';
       entryType: string;
       paymentMethod?: string;
+      recordedByName?: string;
     }> = [];
     for (const e of cashbookRows ?? []) {
       const payrollHint =
@@ -262,6 +263,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
         source: 'cashbook',
         entryType: cashbookEntryTypeLabel(e.entryType),
         paymentMethod: e.paymentMethod,
+        recordedByName: e.createdByName?.trim() || undefined,
       });
     }
     if (isPettyAccount) {
@@ -276,6 +278,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
           source: 'petty',
           entryType: 'รายการ Petty หน้างาน',
           paymentMethod: e.paymentMethod,
+          recordedByName: e.createdByName?.trim() || undefined,
         });
       }
     }
@@ -715,6 +718,9 @@ function BankAccountDetailContent({ id }: { id: string }) {
                                     {row.source === 'petty' ? 'Petty' : 'Cashbook'}
                                   </Badge>
                                   <span className="text-[11px] text-muted-foreground">{row.entryType}</span>
+                                  {row.recordedByName ? (
+                                    <span className="text-[11px] text-muted-foreground">· บันทึกโดย {row.recordedByName}</span>
+                                  ) : null}
                                   {row.paymentMethod && (
                                     <span className="text-[11px] text-muted-foreground">· {row.paymentMethod}</span>
                                   )}

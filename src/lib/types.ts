@@ -1756,6 +1756,8 @@ export interface CashbookEntry {
   paymentMethod: PaymentMethod;
   createdAt: number;
   updatedAt: number;
+  createdByUid?: string;
+  createdByName?: string;
   /** ยอดเต็มงวด (ก่อนหัก ณ ที่จ่าย) — ใช้ประกอบรายการจ่ายคู่ค้า */
   grossPaymentAmount?: number;
   /** หัก ณ ที่จ่ายที่ไม่ได้ตัดจากบัญชีธนาคาร (รอนำส่งสรรพากร) */

@@ -27,7 +27,7 @@ export async function loadAssignmentsForTimesheets(
 }
 
 /**
- * วันนี้อยู่ในหน้าต่าง mobilization ของ assignment หรือไม่ — สอดคล้อง sumWorkHoursForWaveMonthRow (onlyWithinMobWindow)
+ * วันนี้อยู่ในหน้าต่าง mobilization ของ assignment หรือไม่ — ใช้กรอง payroll ก่อนปิดงวด (readyForPayroll)
  */
 export function isDailyTimesheetInPayrollMobWindow(
   ts: Pick<DailyTimesheet, 'date' | 'assignmentId'>,

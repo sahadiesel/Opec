@@ -301,6 +301,65 @@ export function isHtmlDateAfterMobLocationEnd(
   return true;
 }
 
+/** mobilization เดียว: จบไซต์รอบเก่า (mobEnd) แล้วยังไม่ถึงวัน SB/เริ่มงานรอบใหม่ */
+export function assignmentHasSplitPriorAndNewCycleOnDoc(
+  a: Pick<Assignment, 'mobLocationEndDate' | 'mobWorkingStartDate'>,
+): boolean {
+  const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
+  const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
+  return (
+    /^\d{4}-\d{2}-\d{2}$/.test(mobEnd) &&
+    /^\d{4}-\d{2}-\d{2}$/.test(mobStart) &&
+    mobEnd < mobStart
+  );
+}
+
+/** วันแรกของ mobilization รอบใหม่ (Standby หรือเริ่มงาน — อันไหนมาก่อน) */
+export function resolveMobSegmentStartYmd(
+  a: Pick<Assignment, 'mobStandbyDate' | 'mobWorkingStartDate'>,
+): string | undefined {
+  const mobStandby = (a.mobStandbyDate || '').trim().slice(0, 10);
+  const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
+  const hasStandby = /^\d{4}-\d{2}-\d{2}$/.test(mobStandby);
+  const hasMobStart = /^\d{4}-\d{2}-\d{2}$/.test(mobStart);
+  if (hasStandby && hasMobStart) return mobStandby <= mobStart ? mobStandby : mobStart;
+  if (hasStandby) return mobStandby;
+  if (hasMobStart) return mobStart;
+  return undefined;
+}
+
+/**
+ * ช่วงหยุดระหว่างจบไซต์รอบเก่ากับ mobilization รอบใหม่ — ลูกจ้างไม่อยู่ไซต์
+ * ห้าม auto work_day / แสดง W ย้อนหลังในช่วงนี้
+ */
+export function isYmdInRemobGapBetweenCycles(
+  a: Pick<Assignment, 'mobLocationEndDate' | 'mobStandbyDate' | 'mobWorkingStartDate'>,
+  ymd: string,
+): boolean {
+  const d = ymd.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  if (!assignmentHasSplitPriorAndNewCycleOnDoc(a)) return false;
+  const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
+  const mobSegmentStart = resolveMobSegmentStartYmd(a);
+  if (!mobSegmentStart) return false;
+  return d > mobEnd && d < mobSegmentStart;
+}
+
+/** ทุกวัน yyyy-MM-dd ในช่องว่าง remob (exclusive ขอบ) */
+export function* eachYmdInRemobGapBetweenCycles(
+  a: Pick<Assignment, 'mobLocationEndDate' | 'mobStandbyDate' | 'mobWorkingStartDate'>,
+): Generator<string> {
+  if (!assignmentHasSplitPriorAndNewCycleOnDoc(a)) return;
+  const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
+  const mobSegmentStart = resolveMobSegmentStartYmd(a);
+  if (!mobSegmentStart || mobEnd >= mobSegmentStart) return;
+  let cur = addDaysToYmd(mobEnd, 1);
+  while (cur < mobSegmentStart) {
+    yield cur;
+    cur = addDaysToYmd(cur, 1);
+  }
+}
+
 /**
  * วันนี้ควรแสดง/รวมในตารางสรุปรายเดือน (และชม.ทำงาน) หรือไม่ — อิง mobilization จริงบนไซต์
  * - ขอบล่างปกติ = วันแรกของช่วง mobilization บนไซต์ = min(วัน Standby, วันเริ่มทำงาน) เทียบ PO Active — ไม่ใช้แค่วันเริ่มทำงาน
@@ -343,11 +402,10 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
   const hasMobEnd = /^\d{4}-\d{2}-\d{2}$/.test(mobEnd);
   const hasAssignEnd = /^\d{4}-\d{2}-\d{2}$/.test(assignEnd);
 
+  if (isYmdInRemobGapBetweenCycles(a, d)) return false;
+
   /** วันแรกของช่วง mobilization (Standby / เริ่มงาน) — Standby มักก่อนวันเริ่มทำงาน */
-  let mobSegmentStart: string | undefined;
-  if (hasStandby && hasMobStart) mobSegmentStart = mobStandby <= mobStart ? mobStandby : mobStart;
-  else if (hasStandby) mobSegmentStart = mobStandby;
-  else if (hasMobStart) mobSegmentStart = mobStart;
+  const mobSegmentStart = resolveMobSegmentStartYmd(a);
 
   const segmentForMonthCompare = mobSegmentStart ?? mobStart;
 
@@ -355,17 +413,7 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
    * เอกสาร mobilization เดียวที่เก็บทั้งจบไซต์รอบเก่า (mobEnd) กับเริ่มรอบใหม่ (mobStart) — mobEnd < mobStart
    * (ใช้ทั้งขอบล่างและเพดานด้านล่าง)
    */
-  const splitPriorAndNewCycleOnDoc = hasMobEnd && hasMobStart && mobEnd < mobStart;
-
-  /**
-   * ช่วง remob ระหว่างจบไซต์รอบก่อนกับวัน Standby/เริ่มงานของรอบใหม่ — เดิมใช้ mobSegmentStart เป็นขอบล่าง
-   * ทำให้ทุกวันใน gap ถูกตัดจนลงเวลาไม่ได้ แม้ยัง ACTIVE และอยู่ในช่วงมอบหมาย
-   */
-  const remobGapBetweenCycles =
-    splitPriorAndNewCycleOnDoc &&
-    !!mobSegmentStart &&
-    d > mobEnd &&
-    d < mobSegmentStart;
+  const splitPriorAndNewCycleOnDoc = assignmentHasSplitPriorAndNewCycleOnDoc(a);
 
   /** วันนี้อยู่ในรอบที่ปิดแล้ว (ก่อนเริ่มรอบใหม่ที่สะสมใน mobilization เดียวกัน) */
   const inClosedPriorCycle =
@@ -378,10 +426,6 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
 
   let floor: string | undefined;
   if (inClosedPriorCycle || inEarlierCalendarMonthThanMobSegment) {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(assignStart)) floor = assignStart;
-    else if (/^\d{4}-\d{2}-\d{2}$/.test(assignedFallback)) floor = assignedFallback;
-  } else if (remobGapBetweenCycles) {
-    /** Gap remob: อนุญาตตั้งแต่วันมอบหมาย — ไม่ดึงขอบล่างไปที่วัน SB/W รอบใหม่ */
     if (/^\d{4}-\d{2}-\d{2}$/.test(assignStart)) floor = assignStart;
     else if (/^\d{4}-\d{2}-\d{2}$/.test(assignedFallback)) floor = assignedFallback;
   } else if (mobSegmentStart) {

@@ -5,6 +5,7 @@
 
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -19,6 +20,7 @@ import type { Assignment, DailyTimesheet, LaborCostContractTerm, POLine, Purchas
 import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
 import { assertPayrollPermission } from '@/lib/permissions';
 import { isPoActiveBundleAutoDailyDisabled, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import { eachYmdInRemobGapBetweenCycles } from '@/lib/constants/timesheet-ui';
 import {
   buildPoActiveAutoDailyRowPayload,
   buildPoActiveAutoStandbyRowPayload,
@@ -241,6 +243,25 @@ export async function syncPoActiveAutoDailyForAssignment(
   }
 
   await flush();
+
+  /** ลบแถว auto ที่สร้างผิดในช่วง remob (หยุดงาน → กลับมาใหม่) */
+  let deleted = 0;
+  for (const gapDate of eachYmdInRemobGapBetweenCycles(assignment)) {
+    const id = poActiveDailyTimesheetDocId(assignment.workerId, assignment.id, gapDate);
+    const dRef = doc(tsCol, id);
+    const existing = await getDoc(dRef);
+    if (!existing.exists()) continue;
+    const cur = existing.data() as DailyTimesheet;
+    if (cur.poActiveAutoDaily !== true) continue;
+    if (isTimesheetFinanciallyImmutable(cur.status)) continue;
+    await deleteDoc(dRef);
+    deleted++;
+  }
+
+  if (deleted > 0) {
+    skipped += deleted;
+  }
+
   return { created, updated, skipped };
 }
 

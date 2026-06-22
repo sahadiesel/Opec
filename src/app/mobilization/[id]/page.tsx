@@ -773,7 +773,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   };
 
   const workerId = assignment.workerId;
-  const workerManageHref = (tab: string) => `/workers/${encodeURIComponent(workerId)}?tab=${encodeURIComponent(tab)}`;
+  const mobReturnPath = `/mobilization/${encodeURIComponent(assignment.id)}`;
+  const workerManageHref = (tab: string) =>
+    `/workers/${encodeURIComponent(workerId)}?tab=${encodeURIComponent(tab)}&returnTo=${encodeURIComponent(mobReturnPath)}`;
 
   const isFullyReady = assignment.readinessStatus === 'ready';
 
@@ -912,7 +914,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           <TableCell className="font-medium text-sm">
                             ผลตรวจสารเสพติด (Drug test)
                             <span className="block text-[10px] font-normal text-muted-foreground">
-                              ครบแผง negative · valid ภายใน 10 วันหลังวันตรวจ
+                              ครบทุกชุดในแผงปัจจุบัน negative · valid ภายใน 10 วันหลังวันตรวจ
                             </span>
                           </TableCell>
                           <TableCell className="text-left capitalize text-xs">
@@ -1573,7 +1575,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                     </div>
                     <Separator />
                     <Button variant="outline" size="sm" className="w-full text-xs h-8" asChild>
-                      <Link href={`/workers/${worker.id}`}>ดูประวัติคนงานแบบเต็ม <ChevronRight className="h-3 w-3 ml-1" /></Link>
+                      <Link href={`/workers/${worker.id}?returnTo=${encodeURIComponent(mobReturnPath)}`}>
+                        ดูประวัติคนงานแบบเต็ม <ChevronRight className="h-3 w-3 ml-1" />
+                      </Link>
                     </Button>
                   </>
                 ) : <div className="animate-pulse h-20 bg-muted rounded" />}

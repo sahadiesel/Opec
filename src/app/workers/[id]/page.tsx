@@ -86,6 +86,12 @@ const WORKER_TAB_VALUES = [
 ] as const;
 type WorkerProfileTab = (typeof WORKER_TAB_VALUES)[number];
 
+function resolveSafeInternalReturnPath(raw: string | null | undefined, fallback = '/workers'): string {
+  const t = (raw || '').trim();
+  if (!t.startsWith('/') || t.startsWith('//')) return fallback;
+  return t;
+}
+
 /** รองรับลิงก์เก่า ?tab=attendance / certs / docs */
 function normalizeWorkerProfileTabParam(s: string | null): WorkerProfileTab | null {
   if (s == null) return null;
@@ -100,6 +106,7 @@ function normalizeWorkerProfileTabParam(s: string | null): WorkerProfileTab | nu
 
 function WorkerDetailContent({ id }: { id: string }) {
   const searchParams = useSearchParams();
+  const backHref = resolveSafeInternalReturnPath(searchParams.get('returnTo'));
   const tabFromUrl = searchParams.get('tab');
   const [activeTab, setActiveTab] = useState<WorkerProfileTab>(() =>
     normalizeWorkerProfileTabParam(tabFromUrl) ?? 'info',
@@ -597,7 +604,7 @@ function WorkerDetailContent({ id }: { id: string }) {
         {/* Header */}
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" asChild>
-            <Link href="/workers"><ArrowLeft className="h-5 w-5" /></Link>
+            <Link href={backHref}><ArrowLeft className="h-5 w-5" /></Link>
           </Button>
           <div className="flex-1">
             <div className="flex items-center gap-3">

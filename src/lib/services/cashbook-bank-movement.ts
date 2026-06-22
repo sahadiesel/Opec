@@ -50,6 +50,7 @@ export async function recordCashbookMovementWithBalance(
   const delta = params.direction === 'IN' ? amt : -amt;
 
   const now = Date.now();
+  const actorName = String(user.displayName || user.email || user.id).trim() || user.id;
   const cashbookRow: Record<string, unknown> = {
     entryNo,
     bankAccountId: params.bankAccountId,
@@ -61,6 +62,8 @@ export async function recordCashbookMovementWithBalance(
     description: params.description,
     paymentMethod: params.paymentMethod,
     createdAt: now,
+    createdByUid: user.id,
+    createdByName: actorName,
     updatedAt: now,
   };
   const ref = params.referenceId?.trim();
@@ -187,6 +190,8 @@ export async function recordInterBankTransfer(
 
   const baseMemo = params.memo?.trim() || 'โอนระหว่างบัญชี';
   const route = `${fromCode} → ${toCode}`;
+  const actorName = String(user.displayName || user.email || user.id).trim() || user.id;
+  const now = Date.now();
 
   const batch = writeBatch(db);
 
@@ -201,8 +206,10 @@ export async function recordInterBankTransfer(
     amount: amt,
     description: `${baseMemo}: ${route} · จ่ายออกจากบัญชีนี้ (${fromCode})`,
     paymentMethod: 'TRANSFER',
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    createdAt: now,
+    createdByUid: user.id,
+    createdByName: actorName,
+    updatedAt: now,
   });
 
   batch.set(inRef, {
@@ -216,8 +223,10 @@ export async function recordInterBankTransfer(
     amount: amt,
     description: `${baseMemo}: ${route} · เงินเข้าบัญชีนี้ (${toCode})`,
     paymentMethod: 'TRANSFER',
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    createdAt: now,
+    createdByUid: user.id,
+    createdByName: actorName,
+    updatedAt: now,
   });
 
   batch.update(fromRef, {

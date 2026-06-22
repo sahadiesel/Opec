@@ -4,6 +4,7 @@ import {
   assignmentHasAnyMobTimesheetDayInCalendarMonth,
   assignmentEndedWithoutEverMobilizingOnSite,
   isHtmlDateAfterMobLocationEnd,
+  isYmdInRemobGapBetweenCycles,
   isYmdWithinAssignmentMobTimesheetWindow,
 } from '@/lib/constants/timesheet-ui';
 import { assignmentOverlapsYearMonthForPoDailyBoard } from '@/lib/ops/timesheet-hub-po-month';
@@ -88,8 +89,7 @@ export function standbyHoursCountedForWaveMonth(
 
 /**
  * รวมชม.ทำงานในเดือนตามแถวตาราง — ใช้การจับคู่ timesheet เดียวกับช่องรายวัน (ไม่รวมซ้ำข้าม assignment/PO)
- * @param options.onlyWithinMobWindow — ถ้า true จะนับเฉพาะวันที่อยู่ในช่วง mobilization ตามฟิลด์บน assignment ของแถว
- *   (สอดคล้องการนับจากกริดเมื่อไม่นับวันที่อยู่นอกหน้าต่างแม้เซลล์แสดง W พร้อมวงแหวน)
+ * นับจาก `resolveTimesheetForWaveMonthCell` ให้ตรงกับเซลล์ที่แสดง W/SB (ยกเว้นช่วง remob gap ที่ resolve ไม่คืนค่า)
  */
 export function sumWorkHoursForWaveMonthRow(
   assignment: Pick<
@@ -111,17 +111,10 @@ export function sumWorkHoursForWaveMonthRow(
   flatMonthSheets: readonly DailyTimesheet[],
   poScopeWaveId?: string | null,
   alternateAssignmentIds?: readonly string[] | null,
-  options?: { onlyWithinMobWindow?: boolean },
+  _options?: { onlyWithinMobWindow?: boolean },
 ): number {
   let sum = 0;
   for (const d of daysYmd) {
-    if (
-      options?.onlyWithinMobWindow &&
-      assignment &&
-      !isYmdWithinAssignmentMobTimesheetWindow(assignment, d)
-    ) {
-      continue;
-    }
     const ts = resolveTimesheetForWaveMonthCell(
       waveId,
       workerId,
@@ -161,17 +154,10 @@ export function sumStandbyHoursForWaveMonthRow(
   flatMonthSheets: readonly DailyTimesheet[],
   poScopeWaveId?: string | null,
   alternateAssignmentIds?: readonly string[] | null,
-  options?: { onlyWithinMobWindow?: boolean },
+  _options?: { onlyWithinMobWindow?: boolean },
 ): number {
   let sum = 0;
   for (const d of daysYmd) {
-    if (
-      options?.onlyWithinMobWindow &&
-      assignment &&
-      !isYmdWithinAssignmentMobTimesheetWindow(assignment, d)
-    ) {
-      continue;
-    }
     const ts = resolveTimesheetForWaveMonthCell(
       waveId,
       workerId,
@@ -284,6 +270,9 @@ export function resolveTimesheetForWaveMonthCell(
   const outsideMobWindow =
     !!assignmentWindow &&
     !isYmdWithinAssignmentMobTimesheetWindow(assignmentWindow, date);
+  if (outsideMobWindow && assignmentWindow && isYmdInRemobGapBetweenCycles(assignmentWindow, date)) {
+    return undefined;
+  }
   const mobEndStr = (assignmentWindow?.mobLocationEndDate || '').trim().slice(0, 10);
   const hasConfirmedMobEnd = /^\d{4}-\d{2}-\d{2}$/.test(mobEndStr);
   const afterRecordedSiteEnd =

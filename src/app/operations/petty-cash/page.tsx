@@ -238,6 +238,7 @@ export default function OperationsPettyCashPage() {
       source: 'cashbook' | 'petty';
       entryType: string;
       paymentMethod?: string;
+      recordedByName?: string;
     }> = [];
     for (const e of cashbookRows ?? []) {
       list.push({
@@ -250,6 +251,7 @@ export default function OperationsPettyCashPage() {
         source: 'cashbook',
         entryType: ledgerLineLabelForPettyFund(e.entryType, e.direction),
         paymentMethod: e.paymentMethod,
+        recordedByName: e.createdByName?.trim() || undefined,
       });
     }
     for (const e of pettyRows ?? []) {
@@ -261,8 +263,9 @@ export default function OperationsPettyCashPage() {
         direction: e.direction,
         amount: e.amount,
         source: 'petty',
-        entryType: 'บันทึกโดยฝ่ายปฏิบัติการ (หน้างาน)',
+        entryType: 'รายการหน้างาน',
         paymentMethod: e.paymentMethod,
+        recordedByName: e.createdByName?.trim() || undefined,
       });
     }
     return list;
@@ -621,6 +624,9 @@ export default function OperationsPettyCashPage() {
                                       {row.source === 'petty' ? 'ฝ่ายหน้างาน' : 'ฝ่ายบัญชี (รวมโอนจากธ.ก.)'}
                                     </Badge>
                                     <span className="text-[11px] text-muted-foreground">{row.entryType}</span>
+                                    {row.recordedByName ? (
+                                      <span className="text-[11px] text-muted-foreground">· บันทึกโดย {row.recordedByName}</span>
+                                    ) : null}
                                     {row.paymentMethod && (
                                       <span className="text-[11px] text-muted-foreground">· {row.paymentMethod}</span>
                                     )}

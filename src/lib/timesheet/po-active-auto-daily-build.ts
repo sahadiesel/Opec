@@ -1,5 +1,10 @@
 import type { Assignment, DailyTimesheet, POLine, PurchaseOrder } from '@/lib/types';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
+import {
+  assignmentHasSplitPriorAndNewCycleOnDoc,
+  isYmdInRemobGapBetweenCycles,
+  resolveMobSegmentStartYmd,
+} from '@/lib/constants/timesheet-ui';
 import { resolveWorkModeForPoContext } from '@/lib/ops/po-active-bundle';
 import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 
@@ -44,6 +49,7 @@ export const PO_ACTIVE_STANDBY_STOP_AUTO_DAYS = 7;
  */
 export function resolvePoActiveAutoDailySyncKind(a: Assignment, dateYmd: string): 'work_day' | 'standby_day' | null {
   if (!isAssignmentEligibleForPoActiveAutoDaily(a)) return null;
+  if (isYmdInRemobGapBetweenCycles(a, dateYmd)) return null;
   const suspended = a.poActiveAutoWorkSuspended === true;
   const sbStart = (a.poActiveStandbyAutoStartYmd || '').trim().slice(0, 10);
   const sbEnd = (a.poActiveStandbyAutoEndYmd || '').trim().slice(0, 10);
@@ -90,6 +96,7 @@ export function computePoActiveAutoDailyRange(
   const hasStandby = /^\d{4}-\d{2}-\d{2}$/.test(mobStandby);
   const hasMobStart = /^\d{4}-\d{2}-\d{2}$/.test(mobStart);
   const hasAssignStart = /^\d{4}-\d{2}-\d{2}$/.test(assignStart);
+  const splitPriorAndNewCycleOnDoc = assignmentHasSplitPriorAndNewCycleOnDoc(a);
 
   let startRaw = '';
 
@@ -97,8 +104,8 @@ export function computePoActiveAutoDailyRange(
     startRaw = mobStandby;
   } else if (hasMobStart) {
     startRaw = mobStart;
-    /** ช่วงก่อนเริ่มงานไม่มี mobStandbyDate — ตารางรายเดือนใช้ startDate เป็นพื้น */
-    if (!hasStandby && hasAssignStart && assignStart < mobStart) {
+    /** ช่วงก่อนเริ่มงานไม่มี mobStandbyDate — ตารางรายเดือนใช้ startDate เป็นพื้น (ไม่ใช่ remob หลังจบรอบเก่า) */
+    if (!hasStandby && hasAssignStart && assignStart < mobStart && !splitPriorAndNewCycleOnDoc) {
       startRaw = assignStart;
     }
   } else if (hasAssignStart) {
@@ -108,6 +115,14 @@ export function computePoActiveAutoDailyRange(
   }
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startRaw)) return null;
+
+  /** remob หลังจบไซต์รอบเก่า — เริ่ม auto ตั้งแต่วัน mobilization รอบใหม่เท่านั้น */
+  if (splitPriorAndNewCycleOnDoc) {
+    const mobSegmentStart = resolveMobSegmentStartYmd(a);
+    if (mobSegmentStart && startRaw < mobSegmentStart) {
+      startRaw = mobSegmentStart;
+    }
+  }
 
   const mobLocEnd = ((a.mobLocationEndDate || '') as string).trim().slice(0, 10);
   const assignEnd = ((a.endDate || '') as string).trim().slice(0, 10);
@@ -119,6 +134,13 @@ export function computePoActiveAutoDailyRange(
   }
   if (/^\d{4}-\d{2}-\d{2}$/.test(mobLocEnd) && mobLocEnd >= startRaw) {
     cap = minYmd(cap, mobLocEnd);
+  }
+  /** remob: mobLocationEndDate เป็นของรอบเก่า — อย่าใช้เป็นฝาหลังวันเริ่มรอบใหม่ */
+  if (splitPriorAndNewCycleOnDoc && cap < startRaw) {
+    cap = minYmd(throughYmd, endFromPo);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(assignEnd)) {
+      cap = minYmd(cap, assignEnd);
+    }
   }
   cap = minYmd(cap, endFromPo);
 
