@@ -49,6 +49,11 @@ import {
   WorkerStoreEquipmentReadiness,
 } from '@/lib/types';
 import {
+  mandatoryCertificateComplianceMet,
+  partitionMandatoryCertificateRequirements,
+  workerHasValidCertificateRequirement,
+} from '@/lib/position-certificate-compliance';
+import {
   computeDrugPanelWorkerFields,
   computeDrugPanelMobDrugOk,
   DRUG_TEST_PANEL_DOC_PATH,
@@ -429,30 +434,48 @@ function WorkerDetailContent({ id }: { id: string }) {
       const reqsSnap = await getDocs(query(reqsRef, where('required', '==', true)));
       const mandatoryReqs = reqsSnap.docs.map(d => d.data() as PositionCertificateRequirement);
 
-      for (const req of mandatoryReqs) {
-        const reqType = req.requirementType || 'certificate';
+      if (
+        !mandatoryCertificateComplianceMet(
+          mandatoryReqs,
+          certs || [],
+          workerDocs || [],
+          now,
+        )
+      ) {
+        newStatus = 'MISSING_CERTIFICATE';
+      }
+
+      const { standalone, orGroups } = partitionMandatoryCertificateRequirements(mandatoryReqs);
+      const markReqExpiry = (req: PositionCertificateRequirement) => {
         const requiresExpiry = req.hasExpiry ?? true;
+        const reqType = req.requirementType || 'certificate';
         if (reqType === 'document') {
-          const matchedDoc = workerDocs?.find((d) => (d.documentType || '').toLowerCase() === (req.certificateCode || '').toLowerCase());
-          const hasDoc = !!matchedDoc && (!requiresExpiry || Number(matchedDoc.expiryDate || 0) > now);
-          if (!hasDoc) {
-            newStatus = 'MISSING_CERTIFICATE';
-            break;
-          }
+          const matchedDoc = workerDocs?.find(
+            (d) => (d.documentType || '').toLowerCase() === (req.certificateCode || '').toLowerCase(),
+          );
           if (matchedDoc && requiresExpiry) {
             markExpiryByPolicy(req.certificateCode, Number(matchedDoc.expiryDate || 0));
           }
         } else {
-          const certRecord = certs?.find((c) => c.certificateCode === req.certificateCode && c.status === 'valid');
-          const hasCert = !!certRecord && (requiresExpiry ? certRecord.expiryDate > now : true);
-          if (!hasCert) {
-            newStatus = 'MISSING_CERTIFICATE';
-            break;
-          }
+          const certRecord = certs?.find(
+            (c) => c.certificateCode === req.certificateCode && c.status === 'valid',
+          );
           if (certRecord && requiresExpiry) {
             markExpiryByPolicy(req.certificateCode, certRecord.expiryDate);
           }
         }
+      };
+
+      for (const req of standalone) {
+        if (workerHasValidCertificateRequirement(req, certs || [], workerDocs || [], now)) {
+          markReqExpiry(req);
+        }
+      }
+      for (const [, groupReqs] of orGroups) {
+        const satisfied = groupReqs.find((req) =>
+          workerHasValidCertificateRequirement(req, certs || [], workerDocs || [], now),
+        );
+        if (satisfied) markReqExpiry(satisfied);
       }
     }
 

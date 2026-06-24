@@ -18,12 +18,18 @@ import { useToast } from '@/hooks/use-toast';
 import { useFirebaseApp } from '@/firebase';
 import { uploadWorkerCertificatePhoto } from '@/lib/storage/worker-certificate-photos';
 import { uploadWorkerDocumentPhoto } from '@/lib/storage/worker-document-photos';
+import { isPdfAttachment, isPdfFile } from '@/lib/storage/worker-credential-attachment';
 import type {
   WorkerCertificate,
   WorkerDocument,
   WorkerDocumentCatalogItem,
   PositionCertificateRequirement,
 } from '@/lib/types';
+import {
+  getUnsatisfiedMandatoryCertificateRequirements,
+  orGroupMemberSummary,
+  partitionMandatoryCertificateRequirements,
+} from '@/lib/position-certificate-compliance';
 
 type CredentialKind = 'certificate' | 'document';
 
@@ -37,7 +43,7 @@ type UnifiedCredentialRow = {
   number: string;
   expiryDate: number;
   status?: string;
-  attachment?: { downloadUrl?: string };
+  attachment?: { downloadUrl?: string; contentType?: string; fileName?: string };
 };
 
 interface WorkerCredentialsTabProps {
@@ -120,6 +126,7 @@ export function WorkerCredentialsTab({
   const [expiryDate, setExpiryDate] = useState('');
   const [editing, setEditing] = useState<{ id: string; kind: CredentialKind } | null>(null);
   const [formFile, setFormFile] = useState<File | null>(null);
+  const [formPreviewIsPdf, setFormPreviewIsPdf] = useState(false);
   const [formPreviewUrl, setFormPreviewUrl] = useState<string | null>(null);
   const [formRemoveAttachment, setFormRemoveAttachment] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -140,17 +147,30 @@ export function WorkerCredentialsTab({
     [positionCertRequirements],
   );
 
-  const missingPositionCerts = useMemo(
-    () =>
-      positionCertificateReqs.filter(
-        (req) =>
-          !(certs || []).some(
-            (c) =>
-              (c.certificateCode || '').toLowerCase() === (req.certificateCode || '').toLowerCase(),
-          ),
-      ),
-    [positionCertificateReqs, certs],
-  );
+  const missingPositionCerts = useMemo(() => {
+    const certReqs = (positionCertRequirements || []).filter(
+      (r) => (r.requirementType || 'certificate') === 'certificate' && r.required,
+    );
+    return getUnsatisfiedMandatoryCertificateRequirements(certReqs, certs || [], [], Date.now());
+  }, [positionCertRequirements, certs]);
+
+  const missingOrGroupMeta = useMemo(() => {
+    const certReqs = (positionCertRequirements || []).filter(
+      (r) => (r.requirementType || 'certificate') === 'certificate' && r.required,
+    );
+    const { orGroups } = partitionMandatoryCertificateRequirements(certReqs);
+    const meta = new Map<string, { label: string; summary: string; reqs: PositionCertificateRequirement[] }>();
+    for (const [key, groupReqs] of orGroups) {
+      const label =
+        (groupReqs.find((r) => (r.alternativeGroupLabel || '').trim())?.alternativeGroupLabel || '').trim() ||
+        'กลุ่มทางเลือก';
+      meta.set(groupReqs[0].id, { label, summary: orGroupMemberSummary(groupReqs), reqs: groupReqs });
+      for (const r of groupReqs.slice(1)) {
+        meta.set(r.id, { label, summary: orGroupMemberSummary(groupReqs), reqs: groupReqs });
+      }
+    }
+    return meta;
+  }, [positionCertRequirements]);
 
   const dialogCatalogOptions = useMemo(() => {
     if (formContext === 'add-document') return documentCatalogOptions;
@@ -175,6 +195,7 @@ export function WorkerCredentialsTab({
     setFormPreviewUrl(null);
     setFormFile(null);
     setFormRemoveAttachment(false);
+    setFormPreviewIsPdf(false);
     if (photoInputRef.current) photoInputRef.current.value = '';
   };
 
@@ -199,7 +220,10 @@ export function WorkerCredentialsTab({
     setNumber(cert.certificateNo || '');
     setIssueDate(cert.issueDate ? timestampToHtmlDateValue(cert.issueDate) : '');
     setExpiryDate(cert.expiryDate ? timestampToHtmlDateValue(cert.expiryDate) : '');
-    if (cert.attachment?.downloadUrl) setFormPreviewUrl(cert.attachment.downloadUrl);
+    if (cert.attachment?.downloadUrl) {
+      setFormPreviewUrl(cert.attachment.downloadUrl);
+      setFormPreviewIsPdf(isPdfAttachment(cert.attachment));
+    }
   };
 
   const populateFromDoc = (row: WorkerDocument) => {
@@ -212,7 +236,10 @@ export function WorkerCredentialsTab({
     setNumber(row.documentNo || '');
     setIssueDate(row.issueDate ? timestampToHtmlDateValue(row.issueDate) : '');
     setExpiryDate(row.expiryDate ? timestampToHtmlDateValue(row.expiryDate) : '');
-    if (row.attachment?.downloadUrl) setFormPreviewUrl(row.attachment.downloadUrl);
+    if (row.attachment?.downloadUrl) {
+      setFormPreviewUrl(row.attachment.downloadUrl);
+      setFormPreviewIsPdf(isPdfAttachment(row.attachment));
+    }
   };
 
   useEffect(() => {
@@ -237,6 +264,24 @@ export function WorkerCredentialsTab({
     setDialogOpen(true);
   };
 
+  const orGroupFillOptions = useMemo(() => {
+    const gk = (lockedPositionReq?.alternativeGroupKey || '').trim();
+    if (!gk) return null;
+    return (positionCertRequirements || []).filter(
+      (r) => (r.alternativeGroupKey || '').trim() === gk,
+    );
+  }, [lockedPositionReq, positionCertRequirements]);
+
+  const pickOrGroupFillReq = (reqId: string) => {
+    const req = (positionCertRequirements || []).find((r) => r.id === reqId);
+    if (!req) return;
+    setLockedPositionReq(req);
+    const template =
+      (req.templateId ? (workerDocCatalog || []).find((x) => x.id === req.templateId) : undefined) ||
+      catalogHit(workerDocCatalog, req.certificateCode);
+    setTemplateId(template?.id || '');
+  };
+
   const openEditDialog = (row: UnifiedCredentialRow) => {
     if (row.kind === 'certificate') {
       const cert = (certs || []).find((c) => c.id === row.id);
@@ -253,18 +298,25 @@ export function WorkerCredentialsTab({
     setFormPreviewUrl(null);
     setFormFile(null);
     setFormRemoveAttachment(true);
+    setFormPreviewIsPdf(false);
     if (photoInputRef.current) photoInputRef.current.value = '';
   };
 
-  const onPhotoPick = (file: File | null) => {
+  const onAttachmentPick = (file: File | null) => {
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      toast({ variant: 'destructive', title: 'รองรับเฉพาะรูปภาพ', description: 'เลือกไฟล์ JPEG, PNG หรือ WebP' });
+    const pdf = isPdfFile(file);
+    if (!pdf && !file.type.startsWith('image/')) {
+      toast({
+        variant: 'destructive',
+        title: 'ไฟล์ไม่รองรับ',
+        description: 'เลือกรูปภาพ (JPEG, PNG, WebP) หรือ PDF',
+      });
       return;
     }
     if (formPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(formPreviewUrl);
     setFormFile(file);
     setFormRemoveAttachment(false);
+    setFormPreviewIsPdf(pdf);
     setFormPreviewUrl(URL.createObjectURL(file));
   };
 
@@ -507,19 +559,34 @@ export function WorkerCredentialsTab({
                   </TableCell>
                   <TableCell className="text-center align-top">
                     {thumbUrl ? (
-                      <a
-                        href={thumbUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex flex-col items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-blue-700 hover:bg-blue-100"
-                        title="เปิดเอกสารแนบ"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={thumbUrl} alt="" className="h-10 w-10 rounded object-cover" />
-                        <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold">
-                          <FileImage className="h-3 w-3" /> ดูเอกสาร
-                        </span>
-                      </a>
+                      isPdfAttachment(row.attachment) ? (
+                        <a
+                          href={thumbUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex flex-col items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-red-800 hover:bg-red-100"
+                          title="เปิด PDF"
+                        >
+                          <FileText className="h-8 w-8" />
+                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold max-w-[5rem] truncate">
+                            PDF
+                          </span>
+                        </a>
+                      ) : (
+                        <a
+                          href={thumbUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex flex-col items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-blue-700 hover:bg-blue-100"
+                          title="เปิดเอกสารแนบ"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={thumbUrl} alt="" className="h-10 w-10 rounded object-cover" />
+                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold">
+                            <FileImage className="h-3 w-3" /> ดูเอกสาร
+                          </span>
+                        </a>
+                      )
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
@@ -551,12 +618,20 @@ export function WorkerCredentialsTab({
                 </TableRow>
               );
             })}
-            {missingPositionCerts.map((req) => (
+            {missingPositionCerts.map((req) => {
+              const orMeta = missingOrGroupMeta.get(req.id);
+              const isOrGroup = !!orMeta && (req.alternativeGroupKey || '').trim();
+              return (
               <TableRow key={`missing-${req.id}`} className="bg-amber-50/40">
                 <TableCell className="pl-6 font-medium text-primary align-top break-words">
-                  {req.certificateName}
+                  {isOrGroup ? orMeta!.label : req.certificateName}
+                  {isOrGroup ? (
+                    <p className="text-[10px] font-normal text-muted-foreground mt-1">
+                      อย่างใดอย่างหนึ่ง: {orMeta!.summary}
+                    </p>
+                  ) : null}
                   <Badge variant="outline" className="ml-2 text-[10px] font-normal text-amber-800 border-amber-300">
-                    ตามตำแหน่ง
+                    {isOrGroup ? 'OR · ตามตำแหน่ง' : 'ตามตำแหน่ง'}
                   </Badge>
                 </TableCell>
                 <TableCell className="align-top">
@@ -580,7 +655,8 @@ export function WorkerCredentialsTab({
                   </TableCell>
                 ) : null}
               </TableRow>
-            ))}
+            );
+            })}
             {rows.length === 0 && missingPositionCerts.length === 0 && (
               <TableRow>
                 <TableCell colSpan={colCount} className="py-20 text-center text-muted-foreground italic">
@@ -637,15 +713,34 @@ export function WorkerCredentialsTab({
                   </Select>
                 </>
               ) : (
-                <div className="rounded-lg border bg-muted/20 p-3 text-sm">
-                  <p className="text-xs text-muted-foreground mb-1">ใบเซอร์ (CERTIFICATE)</p>
-                  <p className="font-semibold text-primary">
-                    {lockedPositionReq?.certificateName ||
-                      selectedTemplate?.itemName ||
-                      (certs || []).find((c) => c.id === editing?.id)?.certificateName ||
-                      '—'}
-                  </p>
-                </div>
+                <>
+                  {orGroupFillOptions && orGroupFillOptions.length > 1 ? (
+                    <div className="space-y-2">
+                      <Label>เลือกใบเซอร์ในกลุ่ม OR</Label>
+                      <Select value={lockedPositionReq?.id || ''} onValueChange={pickOrGroupFillReq}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="เลือกใบเซอร์..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {orGroupFillOptions.map((r) => (
+                            <SelectItem key={r.id} value={r.id}>
+                              {r.certificateName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
+                  <div className="rounded-lg border bg-muted/20 p-3 text-sm">
+                    <p className="text-xs text-muted-foreground mb-1">ใบเซอร์ (CERTIFICATE)</p>
+                    <p className="font-semibold text-primary">
+                      {lockedPositionReq?.certificateName ||
+                        selectedTemplate?.itemName ||
+                        (certs || []).find((c) => c.id === editing?.id)?.certificateName ||
+                        '—'}
+                    </p>
+                  </div>
+                </>
               )}
               {selectedTemplate && formContext === 'add-document' ? (
                 <p className="text-xs text-muted-foreground">
@@ -673,17 +768,19 @@ export function WorkerCredentialsTab({
               />
               <div className="space-y-2 rounded-lg border border-dashed border-primary/30 bg-primary/5 p-3">
                 <Label className="flex items-center gap-2">
-                  <Camera className="h-4 w-4" /> แนบรูปถ่าย
+                  <Camera className="h-4 w-4" /> แนบไฟล์ (รูปหรือ PDF)
                 </Label>
-                <p className="text-[10px] text-muted-foreground">ถ่ายจากกล้องหรือเลือกไฟล์ — ระบบบีบอัดไม่เกิน 500 KB</p>
+                <p className="text-[10px] text-muted-foreground">
+                  รูป: JPEG/PNG/WebP (บีบอัดไม่เกิน 500 KB) · PDF: สูงสุด 10 MB
+                </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <Input
                     ref={photoInputRef}
                     type="file"
-                    accept="image/*"
+                    accept="image/*,application/pdf,.pdf"
                     capture="environment"
                     className="max-w-[14rem] text-xs"
-                    onChange={(e) => onPhotoPick(e.target.files?.[0] ?? null)}
+                    onChange={(e) => onAttachmentPick(e.target.files?.[0] ?? null)}
                   />
                   {formPreviewUrl && (
                     <Button
@@ -693,19 +790,30 @@ export function WorkerCredentialsTab({
                       className="h-8 text-destructive"
                       onClick={removeAttachmentPreview}
                     >
-                      <X className="h-3 w-3 mr-1" /> {editing && !formFile ? 'ลบไฟล์แนบ' : 'ลบรูป'}
+                      <X className="h-3 w-3 mr-1" /> {editing && !formFile ? 'ลบไฟล์แนบ' : 'ลบไฟล์'}
                     </Button>
                   )}
                 </div>
                 {formRemoveAttachment && !formPreviewUrl && (
                   <p className="text-[10px] text-amber-700">จะลบไฟล์แนบเดิมเมื่อกดบันทึก</p>
                 )}
-                {formPreviewUrl && (
+                {formPreviewUrl && formPreviewIsPdf ? (
+                  <a
+                    href={formPreviewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm text-red-800 hover:bg-muted/40"
+                  >
+                    <FileText className="h-5 w-5 shrink-0" />
+                    <span className="truncate max-w-[12rem]">{formFile?.name || 'ไฟล์ PDF'}</span>
+                  </a>
+                ) : null}
+                {formPreviewUrl && !formPreviewIsPdf ? (
                   <a href={formPreviewUrl} target="_blank" rel="noopener noreferrer" className="inline-block">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={formPreviewUrl} alt="ตัวอย่างรูปแนบ" className="h-20 w-20 rounded border object-cover" />
                   </a>
-                )}
+                ) : null}
               </div>
             </div>
             <DialogFooter>

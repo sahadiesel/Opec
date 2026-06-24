@@ -22,11 +22,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { PayrollSsoSectionCard } from '@/components/accounting/payroll-sso-section-card';
+import { PayrollSsoCombinedPayButton } from '@/components/accounting/payroll-sso-combined-pay';
 import { fmtBaht } from '@/components/accounting/withholding-wht-pay-tax-ui';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { Users, Loader2, Search, Building2, Briefcase, ShieldCheck, Printer } from 'lucide-react';
-import type { User, PayrollBatch, PayrollBatchLine, OfficePayrollRun, OfficePayrollLine, BankAccount } from '@/lib/types';
+import type { User, PayrollBatch, PayrollBatchLine, OfficePayrollRun, OfficePayrollLine, BankAccount, Worker, OfficeStaff, ExecutivePayrollStaff } from '@/lib/types';
 import { canSeeAccountingPillarUi, canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { canViewHrPayrollFlowSubsection } from '@/lib/navigation/nav-access';
 import { isSystemAdmin } from '@/lib/permission-core';
@@ -60,8 +61,10 @@ import {
   workerRowsToSsoTable,
   officeRowsToSsoTable,
   executiveRowsToSsoTableFixed,
-  workerLinePaidAmount,
-  officeLinePaidAmount,
+  workerLineGrossPayAmount,
+  officeLineGrossPayAmount,
+  resolveWorkerNationalId,
+  resolveStaffNationalId,
 } from '@/app/accounting/social-security-payroll/sso-section-utils';
 
 export type { WorkerSsoRow, OfficeSsoRow, ExecutiveSsoRow };
@@ -145,6 +148,9 @@ function buildSocialSecurityPrintRows(
   workers: WorkerSsoRow[],
   offices: OfficeSsoRow[],
   executives: ExecutiveSsoRow[],
+  nationalIdByWorkerId?: ReadonlyMap<string, string>,
+  nationalIdByOfficeStaffId?: ReadonlyMap<string, string>,
+  nationalIdByExecutiveStaffId?: ReadonlyMap<string, string>,
 ): SocialSecurityPayrollListPrintRow[] {
   const rows: SocialSecurityPayrollListPrintRow[] = [];
   for (const { batch, line, sso, paymentYmd } of workers) {
@@ -156,9 +162,9 @@ function buildSocialSecurityPrintRows(
       employerStatus: employerContribStatusLabel(wagePaid, isWorkerEmployerContribPaid(line)),
       batchLabel: batch.id,
       earnerName: line.workerNameSnapshot || '—',
-      earnerId: line.workerId,
+      earnerId: resolveWorkerNationalId(line, nationalIdByWorkerId),
       paymentDate: paymentYmd,
-      paidLabel: fmtBaht(workerLinePaidAmount(line)),
+      paidLabel: fmtBaht(workerLineGrossPayAmount(line)),
       ssoLabel: fmtBaht(sso),
       employerLabel: fmtBaht(ssoCombinedRemitAmount(sso)),
     });
@@ -172,9 +178,9 @@ function buildSocialSecurityPrintRows(
       employerStatus: employerContribStatusLabel(wagePaid, isOfficeEmployerContribPaid(line)),
       batchLabel: run.payrollRunNo || run.id,
       earnerName: line.staffName || '—',
-      earnerId: line.staffId,
+      earnerId: resolveStaffNationalId(line.staffId, nationalIdByOfficeStaffId),
       paymentDate: paymentYmd,
-      paidLabel: fmtBaht(officeLinePaidAmount(line)),
+      paidLabel: fmtBaht(officeLineGrossPayAmount(line)),
       ssoLabel: fmtBaht(sso),
       employerLabel: fmtBaht(ssoCombinedRemitAmount(sso)),
     });
@@ -188,9 +194,9 @@ function buildSocialSecurityPrintRows(
       employerStatus: employerContribStatusLabel(wagePaid, isOfficeEmployerContribPaid(line)),
       batchLabel: run.payrollRunNo || run.id,
       earnerName: line.staffName || '—',
-      earnerId: line.staffId,
+      earnerId: resolveStaffNationalId(line.staffId, nationalIdByExecutiveStaffId),
       paymentDate: paymentYmd,
-      paidLabel: fmtBaht(officeLinePaidAmount(line)),
+      paidLabel: fmtBaht(officeLineGrossPayAmount(line)),
       ssoLabel: fmtBaht(sso),
       employerLabel: fmtBaht(ssoCombinedRemitAmount(sso)),
     });
@@ -255,6 +261,55 @@ export default function AccountingSocialSecurityPayrollHubPage() {
     isLoading: loadingExecutiveRuns,
     error: executiveRunsErr,
   } = useCollection<OfficePayrollRun>(executiveRunsQuery as any);
+
+  const workersQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return collection(firestore, 'workers');
+  }, [firestore]);
+
+  const officeStaffQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return collection(firestore, 'office_staff');
+  }, [firestore]);
+
+  const executiveStaffQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return collection(firestore, 'executive_payroll_staff');
+  }, [firestore]);
+
+  const { data: workerRegistry } = useCollection<Worker>(workersQuery as any);
+  const { data: officeStaffRegistry } = useCollection<OfficeStaff>(officeStaffQuery as any);
+  const { data: executiveStaffRegistry } = useCollection<ExecutivePayrollStaff>(executiveStaffQuery as any);
+
+  const nationalIdByWorkerId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const worker of workerRegistry ?? []) {
+      const id = worker.thaiNationalId?.trim();
+      if (id) map.set(worker.id, id);
+    }
+    return map;
+  }, [workerRegistry]);
+
+  const nationalIdByOfficeStaffId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const staff of officeStaffRegistry ?? []) {
+      const id = staff.nationalId?.trim();
+      if (id) map.set(staff.id, id);
+    }
+    return map;
+  }, [officeStaffRegistry]);
+
+  const nationalIdByExecutiveStaffId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const staff of executiveStaffRegistry ?? []) {
+      let id = staff.nationalId?.trim();
+      if (!id && staff.linkedOfficeStaffId) {
+        id = nationalIdByOfficeStaffId.get(staff.linkedOfficeStaffId)?.trim();
+      }
+      if (id) map.set(staff.id, id);
+    }
+    return map;
+  }, [executiveStaffRegistry, nationalIdByOfficeStaffId]);
 
   useEffect(() => {
     if (!firestore || batches === undefined) return;
@@ -395,9 +450,10 @@ export default function AccountingSocialSecurityPayrollHubPage() {
       const bid = batch.id.toLowerCase();
       const lid = line.id.toLowerCase();
       const wid = line.workerId.toLowerCase();
-      return name.includes(t) || bid.includes(t) || lid.includes(t) || wid.includes(t) || paymentYmd.includes(t);
+      const nid = (nationalIdByWorkerId.get(line.workerId) || '').toLowerCase();
+      return name.includes(t) || bid.includes(t) || lid.includes(t) || wid.includes(t) || nid.includes(t) || paymentYmd.includes(t);
     });
-  }, [workerRows, q]);
+  }, [workerRows, q, nationalIdByWorkerId]);
 
   const officeRowsBySearch = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -409,9 +465,10 @@ export default function AccountingSocialSecurityPayrollHubPage() {
       const lid = line.id.toLowerCase();
       const sid = line.staffId.toLowerCase();
       const ym = (run.payrollMonth || '').toLowerCase();
-      return name.includes(t) || rn.includes(t) || rid.includes(t) || lid.includes(t) || sid.includes(t) || ym.includes(t) || paymentYmd.includes(t);
+      const nid = (nationalIdByOfficeStaffId.get(line.staffId) || '').toLowerCase();
+      return name.includes(t) || rn.includes(t) || rid.includes(t) || lid.includes(t) || sid.includes(t) || ym.includes(t) || nid.includes(t) || paymentYmd.includes(t);
     });
-  }, [officeRows, q]);
+  }, [officeRows, q, nationalIdByOfficeStaffId]);
 
   const executiveRowsBySearch = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -423,9 +480,10 @@ export default function AccountingSocialSecurityPayrollHubPage() {
       const lid = line.id.toLowerCase();
       const sid = line.staffId.toLowerCase();
       const ym = (run.payrollMonth || '').toLowerCase();
-      return name.includes(t) || rn.includes(t) || rid.includes(t) || lid.includes(t) || sid.includes(t) || ym.includes(t) || paymentYmd.includes(t);
+      const nid = (nationalIdByExecutiveStaffId.get(line.staffId) || '').toLowerCase();
+      return name.includes(t) || rn.includes(t) || rid.includes(t) || lid.includes(t) || sid.includes(t) || ym.includes(t) || nid.includes(t) || paymentYmd.includes(t);
     });
-  }, [executiveRows, q]);
+  }, [executiveRows, q, nationalIdByExecutiveStaffId]);
 
   const filteredWorker = useMemo(() => {
     if (monthFilter === 'ALL') return workerRowsBySearch;
@@ -458,18 +516,30 @@ export default function AccountingSocialSecurityPayrollHubPage() {
   const grandTotal = workerTotalSso + officeTotalSso + executiveTotalSso;
   const filteredRowCount = filteredWorker.length + filteredOffice.length + filteredExecutive.length;
   const allRowCount = workerRows.length + officeRows.length + executiveRows.length;
+  const ssoDataLoading =
+    loadingBatches
+    || loadingRuns
+    || loadingExecutiveRuns
+    || loadingWorkerLines
+    || loadingOfficeLines
+    || loadingExecutiveLines;
 
-  const workerTableRows = useMemo(() => workerRowsToSsoTable(filteredWorker), [filteredWorker]);
+  const workerTableRows = useMemo(
+    () => workerRowsToSsoTable(filteredWorker, nationalIdByWorkerId),
+    [filteredWorker, nationalIdByWorkerId],
+  );
   const officeTableRows = useMemo(
     () =>
-      officeRowsToSsoTable(filteredOffice, (runId, staffId) =>
-        `/office-payroll/${encodeURIComponent(runId)}/staff/${encodeURIComponent(staffId)}`,
+      officeRowsToSsoTable(
+        filteredOffice,
+        (runId, staffId) => `/office-payroll/${encodeURIComponent(runId)}/staff/${encodeURIComponent(staffId)}`,
+        nationalIdByOfficeStaffId,
       ),
-    [filteredOffice],
+    [filteredOffice, nationalIdByOfficeStaffId],
   );
   const executiveTableRows = useMemo(
-    () => executiveRowsToSsoTableFixed(filteredExecutive),
-    [filteredExecutive],
+    () => executiveRowsToSsoTableFixed(filteredExecutive, nationalIdByExecutiveStaffId),
+    [filteredExecutive, nationalIdByExecutiveStaffId],
   );
 
   const runSocialSecurityPayrollListPrint = useCallback(
@@ -477,7 +547,14 @@ export default function AccountingSocialSecurityPayrollHubPage() {
       const workers = scope === 'filtered' ? filteredWorker : workerRows;
       const offices = scope === 'filtered' ? filteredOffice : officeRows;
       const executives = scope === 'filtered' ? filteredExecutive : executiveRows;
-      const sourceRows = buildSocialSecurityPrintRows(workers, offices, executives);
+      const sourceRows = buildSocialSecurityPrintRows(
+        workers,
+        offices,
+        executives,
+        nationalIdByWorkerId,
+        nationalIdByOfficeStaffId,
+        nationalIdByExecutiveStaffId,
+      );
 
       if (sourceRows.length === 0) {
         toast({
@@ -549,6 +626,9 @@ export default function AccountingSocialSecurityPayrollHubPage() {
       monthFilter,
       currentUser?.displayName,
       toast,
+      nationalIdByWorkerId,
+      nationalIdByOfficeStaffId,
+      nationalIdByExecutiveStaffId,
     ],
   );
 
@@ -608,7 +688,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     className="h-10 pl-9"
-                    placeholder="พิมพ์คำค้น..."
+                    placeholder="พิมพ์คำค้น (ชื่อ, เลขบัตร, ชุดจ่าย)..."
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
                     aria-label="ค้นหารายการประกันสังคม"
@@ -631,8 +711,6 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
                 <Button
                   type="button"
                   variant="outline"
@@ -642,7 +720,25 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                   <Printer className="h-4 w-4 shrink-0" />
                   พิมพ์รายการ
                 </Button>
-                {!loadingBatches && !loadingRuns && !loadingExecutiveRuns && !loadingWorkerLines && !loadingOfficeLines && !loadingExecutiveLines ? (
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <PayrollSsoCombinedPayButton
+                  canPay={canPaySso}
+                  loading={ssoDataLoading}
+                  firestore={firestore}
+                  currentUser={user}
+                  operatingBankOptions={operatingBankOptions}
+                  workerTableRows={workerTableRows}
+                  officeTableRows={officeTableRows}
+                  executiveTableRows={executiveTableRows}
+                  workerRows={workerRows}
+                  officeRows={officeRows}
+                  executiveRows={executiveRows}
+                  onWorkerRowsChange={setWorkerRows}
+                  onOfficeRowsChange={setOfficeRows}
+                  onExecutiveRowsChange={setExecutiveRows}
+                />
+                {!ssoDataLoading ? (
                   <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-2 min-w-[11rem]">
                     <p className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">รวม ปกส.+สมทบ (3 หมวด)</p>
                     <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(grandTotal)}</p>

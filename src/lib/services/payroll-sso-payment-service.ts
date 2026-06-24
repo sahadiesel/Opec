@@ -3,13 +3,16 @@
 import { Firestore, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { recordCashbookMovementWithBalance } from '@/lib/services/cashbook-bank-movement';
 import {
-  employerSsoContribAmount,
   isOfficeEmployerContribPaid,
   isOfficePayrollWagePaid,
+  isOfficeSsoCombinedFullyPaid,
   isOfficeSsoRemitPaid,
   isWorkerEmployerContribPaid,
   isWorkerPayrollWagePaid,
+  isWorkerSsoCombinedFullyPaid,
   isWorkerSsoRemitPaid,
+  remainingOfficeSsoPaymentAmount,
+  remainingWorkerSsoPaymentAmount,
 } from '@/lib/payroll/payroll-sso-payment-model';
 import type {
   OfficePayrollLine,
@@ -19,24 +22,71 @@ import type {
   User,
 } from '@/lib/types';
 
-export type PayrollSsoPaymentKind = 'sso_remit' | 'employer_contrib';
-
 type LineCollection = 'payroll_batches' | 'office_payroll_runs' | 'executive_payroll_runs';
 
-async function assertWagePaidForOfficeRun(run: OfficePayrollRun, line: OfficePayrollLine): Promise<void> {
-  if (!isOfficePayrollWagePaid(run, line)) {
-    throw new Error('ยังไม่ได้จ่ายเงินเดือน — ไม่สามารถจ่ายประกันสังคม/เงินสมทบได้');
+function buildWorkerCombinedSsoPatch(
+  line: PayrollBatchLine,
+  cashbookEntryId: string,
+  entryNo: string,
+  bankAccountId: string,
+  user: User,
+  now: number,
+): Partial<PayrollBatchLine> & { updatedAt: number } {
+  const patch: Partial<PayrollBatchLine> & { updatedAt: number } = { updatedAt: now };
+  if (!isWorkerSsoRemitPaid(line)) {
+    patch.ssoRemitCashbookEntryId = cashbookEntryId;
+    patch.ssoRemitCashbookEntryNo = entryNo;
+    patch.ssoRemitPaidAt = now;
+    patch.ssoRemitPaidByUid = user.id;
+    patch.ssoRemitPaidByName = user.displayName || user.email || user.id;
+    patch.ssoRemitPaymentBankAccountId = bankAccountId;
   }
+  if (!isWorkerEmployerContribPaid(line)) {
+    patch.ssoEmployerContribCashbookEntryId = cashbookEntryId;
+    patch.ssoEmployerContribCashbookEntryNo = entryNo;
+    patch.ssoEmployerContribPaidAt = now;
+    patch.ssoEmployerContribPaidByUid = user.id;
+    patch.ssoEmployerContribPaidByName = user.displayName || user.email || user.id;
+    patch.ssoEmployerContribPaymentBankAccountId = bankAccountId;
+  }
+  return patch;
 }
 
-async function recordOfficeLineSsoPayment(
+function buildOfficeCombinedSsoPatch(
+  line: OfficePayrollLine,
+  cashbookEntryId: string,
+  entryNo: string,
+  bankAccountId: string,
+  user: User,
+  now: number,
+): Partial<OfficePayrollLine> & { updatedAt: number } {
+  const patch: Partial<OfficePayrollLine> & { updatedAt: number } = { updatedAt: now };
+  if (!isOfficeSsoRemitPaid(line)) {
+    patch.ssoRemitCashbookEntryId = cashbookEntryId;
+    patch.ssoRemitCashbookEntryNo = entryNo;
+    patch.ssoRemitPaidAt = now;
+    patch.ssoRemitPaidByUid = user.id;
+    patch.ssoRemitPaidByName = user.displayName || user.email || user.id;
+    patch.ssoRemitPaymentBankAccountId = bankAccountId;
+  }
+  if (!isOfficeEmployerContribPaid(line)) {
+    patch.ssoEmployerContribCashbookEntryId = cashbookEntryId;
+    patch.ssoEmployerContribCashbookEntryNo = entryNo;
+    patch.ssoEmployerContribPaidAt = now;
+    patch.ssoEmployerContribPaidByUid = user.id;
+    patch.ssoEmployerContribPaidByName = user.displayName || user.email || user.id;
+    patch.ssoEmployerContribPaymentBankAccountId = bankAccountId;
+  }
+  return patch;
+}
+
+async function recordOfficeLineSsoCombinedPayment(
   db: Firestore,
   user: User,
   params: {
     collection: LineCollection;
     run: OfficePayrollRun;
     line: OfficePayrollLine;
-    kind: PayrollSsoPaymentKind;
     employeeSsoAmount: number;
     bankAccountId: string;
     entryDate: string;
@@ -45,19 +95,15 @@ async function recordOfficeLineSsoPayment(
     sectionLabel: string;
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
-  const { run, line, kind, collection } = params;
-  await assertWagePaidForOfficeRun(run, line);
-
-  if (kind === 'sso_remit') {
-    if (isOfficeSsoRemitPaid(line)) throw new Error('รายการนี้จ่ายประกันสังคมแล้ว');
-  } else if (isOfficeEmployerContribPaid(line)) {
-    throw new Error('รายการนี้จ่ายเงินสมทบแล้ว');
+  const { run, line, collection } = params;
+  if (!isOfficePayrollWagePaid(run, line)) {
+    throw new Error('ยังไม่ได้จ่ายเงินเดือน — ไม่สามารถจ่ายประกันสังคม/เงินสมทบได้');
+  }
+  if (isOfficeSsoCombinedFullyPaid(line)) {
+    throw new Error('รายการนี้จ่าย ปกส.+สมทบ แล้ว');
   }
 
-  const amount =
-    kind === 'sso_remit'
-      ? Number(params.employeeSsoAmount)
-      : employerSsoContribAmount(params.employeeSsoAmount);
+  const amount = remainingOfficeSsoPaymentAmount(params.employeeSsoAmount, line);
   if (!amount || amount <= 0) throw new Error('ยอดประกันสังคม/เงินสมทบไม่ถูกต้อง');
 
   const bankAccountId = params.bankAccountId?.trim();
@@ -69,8 +115,7 @@ async function recordOfficeLineSsoPayment(
     : bankAccountId;
 
   const earner = (params.earnerName || line.staffName || line.staffId || '').trim() || 'พนักงาน';
-  const kindLabel = kind === 'sso_remit' ? 'ประกันสังคม' : 'เงินสมทบนายจ้าง';
-  const description = `จ่าย${kindLabel} ${params.sectionLabel} ${earner} · งวด ${params.runLabel} · ตัดจากบัญชี ${bankCode}`;
+  const description = `จ่าย ปกส.+สมทบ ${params.sectionLabel} ${earner} · งวด ${params.runLabel} · ตัดจากบัญชี ${bankCode}`;
 
   const { cashbookEntryId, entryNo } = await recordCashbookMovementWithBalance(db, user, {
     bankAccountId,
@@ -81,31 +126,11 @@ async function recordOfficeLineSsoPayment(
     paymentMethod: 'TRANSFER',
     entryType: 'OTHER',
     referenceType: 'OTHER',
-    referenceId: `${run.id}/${line.id}/${kind}`,
+    referenceId: `${run.id}/${line.id}/sso_combined`,
   });
 
   const now = Date.now();
-  const patch =
-    kind === 'sso_remit'
-      ? {
-          ssoRemitCashbookEntryId: cashbookEntryId,
-          ssoRemitCashbookEntryNo: entryNo,
-          ssoRemitPaidAt: now,
-          ssoRemitPaidByUid: user.id,
-          ssoRemitPaidByName: user.displayName || user.email || user.id,
-          ssoRemitPaymentBankAccountId: bankAccountId,
-          updatedAt: now,
-        }
-      : {
-          ssoEmployerContribCashbookEntryId: cashbookEntryId,
-          ssoEmployerContribCashbookEntryNo: entryNo,
-          ssoEmployerContribPaidAt: now,
-          ssoEmployerContribPaidByUid: user.id,
-          ssoEmployerContribPaidByName: user.displayName || user.email || user.id,
-          ssoEmployerContribPaymentBankAccountId: bankAccountId,
-          updatedAt: now,
-        };
-
+  const patch = buildOfficeCombinedSsoPatch(line, cashbookEntryId, entryNo, bankAccountId, user, now);
   await updateDoc(doc(db, collection, run.id, 'lines', line.id), patch);
   return { cashbookEntryId, entryNo };
 }
@@ -116,28 +141,21 @@ export async function recordWorkerPayrollSsoPayment(
   params: {
     batch: PayrollBatch;
     line: PayrollBatchLine;
-    kind: PayrollSsoPaymentKind;
     employeeSsoAmount: number;
     bankAccountId: string;
     entryDate: string;
     earnerName: string;
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
-  const { batch, line, kind } = params;
+  const { batch, line } = params;
   if (!isWorkerPayrollWagePaid(batch, line)) {
     throw new Error('ยังไม่ได้จ่ายค่าแรง — ไม่สามารถจ่ายประกันสังคม/เงินสมทบได้');
   }
-  if (kind === 'sso_remit' && isWorkerSsoRemitPaid(line)) {
-    throw new Error('รายการนี้จ่ายประกันสังคมแล้ว');
-  }
-  if (kind === 'employer_contrib' && isWorkerEmployerContribPaid(line)) {
-    throw new Error('รายการนี้จ่ายเงินสมทบแล้ว');
+  if (isWorkerSsoCombinedFullyPaid(line)) {
+    throw new Error('รายการนี้จ่าย ปกส.+สมทบ แล้ว');
   }
 
-  const amount =
-    kind === 'sso_remit'
-      ? Number(params.employeeSsoAmount)
-      : employerSsoContribAmount(params.employeeSsoAmount);
+  const amount = remainingWorkerSsoPaymentAmount(params.employeeSsoAmount, line);
   if (!amount || amount <= 0) throw new Error('ยอดประกันสังคม/เงินสมทบไม่ถูกต้อง');
 
   const bankAccountId = params.bankAccountId?.trim();
@@ -149,8 +167,7 @@ export async function recordWorkerPayrollSsoPayment(
     : bankAccountId;
 
   const earner = (params.earnerName || line.workerNameSnapshot || line.workerId || '').trim() || 'ลูกจ้าง';
-  const kindLabel = kind === 'sso_remit' ? 'ประกันสังคม' : 'เงินสมทบนายจ้าง';
-  const description = `จ่าย${kindLabel} ลูกจ้าง ${earner} · ชุด ${batch.id} · ตัดจากบัญชี ${bankCode}`;
+  const description = `จ่าย ปกส.+สมทบ ลูกจ้าง ${earner} · ชุด ${batch.id} · ตัดจากบัญชี ${bankCode}`;
 
   const { cashbookEntryId, entryNo } = await recordCashbookMovementWithBalance(db, user, {
     bankAccountId,
@@ -161,31 +178,11 @@ export async function recordWorkerPayrollSsoPayment(
     paymentMethod: 'TRANSFER',
     entryType: 'OTHER',
     referenceType: 'OTHER',
-    referenceId: `${batch.id}/${line.id}/${kind}`,
+    referenceId: `${batch.id}/${line.id}/sso_combined`,
   });
 
   const now = Date.now();
-  const patch =
-    kind === 'sso_remit'
-      ? {
-          ssoRemitCashbookEntryId: cashbookEntryId,
-          ssoRemitCashbookEntryNo: entryNo,
-          ssoRemitPaidAt: now,
-          ssoRemitPaidByUid: user.id,
-          ssoRemitPaidByName: user.displayName || user.email || user.id,
-          ssoRemitPaymentBankAccountId: bankAccountId,
-          updatedAt: now,
-        }
-      : {
-          ssoEmployerContribCashbookEntryId: cashbookEntryId,
-          ssoEmployerContribCashbookEntryNo: entryNo,
-          ssoEmployerContribPaidAt: now,
-          ssoEmployerContribPaidByUid: user.id,
-          ssoEmployerContribPaidByName: user.displayName || user.email || user.id,
-          ssoEmployerContribPaymentBankAccountId: bankAccountId,
-          updatedAt: now,
-        };
-
+  const patch = buildWorkerCombinedSsoPatch(line, cashbookEntryId, entryNo, bankAccountId, user, now);
   await updateDoc(doc(db, 'payroll_batches', batch.id, 'lines', line.id), patch);
   return { cashbookEntryId, entryNo };
 }
@@ -196,7 +193,6 @@ export async function recordOfficePayrollSsoPayment(
   params: {
     run: OfficePayrollRun;
     line: OfficePayrollLine;
-    kind: PayrollSsoPaymentKind;
     employeeSsoAmount: number;
     bankAccountId: string;
     entryDate: string;
@@ -204,11 +200,10 @@ export async function recordOfficePayrollSsoPayment(
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const runLabel = params.run.payrollRunNo || params.run.id;
-  return recordOfficeLineSsoPayment(db, user, {
+  return recordOfficeLineSsoCombinedPayment(db, user, {
     collection: 'office_payroll_runs',
     run: params.run,
     line: params.line,
-    kind: params.kind,
     employeeSsoAmount: params.employeeSsoAmount,
     bankAccountId: params.bankAccountId,
     entryDate: params.entryDate,
@@ -224,7 +219,6 @@ export async function recordExecutivePayrollSsoPayment(
   params: {
     run: OfficePayrollRun;
     line: OfficePayrollLine;
-    kind: PayrollSsoPaymentKind;
     employeeSsoAmount: number;
     bankAccountId: string;
     entryDate: string;
@@ -232,11 +226,10 @@ export async function recordExecutivePayrollSsoPayment(
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const runLabel = params.run.payrollRunNo || params.run.id;
-  return recordOfficeLineSsoPayment(db, user, {
+  return recordOfficeLineSsoCombinedPayment(db, user, {
     collection: 'executive_payroll_runs',
     run: params.run,
     line: params.line,
-    kind: params.kind,
     employeeSsoAmount: params.employeeSsoAmount,
     bankAccountId: params.bankAccountId,
     entryDate: params.entryDate,
@@ -245,3 +238,6 @@ export async function recordExecutivePayrollSsoPayment(
     sectionLabel: 'ผู้บริหาร',
   });
 }
+
+/** @deprecated ใช้ recordWorkerPayrollSsoPayment แบบรวมยอดเดียวแล้ว */
+export type PayrollSsoPaymentKind = 'sso_remit' | 'employer_contrib';

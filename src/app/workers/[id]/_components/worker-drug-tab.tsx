@@ -11,7 +11,7 @@ import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatOptionalDateThaiBE, formatDateThaiBE } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Plus, Trash2, Pencil, AlertCircle, Camera, Loader2, X } from 'lucide-react';
+import { Plus, Trash2, Pencil, AlertCircle, Camera, Loader2, X, FileText } from 'lucide-react';
 import { addDoc, doc, deleteField, type Firestore, type CollectionReference } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
@@ -19,6 +19,7 @@ import { useFirebaseApp } from '@/firebase';
 import { displayLocation, sortDrugTestsNewestFirst, computeDrugTestRowValidityStatus, drugTestRowValidityLabelTh } from '@/lib/drug-test-panel';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { uploadWorkerDrugTestPhoto } from '@/lib/storage/worker-drug-test-photos';
+import { isPdfAttachment, isPdfFile } from '@/lib/storage/worker-credential-attachment';
 import Link from 'next/link';
 import type {
   WorkerDrugTest,
@@ -50,6 +51,7 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
   const [drugFormResult, setDrugFormResult] = useState<DrugTestResult>('none');
   const [drugFormFile, setDrugFormFile] = useState<File | null>(null);
   const [drugFormPreviewUrl, setDrugFormPreviewUrl] = useState<string | null>(null);
+  const [drugFormPreviewIsPdf, setDrugFormPreviewIsPdf] = useState(false);
   const [drugFormRemoveAttachment, setDrugFormRemoveAttachment] = useState(false);
   const [editingDrugId, setEditingDrugId] = useState<string | null>(null);
   const [drugSaving, setDrugSaving] = useState(false);
@@ -69,6 +71,7 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
     setDrugFormPreviewUrl(null);
     setDrugFormFile(null);
     setDrugFormRemoveAttachment(false);
+    setDrugFormPreviewIsPdf(false);
     if (photoInputRef.current) photoInputRef.current.value = '';
   };
 
@@ -92,6 +95,7 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
     setDrugFormResult(row.result || 'none');
     if (row.attachment?.downloadUrl) {
       setDrugFormPreviewUrl(row.attachment.downloadUrl);
+      setDrugFormPreviewIsPdf(isPdfAttachment(row.attachment));
     }
   };
 
@@ -119,13 +123,19 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
     setDrugFormPreviewUrl(null);
     setDrugFormFile(null);
     setDrugFormRemoveAttachment(true);
+    setDrugFormPreviewIsPdf(false);
     if (photoInputRef.current) photoInputRef.current.value = '';
   };
 
-  const onPhotoPick = (file: File | null) => {
+  const onAttachmentPick = (file: File | null) => {
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      toast({ variant: 'destructive', title: 'รองรับเฉพาะรูปภาพ', description: 'เลือกไฟล์ JPEG, PNG หรือ WebP' });
+    const pdf = isPdfFile(file);
+    if (!pdf && !file.type.startsWith('image/')) {
+      toast({
+        variant: 'destructive',
+        title: 'ไฟล์ไม่รองรับ',
+        description: 'เลือกรูปภาพ (JPEG, PNG, WebP) หรือ PDF',
+      });
       return;
     }
     if (drugFormPreviewUrl?.startsWith('blob:')) {
@@ -133,6 +143,7 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
     }
     setDrugFormFile(file);
     setDrugFormRemoveAttachment(false);
+    setDrugFormPreviewIsPdf(pdf);
     setDrugFormPreviewUrl(URL.createObjectURL(file));
   };
 
@@ -284,16 +295,29 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
                     </TableCell>
                     <TableCell className="text-center">
                       {thumbUrl ? (
-                        <a
-                          href={thumbUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-block rounded border overflow-hidden hover:opacity-90"
-                          title="เปิดรูปแนบ"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={thumbUrl} alt="" className="h-10 w-10 object-cover" />
-                        </a>
+                        isPdfAttachment(row.attachment) ? (
+                          <a
+                            href={thumbUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex flex-col items-center gap-0.5 rounded border border-red-200 bg-red-50 px-2 py-1 text-red-800 hover:bg-red-100"
+                            title="เปิด PDF"
+                          >
+                            <FileText className="h-6 w-6" />
+                            <span className="text-[9px] font-semibold">PDF</span>
+                          </a>
+                        ) : (
+                          <a
+                            href={thumbUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-block rounded border overflow-hidden hover:opacity-90"
+                            title="เปิดรูปแนบ"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={thumbUrl} alt="" className="h-10 w-10 object-cover" />
+                          </a>
+                        )
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
@@ -454,33 +478,46 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
               </div>
               <div className="space-y-2 rounded-lg border border-dashed border-primary/30 bg-primary/5 p-3">
                 <Label className="flex items-center gap-2">
-                  <Camera className="h-4 w-4" /> แนบรูปถ่าย
+                  <Camera className="h-4 w-4" /> แนบไฟล์ (รูปหรือ PDF)
                 </Label>
-                <p className="text-[10px] text-muted-foreground">ถ่ายจากกล้องหรือเลือกไฟล์ — ระบบบีบอัดไม่เกิน 500 KB</p>
+                <p className="text-[10px] text-muted-foreground">
+                  รูป: JPEG/PNG/WebP (บีบอัดไม่เกิน 500 KB) · PDF: สูงสุด 10 MB
+                </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <Input
                     ref={photoInputRef}
                     type="file"
-                    accept="image/*"
+                    accept="image/*,application/pdf,.pdf"
                     capture="environment"
                     className="max-w-[14rem] text-xs"
-                    onChange={(e) => onPhotoPick(e.target.files?.[0] ?? null)}
+                    onChange={(e) => onAttachmentPick(e.target.files?.[0] ?? null)}
                   />
                   {drugFormPreviewUrl && (
                     <Button type="button" variant="ghost" size="sm" className="h-8 text-destructive" onClick={removeAttachmentPreview}>
-                      <X className="h-3 w-3 mr-1" /> {editingDrugId && !drugFormFile ? 'ลบไฟล์แนบ' : 'ลบรูป'}
+                      <X className="h-3 w-3 mr-1" /> {editingDrugId && !drugFormFile ? 'ลบไฟล์แนบ' : 'ลบไฟล์'}
                     </Button>
                   )}
                 </div>
                 {drugFormRemoveAttachment && !drugFormPreviewUrl && (
                   <p className="text-[10px] text-amber-700">จะลบไฟล์แนบเดิมเมื่อกดบันทึก</p>
                 )}
-                {drugFormPreviewUrl && (
+                {drugFormPreviewUrl && drugFormPreviewIsPdf ? (
+                  <a
+                    href={drugFormPreviewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm text-red-800 hover:bg-muted/40"
+                  >
+                    <FileText className="h-5 w-5 shrink-0" />
+                    <span className="truncate max-w-[12rem]">{drugFormFile?.name || 'ไฟล์ PDF'}</span>
+                  </a>
+                ) : null}
+                {drugFormPreviewUrl && !drugFormPreviewIsPdf ? (
                   <a href={drugFormPreviewUrl} target="_blank" rel="noopener noreferrer" className="inline-block">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={drugFormPreviewUrl} alt="ตัวอย่างรูปแนบ" className="h-20 w-20 rounded border object-cover" />
                   </a>
-                )}
+                ) : null}
               </div>
             </div>
             <DialogFooter>

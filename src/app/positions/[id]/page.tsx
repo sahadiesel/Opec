@@ -67,6 +67,11 @@ import { canViewWorkerLaborCostFromUser, canEditWorkerLaborCostFromUser } from '
 import { LaborCostPositionSection } from '@/components/hr/labor-cost-position-section';
 import { LaborCostByContractSection } from '@/components/hr/labor-cost-by-contract-section';
 import { mainContractIdFromPositionRatePath, mergeLaborCostRowsForPersist, mergeLaborCostRowsWithMainContracts } from '@/lib/payroll/position-labor-cost-contract-rows';
+import {
+  groupPositionCertificateRequirementsForDisplay,
+  orGroupMemberSummary,
+  slugAlternativeGroupKey,
+} from '@/lib/position-certificate-compliance';
 
 function isStoreVariantLine(item: StoreItem): boolean {
   return item.catalogGroupRole === 'line';
@@ -238,6 +243,9 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     requirementType: 'certificate',
     hasExpiry: true,
   });
+  const [certAddMode, setCertAddMode] = useState<'single' | 'or_group'>('single');
+  const [orGroupLabel, setOrGroupLabel] = useState('');
+  const [orGroupSelectedIds, setOrGroupSelectedIds] = useState<string[]>([]);
   const [newPPE, setNewPPE] = useState<Partial<PositionPPERequirement>>({ required: true, quantityDefault: 1 });
   const [newTool, setNewTool] = useState<Partial<PositionToolRequirement>>({ allowed: true, quantityDefault: 1, itemType: 'tool' });
 
@@ -266,16 +274,34 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
     [toolMainCatalogPickList],
   );
 
+  const certCatalogItems = useMemo(
+    () =>
+      (workerDocCatalog || []).filter(
+        (x) => x.active !== false && (x.requirementType || 'certificate') === 'certificate',
+      ),
+    [workerDocCatalog],
+  );
+
+  const certDisplayRows = useMemo(
+    () => groupPositionCertificateRequirementsForDisplay(certs),
+    [certs],
+  );
+
+  const resetCertAddDialog = useCallback(() => {
+    setNewCert({ required: true, requirementType: 'certificate', hasExpiry: true });
+    setCertAddMode('single');
+    setOrGroupLabel('');
+    setOrGroupSelectedIds([]);
+  }, []);
+
   const certCatalogOptions = useMemo(
     () =>
-      (workerDocCatalog || [])
-        .filter((x) => x.active !== false && (x.requirementType || 'certificate') === 'certificate')
-        .map((x) => ({
-          id: x.id,
-          label: `${x.itemName} - certificate`,
-          searchText: [x.itemName, x.itemCode, x.requirementType, x.description].filter(Boolean).join(' '),
-        })),
-    [workerDocCatalog],
+      certCatalogItems.map((x) => ({
+        id: x.id,
+        label: `${x.itemName} - certificate`,
+        searchText: [x.itemName, x.itemCode, x.requirementType, x.description].filter(Boolean).join(' '),
+      })),
+    [certCatalogItems],
   );
 
   const resetAddToolDialog = useCallback(() => {
@@ -404,6 +430,43 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
       return;
     }
     if (!certsQuery) return;
+
+    if (certAddMode === 'or_group') {
+      const label = orGroupLabel.trim();
+      if (!label) {
+        toast({ variant: 'destructive', title: 'ยังไม่ได้ตั้งชื่อกลุ่ม', description: 'เช่น Offshore Safety' });
+        return;
+      }
+      if (orGroupSelectedIds.length < 2) {
+        toast({
+          variant: 'destructive',
+          title: 'เลือกใบเซอร์ไม่ครบ',
+          description: 'กลุ่ม OR ต้องมีอย่างน้อย 2 ใบเซอร์ทางเลือก',
+        });
+        return;
+      }
+      const groupKey = slugAlternativeGroupKey(label);
+      for (const templateId of orGroupSelectedIds) {
+        const item = certCatalogItems.find((x) => x.id === templateId);
+        if (!item) continue;
+        addDocumentNonBlocking(certsQuery, {
+          templateId: item.id,
+          requirementType: item.requirementType || 'certificate',
+          certificateName: item.itemName || '',
+          certificateCode: item.itemCode || '',
+          required: newCert.required ?? true,
+          validityMonths: item.hasExpiry ? Number(item.defaultValidityMonths || 0) : 0,
+          hasExpiry: item.hasExpiry ?? true,
+          notes: newCert.notes || '',
+          alternativeGroupKey: groupKey,
+          alternativeGroupLabel: label,
+        });
+      }
+      setIsAddCertOpen(false);
+      resetCertAddDialog();
+      return;
+    }
+
     if (!selectedCatalogItem) {
       toast({ variant: 'destructive', title: 'ยังไม่ได้เลือกเอกสารกลาง', description: 'กรุณาเลือกรายการจากเมนูรายการเอกสารกลางก่อนบันทึก' });
       return;
@@ -427,7 +490,28 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
       notes: newCert.notes || ''
     });
     setIsAddCertOpen(false);
-    setNewCert({ required: true, requirementType: 'certificate', hasExpiry: true });
+    resetCertAddDialog();
+  };
+
+  const deleteCertGroup = (groupKey: string) => {
+    if (!canDeletePositions) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์ลบรายการในตำแหน่งงาน' });
+      return;
+    }
+    if (!firestore) return;
+    const members = (certs || []).filter((c) => (c.alternativeGroupKey || '').trim() === groupKey);
+    if (members.length === 0) return;
+    if (!confirm(`ลบกลุ่ม OR ทั้งหมด (${members.length} ใบเซอร์)?`)) return;
+    for (const c of members) {
+      deleteDocumentNonBlocking(doc(firestore, 'positions', id, 'certificate_requirements', c.id));
+    }
+  };
+
+  const toggleOrGroupCatalogId = (catalogId: string, checked: boolean) => {
+    setOrGroupSelectedIds((prev) => {
+      if (checked) return prev.includes(catalogId) ? prev : [...prev, catalogId];
+      return prev.filter((x) => x !== catalogId);
+    });
   };
 
   const handleAddPPE = () => {
@@ -790,43 +874,134 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                   <CardTitle className="text-lg flex items-center gap-2 text-primary">
                     <FileText className="h-5 w-5" /> เกณฑ์ใบรับรองบังคับ (Compliance Reqs)
                   </CardTitle>
-                  <CardDescription>ใบเซอร์ที่คนงานต้องมีและยังไม่หมดอายุเพื่อผ่านเกณฑ์ READY</CardDescription>
+                  <CardDescription>
+                    ใบเซอร์ที่คนงานต้องมีและยังไม่หมดอายุเพื่อผ่านเกณฑ์ READY — รองรับกลุ่ม OR (มีอย่างใดอย่างหนึ่ง)
+                  </CardDescription>
                 </div>
                 {canEditPositions ? (
-                <Dialog open={isAddCertOpen} onOpenChange={setIsAddCertOpen}>
+                <Dialog
+                  open={isAddCertOpen}
+                  onOpenChange={(open) => {
+                    setIsAddCertOpen(open);
+                    if (!open) resetCertAddDialog();
+                  }}
+                >
                     <DialogTrigger asChild>
-                      <Button className="h-10 bg-primary font-bold shadow-md"><Plus className="h-4 w-4 mr-2" /> เพิ่มเกณฑ์ (Add)</Button>
+                      <Button className="h-10 bg-primary font-bold shadow-md">
+                        <Plus className="h-4 w-4 mr-2" /> เพิ่มเกณฑ์ / กลุ่ม OR
+                      </Button>
                     </DialogTrigger>
-                    <DialogContent>
+                    <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
                       <DialogHeader>
                         <DialogTitle>เพิ่มเกณฑ์ใบรับรอง</DialogTitle>
-                        <DialogDescription>กำหนดมาตรฐานใบรับรองสำหรับตำแหน่งงาน — เลือกได้เฉพาะประเภท certificate</DialogDescription>
+                        <DialogDescription>
+                          เลือกประเภทด้านล่าง — กลุ่ม OR ใช้เมื่อมีหลายใบเซอร์ทางเลือก (เช่น BOSIET / T-BOSIET / T-FOET)
+                        </DialogDescription>
                       </DialogHeader>
-                      <div className="grid gap-4 py-4">
-                        <SearchableSelect
-                          label="เลือกรายการจากเอกสารกลาง *"
-                          labelClassName="font-bold"
-                          options={certCatalogOptions}
-                          value={newCert.templateId || undefined}
-                          onChange={(v) => setNewCert({ ...newCert, templateId: v ?? '' })}
-                          placeholder="เลือกเอกสารกลาง..."
-                          searchPlaceholder="ค้นหาชื่อหรือรหัสใบเซอร์…"
-                          emptyMessage="ไม่พบใบเซอร์ (certificate) ในเอกสารกลาง"
-                        />
-                        {selectedCatalogItem && (
-                          <div className="text-xs rounded-lg border p-3 bg-muted/20">
-                            ประเภท: <b>{selectedCatalogItem.requirementType}</b> | มีอายุ:{' '}
-                            <b>{selectedCatalogItem.hasExpiry ? 'มี' : 'ไม่มี'}</b> | อายุแนะนำ:{' '}
-                            <b>{selectedCatalogItem.hasExpiry ? `${selectedCatalogItem.defaultValidityMonths || 0} เดือน` : '-'}</b>
-                          </div>
+                      <div className="grid gap-4 py-2">
+                        <div className="rounded-lg border bg-muted/30 p-1 grid grid-cols-2 gap-1">
+                          <button
+                            type="button"
+                            className={`rounded-md px-3 py-2.5 text-sm font-semibold transition-colors ${
+                              certAddMode === 'single'
+                                ? 'bg-primary text-primary-foreground shadow-sm'
+                                : 'text-muted-foreground hover:bg-muted/60'
+                            }`}
+                            onClick={() => setCertAddMode('single')}
+                          >
+                            ใบเดียว (AND)
+                          </button>
+                          <button
+                            type="button"
+                            className={`rounded-md px-3 py-2.5 text-sm font-semibold transition-colors ${
+                              certAddMode === 'or_group'
+                                ? 'bg-sky-600 text-white shadow-sm'
+                                : 'text-muted-foreground hover:bg-muted/60'
+                            }`}
+                            onClick={() => setCertAddMode('or_group')}
+                          >
+                            กลุ่มทางเลือก (OR)
+                          </button>
+                        </div>
+                        {certAddMode === 'or_group' ? (
+                          <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-md px-3 py-2">
+                            โหมด OR — ตั้งชื่อกลุ่ม แล้วติ๊กเลือก 2 ใบขึ้นไป คนงานมีใบใดใบหนึ่ง = ผ่าน
+                          </p>
+                        ) : null}
+
+                        {certAddMode === 'single' ? (
+                          <>
+                            <SearchableSelect
+                              label="เลือกรายการจากเอกสารกลาง *"
+                              labelClassName="font-bold"
+                              options={certCatalogOptions}
+                              value={newCert.templateId || undefined}
+                              onChange={(v) => setNewCert({ ...newCert, templateId: v ?? '' })}
+                              placeholder="เลือกเอกสารกลาง..."
+                              searchPlaceholder="ค้นหาชื่อหรือรหัสใบเซอร์…"
+                              emptyMessage="ไม่พบใบเซอร์ (certificate) ในเอกสารกลาง"
+                            />
+                            {selectedCatalogItem ? (
+                              <div className="text-xs rounded-lg border p-3 bg-muted/20">
+                                ประเภท: <b>{selectedCatalogItem.requirementType}</b> | มีอายุ:{' '}
+                                <b>{selectedCatalogItem.hasExpiry ? 'มี' : 'ไม่มี'}</b> | อายุแนะนำ:{' '}
+                                <b>{selectedCatalogItem.hasExpiry ? `${selectedCatalogItem.defaultValidityMonths || 0} เดือน` : '-'}</b>
+                              </div>
+                            ) : null}
+                          </>
+                        ) : (
+                          <>
+                            <div className="space-y-2">
+                              <Label className="font-bold">ชื่อกลุ่ม *</Label>
+                              <Input
+                                value={orGroupLabel}
+                                onChange={(e) => setOrGroupLabel(e.target.value)}
+                                placeholder="เช่น Offshore Safety"
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                เลือกอย่างน้อย 2 ใบ — คนงานมีใบใดใบหนึ่งในกลุ่มและยังไม่หมดอายุ = ผ่าน
+                              </p>
+                            </div>
+                            <div className="rounded-lg border max-h-52 overflow-y-auto divide-y">
+                              {certCatalogItems.map((item) => {
+                                const checked = orGroupSelectedIds.includes(item.id);
+                                return (
+                                  <label
+                                    key={item.id}
+                                    className="flex items-start gap-3 px-3 py-2.5 cursor-pointer hover:bg-muted/30"
+                                  >
+                                    <Checkbox
+                                      checked={checked}
+                                      onCheckedChange={(v) => toggleOrGroupCatalogId(item.id, v === true)}
+                                      className="mt-0.5"
+                                    />
+                                    <span className="min-w-0">
+                                      <span className="block font-medium text-sm">{item.itemName}</span>
+                                      <span className="block text-[10px] font-mono text-muted-foreground">{item.itemCode}</span>
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            {orGroupSelectedIds.length > 0 ? (
+                              <p className="text-xs text-muted-foreground">
+                                เลือกแล้ว {orGroupSelectedIds.length} ใบ:{' '}
+                                {certCatalogItems
+                                  .filter((x) => orGroupSelectedIds.includes(x.id))
+                                  .map((x) => x.itemName)
+                                  .join(' · ')}
+                              </p>
+                            ) : null}
+                          </>
                         )}
+
                         <div className="flex items-center space-x-2 p-3 border rounded-lg bg-muted/20">
                           <Checkbox id="req" checked={newCert.required} onCheckedChange={v => setNewCert({...newCert, required: !!v})} />
                           <Label htmlFor="req" className="font-bold cursor-pointer">บังคับต้องมี (Mandatory - Blocks Readiness)</Label>
                         </div>
                       </div>
                       <DialogFooter>
-                        <Button variant="outline" onClick={() => setIsAddCertOpen(false)}>ยกเลิก</Button>
+                        <Button variant="outline" onClick={() => { setIsAddCertOpen(false); resetCertAddDialog(); }}>ยกเลิก</Button>
                         <Button onClick={handleAddCert} className="bg-primary font-bold">บันทึกเกณฑ์ (Save)</Button>
                       </DialogFooter>
                     </DialogContent>
@@ -845,31 +1020,94 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {certs?.map(c => (
-                      <TableRow key={c.id}>
-                        <TableCell className="pl-6">
-                          <div className="flex flex-col">
-                            <span className="font-bold text-primary">{c.certificateName}</span>
-                            <span className="text-[10px] font-mono text-muted-foreground">{c.certificateCode || 'N/A'}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-xs uppercase">
-                          {c.requirementType || 'certificate'}
-                        </TableCell>
-                        <TableCell>
-                          {c.required ? (
-                            <Badge className="bg-red-600">Mandatory (บังคับ)</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-slate-500">Optional (เสริม)</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-sm">{c.hasExpiry === false ? 'ไม่มีวันหมดอายุ' : (c.validityMonths ? `${c.validityMonths} เดือน` : 'มีอายุ (ไม่ระบุเดือน)')}</TableCell>
-                        <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8" onClick={() => deleteReq('certificate_requirements', c.id)}><Trash2 className="h-4 w-4" /></Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {certs?.length === 0 && (
+                    {certDisplayRows.map((row) => {
+                      if (row.kind === 'standalone') {
+                        const c = row.req;
+                        return (
+                          <TableRow key={c.id}>
+                            <TableCell className="pl-6">
+                              <div className="flex flex-col">
+                                <span className="font-bold text-primary">{c.certificateName}</span>
+                                <span className="text-[10px] font-mono text-muted-foreground">{c.certificateCode || 'N/A'}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-xs uppercase">{c.requirementType || 'certificate'}</TableCell>
+                            <TableCell>
+                              {c.required ? (
+                                <Badge className="bg-red-600">Mandatory (บังคับ)</Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-slate-500">Optional (เสริม)</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {c.hasExpiry === false
+                                ? 'ไม่มีวันหมดอายุ'
+                                : c.validityMonths
+                                  ? `${c.validityMonths} เดือน`
+                                  : 'มีอายุ (ไม่ระบุเดือน)'}
+                            </TableCell>
+                            <TableCell className="text-right pr-6">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-destructive h-8 w-8"
+                                onClick={() => deleteReq('certificate_requirements', c.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      }
+
+                      const validityLabel = row.reqs.every((r) => r.validityMonths === row.reqs[0]?.validityMonths)
+                        ? row.reqs[0]?.hasExpiry === false
+                          ? 'ไม่มีวันหมดอายุ'
+                          : row.reqs[0]?.validityMonths
+                            ? `${row.reqs[0].validityMonths} เดือน`
+                            : 'มีอายุ (ไม่ระบุเดือน)'
+                        : 'ตามใบเซอร์';
+
+                      return (
+                        <TableRow key={`or-${row.groupKey}`} className="bg-sky-50/50">
+                          <TableCell className="pl-6">
+                            <div className="flex flex-col gap-1">
+                              <span className="font-bold text-primary">{row.label}</span>
+                              <span className="text-xs text-muted-foreground">{orGroupMemberSummary(row.reqs)}</span>
+                              <div className="flex flex-wrap gap-1 pt-1">
+                                {row.reqs.map((r) => (
+                                  <Badge key={r.id} variant="outline" className="text-[10px] font-mono">
+                                    {r.certificateCode || r.certificateName}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-xs uppercase">certificate</TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-1">
+                              <Badge className="bg-red-600">Mandatory (บังคับ)</Badge>
+                              <Badge variant="outline" className="border-sky-500 text-sky-800 bg-sky-50">
+                                OR · มีอย่างใดอย่างหนึ่ง
+                              </Badge>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-sm">{validityLabel}</TableCell>
+                          <TableCell className="text-right pr-6">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive h-8 w-8"
+                              title="ลบทั้งกลุ่ม OR"
+                              onClick={() => deleteCertGroup(row.groupKey)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {certDisplayRows.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={5} className="py-20 text-center text-muted-foreground italic">ไม่มีรายการใบเซอร์/เอกสารที่กำหนด</TableCell>
                       </TableRow>

@@ -128,7 +128,9 @@ export function PayrollSsoListTable({
             <TableHead>ชุดจ่าย / งวด</TableHead>
             <TableHead>ผู้มีเงินได้</TableHead>
             <TableHead className="whitespace-nowrap">วันที่จ่าย</TableHead>
-            <TableHead className={cn(SSO_EQUAL_COL_HEAD, 'text-right')}>ยอดจ่าย</TableHead>
+            <TableHead className={cn(SSO_EQUAL_COL_HEAD, 'text-right')} title="ยอดเงินได้ก่อนหัก ภงด. และ ปกส.">
+              ยอดจ่าย
+            </TableHead>
             <TableHead className={cn(SSO_EQUAL_COL_HEAD, 'text-center')}>สถานะจ่ายค่าจ้าง</TableHead>
             <TableHead className={cn(SSO_EQUAL_COL_HEAD, 'text-right')}>ยอด ปกส.</TableHead>
             <TableHead className={cn(SSO_EQUAL_COL_HEAD, 'text-right')}>ปกส.+สมทบ</TableHead>
@@ -181,7 +183,9 @@ export function PayrollSsoListTable({
                   <div className="truncate font-medium" title={r.earnerName}>
                     {r.earnerName}
                   </div>
-                  <div className="truncate text-xs text-muted-foreground font-mono">{r.earnerId}</div>
+                  <div className="truncate text-xs text-muted-foreground font-mono" title="เลขบัตรประชาชน">
+                    {r.earnerId}
+                  </div>
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm">{r.paymentYmd}</TableCell>
                 <TableCell className={cn(SSO_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>

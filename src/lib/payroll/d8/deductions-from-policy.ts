@@ -9,12 +9,19 @@ import {
 } from '@/lib/payroll/employee-payroll-deductions';
 import type { PayrollPolicyRecord } from '@/lib/types';
 
+/** ปัดเศษสตางค์ ปกส. — ต่ำกว่า 0.5 ปัดลง, 0.5 ขึ้นไปปัดขึ้น */
+export function roundSocialSecurityBahtHalfUp(amount: number): number {
+  const v = Number(amount);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  return Math.floor(v * 100 + 0.5) / 100;
+}
+
 export function socialSecurityFromPolicy(grossForSS: number, policy: PayrollPolicyRecord | null): number {
   if (!policy) return 0;
   const rate = Number(policy.config.employeeRatePercent ?? DEFAULT_SOCIAL_SECURITY_EMPLOYEE_RATE_PERCENT) / 100;
   const ceiling = Number(policy.config.monthlyCeilingBaht ?? DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT);
   const base = Math.min(Math.max(0, grossForSS), ceiling);
-  return Math.round(base * rate * 100) / 100;
+  return roundSocialSecurityBahtHalfUp(base * rate);
 }
 
 /**

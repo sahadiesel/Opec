@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useCallback, useMemo, useState } from 'react';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -10,7 +10,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -21,17 +20,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2 } from 'lucide-react';
-import {
-  PayrollSsoListTable,
-  PayrollSsoPayButton,
-  type PayrollSsoTableRow,
-} from '@/components/accounting/payroll-sso-list-table';
 import { fmtBaht } from '@/components/accounting/withholding-wht-pay-tax-ui';
+import type { PayrollSsoTableRow } from '@/components/accounting/payroll-sso-list-table';
 import {
-  countSelectedPayable,
   payAmountForRow,
   applyLocalCombinedSsoPaymentPatch,
-  selectableKeySig,
   type ExecutiveSsoRow,
   type OfficeSsoRow,
   type WorkerSsoRow,
@@ -45,25 +38,19 @@ import {
 } from '@/lib/services/payroll-sso-payment-service';
 import { useToast } from '@/hooks/use-toast';
 
-export type SsoSectionKind = 'worker' | 'office' | 'executive';
+function payableTableRows(...groups: PayrollSsoTableRow[][]): PayrollSsoTableRow[] {
+  return groups.flat().filter((r) => r.ssoPayable || r.employerPayable);
+}
 
-type PayDialogState = true | null;
-
-export function PayrollSsoSectionCard({
-  title,
-  description,
-  icon,
-  loading,
-  error,
-  emptyFiltered,
-  emptyAll,
-  tableRows,
-  totalSsoLabel,
+export function PayrollSsoCombinedPayButton({
   canPay,
+  loading,
   firestore,
   currentUser,
   operatingBankOptions,
-  sectionKind,
+  workerTableRows,
+  officeTableRows,
+  executiveTableRows,
   workerRows,
   officeRows,
   executiveRows,
@@ -71,52 +58,31 @@ export function PayrollSsoSectionCard({
   onOfficeRowsChange,
   onExecutiveRowsChange,
 }: {
-  title: ReactNode;
-  description: string;
-  icon: ReactNode;
-  loading: boolean;
-  error: string | null;
-  emptyFiltered: string;
-  emptyAll: string;
-  tableRows: PayrollSsoTableRow[];
-  totalSsoLabel: string;
   canPay: boolean;
+  loading: boolean;
   firestore: Firestore | null;
   currentUser: User | null;
   operatingBankOptions: BankAccount[];
-  sectionKind: SsoSectionKind;
-  workerRows?: WorkerSsoRow[];
-  officeRows?: OfficeSsoRow[];
-  executiveRows?: ExecutiveSsoRow[];
-  onWorkerRowsChange?: (updater: (prev: WorkerSsoRow[]) => WorkerSsoRow[]) => void;
-  onOfficeRowsChange?: (updater: (prev: OfficeSsoRow[]) => OfficeSsoRow[]) => void;
-  onExecutiveRowsChange?: (updater: (prev: ExecutiveSsoRow[]) => ExecutiveSsoRow[]) => void;
+  workerTableRows: PayrollSsoTableRow[];
+  officeTableRows: PayrollSsoTableRow[];
+  executiveTableRows: PayrollSsoTableRow[];
+  workerRows: WorkerSsoRow[];
+  officeRows: OfficeSsoRow[];
+  executiveRows: ExecutiveSsoRow[];
+  onWorkerRowsChange: (updater: (prev: WorkerSsoRow[]) => WorkerSsoRow[]) => void;
+  onOfficeRowsChange: (updater: (prev: OfficeSsoRow[]) => OfficeSsoRow[]) => void;
+  onExecutiveRowsChange: (updater: (prev: ExecutiveSsoRow[]) => ExecutiveSsoRow[]) => void;
 }) {
   const { toast } = useToast();
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
-  const [payDialog, setPayDialog] = useState<PayDialogState>(null);
+  const [payDialogOpen, setPayDialogOpen] = useState(false);
   const [payBankId, setPayBankId] = useState('');
   const [payDate, setPayDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [payBusy, setPayBusy] = useState(false);
 
-  const keySig = useMemo(() => selectableKeySig(tableRows), [tableRows]);
-
-  useEffect(() => {
-    const keys = keySig ? keySig.split('|') : [];
-    setSelectedKeys(new Set(keys));
-  }, [keySig]);
-
-  const selectedPayCount = useMemo(
-    () => countSelectedPayable(tableRows, selectedKeys),
-    [tableRows, selectedKeys],
+  const payTargets = useMemo(
+    () => payableTableRows(workerTableRows, officeTableRows, executiveTableRows),
+    [workerTableRows, officeTableRows, executiveTableRows],
   );
-
-  const payTargets = useMemo(() => {
-    if (!payDialog) return [];
-    return tableRows.filter(
-      (r) => selectedKeys.has(r.rowKey) && (r.ssoPayable || r.employerPayable),
-    );
-  }, [payDialog, tableRows, selectedKeys]);
 
   const payDialogTotal = useMemo(
     () => payTargets.reduce((sum, r) => sum + payAmountForRow(r), 0),
@@ -124,25 +90,25 @@ export function PayrollSsoSectionCard({
   );
 
   const openPayDialog = useCallback(() => {
-    if (selectedPayCount === 0) {
+    if (payTargets.length === 0) {
       toast({
         variant: 'destructive',
         title: 'ไม่มีรายการที่พร้อมจ่าย',
-        description: 'ต้องจ่ายค่าจ้างแล้วและยังไม่ได้จ่าย ปกส.+สมทบ ครบ',
+        description: 'ต้องจ่ายค่าจ้างแล้วและยังไม่ได้จ่าย ปกส.+สมทบ ครบ — หรือปรับตัวกรอง',
       });
       return;
     }
-    setPayDialog(true);
+    setPayDialogOpen(true);
     setPayBankId((prev) =>
       prev && operatingBankOptions.some((b) => b.id === prev) ? prev : (operatingBankOptions[0]?.id ?? ''),
     );
     setPayDate(new Date().toISOString().slice(0, 10));
-  }, [selectedPayCount, operatingBankOptions, toast]);
+  }, [payTargets.length, operatingBankOptions, toast]);
 
   const patchLineAfterPay = useCallback(
     (rowKey: string, result: { cashbookEntryId: string; entryNo: string }, bankId: string) => {
       const now = Date.now();
-      if (sectionKind === 'worker' && onWorkerRowsChange && workerRows) {
+      if (rowKey.startsWith('worker::')) {
         onWorkerRowsChange((prev) =>
           prev.map((row) => {
             const key = `worker::${row.batch.id}::${row.line.id}`;
@@ -153,7 +119,9 @@ export function PayrollSsoSectionCard({
             };
           }),
         );
-      } else if (sectionKind === 'office' && onOfficeRowsChange && officeRows) {
+        return;
+      }
+      if (rowKey.startsWith('office::')) {
         onOfficeRowsChange((prev) =>
           prev.map((row) => {
             const key = `office::${row.run.id}::${row.line.id}`;
@@ -164,7 +132,9 @@ export function PayrollSsoSectionCard({
             };
           }),
         );
-      } else if (sectionKind === 'executive' && onExecutiveRowsChange && executiveRows) {
+        return;
+      }
+      if (rowKey.startsWith('executive::')) {
         onExecutiveRowsChange((prev) =>
           prev.map((row) => {
             const key = `executive::${row.run.id}::${row.line.id}`;
@@ -177,11 +147,11 @@ export function PayrollSsoSectionCard({
         );
       }
     },
-    [sectionKind, onWorkerRowsChange, onOfficeRowsChange, onExecutiveRowsChange, workerRows, officeRows, executiveRows],
+    [onWorkerRowsChange, onOfficeRowsChange, onExecutiveRowsChange],
   );
 
   const handleConfirmPay = useCallback(async () => {
-    if (!firestore || !currentUser || !payDialog) return;
+    if (!firestore || !currentUser || !payDialogOpen) return;
     if (!payBankId.trim()) {
       toast({ variant: 'destructive', title: 'กรุณาเลือกบัญชีธนาคาร' });
       return;
@@ -194,12 +164,11 @@ export function PayrollSsoSectionCard({
     setPayBusy(true);
     let success = 0;
     const errors: string[] = [];
-    const paidKeys = new Set<string>();
 
     try {
       for (const target of payTargets) {
         try {
-          if (sectionKind === 'worker' && workerRows) {
+          if (target.rowKey.startsWith('worker::')) {
             const row = workerRows.find((r) => `worker::${r.batch.id}::${r.line.id}` === target.rowKey);
             if (!row) continue;
             const result = await recordWorkerPayrollSsoPayment(firestore, currentUser, {
@@ -211,7 +180,7 @@ export function PayrollSsoSectionCard({
               earnerName: row.line.workerNameSnapshot || row.line.workerId,
             });
             patchLineAfterPay(target.rowKey, result, payBankId);
-          } else if (sectionKind === 'office' && officeRows) {
+          } else if (target.rowKey.startsWith('office::')) {
             const row = officeRows.find((r) => `office::${r.run.id}::${r.line.id}` === target.rowKey);
             if (!row) continue;
             const result = await recordOfficePayrollSsoPayment(firestore, currentUser, {
@@ -223,7 +192,7 @@ export function PayrollSsoSectionCard({
               earnerName: row.line.staffName || row.line.staffId,
             });
             patchLineAfterPay(target.rowKey, result, payBankId);
-          } else if (sectionKind === 'executive' && executiveRows) {
+          } else if (target.rowKey.startsWith('executive::')) {
             const row = executiveRows.find((r) => `executive::${r.run.id}::${r.line.id}` === target.rowKey);
             if (!row) continue;
             const result = await recordExecutivePayrollSsoPayment(firestore, currentUser, {
@@ -236,27 +205,18 @@ export function PayrollSsoSectionCard({
             });
             patchLineAfterPay(target.rowKey, result, payBankId);
           }
-          paidKeys.add(target.rowKey);
           success += 1;
         } catch (e) {
           errors.push(`${target.earnerName}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
 
-      if (paidKeys.size > 0) {
-        setSelectedKeys((prev) => {
-          const next = new Set(prev);
-          for (const key of paidKeys) next.delete(key);
-          return next;
-        });
-      }
-
       if (errors.length === 0) {
         toast({
           title: 'บันทึกจ่าย ปกส.+สมทบ แล้ว',
-          description: `จ่ายสำเร็จ ${success} รายการ · ตัดบัญชีและบันทึก cashbook เรียบร้อย`,
+          description: `จ่ายสำเร็จ ${success} รายการ (ลูกจ้าง+ออฟฟิศ+ผู้บริหาร) · ตัดบัญชีและบันทึก cashbook เรียบร้อย`,
         });
-        setPayDialog(null);
+        setPayDialogOpen(false);
       } else if (success > 0) {
         toast({
           variant: 'destructive',
@@ -276,11 +236,10 @@ export function PayrollSsoSectionCard({
   }, [
     firestore,
     currentUser,
-    payDialog,
+    payDialogOpen,
     payBankId,
     payDate,
     payTargets,
-    sectionKind,
     workerRows,
     officeRows,
     executiveRows,
@@ -288,75 +247,40 @@ export function PayrollSsoSectionCard({
     toast,
   ]);
 
-  const hasRows = tableRows.length > 0;
+  if (!canPay || loading) return null;
 
   return (
     <>
-      <Card>
-        <CardHeader>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0 space-y-1.5">
-              <CardTitle className="flex items-center gap-2 text-lg">
-                {icon}
-                {title}
-              </CardTitle>
-              <CardDescription>{description}</CardDescription>
-            </div>
-            {!loading && !error ? (
-              <div className="flex flex-wrap items-stretch gap-2 shrink-0">
-                <PayrollSsoPayButton
-                  canPay={canPay}
-                  selectedCount={selectedPayCount}
-                  onPay={openPayDialog}
-                />
-                <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-3 text-right shadow-sm sm:min-w-[180px]">
-                  <p className="text-xs font-medium text-muted-foreground">ยอด ปกส.+สมทบ รวม (ในตาราง)</p>
-                  <p className="text-xl font-bold tabular-nums tracking-tight text-primary">{totalSsoLabel}</p>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {error ? (
-            <p className="text-sm text-destructive">{error}</p>
-          ) : loading ? (
-            <div className="flex justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : !hasRows ? (
-            <p className="text-sm text-muted-foreground py-8 text-center">{emptyFiltered || emptyAll}</p>
-          ) : (
-            <PayrollSsoListTable
-              rows={tableRows}
-              canPay={canPay}
-              selectedKeys={selectedKeys}
-              onSelectedKeysChange={setSelectedKeys}
-            />
-          )}
-        </CardContent>
-      </Card>
+      <Button
+        type="button"
+        variant="destructive"
+        className="h-10 shrink-0 gap-2 whitespace-nowrap"
+        disabled={payTargets.length === 0}
+        onClick={openPayDialog}
+      >
+        จ่าย ปกส.+สมทบ ({payTargets.length})
+      </Button>
 
-      <Dialog open={!!payDialog} onOpenChange={(open) => !open && !payBusy && setPayDialog(null)}>
+      <Dialog open={payDialogOpen} onOpenChange={(open) => !open && !payBusy && setPayDialogOpen(false)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>จ่าย ปกส.+สมทบ</DialogTitle>
+            <DialogTitle>จ่าย ปกส.+สมทบ (รวม 3 หมวด)</DialogTitle>
             <DialogDescription>
-              ตัดจ่าย ปกส.+สมทบ รวมยอดเดียว — บันทึก cashbook 1 รายการต่อคน (ลูกจ้าง + สมทบนายจ้าง)
+              ลูกจ้าง · ออฟฟิศ · ผู้บริหาร — ตามตัวกรองปัจจุบัน · cashbook 1 รายการต่อคน (ปกส.+สมทบ)
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 text-sm">
             <div className="rounded-md border bg-muted/30 p-3 space-y-1">
-              <p className="font-medium">รายการที่เลือก {payTargets.length} รายการ</p>
+              <p className="font-medium">รายการที่พร้อมจ่าย {payTargets.length} รายการ</p>
               <p className="text-muted-foreground">
                 ยอดรวม{' '}
-                <span className="font-semibold text-primary tabular-nums">{fmtBaht(payDialogTotal)}</span>
+                <span className="font-semibold text-destructive tabular-nums">{fmtBaht(payDialogTotal)}</span>
               </p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor={`sso-pay-bank-${sectionKind}`}>บัญชีธนาคารที่ตัดจ่าย</Label>
+              <Label htmlFor="sso-combined-pay-bank">บัญชีธนาคารที่ตัดจ่าย</Label>
               <Select value={payBankId} onValueChange={setPayBankId}>
-                <SelectTrigger id={`sso-pay-bank-${sectionKind}`}>
+                <SelectTrigger id="sso-combined-pay-bank">
                   <SelectValue placeholder="เลือกบัญชี ACTIVE" />
                 </SelectTrigger>
                 <SelectContent>
@@ -369,9 +293,9 @@ export function PayrollSsoSectionCard({
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor={`sso-pay-date-${sectionKind}`}>วันที่ตัดบัญชี</Label>
+              <Label htmlFor="sso-combined-pay-date">วันที่ตัดบัญชี</Label>
               <Input
-                id={`sso-pay-date-${sectionKind}`}
+                id="sso-combined-pay-date"
                 type="date"
                 value={payDate}
                 onChange={(e) => setPayDate(e.target.value)}
@@ -379,12 +303,12 @@ export function PayrollSsoSectionCard({
             </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" disabled={payBusy} onClick={() => setPayDialog(null)}>
+            <Button type="button" variant="outline" disabled={payBusy} onClick={() => setPayDialogOpen(false)}>
               ยกเลิก
             </Button>
             <Button
               type="button"
-              variant="secondary"
+              variant="destructive"
               disabled={payBusy || !payBankId || payTargets.length === 0}
               onClick={() => void handleConfirmPay()}
             >

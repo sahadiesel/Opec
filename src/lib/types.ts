@@ -510,6 +510,10 @@ export interface PositionCertificateRequirement {
   validityMonths: number;
   hasExpiry?: boolean;
   notes?: string;
+  /** รหัสกลุ่มทางเลือก — มีใบใดใบหนึ่งในกลุ่มเดียวกันก็ผ่าน (OR) */
+  alternativeGroupKey?: string;
+  /** ชื่อแสดงกลุ่ม OR เช่น Offshore Safety */
+  alternativeGroupLabel?: string;
 }
 
 export interface WorkerDocumentCatalogItem {
@@ -1004,6 +1008,27 @@ export type MobLocationPhase =
   /** จบที่ไซต์นี้แล้ว — พร้อมเปิด mobCycleNumber ถัดไปหรือกลับคิว */
   | 'finished_location';
 
+/** ค่า mobilization ก่อนกดจบงานบน Wave Board — ใช้ยกเลิกจบงาน */
+export interface MobFinishUndoSnapshot {
+  deploymentStatus?: DeploymentStatus;
+  mobilizationStatus?: string;
+  mobCycleNumber?: number;
+  mobCycleId?: string;
+  mobStandbyDate?: string;
+  mobStandbyDayEventType?: 'standby_day' | 'mobilization_day';
+  mobStandbyRecordedAt?: number;
+  mobStandbyRecordedByUserId?: string;
+  mobWorkingStartDate?: string;
+  mobWorkingStartedAt?: number;
+  mobWorkingStartedByUserId?: string;
+  mobReadyToTravelAt?: number;
+  mobReadyToTravelByUserId?: string;
+  mobLocationPhase?: MobLocationPhase;
+  poActiveAutoWorkSuspended?: boolean;
+  poActiveStandbyAutoStartYmd?: string;
+  poActiveStandbyAutoEndYmd?: string;
+}
+
 export interface Assignment {
   id: string;
   assignmentNo: string;
@@ -1056,6 +1081,8 @@ export interface Assignment {
   mobLocationEndDate?: string;
   mobLocationEndedAt?: number;
   mobLocationEndedByUserId?: string;
+  /** snapshot ก่อนจบงานจาก Wave Board — ใช้ยกเลิกจบงานคืนสถานะ mobilization */
+  mobFinishUndoSnapshot?: MobFinishUndoSnapshot;
   /**
    * หยุดแบบ standby จาก Wave Board — หลังช่วง SB อัตโนมัติแล้วไม่สร้าง work_day จนกว่าจะเริ่มงานใหม่ที่ Mobilization
    */
@@ -2342,6 +2369,8 @@ export interface WorkerMedicalRecord {
   hospitalOrClinic?: string;
   status?: string;
   recordDate?: string;
+  /** รูปหรือ PDF แนบผลตรวจ */
+  attachment?: WaveMonthTimesheetPhotoAttachment;
   _path?: string;
 }
 

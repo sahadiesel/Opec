@@ -61,6 +61,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
+import { cn } from '@/lib/utils';
 
 function statusLabel(s: PurchaseRequestStatus) {
   const m: Record<PurchaseRequestStatus, string> = {
@@ -528,18 +529,40 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           </Badge>
         </div>
 
-        {showPO && (
+        <div className={cn('grid gap-4', showPO && 'sm:grid-cols-2')}>
+          {showPO && (
+            <Card className="border-primary/20 bg-primary/5">
+              <CardHeader>
+                <CardTitle className="text-base">ใบสั่งซื้อที่อ้างอิง</CardTitle>
+                <CardDescription>
+                  <Button type="button" variant="link" className="h-auto p-0 text-base font-mono" asChild>
+                    <Link href={`/purchases/${linkedPo!.id}`}>{linkedPo!.purchaseNo}</Link>
+                  </Button>
+                </CardDescription>
+              </CardHeader>
+            </Card>
+          )}
+
           <Card className="border-primary/20 bg-primary/5">
-            <CardHeader>
-              <CardTitle className="text-base">ใบสั่งซื้อที่อ้างอิง</CardTitle>
-              <CardDescription>
-                <Button type="button" variant="link" className="h-auto p-0 text-base font-mono" asChild>
-                  <Link href={`/purchases/${linkedPo!.id}`}>{linkedPo!.purchaseNo}</Link>
-                </Button>
-              </CardDescription>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">ผู้จัดทำ / ผู้อนุมัติ</CardTitle>
             </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div>
+                <p className="text-xs text-muted-foreground">ผู้จัดทำ</p>
+                <p className="font-medium">{pr.requestedByName?.trim() || '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">ผู้อนุมัติ</p>
+                <p className="font-medium">
+                  {displayStatus === 'APPROVED' || displayStatus === 'PO_ISSUED'
+                    ? pr.decidedByName?.trim() || '—'
+                    : '—'}
+                </p>
+              </div>
+            </CardContent>
           </Card>
-        )}
+        </div>
 
         {showPoLink && okStore && (
           <Card className="border-emerald-200 bg-emerald-50/40">

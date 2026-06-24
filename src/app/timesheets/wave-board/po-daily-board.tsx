@@ -76,6 +76,12 @@ import {
   formatThaiYearMonthLabel,
 } from '@/lib/ops/timesheet-hub-po-month';
 import { buildMobCycleDocId } from '@/lib/ops/mob-cycle-ids';
+import {
+  buildMobFinishUndoRestoreFields,
+  buildMobFinishUndoSnapshot,
+  inferMobWorkingStartDateFromTimesheets,
+  isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob,
+} from '@/lib/timesheet/mob-finish-undo';
 import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import {
   applyPoActiveStandbyStopWindow,
@@ -879,6 +885,7 @@ export function PoDailyBoardCard({
       const tsService = new TimesheetService(firestore);
       const nextCycle = Math.max(1, (asgn.mobCycleNumber || 1) + 1);
       batch.update(mobRef, {
+        mobFinishUndoSnapshot: buildMobFinishUndoSnapshot(asgn),
         deploymentStatus: 'DRAFT',
         mobilizationStatus: 'PENDING',
         mobCycleNumber: nextCycle,
@@ -952,17 +959,21 @@ export function PoDailyBoardCard({
     try {
       const mobRef = doc(firestore, 'mobilizations', asgn.id);
       const batch = writeBatch(firestore);
+      const restoreFields = buildMobFinishUndoRestoreFields(
+        asgn.id,
+        asgn.mobFinishUndoSnapshot,
+        prevCycle,
+        deleteField(),
+      );
+      if (
+        !asgn.mobFinishUndoSnapshot?.mobWorkingStartDate &&
+        typeof restoreFields.mobWorkingStartDate === 'object'
+      ) {
+        const inferred = await inferMobWorkingStartDateFromTimesheets(firestore, asgn.id);
+        if (inferred) restoreFields.mobWorkingStartDate = inferred;
+      }
       batch.update(mobRef, {
-        deploymentStatus: 'ACTIVE',
-        mobilizationStatus: 'ACTIVE',
-        mobCycleNumber: prevCycle,
-        mobCycleId: buildMobCycleDocId(asgn.id, prevCycle),
-        mobLocationEndDate: deleteField(),
-        mobLocationEndedAt: deleteField(),
-        mobLocationEndedByUserId: deleteField(),
-        poActiveAutoWorkSuspended: deleteField(),
-        poActiveStandbyAutoStartYmd: deleteField(),
-        poActiveStandbyAutoEndYmd: deleteField(),
+        ...restoreFields,
         updatedAt: now,
         updatedBy: currentUser.id,
       });
@@ -971,7 +982,9 @@ export function PoDailyBoardCard({
       await loadRoster();
       toast({
         title: 'ยกเลิกการจบงานแล้ว',
-        description: 'สถานะกลับเป็น ACTIVE — ตรวจขั้น Mobilization ถ้าต้องบันทึกวันเริ่มงานใหม่',
+        description: asgn.mobFinishUndoSnapshot
+          ? 'สถานะและวัน mobilization กลับตามก่อนจบงาน — แก้ไขลงเวลาได้ตามปกติ'
+          : 'สถานะกลับเป็น ACTIVE — ตรวจวันเริ่มงานใน Mobilization ถ้ายังลงเวลาไม่ได้',
       });
     } catch (e: unknown) {
       toast({ variant: 'destructive', title: 'อัปเดตไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
@@ -1276,12 +1289,17 @@ export function PoDailyBoardCard({
                   const tsService = new TimesheetService(firestore!);
                   const isLocked = tsService.isFinalized(row.status as DailyTimesheetStatus);
                   const dateInAssignment = isYmdWithinAssignmentMobTimesheetWindow(asgn, targetDate.slice(0, 10));
-                  const rowEditLocked =
-                    isLocked || rowLocked || anyMonthLocked || !dateInAssignment || (afterMobEnd && !persisted);
-                  const canFinishJob =
-                    dateInAssignment &&
-                    WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(asgn.deploymentStatus as Assignment['deploymentStatus']);
                   const awaitingRemob = assignmentAwaitingRemobAfterFinish(asgn);
+                  const priorCycleWorkWhileAwaitingRemob = isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(
+                    asgn,
+                    targetDate.slice(0, 10),
+                  );
+                  const editableMobWindow = dateInAssignment || priorCycleWorkWhileAwaitingRemob;
+                  const rowEditLocked =
+                    isLocked || rowLocked || anyMonthLocked || !editableMobWindow || (afterMobEnd && !persisted);
+                  const canFinishJob =
+                    editableMobWindow &&
+                    WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(asgn.deploymentStatus as Assignment['deploymentStatus']);
                   const finishDateHintForRow =
                     finishJobModal?.assignment.id === asgn.id ? finishModalDateIssue : null;
 
@@ -1290,7 +1308,7 @@ export function PoDailyBoardCard({
                       key={asgn.id}
                       className={
                         rowEditLocked
-                          ? !dateInAssignment
+                          ? !editableMobWindow
                             ? 'bg-amber-50/40 dark:bg-amber-950/20'
                             : 'bg-slate-50 opacity-80'
                           : 'hover:bg-muted/20'
@@ -1304,7 +1322,7 @@ export function PoDailyBoardCard({
                           <span className="text-[9px] font-mono text-muted-foreground uppercase">
                             {worker?.workerCode || asgn.id.slice(0, 8)}
                           </span>
-                          {!dateInAssignment ? (
+                          {!editableMobWindow ? (
                             <span className="text-[9px] text-amber-800 dark:text-amber-200 mt-0.5 leading-snug">
                               วันที่เลือกอยู่นอกช่วงที่อนุญาตลงเวลา (ระบบเทียบวันมอบหมาย วันสแตนด์บาย/เริ่มงาน
                               วันจบไซต์ และ endDate มอบหมาย)
@@ -1312,6 +1330,10 @@ export function PoDailyBoardCard({
                                 สาเหตุที่พบบ่อย: ช่องว่างระหว่าง &quot;จบรอบไซต์ก่อน&quot; กับวัน Standby/เริ่มงานของรอบใหม่
                                 ใน mobilization เดียวกัน (remob) · หรือเลือกวันหลังวันจบงาน/endDate ที่บันทึกแล้ว
                               </span>
+                            </span>
+                          ) : awaitingRemob && priorCycleWorkWhileAwaitingRemob ? (
+                            <span className="text-[9px] text-sky-800 dark:text-sky-200 mt-0.5 leading-snug">
+                              Waiting MOB — แก้ไขลงเวลารอบก่อนจบงานได้ · กด «ยกเลิกจบงาน» เพื่อกลับ ACTIVE
                             </span>
                           ) : afterMobEnd ? (
                             <span className="text-[9px] text-muted-foreground mt-0.5">

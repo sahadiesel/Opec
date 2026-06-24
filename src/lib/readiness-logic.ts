@@ -9,6 +9,7 @@ import {
   DrugTestPanelSubstance,
 } from './types';
 import { getPolicy } from './policy/engine';
+import { mandatoryCertificateComplianceMet } from './position-certificate-compliance';
 
 /**
  * Calculates a worker's readiness status based on their records and position-level policy.
@@ -26,18 +27,15 @@ export async function calculateWorkerReadiness(
   const now = Date.now();
   const policy = getPolicy(mode);
 
-  // 1. Check Mandatory Certificates based on Job Mode
-  for (const req of mandatoryReqs) {
-    // Only check Offshore specific certs if in Offshore mode
+  const skipReq = (req: PositionCertificateRequirement) => {
     const isBOSIET = req.certificateCode === 'BOSIET' || req.certificateName.includes('BOSIET');
-    if (isBOSIET && !policy.readinessRules.requiresBOSIET) continue;
+    return isBOSIET && !policy.readinessRules.requiresBOSIET;
+  };
 
-    const hasValidCert = certificates.some(c => 
-      (c.certificateCode === req.certificateCode || c.certificateName === req.certificateName) && 
-      c.expiryDate > now && 
-      c.status === 'valid'
-    );
-    if (!hasValidCert) return 'MISSING_CERTIFICATE';
+  if (
+    !mandatoryCertificateComplianceMet(mandatoryReqs, certificates, [], now, skipReq)
+  ) {
+    return 'MISSING_CERTIFICATE';
   }
 
   // 2. Check Medical Records
@@ -53,7 +51,7 @@ export async function calculateWorkerReadiness(
   const medExpiry = new Date(latestMedical.expiryDate).getTime();
   if (medExpiry < now) return 'MEDICAL_EXPIRED';
 
-  // Drug panel: ไม่บล็อก readiness/assign — ตรวจที่ขั้น mobilization แทน
+  // Drug panel: ไม่บล็อก readiness/assign — ตรวจที่ mobilization แทน
 
   return 'READY';
 }
