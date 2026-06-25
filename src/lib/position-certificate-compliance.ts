@@ -3,6 +3,7 @@ import type {
   WorkerCertificate,
   WorkerDocument,
 } from '@/lib/types';
+import { isStoredExpiryPast } from '@/lib/date-thai';
 
 export type PositionCertReqDisplayRow =
   | { kind: 'standalone'; req: PositionCertificateRequirement }
@@ -21,6 +22,42 @@ function codesMatch(a: string | undefined, b: string | undefined): boolean {
   return (a || '').trim().toLowerCase() === (b || '').trim().toLowerCase();
 }
 
+function normalizeCredentialLabel(s: string | undefined): string {
+  return (s || '').trim().toLowerCase().replace(/[\s_-]+/g, '');
+}
+
+function certStatusIsValid(status: string | undefined): boolean {
+  return (status || '').trim().toLowerCase() === 'valid';
+}
+
+/** จับคู่ใบเซอร์กับเกณฑ์ตำแหน่ง — code, ชื่อ, หรือ template ใน catalog */
+export function findWorkerCertificateForRequirement(
+  req: PositionCertificateRequirement,
+  certificates: WorkerCertificate[],
+): WorkerCertificate | undefined {
+  return certificates.find((c) => certificateMatchesRequirement(c, req));
+}
+
+export function findWorkerDocumentForRequirement(
+  req: PositionCertificateRequirement,
+  documents: WorkerDocument[],
+): WorkerDocument | undefined {
+  return documents.find((d) => documentMatchesRequirement(d, req));
+}
+
+function certificateMatchesRequirement(cert: WorkerCertificate, req: PositionCertificateRequirement): boolean {
+  if (codesMatch(cert.certificateCode, req.certificateCode)) return true;
+  if (normalizeCredentialLabel(cert.certificateName) === normalizeCredentialLabel(req.certificateName)) {
+    return true;
+  }
+  return false;
+}
+
+function documentMatchesRequirement(doc: WorkerDocument, req: PositionCertificateRequirement): boolean {
+  if (codesMatch(doc.documentType, req.certificateCode)) return true;
+  return false;
+}
+
 export function workerHasValidCertificateRequirement(
   req: PositionCertificateRequirement,
   certificates: WorkerCertificate[],
@@ -31,20 +68,16 @@ export function workerHasValidCertificateRequirement(
   const type = reqType(req);
 
   if (type === 'document') {
-    const matchedDoc = documents.find((d) => codesMatch(d.documentType, req.certificateCode));
+    const matchedDoc = findWorkerDocumentForRequirement(req, documents);
     if (!matchedDoc) return false;
     if (!requiresExpiry) return true;
-    return Number(matchedDoc.expiryDate || 0) > now;
+    return !isStoredExpiryPast(matchedDoc.expiryDate, now);
   }
 
-  const certRecord = certificates.find(
-    (c) =>
-      codesMatch(c.certificateCode, req.certificateCode) &&
-      c.status === 'valid',
-  );
-  if (!certRecord) return false;
+  const certRecord = findWorkerCertificateForRequirement(req, certificates);
+  if (!certRecord || !certStatusIsValid(certRecord.status)) return false;
   if (!requiresExpiry) return true;
-  return Number(certRecord.expiryDate || 0) > now;
+  return !isStoredExpiryPast(certRecord.expiryDate, now);
 }
 
 /** แยก mandatory เป็น standalone (AND) กับกลุ่ม OR */
@@ -126,6 +159,30 @@ export function getUnsatisfiedMandatoryCertificateRequirements(
   }
 
   return missing;
+}
+
+/**
+ * เกณฑ์บังคับที่ยังไม่มีเรคอร์ดในระบบ — ใช้แถว «ตามตำแหน่ง» เท่านั้น
+ * (ถ้ามีใบแล้วแต่หมดอายุ/ไม่ valid ให้แก้ที่แถวเดิม ไม่สร้างแถวซ้ำ)
+ */
+export function getMandatoryRequirementsWithNoWorkerRecord(
+  mandatoryReqs: PositionCertificateRequirement[],
+  certificates: WorkerCertificate[],
+  documents: WorkerDocument[],
+  now = Date.now(),
+): PositionCertificateRequirement[] {
+  const unsatisfied = getUnsatisfiedMandatoryCertificateRequirements(
+    mandatoryReqs,
+    certificates,
+    documents,
+    now,
+  );
+  return unsatisfied.filter((req) => {
+    if (reqType(req) === 'document') {
+      return !findWorkerDocumentForRequirement(req, documents);
+    }
+    return !findWorkerCertificateForRequirement(req, certificates);
+  });
 }
 
 export function groupPositionCertificateRequirementsForDisplay(

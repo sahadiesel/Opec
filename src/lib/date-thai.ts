@@ -213,3 +213,63 @@ export function formatOfficePayrollRunPeriodLabelThaiBE(
   if (monthLabel && monthLabel !== '—') return monthLabel;
   return empty;
 }
+
+/** แปลงค่าวันที่จาก Firestore (ms, วินาที, yyyy-mm-dd, Timestamp) → timestamp ms */
+export function coerceStoredDateToMs(input: unknown): number | undefined {
+  if (input == null || input === '') return undefined;
+  if (typeof input === 'number' && Number.isFinite(input)) {
+    if (input > 0 && input < 1e12) return input * 1000;
+    return input;
+  }
+  if (typeof input === 'string') {
+    const t = input.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return htmlDateValueToTimestampMs(t);
+    const parsed = Date.parse(t);
+    if (Number.isFinite(parsed)) return parsed;
+    return undefined;
+  }
+  if (typeof input === 'object' && input !== null) {
+    const ts = input as { toMillis?: () => number; seconds?: number };
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+  }
+  return undefined;
+}
+
+/** วันหมดอายุผ่านแล้ว — นับครบถึงสิ้นวัน (local) */
+export function isStoredExpiryPast(input: unknown, now = Date.now()): boolean {
+  const ms = coerceStoredDateToMs(input);
+  if (ms == null || ms <= 0) return false;
+  const end = new Date(ms);
+  end.setHours(23, 59, 59, 999);
+  return end.getTime() < now;
+}
+
+/** สถานะที่แสดงจริง — ถ้าวันหมดอายุผ่านแล้ว ไม่แสดง valid แม้ฟิลด์ status ใน DB ยังเป็น valid */
+export function effectiveWorkerCredentialStatus(
+  status: string | undefined,
+  expiryDate: unknown,
+  now = Date.now(),
+): 'valid' | 'expired' | 'revoked' | undefined {
+  const s = (status || '').trim().toLowerCase();
+  if (s === 'revoked') return 'revoked';
+  if (isStoredExpiryPast(expiryDate, now)) return 'expired';
+  if (s === 'valid') return 'valid';
+  if (s === 'expired') return 'expired';
+  return undefined;
+}
+
+/** สถานะแสดงในตารางเอกสาร/ใบเซอร์ — เอกสาร (DOCUMENT) ไม่มีฟิลด์ status ใช้วันหมดอายุแทน */
+export function effectiveCredentialRowStatus(
+  kind: 'certificate' | 'document',
+  status: string | undefined,
+  expiryDate: unknown,
+  now = Date.now(),
+): 'valid' | 'expired' | 'revoked' | undefined {
+  if (kind === 'certificate') {
+    return effectiveWorkerCredentialStatus(status, expiryDate, now);
+  }
+  const ms = coerceStoredDateToMs(expiryDate);
+  if (ms == null || ms <= 0) return undefined;
+  return isStoredExpiryPast(expiryDate, now) ? 'expired' : 'valid';
+}

@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatOptionalDateThaiBE } from '@/lib/date-thai';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatOptionalDateThaiBE, coerceStoredDateToMs, effectiveCredentialRowStatus, isStoredExpiryPast } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Plus, Trash2, FileText, Pencil, Camera, Loader2, X, FileImage } from 'lucide-react';
@@ -26,7 +26,7 @@ import type {
   PositionCertificateRequirement,
 } from '@/lib/types';
 import {
-  getUnsatisfiedMandatoryCertificateRequirements,
+  getMandatoryRequirementsWithNoWorkerRecord,
   orGroupMemberSummary,
   partitionMandatoryCertificateRequirements,
 } from '@/lib/position-certificate-compliance';
@@ -82,7 +82,7 @@ function buildUnifiedRows(
       itemName: c.certificateName || catalogHit(catalog, c.certificateCode)?.itemName || c.certificateCode,
       itemCode: c.certificateCode,
       number: c.certificateNo || '',
-      expiryDate: c.expiryDate || 0,
+      expiryDate: coerceStoredDateToMs(c.expiryDate) ?? 0,
       status: c.status,
       attachment: c.attachment,
     });
@@ -95,7 +95,7 @@ function buildUnifiedRows(
       itemName: hit?.itemName || d.documentType.replace(/_/g, ' '),
       itemCode: d.documentType,
       number: d.documentNo || '',
-      expiryDate: d.expiryDate || 0,
+      expiryDate: coerceStoredDateToMs(d.expiryDate) ?? 0,
       attachment: d.attachment,
     });
   }
@@ -151,7 +151,7 @@ export function WorkerCredentialsTab({
     const certReqs = (positionCertRequirements || []).filter(
       (r) => (r.requirementType || 'certificate') === 'certificate' && r.required,
     );
-    return getUnsatisfiedMandatoryCertificateRequirements(certReqs, certs || [], [], Date.now());
+    return getMandatoryRequirementsWithNoWorkerRecord(certReqs, certs || [], [], Date.now());
   }, [positionCertRequirements, certs]);
 
   const missingOrGroupMeta = useMemo(() => {
@@ -218,8 +218,8 @@ export function WorkerCredentialsTab({
     const template = catalogHit(workerDocCatalog, cert.certificateCode);
     setTemplateId(template?.id || '');
     setNumber(cert.certificateNo || '');
-    setIssueDate(cert.issueDate ? timestampToHtmlDateValue(cert.issueDate) : '');
-    setExpiryDate(cert.expiryDate ? timestampToHtmlDateValue(cert.expiryDate) : '');
+    setIssueDate(coerceStoredDateToMs(cert.issueDate) ? timestampToHtmlDateValue(coerceStoredDateToMs(cert.issueDate)!) : '');
+    setExpiryDate(coerceStoredDateToMs(cert.expiryDate) ? timestampToHtmlDateValue(coerceStoredDateToMs(cert.expiryDate)!) : '');
     if (cert.attachment?.downloadUrl) {
       setFormPreviewUrl(cert.attachment.downloadUrl);
       setFormPreviewIsPdf(isPdfAttachment(cert.attachment));
@@ -234,8 +234,8 @@ export function WorkerCredentialsTab({
     const template = catalogHit(workerDocCatalog, row.documentType);
     setTemplateId(template?.id || '');
     setNumber(row.documentNo || '');
-    setIssueDate(row.issueDate ? timestampToHtmlDateValue(row.issueDate) : '');
-    setExpiryDate(row.expiryDate ? timestampToHtmlDateValue(row.expiryDate) : '');
+    setIssueDate(coerceStoredDateToMs(row.issueDate) ? timestampToHtmlDateValue(coerceStoredDateToMs(row.issueDate)!) : '');
+    setExpiryDate(coerceStoredDateToMs(row.expiryDate) ? timestampToHtmlDateValue(coerceStoredDateToMs(row.expiryDate)!) : '');
     if (row.attachment?.downloadUrl) {
       setFormPreviewUrl(row.attachment.downloadUrl);
       setFormPreviewIsPdf(isPdfAttachment(row.attachment));
@@ -448,7 +448,7 @@ export function WorkerCredentialsTab({
           certificateNo: number.trim(),
           issueDate: issueTs,
           expiryDate: expiryTs,
-          status: 'valid',
+          status: isStoredExpiryPast(expiryTs, now) ? 'expired' : 'valid',
         };
         if (attachment) payload.attachment = attachment;
         else if (editing && formRemoveAttachment) payload.attachment = deleteField();
@@ -530,7 +530,8 @@ export function WorkerCredentialsTab({
               const catalogItem = catalogHit(workerDocCatalog, row.itemCode);
               const reqType = catalogItem?.requirementType || row.kind;
               const thumbUrl = row.attachment?.downloadUrl;
-              const expired = row.expiryDate > 0 && row.expiryDate < Date.now();
+              const expired = isStoredExpiryPast(row.expiryDate);
+              const displayStatus = effectiveCredentialRowStatus(row.kind, row.status, row.expiryDate);
               return (
                 <TableRow key={`${row.kind}-${row.id}`}>
                   <TableCell className="pl-6 font-medium text-primary align-top break-words">{row.itemName}</TableCell>
@@ -544,15 +545,13 @@ export function WorkerCredentialsTab({
                     {row.expiryDate > 0 ? formatOptionalDateThaiBE(row.expiryDate, '—') : '—'}
                   </TableCell>
                   <TableCell className="align-top">
-                    {row.kind === 'certificate' && row.status ? (
+                    {displayStatus ? (
                       <Badge
-                        variant={row.status === 'valid' ? 'default' : 'destructive'}
-                        className={row.status === 'valid' ? 'bg-green-600' : ''}
+                        variant={displayStatus === 'valid' ? 'default' : 'destructive'}
+                        className={displayStatus === 'valid' ? 'bg-green-600' : ''}
                       >
-                        {row.status.toUpperCase()}
+                        {displayStatus.toUpperCase()}
                       </Badge>
-                    ) : expired ? (
-                      <Badge variant="destructive">EXPIRED</Badge>
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}
