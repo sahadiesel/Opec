@@ -931,18 +931,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           </TableCell>
                         </TableRow>
                         <TableRow>
-                          <TableCell>{getChecklistIcon(assignment.readinessSummary.clientApproved)}</TableCell>
-                          <TableCell className="font-medium text-sm">ได้รับการอนุมัติจากลูกค้า (Client Approval)</TableCell>
-                          <TableCell className="text-left capitalize text-xs">{assignment.readinessSummary.clientApproved}</TableCell>
-                          <TableCell className="text-right p-2">
-                            <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="เปิดทะเบียน — เอกสาร/หลักฐาน">
-                              <Link href={workerManageHref('docs')}>
-                                <ChevronRight className="h-4 w-4" />
-                              </Link>
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                        <TableRow>
                           <TableCell>{getChecklistIcon(assignment.readinessSummary.ppeIssued)}</TableCell>
                           <TableCell className="font-medium text-sm">เบิกอุปกรณ์ PPE ครบถ้วน (PPE Issued)</TableCell>
                           <TableCell className="text-left capitalize text-xs">{assignment.readinessSummary.ppeIssued}</TableCell>

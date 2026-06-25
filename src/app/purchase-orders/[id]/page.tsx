@@ -58,6 +58,7 @@ import {
   resolvePoActiveBundleKeyForPo,
 } from '@/lib/ops/po-active-bundle';
 import { PoActiveBundleLinesPanel } from '@/components/commercial/po-active-bundle-lines-panel';
+import { resolveSafeInternalReturnPath } from '@/lib/navigation/safe-return-path';
 
 export default function CustomerPODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -70,6 +71,12 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const canDeletePo = useMemo(() => canDelete(currentUser, 'customer_pos'), [currentUser]);
   const canApprovePo = useMemo(() => canApprovePurchaseAsManager(currentUser), [currentUser]);
   const isAdminUser = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
+  const [backHref, setBackHref] = useState('/purchase-orders');
+
+  useEffect(() => {
+    const returnTo = new URLSearchParams(window.location.search).get('returnTo');
+    setBackHref(resolveSafeInternalReturnPath(returnTo, '/purchase-orders'));
+  }, []);
 
   const poRef = useMemoFirebase(() => (firestore && canViewPo ? doc(firestore, 'purchase_orders', id) : null), [firestore, id, canViewPo]);
   const { data: po, isLoading: isPOLoading } = useDoc<PurchaseOrder>(poRef as any);
@@ -342,7 +349,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" asChild>
-              <Link href="/purchase-orders"><ArrowLeft className="h-5 w-5" /></Link>
+              <Link href={backHref}><ArrowLeft className="h-5 w-5" /></Link>
             </Button>
             <div className="flex-1">
               <div className="flex items-center gap-3">

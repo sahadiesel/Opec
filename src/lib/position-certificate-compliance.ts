@@ -30,6 +30,20 @@ function certStatusIsValid(status: string | undefined): boolean {
   return (status || '').trim().toLowerCase() === 'valid';
 }
 
+export type CredentialCatalogLookup = (
+  itemCode: string | undefined,
+) => { hasExpiry?: boolean } | null | undefined;
+
+/** ใช้ catalog เป็นหลัก — เกณฑ์ตำแหน่งอาจเป็นค่าเก่าก่อนแก้รายการกลาง */
+export function resolveCredentialHasExpiry(
+  reqHasExpiry: boolean | undefined,
+  catalogItem?: { hasExpiry?: boolean } | null,
+): boolean {
+  if (catalogItem?.hasExpiry === false) return false;
+  if (catalogItem?.hasExpiry === true) return true;
+  return reqHasExpiry ?? true;
+}
+
 /** จับคู่ใบเซอร์กับเกณฑ์ตำแหน่ง — code, ชื่อ, หรือ template ใน catalog */
 export function findWorkerCertificateForRequirement(
   req: PositionCertificateRequirement,
@@ -63,8 +77,10 @@ export function workerHasValidCertificateRequirement(
   certificates: WorkerCertificate[],
   documents: WorkerDocument[],
   now = Date.now(),
+  catalogLookup?: CredentialCatalogLookup,
 ): boolean {
-  const requiresExpiry = req.hasExpiry ?? true;
+  const catalogItem = catalogLookup?.(req.certificateCode);
+  const requiresExpiry = resolveCredentialHasExpiry(req.hasExpiry, catalogItem);
   const type = reqType(req);
 
   if (type === 'document') {
@@ -75,8 +91,11 @@ export function workerHasValidCertificateRequirement(
   }
 
   const certRecord = findWorkerCertificateForRequirement(req, certificates);
-  if (!certRecord || !certStatusIsValid(certRecord.status)) return false;
-  if (!requiresExpiry) return true;
+  if (!certRecord) return false;
+  if (!requiresExpiry) {
+    return (certRecord.status || '').trim().toLowerCase() !== 'revoked';
+  }
+  if (!certStatusIsValid(certRecord.status)) return false;
   return !isStoredExpiryPast(certRecord.expiryDate, now);
 }
 
@@ -111,12 +130,13 @@ export function mandatoryCertificateComplianceMet(
   now = Date.now(),
   /** ข้าม req ที่ policy ไม่ใช้ (เช่น BOSIET บน onshore) */
   skipReq?: (req: PositionCertificateRequirement) => boolean,
+  catalogLookup?: CredentialCatalogLookup,
 ): boolean {
   const { standalone, orGroups } = partitionMandatoryCertificateRequirements(mandatoryReqs);
 
   for (const req of standalone) {
     if (skipReq?.(req)) continue;
-    if (!workerHasValidCertificateRequirement(req, certificates, documents, now)) {
+    if (!workerHasValidCertificateRequirement(req, certificates, documents, now, catalogLookup)) {
       return false;
     }
   }
@@ -125,7 +145,7 @@ export function mandatoryCertificateComplianceMet(
     const applicable = groupReqs.filter((r) => !skipReq?.(r));
     if (applicable.length === 0) continue;
     const anyValid = applicable.some((req) =>
-      workerHasValidCertificateRequirement(req, certificates, documents, now),
+      workerHasValidCertificateRequirement(req, certificates, documents, now, catalogLookup),
     );
     if (!anyValid) return false;
   }
@@ -139,19 +159,20 @@ export function getUnsatisfiedMandatoryCertificateRequirements(
   certificates: WorkerCertificate[],
   documents: WorkerDocument[],
   now = Date.now(),
+  catalogLookup?: CredentialCatalogLookup,
 ): PositionCertificateRequirement[] {
   const missing: PositionCertificateRequirement[] = [];
   const { standalone, orGroups } = partitionMandatoryCertificateRequirements(mandatoryReqs);
 
   for (const req of standalone) {
-    if (!workerHasValidCertificateRequirement(req, certificates, documents, now)) {
+    if (!workerHasValidCertificateRequirement(req, certificates, documents, now, catalogLookup)) {
       missing.push(req);
     }
   }
 
   for (const [, groupReqs] of orGroups) {
     const anyValid = groupReqs.some((req) =>
-      workerHasValidCertificateRequirement(req, certificates, documents, now),
+      workerHasValidCertificateRequirement(req, certificates, documents, now, catalogLookup),
     );
     if (!anyValid) {
       missing.push(groupReqs[0]);
@@ -170,12 +191,14 @@ export function getMandatoryRequirementsWithNoWorkerRecord(
   certificates: WorkerCertificate[],
   documents: WorkerDocument[],
   now = Date.now(),
+  catalogLookup?: CredentialCatalogLookup,
 ): PositionCertificateRequirement[] {
   const unsatisfied = getUnsatisfiedMandatoryCertificateRequirements(
     mandatoryReqs,
     certificates,
     documents,
     now,
+    catalogLookup,
   );
   return unsatisfied.filter((req) => {
     if (reqType(req) === 'document') {

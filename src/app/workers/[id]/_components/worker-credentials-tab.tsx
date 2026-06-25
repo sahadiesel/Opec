@@ -11,7 +11,7 @@ import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatOptionalDateThaiBE, coerceStoredDateToMs, effectiveCredentialRowStatus, isStoredExpiryPast } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Plus, Trash2, FileText, Pencil, Camera, Loader2, X, FileImage } from 'lucide-react';
+import { Plus, Trash2, FileText, Pencil, Camera, Loader2, X } from 'lucide-react';
 import { deleteField, doc, type Firestore, type CollectionReference } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
@@ -19,6 +19,7 @@ import { useFirebaseApp } from '@/firebase';
 import { uploadWorkerCertificatePhoto } from '@/lib/storage/worker-certificate-photos';
 import { uploadWorkerDocumentPhoto } from '@/lib/storage/worker-document-photos';
 import { isPdfAttachment, isPdfFile } from '@/lib/storage/worker-credential-attachment';
+import { WorkerCredentialAttachmentThumb } from '@/components/workers/worker-credential-attachment-thumb';
 import type {
   WorkerCertificate,
   WorkerDocument,
@@ -151,8 +152,9 @@ export function WorkerCredentialsTab({
     const certReqs = (positionCertRequirements || []).filter(
       (r) => (r.requirementType || 'certificate') === 'certificate' && r.required,
     );
-    return getMandatoryRequirementsWithNoWorkerRecord(certReqs, certs || [], [], Date.now());
-  }, [positionCertRequirements, certs]);
+    const catalogLookup = (code: string | undefined) => catalogHit(workerDocCatalog, code || '');
+    return getMandatoryRequirementsWithNoWorkerRecord(certReqs, certs || [], [], Date.now(), catalogLookup);
+  }, [positionCertRequirements, certs, workerDocCatalog]);
 
   const missingOrGroupMeta = useMemo(() => {
     const certReqs = (positionCertRequirements || []).filter(
@@ -448,7 +450,7 @@ export function WorkerCredentialsTab({
           certificateNo: number.trim(),
           issueDate: issueTs,
           expiryDate: expiryTs,
-          status: isStoredExpiryPast(expiryTs, now) ? 'expired' : 'valid',
+          status: !target.hasExpiry || !isStoredExpiryPast(expiryTs, now) ? 'valid' : 'expired',
         };
         if (attachment) payload.attachment = attachment;
         else if (editing && formRemoveAttachment) payload.attachment = deleteField();
@@ -529,9 +531,15 @@ export function WorkerCredentialsTab({
             {rows.map((row) => {
               const catalogItem = catalogHit(workerDocCatalog, row.itemCode);
               const reqType = catalogItem?.requirementType || row.kind;
-              const thumbUrl = row.attachment?.downloadUrl;
-              const expired = isStoredExpiryPast(row.expiryDate);
-              const displayStatus = effectiveCredentialRowStatus(row.kind, row.status, row.expiryDate);
+              const hasExpiry = catalogItem?.hasExpiry ?? true;
+              const expired = hasExpiry && isStoredExpiryPast(row.expiryDate);
+              const displayStatus = effectiveCredentialRowStatus(
+                row.kind,
+                row.status,
+                row.expiryDate,
+                Date.now(),
+                hasExpiry,
+              );
               return (
                 <TableRow key={`${row.kind}-${row.id}`}>
                   <TableCell className="pl-6 font-medium text-primary align-top break-words">{row.itemName}</TableCell>
@@ -542,7 +550,13 @@ export function WorkerCredentialsTab({
                   </TableCell>
                   <TableCell className="font-mono text-xs align-top break-all">{row.number || '—'}</TableCell>
                   <TableCell className={`align-top ${expired ? 'text-destructive font-black' : 'font-medium'}`}>
-                    {row.expiryDate > 0 ? formatOptionalDateThaiBE(row.expiryDate, '—') : '—'}
+                    {!hasExpiry ? (
+                      <span className="text-xs text-muted-foreground">ไม่มีวันหมดอายุ</span>
+                    ) : row.expiryDate > 0 ? (
+                      formatOptionalDateThaiBE(row.expiryDate, '—')
+                    ) : (
+                      '—'
+                    )}
                   </TableCell>
                   <TableCell className="align-top">
                     {displayStatus ? (
@@ -557,35 +571,8 @@ export function WorkerCredentialsTab({
                     )}
                   </TableCell>
                   <TableCell className="text-center align-top">
-                    {thumbUrl ? (
-                      isPdfAttachment(row.attachment) ? (
-                        <a
-                          href={thumbUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex flex-col items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-red-800 hover:bg-red-100"
-                          title="เปิด PDF"
-                        >
-                          <FileText className="h-8 w-8" />
-                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold max-w-[5rem] truncate">
-                            PDF
-                          </span>
-                        </a>
-                      ) : (
-                        <a
-                          href={thumbUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex flex-col items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-blue-700 hover:bg-blue-100"
-                          title="เปิดเอกสารแนบ"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={thumbUrl} alt="" className="h-10 w-10 rounded object-cover" />
-                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold">
-                            <FileImage className="h-3 w-3" /> ดูเอกสาร
-                          </span>
-                        </a>
-                      )
+                    {row.attachment?.downloadUrl ? (
+                      <WorkerCredentialAttachmentThumb attachment={row.attachment} />
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}

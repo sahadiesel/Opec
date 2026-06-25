@@ -13,6 +13,9 @@ type ContractChangeLog = {
   afterSummary?: string;
   actorUserId?: string;
   actorName?: string;
+  actorRoleKey?: string;
+  rateId?: string;
+  positionId?: string;
   eventAt: number;
 };
 
@@ -25,7 +28,7 @@ function formatValueByKey(key: string, value: any) {
   if ((key === 'startDate' || key === 'endDate') && typeof value === 'number') {
     return formatDateThaiBE(value);
   }
-  if ((key === 'sellRate' || key === 'costBaseline') && typeof value === 'number') {
+  if ((key === 'sellRate' || key === 'sellRateOnshore' || key === 'sellRateOffshore' || key === 'costBaseline' || key === 'onshore' || key === 'offshore') && typeof value === 'number') {
     return value.toLocaleString();
   }
   return String(value);
@@ -38,12 +41,19 @@ const fieldLabels: Record<string, string> = {
   billingTerms: 'Billing Terms',
   paymentTerms: 'Payment Terms',
   notes: 'หมายเหตุ',
+  position: 'ตำแหน่งงาน',
   positionId: 'ตำแหน่งงาน',
   sellRate: 'ราคาขาย',
+  sellRateOnshore: 'ราคาขาย Onshore',
+  sellRateOffshore: 'ราคาขาย Offshore',
   costBaseline: 'ราคาต้นทุน',
+  onshore: 'ต้นทุน Onshore',
+  offshore: 'ต้นทุน Offshore',
   normalWorkHours: 'ชั่วโมงงานปกติ (legacy)',
   normalWorkHoursOnshore: 'ชม.ปกติ Onshore',
   normalWorkHoursOffshore: 'ชม.ปกติ Offshore',
+  billingUnit: 'หน่วย',
+  overtimeRuleKey: 'กฎ OT',
 };
 
 function formatDiffSummary(raw?: string) {
@@ -103,7 +113,12 @@ export function ContractLogsTab({ changeLogs }: ContractLogsTabProps) {
             {changeLogs?.map((log) => (
               <TableRow key={log.id}>
                 <TableCell className="text-xs whitespace-nowrap">{formatDateTimeThaiBE(log.eventAt)}</TableCell>
-                <TableCell className="text-sm font-medium">{log.actorName || '-'}</TableCell>
+                <TableCell className="text-sm font-medium">
+                  <div>{log.actorName || '-'}</div>
+                  {log.actorRoleKey ? (
+                    <div className="text-[10px] text-muted-foreground font-normal">{log.actorRoleKey}</div>
+                  ) : null}
+                </TableCell>
                 <TableCell>
                   <Badge variant="outline" className="text-[10px]">{log.actionType}</Badge>
                 </TableCell>

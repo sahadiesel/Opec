@@ -19,7 +19,7 @@ interface ContractAddRateDialogProps {
   canEditCostSide: boolean;
   canViewCostFields: boolean;
   isSupplementalContract: boolean;
-  contractStatusActive: boolean;
+  canAddRates: boolean;
   onAddRate: () => void;
 }
 
@@ -34,13 +34,13 @@ export function ContractAddRateDialog({
   canEditCostSide,
   canViewCostFields,
   isSupplementalContract,
-  contractStatusActive,
+  canAddRates,
   onAddRate,
 }: ContractAddRateDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button className="gap-2" disabled={contractStatusActive}>
+        <Button className="gap-2" disabled={!canAddRates}>
           <Plus className="h-4 w-4" /> เพิ่มอัตราราคา
         </Button>
       </DialogTrigger>

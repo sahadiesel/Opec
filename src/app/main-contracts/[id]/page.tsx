@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, use, useMemo, useCallback, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -30,9 +31,8 @@ import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlo
 import { MainContract, PositionRate, PurchaseOrder, Customer, Position, User } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
-import { useRouter } from 'next/navigation';
 import { canView, canEdit } from '@/lib/permissions';
-import { isSystemAdmin, isHrManager, isOperationManager, canEditMasterContractCostBaseline } from '@/lib/permission-core';
+import { isSystemAdmin, isHrManager, isOperationManager, isSalesManager, canEditMasterContractCostBaseline } from '@/lib/permission-core';
 import { userMatchesBusinessRoleKey } from '@/lib/role-key-normalizer';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -42,7 +42,6 @@ import { ContractPoTab } from './_components/contract-po-tab';
 import { ContractLogsTab } from './_components/contract-logs-tab';
 import { ContractAddRateDialog } from './_components/contract-add-rate-dialog';
 import { ContractEditRateDialog } from './_components/contract-edit-rate-dialog';
-import { ContractSupplementDialog } from './_components/contract-supplement-dialog';
 import { RateConditionsEditor } from '@/components/commercial/rate-conditions-editor';
 import {
   buildSpecialDaysStrings,
@@ -51,6 +50,7 @@ import {
 } from '@/lib/contract-position-rate-extras';
 import type { CalendarHolidayEntry, OvertimeRuleKey, WeeklyRestPattern } from '@/lib/contract-position-rate-extras';
 import { ContractHolidayScheduleSection } from './_components/contract-holiday-schedule-section';
+import { resolveSafeInternalReturnPath } from '@/lib/navigation/safe-return-path';
 import {
   effectiveNormalWorkHoursOffshore,
   effectiveNormalWorkHoursOnshore,
@@ -113,8 +113,18 @@ type ContractChangeLog = {
   afterSummary?: string;
   actorUserId?: string;
   actorName?: string;
+  actorRoleKey?: string;
+  rateId?: string;
+  positionId?: string;
   eventAt: number;
 };
+
+type MainContractTab = 'info' | 'rates' | 'pos' | 'logs';
+
+function parseMainContractTab(raw: string | null): MainContractTab | null {
+  if (raw === 'info' || raw === 'rates' || raw === 'pos' || raw === 'logs') return raw;
+  return null;
+}
 
 const DEFAULT_RATE_POLICY: NonNullable<MainContract['rateMultiplierPolicy']> = {
   sell: {
@@ -197,6 +207,15 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     [canModify, currentUser],
   );
 
+  const canEditActivePositionRates = useMemo(() => {
+    if (!currentUser) return false;
+    return (
+      isSystemAdmin(currentUser) ||
+      isSalesManager(currentUser) ||
+      isOperationManager(currentUser)
+    );
+  }, [currentUser]);
+
   const mcRef = useMemoFirebase(() => (firestore && isAuthorized ? doc(firestore, 'main_contracts', id) : null), [firestore, id, isAuthorized]);
   const { data: contract, isLoading: isMCLoading } = useDoc<MainContract>(mcRef as any);
 
@@ -218,10 +237,13 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   const [activeMultDraft, setActiveMultDraft] = useState<
     NonNullable<MainContract['rateMultiplierPolicy']>['sell'] | null
   >(null);
-  const [isAddSupplementOpen, setIsAddSupplementOpen] = useState(false);
-  const [isCreatingSupplement, setIsCreatingSupplement] = useState(false);
-  const [supplementTitle, setSupplementTitle] = useState('');
   const [isCreatingRevision, setIsCreatingRevision] = useState(false);
+  const [activeTab, setActiveTab] = useState<MainContractTab>('info');
+
+  useEffect(() => {
+    const tab = parseMainContractTab(new URLSearchParams(window.location.search).get('tab'));
+    if (tab) setActiveTab(tab);
+  }, []);
 
   const applyAddPositionId = useCallback((positionId: string) => {
     setNewRate((prev) => ({ ...prev, positionId }));
@@ -299,12 +321,12 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       ...payload,
       actorUserId: currentUser.id,
       actorName: currentUser.displayName,
+      actorRoleKey: currentUser.assignedRoleKey || currentUser.roleId || '',
       eventAt: Date.now(),
     });
   };
 
   const stripRevisionSuffix = (no: string) => no.replace(/R\d+$/i, '');
-  const stripSupplementSuffix = (no: string) => no.replace(/-\d{2}(?:R\d+)?$/i, '');
   const getRevisionBaseNo = (no: string) => stripRevisionSuffix(no);
 
   const resolveNextRevisionNo = async (baseNo: string) => {
@@ -319,16 +341,32 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     return maxRev + 1;
   };
 
-  const resolveNextSupplementNo = async (rootMasterNo: string) => {
-    if (!firestore) return `${rootMasterNo}-01`;
-    const snapshot = await getDocs(collection(firestore, 'main_contracts'));
-    let maxSeq = 0;
-    snapshot.forEach((d) => {
-      const raw = String((d.data() as any).contractNumber || '');
-      const m = raw.match(new RegExp(`^${rootMasterNo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-([0-9]{2})(?:R\\d+)?$`, 'i'));
-      if (m) maxSeq = Math.max(maxSeq, Number(m[1]) || 0);
+  const positionLabel = useCallback(
+    (positionId: string) => {
+      const pos = allPositions?.find((p) => p.id === positionId);
+      return pos?.positionName || pos?.positionNameTh || positionId;
+    },
+    [allPositions],
+  );
+
+  const contractAllowsPositionRateMutation = useCallback(
+    (c: MainContract) => {
+      const historical =
+        c.status === 'revised' || c.status === 'closed' || c.status === 'expired';
+      if (!canModify || historical) return false;
+      if (c.status === 'pending') return true;
+      if (c.status === 'active') return canEditActivePositionRates;
+      return false;
+    },
+    [canModify, canEditActivePositionRates],
+  );
+
+  const showActiveRatesLockedToast = () => {
+    toast({
+      variant: 'destructive',
+      title: 'ไม่มีสิทธิ์แก้ไขอัตราราคา',
+      description: 'สัญญา Active แก้ไขได้เฉพาะ Sales Manager / Operation Manager / Admin',
     });
-    return `${rootMasterNo}-${String(maxSeq + 1).padStart(2, '0')}`;
   };
 
   useEffect(() => {
@@ -601,16 +639,9 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   };
 
   const handleAddRate = () => {
-    if (!ratesQuery || !canModify || !contract) return;
-    const canMutateRates =
-      contract.status === 'pending' ||
-      (contract.status === 'active' && (contract.contractType || 'master') === 'supplemental');
-    if (!canMutateRates) {
-      toast({
-        variant: 'destructive',
-        title: 'ไม่สามารถเพิ่มตำแหน่งในสัญญาหลักที่ Active',
-        description: 'เพิ่มตำแหน่งใหม่ผ่านสัญญาเพิ่มเติมเท่านั้น',
-      });
+    if (!ratesQuery || !contract) return;
+    if (!contractAllowsPositionRateMutation(contract)) {
+      showActiveRatesLockedToast();
       return;
     }
     const dupForPosition = rates?.find((r) => r.positionId === newRate.positionId);
@@ -677,34 +708,42 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   };
 
   const handleUpdatePositionRate = (rateId: string, payload: Record<string, unknown>) => {
-    if (!firestore || !canModify || !contract) return;
-    const canMutateRates =
-      contract.status === 'pending' ||
-      (contract.status === 'active' && (contract.contractType || 'master') === 'supplemental');
-    if (!canMutateRates) {
-      toast({
-        variant: 'destructive',
-        title: 'ไม่สามารถแก้ราคาในสัญญาหลักที่ Active',
-        description: 'แก้รายละเอียดราคาตำแหน่งได้เฉพาะฉบับ Pending หรือสัญญาเพิ่มเติมที่ Active',
-      });
+    if (!firestore || !contract) return;
+    if (!contractAllowsPositionRateMutation(contract)) {
+      showActiveRatesLockedToast();
       return;
     }
+    const existing = rates?.find((r) => r.id === rateId);
     updateDocumentNonBlocking(doc(firestore, 'main_contracts', id, 'position_rates', rateId), payload);
     addContractChangeLog({
       actionType: 'UPDATE_POSITION_RATE',
-      changedFields: ['position_rates'],
-      beforeSummary: `rate_id=${rateId}`,
-      afterSummary: JSON.stringify(Object.keys(payload)),
+      changedFields: Object.keys(payload).filter((k) => k !== 'updatedAt'),
+      rateId,
+      positionId: existing?.positionId,
+      beforeSummary: existing
+        ? JSON.stringify({
+            position: positionLabel(existing.positionId),
+            sellRate: existing.sellRate,
+            sellRateOnshore: existing.sellRateOnshore,
+            sellRateOffshore: existing.sellRateOffshore,
+            billingUnit: existing.billingUnit,
+            normalWorkHoursOnshore: effectiveNormalWorkHoursOnshore(existing),
+            normalWorkHoursOffshore: effectiveNormalWorkHoursOffshore(existing),
+            overtimeRuleKey: existing.overtimeRuleKey,
+            notes: existing.notes || '',
+          })
+        : `rate_id=${rateId}`,
+      afterSummary: JSON.stringify({
+        position: existing ? positionLabel(existing.positionId) : rateId,
+        ...payload,
+      }),
     });
     toast({ title: 'บันทึกอัตราราคาแล้ว' });
   };
 
   const commitSellRateSide = (rate: PositionRate, field: 'onshore' | 'offshore', raw: string) => {
-    if (!firestore || !canModify || !contract) return;
-    const canMutateRates =
-      contract.status === 'pending' ||
-      (contract.status === 'active' && (contract.contractType || 'master') === 'supplemental');
-    if (!canMutateRates || !canEditSellSide) return;
+    if (!firestore || !contract || !canEditSellSide) return;
+    if (!contractAllowsPositionRateMutation(contract)) return;
 
     const v = parseFloat(raw.trim());
     let nextOn = rate.sellRateOnshore;
@@ -729,6 +768,11 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       }
     }
 
+    const prevOn = rate.sellRateOnshore;
+    const prevOff = rate.sellRateOffshore;
+    if (field === 'onshore' && prevOn === nextOn) return;
+    if (field === 'offshore' && prevOff === nextOff) return;
+
     payload.sellRate = legacySellRateMirror({
       sellRate: rate.sellRate,
       sellRateOnshore: nextOn,
@@ -736,19 +780,30 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     });
 
     updateDocumentNonBlocking(doc(firestore, 'main_contracts', id, 'position_rates', rate.id), payload);
+    addContractChangeLog({
+      actionType: 'UPDATE_POSITION_RATE_SELL',
+      changedFields: [field === 'onshore' ? 'sellRateOnshore' : 'sellRateOffshore', 'sellRate'],
+      rateId: rate.id,
+      positionId: rate.positionId,
+      beforeSummary: JSON.stringify({
+        position: positionLabel(rate.positionId),
+        sellRateOnshore: prevOn,
+        sellRateOffshore: prevOff,
+        sellRate: rate.sellRate,
+      }),
+      afterSummary: JSON.stringify({
+        position: positionLabel(rate.positionId),
+        sellRateOnshore: nextOn,
+        sellRateOffshore: nextOff,
+        sellRate: payload.sellRate,
+      }),
+    });
   };
 
   const deleteRate = (rateId: string) => {
-    if (!firestore || !canModify || !contract) return;
-    const canMutateRates =
-      contract.status === 'pending' ||
-      (contract.status === 'active' && (contract.contractType || 'master') === 'supplemental');
-    if (!canMutateRates) {
-      toast({
-        variant: 'destructive',
-        title: 'ไม่สามารถลบรายการในสัญญาหลักที่ Active',
-        description: 'ลบหรือปรับตำแหน่งผ่านสัญญาเพิ่มเติม / ฉบับแก้ไข Pending',
-      });
+    if (!firestore || !contract) return;
+    if (!contractAllowsPositionRateMutation(contract)) {
+      showActiveRatesLockedToast();
       return;
     }
     if (confirm('ยืนยันการลบอัตราราคานี้?')) {
@@ -757,6 +812,8 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       addContractChangeLog({
         actionType: 'DELETE_POSITION_RATE',
         changedFields: ['position_rates'],
+        positionId: existing?.positionId,
+        rateId,
         beforeSummary: existing
           ? JSON.stringify({
               positionId: existing.positionId,
@@ -771,9 +828,11 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
 
   const handleLaborBaselineBlur = (positionId: string, field: 'onshore' | 'offshore', raw: string) => {
     if (!firestore || !canEditCostSide || !contract) return;
+    if (contract.status === 'active' && !canEditActivePositionRates) return;
     const n = parseFloat(raw.trim());
     const prev = contract.laborCostBaselinesByPositionId || {};
-    const row = { ...(prev[positionId] || {}) };
+    const prevRow = prev[positionId] || {};
+    const row = { ...prevRow };
     if (Number.isFinite(n) && n > 0) {
       row[field] = n;
     } else {
@@ -791,9 +850,18 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     });
     addContractChangeLog({
       actionType: 'UPDATE_LABOR_BASELINE',
-      changedFields: ['laborCostBaselinesByPositionId'],
-      beforeSummary: `${positionId}:${field}`,
-      afterSummary: JSON.stringify(row),
+      changedFields: [`laborCostBaselinesByPositionId.${positionId}.${field}`],
+      positionId,
+      beforeSummary: JSON.stringify({
+        position: positionLabel(positionId),
+        onshore: prevRow.onshore,
+        offshore: prevRow.offshore,
+      }),
+      afterSummary: JSON.stringify({
+        position: positionLabel(positionId),
+        onshore: row.onshore,
+        offshore: row.offshore,
+      }),
     });
   };
 
@@ -834,61 +902,6 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
         title: 'ลบเอกสารไม่สำเร็จ',
         description: error?.message || 'กรุณาลองใหม่',
       });
-    }
-  };
-
-  const handleCreateSupplementContract = async () => {
-    if (!firestore || !currentUser || !contract) return;
-    if (!supplementTitle.trim()) {
-      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุชื่อสัญญาเพิ่มเติม' });
-      return;
-    }
-    setIsCreatingSupplement(true);
-    try {
-      const rootMasterNo = stripSupplementSuffix(stripRevisionSuffix(contract.contractNumber));
-      const finalNo = await resolveNextSupplementNo(rootMasterNo);
-      const payload: Partial<MainContract> = {
-        contractNumber: finalNo,
-        contractType: 'supplemental',
-        parentContractId: contract.id,
-        inheritTermsFromContractId: contract.id,
-        customerId: contract.customerId,
-        title: supplementTitle.trim(),
-        projectId: contract.projectId || '',
-        startDate: contract.startDate,
-        endDate: contract.endDate,
-        status: 'pending',
-        currency: contract.currency,
-        billingTerms: contract.billingTerms,
-        paymentTerms: contract.paymentTerms,
-        rateMultiplierPolicy: contract.rateMultiplierPolicy || DEFAULT_RATE_POLICY,
-        contractSellWeeklyRestPattern: contract.contractSellWeeklyRestPattern,
-        contractCostWeeklyRestPattern: contract.contractCostWeeklyRestPattern,
-        contractSellCalendarHolidays: contract.contractSellCalendarHolidays,
-        contractCostCalendarHolidays: contract.contractCostCalendarHolidays,
-        contractSellSpecialDays: contract.contractSellSpecialDays,
-        contractCostSpecialDays: contract.contractCostSpecialDays,
-        serviceAgreementNo: contract.serviceAgreementNo || '',
-        notes: `Supplemental contract inheriting holiday/OT terms from ${contract.contractNumber}`,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-      const docRef = await addDoc(collection(firestore, 'main_contracts'), payload);
-      setIsAddSupplementOpen(false);
-      setSupplementTitle('');
-      toast({
-        title: 'สร้างสัญญาเพิ่มเติมสำเร็จ',
-        description: `เลขที่: ${finalNo} (สถานะ Pending - ต้อง Active ก่อนเปิดงานต่อ)`,
-      });
-      router.push(`/main-contracts/${docRef.id}`);
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'สร้างสัญญาเพิ่มเติมไม่สำเร็จ',
-        description: error?.message || 'ไม่สามารถสร้างเอกสารสัญญาเพิ่มเติมได้',
-      });
-    } finally {
-      setIsCreatingSupplement(false);
     }
   };
 
@@ -938,9 +951,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   const policySellLive = isActiveContract && activeMultDraft ? activeMultDraft : effectiveRatePolicy.sell;
 
   const canMutatePositionRates =
-    isPendingContract ||
-    (isActiveContract && isSupplementalContract);
-  const masterActiveRatesLocked = isActiveContract && !isSupplementalContract;
+    contractAllowsPositionRateMutation(contract);
 
   const holidayScheduleSource = ((): MainContract => {
     if (isSupplementalContract) return (inheritedPolicyContract || contract) as MainContract;
@@ -1032,7 +1043,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
           </div>
         </div>
 
-        <Tabs defaultValue="info" className="w-full">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as MainContractTab)} className="w-full">
           <TabsList className="grid grid-cols-4 w-full md:w-fit h-auto p-1 bg-muted/50">
             <TabsTrigger value="info" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> ข้อมูลสัญญาหลัก</TabsTrigger>
             <TabsTrigger value="rates" className="gap-2 py-2 px-6"><CircleDollarSign className="h-4 w-4" /> อัตราราคาตามตำแหน่ง</TabsTrigger>
@@ -1297,9 +1308,14 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                       ตำแหน่งงาน
                     </Link>
                     ) — Operations / HR / Admin แก้ต้นทุนตามสิทธิ์
-                    {masterActiveRatesLocked && (
+                    {isActiveContract && !canMutatePositionRates && canModify && (
                       <span className="block mt-1 text-amber-800 font-medium">
-                        สัญญาหลัก Active: ล็อกจำนวนตำแหน่งและราคา — เพิ่มตำแหน่งใหม่ผ่านสัญญาเพิ่มเติมเท่านั้น (วันหยุด/กฎตัวคูณแก้ที่แท็บข้อมูลสัญญาหลัก)
+                        สัญญา Active: แก้ไขอัตราราคาได้เฉพาะ Sales Manager / Operation Manager / Admin
+                      </span>
+                    )}
+                    {isActiveContract && canMutatePositionRates && (
+                      <span className="block mt-1 text-emerald-800 font-medium">
+                        สัญญา Active: แก้ไขรายการได้จากหน้านี้ — ระบบบันทึก log ว่าใครแก้ไขเมื่อไหร่ (แท็บประวัติแก้ไข)
                       </span>
                     )}
                     {contract.commercialTermsOwner === 'sales' && (
@@ -1318,17 +1334,6 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                 </div>
                 {canModify && (
                   <div className="flex flex-wrap items-center gap-2">
-                    {!isSupplementalContract && (
-                      <ContractSupplementDialog
-                        open={isAddSupplementOpen}
-                        onOpenChange={setIsAddSupplementOpen}
-                        supplementTitle={supplementTitle}
-                        setSupplementTitle={setSupplementTitle}
-                        contractTitle={contract.title}
-                        isCreating={isCreatingSupplement}
-                        onCreate={handleCreateSupplementContract}
-                      />
-                    )}
                     {canMutatePositionRates && (
                       <>
                         <ContractAddRateDialog
@@ -1342,7 +1347,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                           canEditCostSide={canEditCostSide}
                           canViewCostFields={canViewCostFields}
                           isSupplementalContract={isSupplementalContract}
-                          contractStatusActive={masterActiveRatesLocked}
+                          canAddRates={canMutatePositionRates}
                           onAddRate={handleAddRate}
                         />
                         <ContractEditRateDialog
@@ -1424,7 +1429,6 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                                           step="any"
                                           defaultValue={onEff > 0 ? onEff : ''}
                                           key={`sell-on-${r.id}-${String(r.sellRate)}-${String(r.sellRateOnshore)}`}
-                                          disabled={isSupplementalContract}
                                           onBlur={(e) => commitSellRateSide(r, 'onshore', e.target.value)}
                                         />
                                       </div>
@@ -1440,7 +1444,6 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                                           step="any"
                                           defaultValue={offEff > 0 ? offEff : ''}
                                           key={`sell-off-${r.id}-${String(r.sellRate)}-${String(r.sellRateOffshore)}`}
-                                          disabled={isSupplementalContract}
                                           onBlur={(e) => commitSellRateSide(r, 'offshore', e.target.value)}
                                         />
                                       </div>
@@ -1495,7 +1498,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                                             Onshore
                                           </span>
                                           <span className="text-xs text-muted-foreground font-normal">{contract.currency}</span>
-                                          {canEditCostSide && firestore ? (
+                                          {canEditCostSide && canMutatePositionRates && firestore ? (
                                             <Input
                                               type="number"
                                               className="h-8 w-28 font-bold text-amber-700"
@@ -1524,7 +1527,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                                             Offshore
                                           </span>
                                           <span className="text-xs text-muted-foreground font-normal">{contract.currency}</span>
-                                          {canEditCostSide && firestore ? (
+                                          {canEditCostSide && canMutatePositionRates && firestore ? (
                                             <Input
                                               type="number"
                                               className="h-8 w-28 font-bold text-amber-700"
@@ -1586,7 +1589,6 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                                 size="icon"
                                 className="text-primary"
                                 title="แก้ไขรายละเอียด / วันหยุด"
-                                disabled={isSupplementalContract}
                                 onClick={() => setEditingRateId(r.id)}
                               >
                                 <Pencil className="h-4 w-4" />
@@ -1621,7 +1623,11 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
               contractId={id}
               customerPOs={customerPOs ?? null}
               canModify={canModify}
-              onNavigatePO={(poId) => router.push(`/purchase-orders/${poId}`)}
+              onNavigatePO={(poId) =>
+                router.push(
+                  `/purchase-orders/${poId}?returnTo=${encodeURIComponent(`/main-contracts/${id}?tab=pos`)}`,
+                )
+              }
             />
           </TabsContent>
 

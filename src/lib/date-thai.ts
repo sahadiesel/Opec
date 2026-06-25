@@ -250,9 +250,11 @@ export function effectiveWorkerCredentialStatus(
   status: string | undefined,
   expiryDate: unknown,
   now = Date.now(),
+  hasExpiry = true,
 ): 'valid' | 'expired' | 'revoked' | undefined {
   const s = (status || '').trim().toLowerCase();
   if (s === 'revoked') return 'revoked';
+  if (hasExpiry === false) return 'valid';
   if (isStoredExpiryPast(expiryDate, now)) return 'expired';
   if (s === 'valid') return 'valid';
   if (s === 'expired') return 'expired';
@@ -265,10 +267,12 @@ export function effectiveCredentialRowStatus(
   status: string | undefined,
   expiryDate: unknown,
   now = Date.now(),
+  hasExpiry = true,
 ): 'valid' | 'expired' | 'revoked' | undefined {
   if (kind === 'certificate') {
-    return effectiveWorkerCredentialStatus(status, expiryDate, now);
+    return effectiveWorkerCredentialStatus(status, expiryDate, now, hasExpiry);
   }
+  if (hasExpiry === false) return 'valid';
   const ms = coerceStoredDateToMs(expiryDate);
   if (ms == null || ms <= 0) return undefined;
   return isStoredExpiryPast(expiryDate, now) ? 'expired' : 'valid';

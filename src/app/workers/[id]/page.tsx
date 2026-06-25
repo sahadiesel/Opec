@@ -30,6 +30,7 @@ import {
 } from '@/lib/store/mobilization-fulfillment';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { sanitizeFirestorePayload } from '@/lib/utils';
+import { isStoredExpiryPast } from '@/lib/date-thai';
 import {
   Worker,
   WorkerCertificate,
@@ -51,6 +52,7 @@ import {
 import {
   mandatoryCertificateComplianceMet,
   partitionMandatoryCertificateRequirements,
+  resolveCredentialHasExpiry,
   workerHasValidCertificateRequirement,
 } from '@/lib/position-certificate-compliance';
 import {
@@ -411,6 +413,8 @@ function WorkerDetailContent({ id }: { id: string }) {
     let nearestExpiryInDays: number | null = null;
     let nearestExpiryAt: number | null = null;
     const catalogByCode = new Map((workerDocCatalog || []).map((x) => [(x.itemCode || '').toLowerCase(), x]));
+    const catalogLookup = (code: string | undefined) =>
+      catalogByCode.get((code || '').toLowerCase());
     const markExpiryByPolicy = (code: string, expiryDate?: number) => {
       const exp = Number(expiryDate || 0);
       if (exp <= 0) return;
@@ -440,6 +444,8 @@ function WorkerDetailContent({ id }: { id: string }) {
           certs || [],
           workerDocs || [],
           now,
+          undefined,
+          catalogLookup,
         )
       ) {
         newStatus = 'MISSING_CERTIFICATE';
@@ -447,7 +453,8 @@ function WorkerDetailContent({ id }: { id: string }) {
 
       const { standalone, orGroups } = partitionMandatoryCertificateRequirements(mandatoryReqs);
       const markReqExpiry = (req: PositionCertificateRequirement) => {
-        const requiresExpiry = req.hasExpiry ?? true;
+        const catalogItem = catalogLookup(req.certificateCode);
+        const requiresExpiry = resolveCredentialHasExpiry(req.hasExpiry, catalogItem);
         const reqType = req.requirementType || 'certificate';
         if (reqType === 'document') {
           const matchedDoc = workerDocs?.find(
@@ -467,13 +474,13 @@ function WorkerDetailContent({ id }: { id: string }) {
       };
 
       for (const req of standalone) {
-        if (workerHasValidCertificateRequirement(req, certs || [], workerDocs || [], now)) {
+        if (workerHasValidCertificateRequirement(req, certs || [], workerDocs || [], now, catalogLookup)) {
           markReqExpiry(req);
         }
       }
       for (const [, groupReqs] of orGroups) {
         const satisfied = groupReqs.find((req) =>
-          workerHasValidCertificateRequirement(req, certs || [], workerDocs || [], now),
+          workerHasValidCertificateRequirement(req, certs || [], workerDocs || [], now, catalogLookup),
         );
         if (satisfied) markReqExpiry(satisfied);
       }
@@ -494,9 +501,12 @@ function WorkerDetailContent({ id }: { id: string }) {
     );
 
     if (newStatus === 'READY') {
-      const hasExpiredIdentityDoc = (workerDocs || []).some((d) =>
-        Number(d.expiryDate || 0) > 0 && Number(d.expiryDate) < now
-      );
+      const hasExpiredIdentityDoc = (workerDocs || []).some((d) => {
+        const catalogItem = catalogByCode.get((d.documentType || '').toLowerCase());
+        const requiresExpiry = resolveCredentialHasExpiry(undefined, catalogItem);
+        if (!requiresExpiry) return false;
+        return isStoredExpiryPast(d.expiryDate, now);
+      });
       if (hasExpiredIdentityDoc) {
         newStatus = 'DOCUMENT_EXPIRED';
       }

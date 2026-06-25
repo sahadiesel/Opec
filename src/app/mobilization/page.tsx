@@ -284,7 +284,6 @@ function MobilizationPageContent() {
                                 <div className="flex gap-1">
                                   <div className={`h-1 w-4 rounded-full ${asgn.readinessSummary.medicalValid === 'pass' ? 'bg-green-500' : 'bg-slate-200'}`} title="Medical" />
                                   <div className={`h-1 w-4 rounded-full ${asgn.readinessSummary.certificatesComplete === 'pass' ? 'bg-green-500' : 'bg-slate-200'}`} title="Certs" />
-                                  <div className={`h-1 w-4 rounded-full ${asgn.readinessSummary.clientApproved === 'pass' ? 'bg-green-500' : 'bg-slate-200'}`} title="Client Approval" />
                                 </div>
                               </div>
                             </TableCell>
