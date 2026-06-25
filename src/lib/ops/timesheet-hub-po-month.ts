@@ -1,6 +1,6 @@
 import type { Assignment, PoMonthTimesheetReview, PurchaseOrder, Wave } from '@/lib/types';
 import {
-  assignmentReadyForWaveTimesheet,
+  assignmentPassesPoMonthOverlapFallbackGate,
   isYmdWithinAssignmentMobTimesheetWindow,
 } from '@/lib/constants/timesheet-ui';
 import { poMonthTimesheetReviewDocId } from '@/lib/timesheet/po-month-timesheet-bridge';
@@ -101,7 +101,7 @@ export function assignmentOverlapsYearMonthForPoDailyBoard(
 ): boolean {
   if (assignmentOverlapsYearMonth(a, yearMonth)) return true;
   if (!/^\d{4}-\d{2}$/.test(yearMonth)) return false;
-  if (!assignmentReadyForWaveTimesheet(a)) return false;
+  if (!assignmentPassesPoMonthOverlapFallbackGate(a)) return false;
   const [y, mo] = yearMonth.split('-').map(Number);
   const lastD = new Date(y, mo, 0).getDate();
   const monthStart = `${yearMonth}-01`;

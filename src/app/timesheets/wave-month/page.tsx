@@ -48,9 +48,8 @@ import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permi
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import {
-  assignmentIncludedInWaveTimesheetRoster,
-  assignmentHasAnyMobTimesheetDayInCalendarMonth,
   isYmdWithinAssignmentMobTimesheetWindow,
+  isYmdEditableForAssignmentTimesheet,
   waveRoundMonthLabel,
 } from '@/lib/constants/timesheet-ui';
 import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
@@ -59,7 +58,6 @@ import { syncPoActiveAutoDailyForAssignment } from '@/lib/timesheet/po-active-au
 import { isAssignmentEligibleForPoActiveAutoDaily } from '@/lib/timesheet/po-active-auto-daily-build';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import {
-  assignmentHasTimesheetRowInCalendarMonth,
   isWaveMonthAttachmentPdf,
   lastDayOfCalendarMonth,
   listDaysInMonth,
@@ -629,18 +627,22 @@ export default function WaveMonthTimesheetSummaryPage() {
 
   const waveIdsWithEligibleMobInMonth = useMemo(() => {
     const s = new Set<string>();
+    const byWave = new Map<string, Assignment[]>();
     for (const m of mobAssignments) {
-      if (
-        assignmentIncludedInWaveTimesheetRoster(m) &&
-        assignmentOverlapsYearMonthForPoDailyBoard(m, monthYm) &&
-        (assignmentHasAnyMobTimesheetDayInCalendarMonth(m, monthYm) ||
-          assignmentHasTimesheetRowInCalendarMonth(m, monthYm, monthSheetsForOpenPos))
-      ) {
-        s.add(m.waveId);
+      if (!scopedPoIdSet.has(m.poId)) continue;
+      const wid = (m.waveId || '').trim();
+      if (!wid) continue;
+      const list = byWave.get(wid) ?? [];
+      list.push(m);
+      byWave.set(wid, list);
+    }
+    for (const [waveId, waveMobs] of byWave) {
+      if (mobilizationsEligibleForWaveMonthGrid(waveMobs, monthYm, monthSheetsForOpenPos).length > 0) {
+        s.add(waveId);
       }
     }
     return s;
-  }, [mobAssignments, monthYm, monthSheetsForOpenPos]);
+  }, [mobAssignments, monthYm, monthSheetsForOpenPos, scopedPoIdSet]);
 
   const missingWaveIdsForMonth = useMemo(
     () => [...waveIdsWithEligibleMobInMonth].filter((id) => !sortedWaveIdSet.has(id)).sort(),
@@ -1033,6 +1035,18 @@ export default function WaveMonthTimesheetSummaryPage() {
         });
         return;
       }
+      const inMobWindow = isYmdEditableForAssignmentTimesheet(assignment, cellDate, {
+        hasPersistedTimesheetOnDate: !!ts,
+      });
+      if (!inMobWindow && !ts) {
+        toast({
+          variant: 'destructive',
+          title: 'วันนี้ลงเวลาไม่ได้',
+          description:
+            'อยู่นอกช่วง mobilization — ถ้าจบงานแล้วแก้ได้เฉพาะวันก่อนวันจบไซต์ หรือกด «ยกเลิกจบงาน» บน Wave Board',
+        });
+        return;
+      }
       setCellEdit({
         wave,
         po,
@@ -1080,6 +1094,18 @@ export default function WaveMonthTimesheetSummaryPage() {
       if (!baseTs || baseTs.id !== loaded.id) {
         baseTs = loaded;
       }
+    }
+
+    const inMobWindow = isYmdEditableForAssignmentTimesheet(assignment, editDate, {
+      hasPersistedTimesheetOnDate: !!(openedTs || baseTs),
+    });
+    if (!inMobWindow) {
+      toast({
+        variant: 'destructive',
+        title: 'วันนี้บันทึกไม่ได้',
+        description: 'อยู่นอกช่วง mobilization ที่อนุญาต — ลองยกเลิกจบงานบน Wave Board ถ้าต้องการลงเวลาต่อ',
+      });
+      return;
     }
 
     if (baseTs && service.isFinalized(baseTs.status as DailyTimesheetStatus)) {
@@ -1208,8 +1234,8 @@ export default function WaveMonthTimesheetSummaryPage() {
                 'รหัสประเภทวัน: ดู tooltip; สี/ขอบตามสถานะ (ดูท้ายตาราง)',
                 'ตัวอักษรในเซลล์ = ประเภทวัน (W/SB/…) · « - » = ว่างหรือไม่จ่าย · คอลัมน์รวม = ชม.ทำงานสะสมในเดือน',
                 'เซลล์จับคู่กับบันทึกรายวัน — รวมข้อมูลจาก Wave Board ที่เก็บ waveId แบบ PO scope (`po_ts_scope_…`) ให้ตรงกับแถว wave จริง',
-                'จบงาน (ปิด mobilization / Demob): ใช้ปุ่ม «หยุด» แล้วเลือก «หยุดแบบจบงาน» บน Wave Board — หน้านี้เป็นตารางสรุปรายเดือนเท่านั้น',
-                'คนที่จบงานแล้วและรอ Mob รอบใหม่: ถ้าไม่มีวันใดในเดือนที่เลือกอยู่ในช่วง mobilization (ยังไม่ SB/ขึ้นไซต์) จะไม่แสดงชื่อในเดือนนั้นจนกว่าจะมีขั้นตอน Mob ใหม่',
+                'จบงาน (ปิด mobilization / Demob): ใช้ปุ่ม «หยุด» แล้วเลือก «หยุดแบบจบงาน» บน Wave Board — ข้อมูลลงเวลาก่อนวันจบยังอยู่ในเดือนเดิมจนกว่าจะทำบิล · แก้ไขได้จนกว่าจะปิดงวด',
+                'คนที่จบงานแล้วรอ Mob รอบใหม่: ยังเห็นในเดือนที่มีลงเวลาจริง — แก้ไขวันก่อนวันจบไซต์ได้ หรือกด «ยกเลิกจบงาน» เพื่อกลับ ACTIVE',
                 'ช่วง Standby / เริ่มงาน: สรุปรายเดือนใช้ทั้งวัน Standby และวันเริ่มทำงานจาก Mobilization — คนสถานะ MOBILIZING ที่ความพร้อม READY ขึ้นตารางเมื่อช่วงมอบหมายทับเดือนนั้น (ยังไม่ ACTIVE จะยังไม่มี work_day อัตโนมัติ — ต้องผ่านขั้น Mobilization)',
                 'ลงเวลาอัตโนมัติ ACTIVE (PO Active): Scheduler เติมวันนี้ (~00:10 ไทย) + ซิงก์เมื่อเปิด Wave Board — ช่วงหยุดแบบ standby เป็น SB อัตโนมัติตามช่วงที่ตั้ง · ปุ่มหยุดแบบจบงานจะหยุดซิงก์ตามวันสิ้นสุด',
               ]}
@@ -1612,10 +1638,6 @@ export default function WaveMonthTimesheetSummaryPage() {
                               </TableCell>
                               {days.map((d) => {
                                 /** จับคู่แบบเดียวกับ resolve ในเซลล์ — คอลัมน์รวมชม.ใช้ logic เดียวกัน */
-                                const inMobWindow = isYmdWithinAssignmentMobTimesheetWindow(
-                                  rosterAssignment,
-                                  d,
-                                );
                                 const ts = resolveTimesheetForWaveMonthCell(
                                   wave.id,
                                   rw.workerId,
@@ -1627,6 +1649,9 @@ export default function WaveMonthTimesheetSummaryPage() {
                                   rosterAssignment,
                                   alternateMobIds,
                                 );
+                                const inMobWindow = isYmdEditableForAssignmentTimesheet(rosterAssignment, d, {
+                                  hasPersistedTimesheetOnDate: !!ts,
+                                });
                                 const cellLabel = timesheetWaveMonthCellDisplay(ts);
                                 return (
                                   <TableCell key={d} className="px-0.5 text-center text-[11px] leading-none">

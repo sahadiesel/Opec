@@ -147,6 +147,35 @@ export function isAssignmentDraftAwaitingFirstMobOnly(
   return cycle <= 1 && !ended;
 }
 
+/** DRAFT หลังจบงานรอ Mob รอบใหม่ — ยังต้องเห็น/แก้ประวัติลงเวลาก่อนวันจบไซต์ (ยังไม่ทำบิล) */
+export function assignmentAwaitingRemobAfterSiteFinish(
+  a: Pick<Assignment, 'deploymentStatus' | 'mobLocationEndDate' | 'mobCycleNumber' | 'unassignedAt'>,
+): boolean {
+  if (typeof a.unassignedAt === 'number' && a.unassignedAt > 0) return false;
+  if (a.deploymentStatus !== 'DRAFT') return false;
+  if (!(a.mobLocationEndDate || '').trim()) return false;
+  return !isAssignmentDraftAwaitingFirstMobOnly(a);
+}
+
+/** ใช้ใน fallback ของ assignmentOverlapsYearMonthForPoDailyBoard — DRAFT หลังจบงานยังทับเดือนเก่าได้ */
+export function assignmentPassesPoMonthOverlapFallbackGate(
+  a: Pick<
+    Assignment,
+    | 'deploymentStatus'
+    | 'readinessStatus'
+    | 'mobCycleNumber'
+    | 'mobLocationEndDate'
+    | 'unassignedAt'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'mobReadyToTravelAt'
+  >,
+): boolean {
+  if (assignmentReadyForWaveTimesheet(a)) return true;
+  if (assignmentAwaitingRemobAfterSiteFinish(a)) return true;
+  return false;
+}
+
 /**
  * ยังไม่เคยผ่านขั้น mobilization บนไซต์ (Standby / เริ่มงาน / จบไซต์ / พร้อมเดินทาง)
  * — ใช้กรองคนที่ Unassign ก่อน mob ออกจากตารางสรุปรายเดือน
@@ -404,8 +433,22 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
 
   if (isYmdInRemobGapBetweenCycles(a, d)) return false;
 
-  /** วันแรกของช่วง mobilization (Standby / เริ่มงาน) — Standby มักก่อนวันเริ่มทำงาน */
   const mobSegmentStart = resolveMobSegmentStartYmd(a);
+
+  /**
+   * รอบที่จบไซต์แล้ว (มี mobEnd) — startDate บนมอบหมายอาจเลื่อนสำหรับ remob รอบใหม่ (เช่น 27 มิ.ย.)
+   * แต่ยังต้องแก้/สรุปวันก่อนหน้านั้นในรอบเดิม (เช่น 1–13 มิ.ย.)
+   */
+  if (hasMobEnd && d <= mobEnd) {
+    const segmentFloor = mobSegmentStart ?? (hasMobStart ? mobStart : hasStandby ? mobStandby : undefined);
+    if (segmentFloor && d >= segmentFloor) {
+      /* ใช้ logic เพดานด้านล่างตามปกติ */
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(assignStart) && assignStart > d) {
+      let ceilOnly = mobEnd;
+      if (hasAssignEnd && assignEnd < ceilOnly) ceilOnly = assignEnd;
+      return d <= ceilOnly;
+    }
+  }
 
   const segmentForMonthCompare = mobSegmentStart ?? mobStart;
 
@@ -425,9 +468,20 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
     d.slice(0, 7) !== segmentForMonthCompare.slice(0, 7);
 
   let floor: string | undefined;
-  if (inClosedPriorCycle || inEarlierCalendarMonthThanMobSegment) {
+  /** จบงานแล้ว (ข้อมูลเก่าที่ล้าง mobStandby/mobWorkingStart) — ยังเห็นช่วงก่อน mobLocationEndDate */
+  if (hasMobEnd && !hasMobStart && !hasStandby) {
+    const candidates = [assignStart, assignedFallback].filter((y) => /^\d{4}-\d{2}-\d{2}$/.test(y));
+    if (candidates.length) floor = candidates.reduce((a, b) => (a < b ? a : b));
+    if (floor !== undefined && d < floor && d <= mobEnd) floor = undefined;
+  } else if (inClosedPriorCycle) {
+    const candidates = [assignStart, assignedFallback].filter(
+      (y) => /^\d{4}-\d{2}-\d{2}$/.test(y) && y <= d,
+    );
+    if (candidates.length) floor = candidates.reduce((a, b) => (a < b ? a : b));
+  } else if (inEarlierCalendarMonthThanMobSegment) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(assignStart)) floor = assignStart;
     else if (/^\d{4}-\d{2}-\d{2}$/.test(assignedFallback)) floor = assignedFallback;
+    if (floor !== undefined && d < floor && hasMobEnd && d <= mobEnd) floor = undefined;
   } else if (mobSegmentStart) {
     /**
      * มีวันเริ่มทำงานแต่ยังไม่มี mobStandbyDate ในเอกสาร — ช่วงก่อนวันเริ่มงานมักเป็น SB จาก clearance
@@ -460,7 +514,13 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
     else if (/^\d{4}-\d{2}-\d{2}$/.test(assignedFallback)) floor = assignedFallback;
   }
 
-  if (floor !== undefined && d < floor) return false;
+  if (floor !== undefined && d < floor) {
+    if (hasMobEnd && d <= mobEnd && floor > d) {
+      /* startDate remob ใหม่ — อย่าตัดวันในรอบที่จบแล้ว */
+    } else {
+      return false;
+    }
+  }
 
   /**
    * splitPriorAndNewCycleOnDoc — ดูด้านบน
@@ -501,6 +561,44 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
   if (ceil !== undefined && d > ceil) return false;
 
   return true;
+}
+
+/** วันนี้ยังแก้ไขลงเวลารอบก่อนจบงานได้ แม้อยู่ Waiting MOB (DRAFT + mobLocationEndDate) */
+export function isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(
+  asgn: Pick<Assignment, 'deploymentStatus' | 'mobLocationEndDate' | 'mobCycleNumber' | 'unassignedAt'>,
+  dateYmd: string,
+): boolean {
+  if (asgn.deploymentStatus !== 'DRAFT') return false;
+  if (!(asgn.mobLocationEndDate || '').trim()) return false;
+  if (isAssignmentDraftAwaitingFirstMobOnly(asgn)) return false;
+  const mobEnd = (asgn.mobLocationEndDate || '').trim().slice(0, 10);
+  const d = dateYmd.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(mobEnd) || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  return d <= mobEnd;
+}
+
+/** กระดานรายวัน / สรุปรายเดือน — วันนี้แก้ไขหรือบันทึก timesheet ได้หรือไม่ */
+export function isYmdEditableForAssignmentTimesheet(
+  asgn: Pick<
+    Assignment,
+    | 'deploymentStatus'
+    | 'mobLocationEndDate'
+    | 'mobCycleNumber'
+    | 'unassignedAt'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'startDate'
+    | 'assignedDate'
+    | 'endDate'
+  >,
+  ymd: string,
+  options?: { hasPersistedTimesheetOnDate?: boolean },
+): boolean {
+  const d = ymd.slice(0, 10);
+  if (options?.hasPersistedTimesheetOnDate && !isHtmlDateAfterMobLocationEnd(asgn, d)) return true;
+  if (isYmdWithinAssignmentMobTimesheetWindow(asgn, d)) return true;
+  if (isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(asgn, d)) return true;
+  return false;
 }
 
 /**
