@@ -38,14 +38,18 @@ export function deriveCostNormalHourlyRate(input: DeriveHourlyInput): number {
   );
 }
 
-/** ฝั่งจ่าย (payroll cost): mobilization คิดแพ็กเดียวกับ standby — billing แยกตาม rate ขาย */
+/** ฝั่งจ่าย (payroll cost): M1 / D1 / SB คิดแพ็ก standby — billing แยกตาม rate ขาย */
 export function isPayrollCostStandbyPackageEvent(
   eventType: DailyTimesheet['eventType'],
 ): boolean {
-  return eventType === 'standby_day' || eventType === 'mobilization_day';
+  return (
+    eventType === 'standby_day' ||
+    eventType === 'mobilization_day' ||
+    eventType === 'demobilization_day'
+  );
 }
 
-/** ชม.ที่จ่าย standby — ใช้ normalHours บนใบงาน; ถ้าไม่มี ใช้ชม.ในแพ็ก PO (12 หรือ 8) × standbyUnits */
+/** ชม.ที่จ่าย standby / M1 / D1 — ใช้ normalHours ที่ลงไว้; ถ้าไม่มี ใช้ชม.ในแพ็ก PO (12 หรือ 8) × standbyUnits */
 export function resolveStandbyPaidHours(
   ts: Pick<DailyTimesheet, 'normalHours' | 'standbyUnits'>,
   statedPackageHours: StatedPackageHours = 8,
@@ -69,8 +73,8 @@ export interface StandbyDayPackageCostInput {
 }
 
 /**
- * Standby / mobilization (ฝั่งจ่าย) = แพ็กต้นทุนรายวัน × สัดส่วนชม.ที่ลง / ชม.ในแพ็ก × ตัวคูณ standby
- * ตัวอย่าง แพ็ก 12 ชม. ฿1,700 × standby 0.5 × 12/12 = ฿850 (ไม่ใช้ฐานชม.แยก 8+4×OT ที่ทำให้ได้ ~฿728)
+ * Standby / mobilization / demobilization (ฝั่งจ่าย) = แพ็กต้นทุนรายวัน × สัดส่วนชม.ที่ลง / ชม.ในแพ็ก × ตัวคูณ standby
+ * ตัวอย่าง แพ็ก 12 ชม. ฿1,700 × standby 0.5 × 12/12 = ฿850 · 8 ชม. → × 8/12
  */
 export function computeStandbyDayCostFromPackage(input: StandbyDayPackageCostInput): number {
   const pkg = Math.max(0, input.costPackagePerDay);

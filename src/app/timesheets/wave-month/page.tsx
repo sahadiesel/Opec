@@ -1570,7 +1570,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                       </p>
                       <p>
                         แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ ·{' '}
-                        <strong>รวมชม.</strong> = ชม.ทำงาน (W) · Standby (SB/M1/D1 วันละ 8 ชม.) · OT แยกคอลัมน์ — เซลล์รายวันแสดง W+5 เมื่อมี OT 5 ชม.
+                        <strong>รวมชม.</strong> = ชม.ทำงาน (W) · Standby (SB/M1/D1 ตามชม.ที่ลง) · OT แยกคอลัมน์ — เซลล์รายวันแสดง W+5 เมื่อมี OT 5 ชม.
                       </p>
                     </CardDescription>
                   </div>
@@ -1624,7 +1624,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                           </TableHead>
                           <TableHead
                             className="text-center font-bold min-w-[5.75rem] w-[5.75rem] shrink-0 text-[10px] leading-tight px-2"
-                            title="ชม. standby (SB/M1/D1) วันละ 8 ชม. — รวมตามเซลล์ในแถวนี้"
+                            title="ชม. standby (SB/M1/D1) ตาม normalHours ที่ลง — รวมตามเซลล์ในแถวนี้"
                           >
                             รวมชม.
                             <br />
@@ -1775,7 +1775,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                               </TableCell>
                               <TableCell
                                 className="text-center font-bold tabular-nums text-xs min-w-[5.75rem] w-[5.75rem] shrink-0 px-2 py-1.5 text-sky-800"
-                                title="ชม. standby (SB/M1/D1) วันละ 8 ชม. รวมในแถวนี้"
+                                title="ชม. standby (SB/M1/D1) ตาม normalHours ที่ลง — รวมในแถวนี้"
                               >
                                 {rowWorkerMonthStandbyTotal}
                               </TableCell>

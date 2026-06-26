@@ -1,4 +1,5 @@
 import type { Assignment, DailyTimesheet, RateConditionEventType, WaveMonthTimesheetPhotoAttachment } from '@/lib/types';
+import { resolveStandbyPaidHours } from '@/lib/payroll/package-labor-cost';
 import {
   assignmentIncludedInWaveTimesheetRoster,
   assignmentHasAnyMobTimesheetDayInCalendarMonth,
@@ -93,9 +94,6 @@ export function otHoursCountedForWaveMonth(
   return totalOtHoursFromTimesheet(ts);
 }
 
-/** ชม. standby ต่อวันในสรุปรายเดือน — M1 / D1 / SB ใช้ค่าเดียวกัน (ไม่อ่าน normalHours จากใบงาน) */
-export const WAVE_MONTH_STANDBY_HOURS_PER_MOB_SB_DAY = 8;
-
 const WAVE_MONTH_STANDBY_EVENT_TYPES = new Set<RateConditionEventType>([
   'standby_day',
   'mobilization_day',
@@ -103,14 +101,15 @@ const WAVE_MONTH_STANDBY_EVENT_TYPES = new Set<RateConditionEventType>([
 ]);
 
 /**
- * ชม.ที่นับเป็น standby ในสรุปรายเดือน — standby_day, mobilization_day (M1), demobilization_day (D1)
- * วันละ 8 ชม. คงที่ (ไม่ใช้ normalHours ที่บันทึกใน PO Daily Board)
+ * ชม.ที่นับเป็น standby ในสรุปรายเดือน — SB / M1 / D1
+ * ยึด `normalHours` ที่ลงในใบงาน (สอดคล้องสูตรจ่ายค่าแรง — 8 ชม. vs 12 ชม. ได้อัตราต่างกัน)
+ * ถ้าไม่ได้ลงชม. ใช้ fallback จาก `resolveStandbyPaidHours` (standbyUnits × 8)
  */
 export function standbyHoursCountedForWaveMonth(
-  ts: Pick<DailyTimesheet, 'eventType'> | undefined,
+  ts: Pick<DailyTimesheet, 'eventType' | 'normalHours' | 'standbyUnits'> | undefined,
 ): number {
   if (!ts || !WAVE_MONTH_STANDBY_EVENT_TYPES.has(ts.eventType as RateConditionEventType)) return 0;
-  return WAVE_MONTH_STANDBY_HOURS_PER_MOB_SB_DAY;
+  return resolveStandbyPaidHours(ts, 8);
 }
 
 /**
