@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { CalendarDays, Save, Loader2, Zap, Lock, Pause, Pencil, Undo2, Sparkles, ArrowLeft } from 'lucide-react';
+import { CalendarDays, Save, Loader2, Zap, Lock, Pause, Pencil, Undo2, Sparkles, ArrowLeft, AlertCircle } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -83,11 +84,17 @@ import {
   buildMobFinishUndoSnapshot,
   inferMobDatesFromTimesheets,
 } from '@/lib/timesheet/mob-finish-undo';
-import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import {
   applyPoActiveStandbyStopWindow,
   syncPoActiveAutoDailyForAssignment,
 } from '@/lib/timesheet/po-active-auto-daily-sync';
+import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
+import {
+  buildBillingModeProceedCopy,
+  billingModeLabel,
+  resolveBillingMode,
+  type PoBillingModeRow,
+} from '@/lib/commercial/resolve-billing-mode';
 import {
   computePoActiveAutoDailyRange,
   isAssignmentEligibleForPoActiveAutoDaily,
@@ -236,6 +243,7 @@ export function PoDailyBoardCard({
   const poIdsKey = poIds.join('|');
   const poById = useMemo(() => new Map(posList.map((p) => [p.id, p])), [posList]);
   const firestore = useFirestore();
+  const router = useRouter();
   const { toast } = useToast();
   const [rosterData, setRosterData] = useState<Record<string, Partial<DailyTimesheet>>>({});
   const [isSaving, setIsSaving] = useState(false);
@@ -270,6 +278,19 @@ export function PoDailyBoardCard({
   const [clearDayBusy, setClearDayBusy] = useState(false);
   /** แถวที่ผู้ใช้ล้างวันนี้แล้ว — ไม่โหลดค่า default และไม่บันทึกทับ */
   const [clearedRowIds, setClearedRowIds] = useState<Set<string>>(() => new Set());
+  const [billingModesByPo, setBillingModesByPo] = useState<PoBillingModeRow[] | null>(null);
+  const [billingProceedHref, setBillingProceedHref] = useState<string | null>(null);
+
+  const billingProceedCopy = useMemo(
+    () => (billingModesByPo?.length ? buildBillingModeProceedCopy(billingModesByPo) : null),
+    [billingModesByPo],
+  );
+
+  const requestMonthlyTimesheetProceed = useCallback((href: string) => {
+    setBillingProceedHref(href);
+  }, []);
+
+  const billingModesReady = billingModesByPo !== null;
 
   const monthYm = targetDate.slice(0, 7);
   const waveById = useMemo(() => new Map(waves.map((w) => [w.id, w])), [waves]);
@@ -361,6 +382,27 @@ export function PoDailyBoardCard({
     }
     return `/timesheets/wave-month?month=${encodeURIComponent(monthYm)}&highlightPo=${encodeURIComponent(canonicalPo.id)}`;
   }, [isBundle, bundleKey, monthYm, canonicalPo.id]);
+
+  useEffect(() => {
+    if (!firestore || posList.length === 0) {
+      setBillingModesByPo([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const rows = await Promise.all(
+        posList.map(async (po) => ({
+          poId: po.id,
+          poCode: po.poCode || po.id,
+          mode: await resolveBillingMode(firestore, po),
+        })),
+      );
+      if (!cancelled) setBillingModesByPo(rows);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, posList]);
 
   useEffect(() => {
     if (!firestore || !/^\d{4}-\d{2}$/.test(monthYm)) {
@@ -1134,13 +1176,42 @@ export function PoDailyBoardCard({
               </CardDescription>
             </div>
             <div className="flex flex-col gap-1.5 sm:items-end shrink-0">
-              <Button variant="secondary" size="sm" asChild>
-                <Link href={poMonthHref}>Monthly Timesheet (วางบิล / payroll) →</Link>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={!billingModesReady}
+                onClick={() => requestMonthlyTimesheetProceed(poMonthHref)}
+              >
+                Monthly Timesheet (วางบิล / payroll) →
               </Button>
             </div>
           </div>
         </CardHeader>
         <CardContent className="p-0 space-y-4">
+          {billingProceedCopy ? (
+            <Alert className="rounded-none border-x-0 border-t-0 border-amber-300/80 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-50">
+              <AlertCircle className="h-4 w-4 text-amber-700 dark:text-amber-300" />
+              <AlertTitle>{billingProceedCopy.title}</AlertTitle>
+              <AlertDescription className="text-sm space-y-1.5">
+                {billingModesByPo && billingModesByPo.length > 1 ? (
+                  <ul className="list-disc pl-5 space-y-0.5">
+                    {billingModesByPo.map((row) => (
+                      <li key={row.poId}>
+                        <span className="font-mono">{row.poCode}</span> — {billingModeLabel(row.mode)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : billingModesByPo?.[0] ? (
+                  <p>
+                    โหมดวางบิลลูกค้า: <strong>{billingModeLabel(billingModesByPo[0].mode)}</strong>
+                  </p>
+                ) : null}
+                {billingProceedCopy.paragraphs.map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </AlertDescription>
+            </Alert>
+          ) : null}
           {anyMonthLocked ? (
             <Alert className="rounded-none border-x-0 border-t-0">
               <AlertTitle>
@@ -1663,8 +1734,13 @@ export function PoDailyBoardCard({
             บันทึกลง <span className="font-medium">daily timesheets</span> ต่อ assignment — ชั่วโมงปกติจากสัญญา/PO · ช่อง OT = ชม. OT (ot15) สำหรับ payroll และวางบิล
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="link" className="text-xs h-auto p-0" asChild>
-              <Link href={poMonthHref}>Monthly Timesheet (ปิดงวด / วางบิล)</Link>
+            <Button
+              variant="link"
+              className="text-xs h-auto p-0"
+              disabled={!billingModesReady}
+              onClick={() => requestMonthlyTimesheetProceed(poMonthHref)}
+            >
+              Monthly Timesheet (ปิดงวด / วางบิล)
             </Button>
             <Button variant="link" className="text-xs h-auto p-0" asChild>
               <Link href="/timesheets/wave-month">สรุปรอบเดือนราย wave</Link>
@@ -1694,6 +1770,60 @@ export function PoDailyBoardCard({
             <Button disabled={clearDayBusy} onClick={() => void confirmClearDay()}>
               {clearDayBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               ใช่ ล้างทั้งหมด
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={billingProceedHref != null}
+        onOpenChange={(open) => {
+          if (!open) setBillingProceedHref(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {billingProceedCopy?.title ?? 'ตรวจโหมดวางบิลก่อนดำเนินการ'}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                {billingModesByPo && billingModesByPo.length > 1 ? (
+                  <ul className="list-disc pl-5 space-y-0.5 text-foreground/90">
+                    {billingModesByPo.map((row) => (
+                      <li key={row.poId}>
+                        <span className="font-mono">{row.poCode}</span> — {billingModeLabel(row.mode)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : billingModesByPo?.[0] ? (
+                  <p className="text-foreground/90">
+                    โหมดวางบิลลูกค้า: <strong>{billingModeLabel(billingModesByPo[0].mode)}</strong>
+                  </p>
+                ) : null}
+                {billingProceedCopy?.paragraphs.map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+                <p className="pt-1 font-medium text-foreground">
+                  ต้องการไป Monthly Timesheet เพื่อสรุป/ปิดงวดต่อหรือไม่?
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+            {billingProceedCopy ? (
+              <Button variant="outline" asChild>
+                <Link href={billingProceedCopy.invoiceHref}>{billingProceedCopy.invoiceLabel}</Link>
+              </Button>
+            ) : null}
+            <Button
+              onClick={() => {
+                const href = billingProceedHref;
+                setBillingProceedHref(null);
+                if (href) router.push(href);
+              }}
+            >
+              ไป Monthly Timesheet
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

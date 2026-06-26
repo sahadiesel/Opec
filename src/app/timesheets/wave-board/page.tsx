@@ -289,61 +289,67 @@ function WaveTimesheetBoardContent() {
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="mx-auto w-full min-w-0 max-w-[1600px] space-y-6">
         <section className="w-full space-y-2">
-          <PayrollScopeTag scope="worker" showHint={false} />
-          <Button variant="link" className="h-auto p-0 text-sm text-muted-foreground" asChild>
-            <Link href="/timesheets">← กลับไปศูนย์ลงเวลา (งวดรายเดือน)</Link>
-          </Button>
-          <h1 className="text-3xl font-bold tracking-tight text-primary">
-            <CalendarDays className="mr-3 inline-block h-8 w-8 align-middle text-primary" aria-hidden />
-            คีย์ลงเวลาแบบกลุ่ม (Bulk Check-in)
-          </h1>
-          <p className="text-muted-foreground text-lg max-w-4xl">
-            {filterPoActiveBundleId ? (
-              <>
-                กรองตาม <strong>ชุด PO Active</strong> — <strong>ตารางเดียว</strong> รวมทุกใบในชุด (สอดคล้องหน้า Assignment) · แถวคือคนที่{' '}
-                <strong>mobilization ผ่านเกณฑ์แล้ว</strong>
-                {rosterFilterYm ? (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0 flex-1 space-y-2">
+              <PayrollScopeTag scope="worker" showHint={false} />
+              <Button variant="link" className="h-auto p-0 text-sm text-muted-foreground" asChild>
+                <Link href="/timesheets">← กลับไปศูนย์ลงเวลา (งวดรายเดือน)</Link>
+              </Button>
+              <h1 className="text-3xl font-bold tracking-tight text-primary">
+                <CalendarDays className="mr-3 inline-block h-8 w-8 align-middle text-primary" aria-hidden />
+                คีย์ลงเวลาแบบกลุ่ม (Bulk Check-in)
+              </h1>
+              <p className="text-muted-foreground text-lg max-w-4xl">
+                {filterPoActiveBundleId ? (
                   <>
-                    {' '}
-                    และช่วงมอบหมาย<strong>ทับเดือน {rosterFilterYm}</strong> (สอดคล้องคอลัมน์ MOB ผ่าน) — เลือกวันที่ใต้ตารางเพื่อลงเวลารายวัน
+                    กรองตาม <strong>ชุด PO Active</strong> — <strong>ตารางเดียว</strong> รวมทุกใบในชุด (สอดคล้องหน้า Assignment) · แถวคือคนที่{' '}
+                    <strong>mobilization ผ่านเกณฑ์แล้ว</strong>
+                    {rosterFilterYm ? (
+                      <>
+                        {' '}
+                        และช่วงมอบหมาย<strong>ทับเดือน {rosterFilterYm}</strong> (สอดคล้องคอลัมน์ MOB ผ่าน) — เลือกวันที่ใต้ตารางเพื่อลงเวลารายวัน
+                      </>
+                    ) : (
+                      <>
+                        {' '}
+                        และช่วงมอบหมายครอบคลุม<strong>วันที่เลือก</strong>
+                      </>
+                    )}
                   </>
                 ) : (
                   <>
-                    {' '}
-                    และช่วงมอบหมายครอบคลุม<strong>วันที่เลือก</strong>
+                    แยก <strong>ต่อ PO หนึ่งการ์ด</strong> — แถว mobilization ผ่านเกณฑ์
+                    {rosterFilterYm ? (
+                      <> และช่วงทับเดือน {rosterFilterYm}</>
+                    ) : (
+                      <> และครอบคลุมวันที่เลือก</>
+                    )}
                   </>
-                )}
-              </>
-            ) : (
-              <>
-                แยก <strong>ต่อ PO หนึ่งการ์ด</strong> — แถว mobilization ผ่านเกณฑ์
-                {rosterFilterYm ? (
-                  <> และช่วงทับเดือน {rosterFilterYm}</>
-                ) : (
-                  <> และครอบคลุมวันที่เลือก</>
-                )}
-              </>
-            )}{' '}
-            บันทึกร่าง DRAFT ที่นี่ ส่งตรวจ/อนุมัติและเรียกเก็บตาม{' '}
-            <Link href="/timesheets/wave-month" className="text-primary font-semibold underline">
-              Monthly Timesheet
-            </Link>
-            .
-          </p>
+                )}{' '}
+                บันทึกร่าง DRAFT ที่นี่ ส่งตรวจ/อนุมัติและเรียกเก็บตาม{' '}
+                <Link href="/timesheets/wave-month" className="text-primary font-semibold underline">
+                  Monthly Timesheet
+                </Link>
+                .
+              </p>
+            </div>
+            <div className="shrink-0 self-end sm:self-start">
+              <PageGuidance
+                compact
+                title="วิธีใช้"
+                tips={[
+                'ชุด PO Active = ตารางเดียวรายชื่อรวม; คนที่ยังอยู่แค่ assign / ยังไม่ mob จะไม่ขึ้นในกระดานจนกว่าจะผ่าน Mobilization ตามเกณฑ์ readiness + deployment',
+                'วางบิล / payroll รอบเดือนให้ยึดเอกสาร Monthly Timesheet หลังอนุมัติ',
+                'รายคน = 1 assignment — demob แล้วจะไม่ขึ้นในกระดานเมื่อวันที่อยู่นอกช่วง',
+                'พารามิเตอร์ ?month=YYYY-MM = แสดงทุกคนที่ทับเดือนนั้น (ตรงจำนวน MOB ผ่านใน Assignments); วันที่ใน date picker = วันที่ลงเวลา — แถวที่วันนั้นอยู่นอกช่วงมอบหมายจะล็อกไม่ให้บันทึก',
+                'แถวที่ lock ตามสถานะส่งตรวจ/อนุมัติของงวด PO (หรือ wave ในข้อมูลเก่า)',
+                'คนที่สถานะ ACTIVE (on-site): Cloud Function + Scheduler เติม/รักษาวันนี้ (~00:10 Asia/Bangkok) และ UI ซิงก์เมื่อมีผู้เปิดกระดาน (~45 วินาที) — ยกเว้นเมื่อปิดสวิตช์ «ลงเวลาอัตโนมัติ» บนกระดาน; ช่วงหยุดแบบ standby จะเป็น SB อัตโนมัติตามช่วงที่ตั้งไว้ · ปุ่ม Auto gen เติมช่วงที่ขาด (รวมตอนปิดสวิตช์) · ปุ่มหยุด = จบงานหรือพัก SB',
+                'อัปเดตหน้าจอ (สวิตช์ Auto / ข้อความใต้ชื่อ): ต้อง deploy แอป — เช่น npm run deploy:app (Firebase App Hosting; opecbackend) — deploy เฉพาะ functions ไม่เปลี่ยน UI',
+                ]}
+              />
+            </div>
+          </div>
         </section>
-
-        <PageGuidance
-          title="วิธีใช้"
-          tips={[
-            'ชุด PO Active = ตารางเดียวรายชื่อรวม; คนที่ยังอยู่แค่ assign / ยังไม่ mob จะไม่ขึ้นในกระดานจนกว่าจะผ่าน Mobilization ตามเกณฑ์ readiness + deployment',
-            'วางบิล / payroll รอบเดือนให้ยึดเอกสาร Monthly Timesheet หลังอนุมัติ',
-            'รายคน = 1 assignment — demob แล้วจะไม่ขึ้นในกระดานเมื่อวันที่อยู่นอกช่วง',
-            'พารามิเตอร์ ?month=YYYY-MM = แสดงทุกคนที่ทับเดือนนั้น (ตรงจำนวน MOB ผ่านใน Assignments); วันที่ใน date picker = วันที่ลงเวลา — แถวที่วันนั้นอยู่นอกช่วงมอบหมายจะล็อกไม่ให้บันทึก',
-            'แถวที่ lock ตามสถานะส่งตรวจ/อนุมัติของงวด PO (หรือ wave ในข้อมูลเก่า)',
-            'คนที่สถานะ ACTIVE (on-site): Cloud Function + Scheduler เติม/รักษาวันนี้ (~00:10 Asia/Bangkok) และ UI ซิงก์เมื่อมีผู้เปิดกระดาน (~45 วินาที) — ยกเว้นเมื่อปิดสวิตช์ «ลงเวลาอัตโนมัติ» บนกระดาน; ช่วงหยุดแบบ standby จะเป็น SB อัตโนมัติตามช่วงที่ตั้งไว้ · ปุ่ม Auto gen เติมช่วงที่ขาด (รวมตอนปิดสวิตช์) · ปุ่มหยุด = จบงานหรือพัก SB',
-            'อัปเดตหน้าจอ (สวิตช์ Auto / ข้อความใต้ชื่อ): ต้อง deploy แอป — เช่น npm run deploy:app (Firebase App Hosting; opecbackend) — deploy เฉพาะ functions ไม่เปลี่ยน UI',
-          ]}
-        />
 
         <p className="text-sm text-muted-foreground">
           {filterPoActiveBundleId
