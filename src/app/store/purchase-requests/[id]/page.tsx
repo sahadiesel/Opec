@@ -9,9 +9,9 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { ArrowLeft, CheckCircle, Loader2, XCircle, PackageSearch, Send, Ban } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Loader2, XCircle, PackageSearch, Send, Ban, Pencil } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
-import { collection, doc, getDocs, updateDoc, type UpdateData } from 'firebase/firestore';
+import { collection, doc, getDocs, updateDoc, deleteField, type UpdateData } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canDecidePurchaseRequest, canApprovePurchaseAsManager } from '@/lib/permissions';
 import type {
@@ -99,6 +99,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
   const [saving, setSaving] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [editingRejected, setEditingRejected] = useState(false);
 
   const okStore = useMemo(
     () => !!currentUser && canView(currentUser, 'store_inventory'),
@@ -145,7 +146,10 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
   const isDraft = pr?.status === 'DRAFT';
+  const isRejected = pr?.status === 'REJECTED';
   const draftEditable = isDraft && okStore;
+  const rejectedResubmitAllowed = isRejected && okStore;
+  const formEditable = draftEditable || (rejectedResubmitAllowed && editingRejected);
 
   useEffect(() => {
     if (!pr) return;
@@ -163,7 +167,12 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
   }, [pr?.id, pr?.updatedAt]);
 
   useEffect(() => {
-    if (!prLines || pr?.status !== 'DRAFT') return;
+    if (pr?.status !== 'REJECTED') setEditingRejected(false);
+  }, [pr?.status]);
+
+  useEffect(() => {
+    if (!prLines) return;
+    if (pr?.status !== 'DRAFT' && !(pr?.status === 'REJECTED' && editingRejected)) return;
     if (prLines.length === 0) {
       setLines([newLine()]);
       return;
@@ -179,7 +188,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         storeItemCode: row.storeItemCode,
       }))
     );
-  }, [pr?.status, prLines, pr?.id]);
+  }, [pr?.status, prLines, pr?.id, editingRejected]);
 
   const lineSum = useMemo(
     () => sumLineAmounts(lines.map((l) => ({ amount: l.amount }))),
@@ -277,7 +286,8 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
 
   const saveDraft = async () => {
     if (!okStore) return;
-    if (!firestore || !pr || pr.status !== 'DRAFT' || !prRef) return;
+    if (!firestore || !pr || !prRef) return;
+    if (pr.status !== 'DRAFT' && pr.status !== 'REJECTED') return;
     if (!validateSubmit(false)) return;
     setSaving(true);
     try {
@@ -310,7 +320,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         paymentMilestoneDrafts: milestonePayload ?? undefined,
         updatedAt: Date.now(),
       });
-      toast({ title: 'บันทึกแล้ว' });
+      toast({ title: pr.status === 'REJECTED' ? 'บันทึกแล้ว' : 'บันทึกแล้ว' });
     } catch (e) {
       console.error(e);
       toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ' });
@@ -321,7 +331,8 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
 
   const submitForApproval = async () => {
     if (!okStore) return;
-    if (!firestore || !pr || pr.status !== 'DRAFT' || !prRef) return;
+    if (!firestore || !pr || !prRef) return;
+    if (pr.status !== 'DRAFT' && pr.status !== 'REJECTED') return;
     if (!validateSubmit(true)) return;
     setSaving(true);
     try {
@@ -357,8 +368,13 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         requestedByUid: pr.requestedByUid || currentUser.id,
         requestedByName: pr.requestedByName || currentUser.displayName || currentUser.email || '',
         submittedAt: now,
+        rejectionReason: deleteField(),
+        decidedAt: deleteField(),
+        decidedByUid: deleteField(),
+        decidedByName: deleteField(),
         updatedAt: now,
       });
+      setEditingRejected(false);
       toast({ title: 'ส่งขออนุมัติแล้ว' });
     } catch (e) {
       console.error(e);
@@ -492,8 +508,8 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
   const showPoLink = pr.status === 'APPROVED' && !pr.linkedPurchaseId;
   const showPO = pr.linkedPurchaseId && linkedPo;
 
-  const displayLines = draftEditable ? lines : readonlyLines;
-  const displayMode = draftEditable ? lineEntryMode : pr.lineEntryMode || 'SERVICE';
+  const displayLines = formEditable ? lines : readonlyLines;
+  const displayMode = formEditable ? lineEntryMode : pr.lineEntryMode || 'SERVICE';
   const displayStatus: PurchaseRequestStatus =
     pr.status === 'APPROVED' && pr.linkedPurchaseId ? 'PO_ISSUED' : pr.status;
 
@@ -529,9 +545,9 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           </Badge>
         </div>
 
-        <div className={cn('grid gap-4', showPO && 'sm:grid-cols-2')}>
-          {showPO && (
-            <Card className="border-primary/20 bg-primary/5">
+        <div className={cn('grid gap-4', (showPO || isRejected) && 'sm:grid-cols-2')}>
+        {showPO && (
+          <Card className="border-primary/20 bg-primary/5 sm:col-span-2">
               <CardHeader>
                 <CardTitle className="text-base">ใบสั่งซื้อที่อ้างอิง</CardTitle>
                 <CardDescription>
@@ -555,13 +571,34 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
               <div>
                 <p className="text-xs text-muted-foreground">ผู้อนุมัติ</p>
                 <p className="font-medium">
-                  {displayStatus === 'APPROVED' || displayStatus === 'PO_ISSUED'
+                  {displayStatus === 'APPROVED' ||
+                  displayStatus === 'PO_ISSUED' ||
+                  displayStatus === 'REJECTED'
                     ? pr.decidedByName?.trim() || '—'
                     : '—'}
                 </p>
               </div>
             </CardContent>
           </Card>
+
+          {isRejected && (
+            <Card className="border-red-200 bg-red-50/60">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base text-red-900">เหตุผลไม่อนุมัติ</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm">
+                <p className="whitespace-pre-wrap text-red-950">
+                  {pr.rejectionReason?.trim() || '— ไม่ได้ระบุเหตุผล —'}
+                </p>
+                {pr.decidedAt ? (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    โดย {pr.decidedByName?.trim() || 'ผู้จัดการ'} ·{' '}
+                    {new Date(pr.decidedAt).toLocaleString('th-TH')}
+                  </p>
+                ) : null}
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {showPoLink && okStore && (
@@ -589,10 +626,10 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label>หัวข้อ</Label>
-              <Input value={title} onChange={(e) => setTitle(e.target.value)} readOnly={!draftEditable} disabled={!draftEditable} />
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} readOnly={!formEditable} disabled={!formEditable} />
             </div>
 
-            {draftEditable ? (
+            {formEditable ? (
               <VendorSearchSelect vendors={vendors ?? undefined} value={vendorId} onChange={setVendorId} disabled={saving} />
             ) : (
               <div>
@@ -604,7 +641,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>วันที่ต้องการของ (อ้างอิง)</Label>
-                {draftEditable ? (
+                {formEditable ? (
                   <DatePickerThaiBE
                     className="h-11"
                     value={htmlDateValueToTimestampMs(needByDate)}
@@ -616,7 +653,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
               </div>
               <div className="space-y-2">
                 <Label>ภาษีมูลค่าเพิ่ม</Label>
-                {draftEditable ? (
+                {formEditable ? (
                   <Select value={vatTreatment} onValueChange={(x) => setVatTreatment(x as PurchaseRequestVatTreatment)}>
                     <SelectTrigger>
                       <SelectValue />
@@ -636,7 +673,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>การชำระเงิน</Label>
-                {draftEditable ? (
+                {formEditable ? (
                   <Select value={purchasePaymentType} onValueChange={(x) => setPurchasePaymentType(x as PurchaseType)}>
                     <SelectTrigger>
                       <SelectValue />
@@ -660,35 +697,50 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
 
             <div className="space-y-2">
               <Label>หมายเหตุ</Label>
-              <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} readOnly={!draftEditable} rows={3} disabled={!draftEditable} />
+              <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} readOnly={!formEditable} rows={3} disabled={!formEditable} />
             </div>
-
-            {pr.status === 'REJECTED' && pr.rejectionReason && (
-              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive-foreground">
-                {pr.rejectionReason}
-              </div>
-            )}
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle>รายการและยอดเงิน</CardTitle>
-            <CardDescription>
-              {draftEditable ? 'แก้ไขได้เฉพาะฉบับร่าง — หลังอนุมัติรายการถือเป็นผลสุดท้ายสำหรับสร้าง PO' : 'สรุปจาก PR'}
-            </CardDescription>
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+            <div>
+              <CardTitle>รายการและยอดเงิน</CardTitle>
+              <CardDescription>
+                {formEditable
+                  ? 'แก้ไขรายการได้ — บันทึกหรือส่งอนุมัติเมื่อพร้อม'
+                  : isRejected
+                    ? 'กด «แก้ไขรายการ» เพื่อปรับตามเหตุผลที่ไม่อนุมัติ แล้วส่งอนุมัติใหม่'
+                    : 'สรุปจาก PR'}
+              </CardDescription>
+            </div>
+            {rejectedResubmitAllowed && !editingRejected && (
+              <Button type="button" variant="outline" className="shrink-0" onClick={() => setEditingRejected(true)}>
+                <Pencil className="mr-2 h-4 w-4" /> แก้ไขรายการ
+              </Button>
+            )}
+            {rejectedResubmitAllowed && editingRejected && (
+              <div className="flex flex-wrap justify-end gap-2 shrink-0">
+                <Button type="button" variant="outline" onClick={() => void saveDraft()} disabled={saving}>
+                  บันทึก
+                </Button>
+                <Button type="button" className="font-bold" onClick={() => void submitForApproval()} disabled={saving}>
+                  <Send className="mr-2 h-4 w-4" /> ส่งอนุมัติ
+                </Button>
+              </div>
+            )}
           </CardHeader>
           <CardContent className="space-y-4">
-            {!draftEditable && displayLines.length === 0 ? (
+            {!formEditable && displayLines.length === 0 ? (
               <p className="text-sm text-muted-foreground">ไม่มีรายการบรรทัดใน PR นี้ (เอกสารเก่าก่อนปรับระบบ)</p>
             ) : (
               <PurchaseRequestLinesEditor
                 lineEntryMode={displayMode}
-                onLineEntryModeChange={draftEditable ? setLineEntryMode : () => {}}
-                lines={displayLines.length > 0 ? displayLines : draftEditable ? [newLine()] : []}
-                onLinesChange={draftEditable ? setLines : () => {}}
+                onLineEntryModeChange={formEditable ? setLineEntryMode : () => {}}
+                lines={displayLines.length > 0 ? displayLines : formEditable ? [newLine()] : []}
+                onLinesChange={formEditable ? setLines : () => {}}
                 storeItems={storeItems as any}
-                readOnly={!draftEditable}
+                readOnly={!formEditable}
               />
             )}
 
@@ -696,7 +748,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
               <div className="text-right">
                 <div className="text-muted-foreground">ภาษี 7%</div>
                 <div className="font-mono font-semibold">
-                  ฿{(draftEditable ? totals.vatAmount : pr.vatAmount ?? 0).toLocaleString(undefined, {
+                  ฿{(formEditable ? totals.vatAmount : pr.vatAmount ?? 0).toLocaleString(undefined, {
                     minimumFractionDigits: 2,
                   })}
                 </div>
@@ -704,14 +756,14 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
               <div className="text-right">
                 <div className="text-muted-foreground">ยอดสุทธิ</div>
                 <div className="font-mono font-bold text-lg text-primary">
-                  ฿{(draftEditable ? totals.totalAmount : pr.totalAmount ?? pr.estimatedAmount ?? 0).toLocaleString(undefined, {
+                  ฿{(formEditable ? totals.totalAmount : pr.totalAmount ?? pr.estimatedAmount ?? 0).toLocaleString(undefined, {
                     minimumFractionDigits: 2,
                   })}
                 </div>
               </div>
             </div>
 
-            {purchasePaymentType === 'CREDIT' && paymentInstallmentsEnabled && draftEditable && (
+            {purchasePaymentType === 'CREDIT' && paymentInstallmentsEnabled && formEditable && (
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <Label>แผนงวดชำระ (ร่าง)</Label>
@@ -803,7 +855,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
               </div>
             )}
 
-            {!draftEditable && pr.paymentInstallmentsEnabled && pr.paymentMilestoneDrafts?.length ? (
+            {!formEditable && pr.paymentInstallmentsEnabled && pr.paymentMilestoneDrafts?.length ? (
               <div className="rounded-md border p-3 text-sm">
                 <div className="font-medium mb-2">แผนงวด (ตาม PR)</div>
                 <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
