@@ -28,7 +28,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
-import { doc, collection, query, where, updateDoc, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, collection, query, where, updateDoc, getDocs, writeBatch, deleteField } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
   PurchaseOrder, 
@@ -41,8 +41,10 @@ import {
   Quotation,
   Wave,
   JobMode,
+  ContractBillingMode,
 } from '@/lib/types';
 import Link from 'next/link';
+import { billingModeLabel } from '@/lib/commercial/resolve-billing-mode';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { writeAuditLog } from '@/lib/services/audit-service';
@@ -139,13 +141,29 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
 
   const isContractBasedPO = (po?.poType || 'contract') === 'contract';
 
+  const effectiveBillingMode = useMemo((): ContractBillingMode => {
+    if (po?.billingMode === 'TRIP' || po?.billingMode === 'MONTHLY') return po.billingMode;
+    if (contract?.billingMode === 'TRIP' || contract?.billingMode === 'MONTHLY') return contract.billingMode;
+    return 'MONTHLY';
+  }, [po?.billingMode, contract?.billingMode]);
+
   const handleSaveMaster = async () => {
     if (!canEditPo) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข Customer PO' });
       return;
     }
     if (!poRef || !currentUser || !po || !firestore) return;
-    updateDocumentNonBlocking(poRef, { ...editedPO, updatedAt: Date.now() });
+    const billingModeValue = editedPO.billingMode;
+    const payload: Record<string, unknown> = {
+      ...editedPO,
+      updatedAt: Date.now(),
+    };
+    if (billingModeValue === 'TRIP' || billingModeValue === 'MONTHLY') {
+      payload.billingMode = billingModeValue;
+    } else {
+      payload.billingMode = deleteField();
+    }
+    updateDocumentNonBlocking(poRef, payload);
     setIsEditing(false);
 
     // Audit Log
@@ -592,6 +610,47 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                       </p>
                     </div>
                   )}
+                  {isContractBasedPO && (
+                    <div className="space-y-2 md:col-span-2">
+                      <Label className="font-bold">โหมดวางบิล (Billing Mode)</Label>
+                      <Select
+                        disabled={!isEditing}
+                        value={
+                          isEditing
+                            ? (editedPO.billingMode ?? '__inherit__')
+                            : (po.billingMode ?? '__inherit__')
+                        }
+                        onValueChange={(v) =>
+                          setEditedPO({
+                            ...editedPO,
+                            billingMode: v === '__inherit__' ? undefined : (v as ContractBillingMode),
+                          })
+                        }
+                      >
+                        <SelectTrigger className="h-10">
+                          <SelectValue placeholder="ใช้ตามสัญญาหลัก" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__inherit__">
+                            ใช้ตามสัญญา ({billingModeLabel(contract?.billingMode ?? 'MONTHLY')})
+                          </SelectItem>
+                          <SelectItem value="MONTHLY">MONTHLY — ปิด PO+เดือน</SelectItem>
+                          <SelectItem value="TRIP">TRIP — รอบ M1→D1</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground">
+                        ที่ใช้จริง: <strong>{billingModeLabel(effectiveBillingMode)}</strong>
+                        {effectiveBillingMode === 'TRIP' && (
+                          <>
+                            {' · '}
+                            <Link href="/accounting/trip-billing" className="text-primary underline">
+                              ทำใบแจ้งหนี้แบบ Trip
+                            </Link>
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label className="font-bold">วันที่เริ่มงานตาม PO</Label>
@@ -650,7 +709,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                     </Button>
                   )}
                   <Button variant="outline" asChild>
-                    <Link href="/draft-invoices">รายการใบแจ้งหนี้ ( Invoice )</Link>
+                    <Link href="/draft-invoices">ทำใบแจ้งหนี้แบบ Monthly</Link>
                   </Button>
                   <Button variant="outline" asChild>
                     <Link href="/tax-invoices">ใบกำกับภาษี</Link>
@@ -732,7 +791,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 </CardHeader>
                 <CardContent className="flex flex-wrap gap-2">
                   <Button variant="outline" asChild>
-                    <Link href="/draft-invoices">รายการใบแจ้งหนี้ ( Invoice )</Link>
+                    <Link href="/draft-invoices">ทำใบแจ้งหนี้แบบ Monthly</Link>
                   </Button>
                   <Button variant="outline" asChild>
                     <Link href="/tax-invoices">ใบกำกับภาษี</Link>

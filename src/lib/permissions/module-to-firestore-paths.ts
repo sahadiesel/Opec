@@ -152,6 +152,8 @@ export const MODULE_FIRESTORE_SPECS: ModuleFirestoreSpec[] = [
         shape: 'crud',
         note: 'รูปแบบ approval/PENDING_CUSTOMER/ISSUED ต้องคงไว้ใน match block เดิม — generator แตะแค่ baseline read/create',
       },
+      { path: 'mob_cycle_billing_reviews/{id}', shape: 'crud' },
+      { path: 'trip_billing_batches/{id}', shape: 'crud' },
     ],
   },
   {

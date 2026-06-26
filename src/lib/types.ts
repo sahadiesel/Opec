@@ -749,6 +749,127 @@ export interface ContactPerson {
   notes?: string;
 }
 
+/** Mob/demob embarkation point — column headers on contract rate sheet. */
+export interface ContractMobDemobLocation {
+  /** Stable key for `mobDemobRoundTrip` lookups (e.g. `songkhla`). */
+  key: string;
+  label: string;
+  displayOrder: number;
+}
+
+/** Offshore rate bundle per position (working / standby / OT / trips / mob). */
+export interface PositionRateOffshoreSide {
+  /** Working day (12 hr) — mirrors legacy `sellRateOffshore` / cost offshore daily. */
+  workingDay?: number;
+  standbyDay?: number;
+  otPerHour?: number;
+  m1PerTrip?: number;
+  d1PerTrip?: number;
+  /** Round-trip mob/demob per `ContractMobDemobLocation.key`. */
+  mobDemobRoundTrip?: Record<string, number>;
+}
+
+/** Onshore rate bundle per position. */
+export interface PositionRateOnshoreSide {
+  /** Working day (8 hr) — mirrors legacy `sellRateOnshore` / cost onshore daily. */
+  workingDay?: number;
+  standbyDay?: number;
+  otNormalPerHour?: number;
+  ot2PerHour?: number;
+  ot3PerHour?: number;
+}
+
+/** Onshore + offshore sides for sell or cost. */
+export interface PositionRateWorkModeBundle {
+  offshore?: PositionRateOffshoreSide;
+  onshore?: PositionRateOnshoreSide;
+}
+
+/** Extended rate sheet per position (sell + cost). */
+export interface PositionRateMatrix {
+  sell?: PositionRateWorkModeBundle;
+  cost?: PositionRateWorkModeBundle;
+}
+
+export type PositionRateMatrixCategory =
+  | 'offshore_working_day'
+  | 'offshore_standby_day'
+  | 'offshore_ot_per_hour'
+  | 'offshore_m1_per_trip'
+  | 'offshore_d1_per_trip'
+  | 'offshore_mob_demob_round_trip'
+  | 'onshore_working_day'
+  | 'onshore_standby_day'
+  | 'onshore_ot_normal_per_hour'
+  | 'onshore_ot2_per_hour'
+  | 'onshore_ot3_per_hour';
+
+export type ContractBillingMode = 'MONTHLY' | 'TRIP';
+
+export type MobCycleBillingReviewStatus =
+  | 'open'
+  | 'pending_billing'
+  | 'approved'
+  | 'invoiced'
+  | 'void';
+
+/** งวดวางบิลต่อคน/ต่อรอบ mobilization (mobCycleId) */
+export interface MobCycleBillingReview {
+  id: string;
+  mobCycleId: string;
+  assignmentId: string;
+  workerId: string;
+  workerNameSnapshot: string;
+  poId: string;
+  contractId?: string;
+  customerId: string;
+  waveId?: string;
+  positionId?: string;
+  /** วัน M1 แรก — ใช้จัดกลุ่ม batch ร่วมกับคนอื่น */
+  tripAnchorStartDate: string;
+  tripStartDate: string;
+  tripEndDate?: string;
+  spansYearMonths?: string[];
+  status: MobCycleBillingReviewStatus;
+  tripBillingBatchId?: string;
+  demobilizationTimesheetId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type TripBillingBatchStatus =
+  | 'draft'
+  | 'ready'
+  | 'pending_manager'
+  | 'approved'
+  | 'invoiced'
+  | 'void';
+
+/** ชุดวางบิลร่วม — หลายคนที่ mobilize พร้อมกัน (เช่น 2 หรือ 4 คน) → invoice เดียว */
+export interface TripBillingBatch {
+  id: string;
+  poId: string;
+  contractId?: string;
+  customerId: string;
+  waveId?: string;
+  /** คีย์จัดกลุ่ม: po + wave + วัน M1 แรก */
+  tripAnchorStartDate: string;
+  memberMobCycleIds: string[];
+  memberWorkerIds: string[];
+  memberWorkerNames?: string[];
+  periodStart: string;
+  periodEnd?: string;
+  status: TripBillingBatchStatus;
+  sourceCommercialInvoiceId?: string;
+  submittedAt?: number;
+  reviewedAt?: number;
+  reviewedByUserId?: string;
+  reviewedByName?: string;
+  notes?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface MainContract {
   id: string;
   contractNumber: string;
@@ -813,6 +934,10 @@ export interface MainContract {
    * เมื่อคำนวณ payroll สำหรับ daily_timesheets ที่ `contractId` ตรงกับสัญญานี้ (เฟส A)
    */
   laborCostBaselinesByPositionId?: Record<string, { onshore?: number; offshore?: number }>;
+  /** Mob/demob location columns for this contract's rate sheet (Thai Nippon-style). */
+  mobDemobLocations?: ContractMobDemobLocation[];
+  /** MONTHLY = ปิด PO+เดือนแล้วออก invoice รวม | TRIP = วางบิลตามรอบ M1→D1 (หลายคนต่อ invoice ได้) */
+  billingMode?: ContractBillingMode;
   /**
    * @deprecated ถูก sync ฝั่งสัญญา (เฟส 4–6) — ไม่ใช้ block อนุมัติแล้ว; ดูฐานต้นทุนได้ที่ /positions
    * รัน `migrate:phase6` เพื่อลบ field เหล่านี้จาก Firestore
@@ -870,6 +995,8 @@ export interface PositionRate {
   sellSpecialDays?: string[];
   costSpecialDays?: string[];
   notes?: string;
+  /** Extended rate sheet (mob, standby, OT, M1/D1) — billing/payroll source when populated. */
+  rateMatrix?: PositionRateMatrix;
 }
 
 export interface PurchaseOrder {
@@ -894,6 +1021,8 @@ export interface PurchaseOrder {
   status: 'pending' | 'active' | 'closed';
   /** โหมดงานของ PO — รวมกลุ่ม PO Active / timesheet (default Offshore สำหรับเอกสารเก่า) */
   poWorkMode?: JobMode;
+  /** MONTHLY | TRIP — override สัญญาหลัก (Guangzhou = MONTHLY, Thai Nippon offshore = TRIP) */
+  billingMode?: ContractBillingMode;
   /** อ้างอิง `po_active_bundles` — sync อัตโนมัติเมื่อ PO Active */
   poActiveBundleId?: string;
   notes?: string;
@@ -939,6 +1068,8 @@ export interface POLine {
   sellOtRulesSnapshot?: OtRulesSnapshot;
   costOtRulesSnapshot?: OtRulesSnapshot;
   normalWorkHoursSnapshot?: 8 | 12;
+  /** Snapshot of `PositionRate.rateMatrix` at PO line creation (Phase 5+). */
+  rateMatrixSnapshot?: PositionRateMatrix;
   status: 'active' | 'cancelled' | 'completed';
 }
 
@@ -1717,6 +1848,11 @@ export interface CommercialInvoice {
   sourceWaveMonthReviewId?: string;
   /** อ้าง po_month_timesheet_reviews — งวดอนุมัติราย PO+เดือน (รวมทุก wave) */
   sourcePoMonthReviewId?: string;
+  /** อ้าง trip_billing_batches — วางบิลรอบ M1→D1 (หลายคนต่อ invoice) */
+  sourceTripBillingBatchId?: string;
+  billingMode?: ContractBillingMode;
+  memberMobCycleIds?: string[];
+  memberWorkerNames?: string[];
   /** ฝั่ง OPEC ส่งให้ลูกค้าเห็นใน portal (DRAFT → PENDING_CUSTOMER) */
   sentToCustomerAt?: number;
   sentToCustomerByUid?: string;

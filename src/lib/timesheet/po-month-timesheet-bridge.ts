@@ -12,6 +12,7 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import type { Assignment, PayrollPeriod, PayrollPeriodStatus, PoMonthTimesheetReview, PurchaseOrder } from '@/lib/types';
+import { resolveBillingMode } from '@/lib/commercial/resolve-billing-mode';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { purchaseOrderOverlapsYearMonth } from '@/lib/timesheet/po-location-month-shell';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
@@ -214,17 +215,32 @@ export async function markTimesheetsReadyForPayrollAfterPoMonthApproval(
   const refs = await gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(db, poId, ym);
   if (refs.length === 0) return { updated: 0 };
 
+  let billingMode: 'MONTHLY' | 'TRIP' = 'MONTHLY';
+  if (poId) {
+    const poSnap = await getDoc(doc(db, 'purchase_orders', poId));
+    if (poSnap.exists()) {
+      billingMode = await resolveBillingMode(db, { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder);
+    }
+  }
+
   let batch = writeBatch(db);
   let n = 0;
   let updated = 0;
   const ts = Date.now();
 
   for (const ref of refs) {
-    batch.update(ref, {
-      readyForPayroll: true,
-      readyForBilling: true,
-      updatedAt: ts,
-    });
+    if (billingMode === 'MONTHLY') {
+      batch.update(ref, {
+        readyForPayroll: true,
+        readyForBilling: true,
+        updatedAt: ts,
+      });
+    } else {
+      batch.update(ref, {
+        readyForPayroll: true,
+        updatedAt: ts,
+      });
+    }
     updated++;
     n++;
     if (n >= FIRESTORE_BATCH_LIMIT) {
@@ -248,17 +264,30 @@ export async function clearReadyPayrollFlagsForPoCalendarMonth(
   const refs = await gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(db, poId, yearMonth);
   if (refs.length === 0) return { updated: 0 };
 
+  let billingMode: 'MONTHLY' | 'TRIP' = 'MONTHLY';
+  const poSnap = await getDoc(doc(db, 'purchase_orders', poId));
+  if (poSnap.exists()) {
+    billingMode = await resolveBillingMode(db, { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder);
+  }
+
   let batch = writeBatch(db);
   let n = 0;
   let updated = 0;
   const ts = Date.now();
 
   for (const ref of refs) {
-    batch.update(ref, {
-      readyForPayroll: false,
-      readyForBilling: false,
-      updatedAt: ts,
-    });
+    if (billingMode === 'MONTHLY') {
+      batch.update(ref, {
+        readyForPayroll: false,
+        readyForBilling: false,
+        updatedAt: ts,
+      });
+    } else {
+      batch.update(ref, {
+        readyForPayroll: false,
+        updatedAt: ts,
+      });
+    }
     updated++;
     n++;
     if (n >= FIRESTORE_BATCH_LIMIT) {

@@ -922,7 +922,7 @@ export default function Home() {
             {showAccountingUi && (
               <ShortcutGroup title="บัญชีและการเงิน (Finance)" icon={Coins} color="border-l-purple-600">
                 {check('draft_invoices', 'view') && (
-                  <ShortcutLink href="/draft-invoices" label="รายการใบแจ้งหนี้" sub="เรียกเก็บ" />
+                  <ShortcutLink href="/draft-invoices" label="ทำใบแจ้งหนี้แบบ Monthly" sub="ปิด PO+เดือน" />
                 )}
                 {check('cashbook', 'view') && (
                   <ShortcutLink href="/cashbook" label="รายรับรายจ่าย" sub="Cashbook" />

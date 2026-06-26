@@ -186,6 +186,7 @@ export function canAccessHrAttendanceKioskPages(
 
 const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/draft-invoices', 'draft_invoices'],
+  ['/accounting/trip-billing', 'draft_invoices'],
   ['/accounting/executive-payroll', 'executive_payroll'],
   ['/accounting/withholding-payroll/executive', 'executive_payroll'],
   ['/accounting/office-payroll', 'office_payroll'],

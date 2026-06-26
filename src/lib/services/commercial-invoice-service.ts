@@ -23,13 +23,16 @@ import type {
   PurchaseOrder,
   Quotation,
   QuotationLine,
+  TripBillingBatch,
   User,
   WaveMonthTimesheetReview,
 } from '@/lib/types';
+import { resolveBillingMode } from '@/lib/commercial/resolve-billing-mode';
 import { resolveWaveMonthPeriodBounds } from '@/lib/timesheet/wave-month-payroll-bridge';
 import { resolvePoMonthPeriodBounds } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { generateBillingLines } from '@/lib/services/billing-line-generator';
+import { generateBillingLines, generateBillingLinesForMobCycles } from '@/lib/services/billing-line-generator';
+import { markTripBatchInvoiced } from '@/lib/services/trip-billing-service';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { writeAuditLog } from '@/lib/services/audit-service';
@@ -43,6 +46,9 @@ export const QUOTATION_PO_WAVE_PLACEHOLDER = '__quotation_po__';
 
 /** งวดอนุมัติ timesheet รวมราย PO+เดือน (ไม่แยก wave) — ใบแจ้งหนี้รวม timesheet ทุก wave ใต้ PO ในช่วงงวด */
 export const PO_MONTH_WAVE_PLACEHOLDER = '__po_month__';
+
+/** วางบิลรอบเดินทาง (trip batch — หลายคนต่อ invoice) */
+export const TRIP_BILLING_WAVE_PLACEHOLDER = '__trip_batch__';
 
 /**
  * นโยบายอ้างอิงงวดวางบิล (Commercial / ลูกค้า)
@@ -112,6 +118,22 @@ export async function findCommercialInvoiceByPoMonthReview(
   reviewId: string,
 ): Promise<{ id: string; invoiceNo: string } | null> {
   const q = query(collection(db, 'commercial_invoices'), where('sourcePoMonthReviewId', '==', reviewId));
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  for (const d of snap.docs) {
+    const data = d.data() as CommercialInvoice;
+    if (data.status !== 'VOID') {
+      return { id: d.id, invoiceNo: String(data.invoiceNo || '') };
+    }
+  }
+  return null;
+}
+
+export async function findCommercialInvoiceByTripBatch(
+  db: Firestore,
+  batchId: string,
+): Promise<{ id: string; invoiceNo: string } | null> {
+  const q = query(collection(db, 'commercial_invoices'), where('sourceTripBillingBatchId', '==', batchId));
   const snap = await getDocs(q);
   if (snap.empty) return null;
   for (const d of snap.docs) {
@@ -460,6 +482,19 @@ export async function ensureCommercialDraftInvoiceAfterPoMonthApproval(
   review: PoMonthTimesheetReview,
   actor: User,
 ): Promise<{ ok: true; id: string; invoiceNo: string } | { ok: false; reason: string }> {
+  const poSnap = await getDoc(doc(db, 'purchase_orders', review.poId));
+  if (poSnap.exists()) {
+    const po = { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder;
+    const mode = await resolveBillingMode(db, po);
+    if (mode === 'TRIP') {
+      return {
+        ok: false,
+        reason:
+          'PO ใช้โหมดวางบิล TRIP — ออก invoice จากเมนู «ทำใบแจ้งหนี้แบบ Trip» หลังทุกคนในกลุ่ม demob (D1)',
+      };
+    }
+  }
+
   const existing = await findCommercialInvoiceByPoMonthReview(db, review.id);
   if (existing?.id) {
     return { ok: false, reason: `มีใบแจ้งหนี้แล้ว (${existing.invoiceNo || existing.id})` };
@@ -595,6 +630,140 @@ export async function createCommercialDraftInvoiceForPoMonth(
   });
 
   return { id: ref.id, invoiceNo };
+}
+
+/**
+ * สร้างใบแจ้งหนี้จาก trip billing batch — หลายคน (mob cycles) ต่อ invoice เดียว
+ */
+export async function createCommercialDraftInvoiceForTripBatch(
+  db: Firestore,
+  batch: TripBillingBatch,
+  actor: User,
+  issueDate?: string,
+): Promise<{ id: string; invoiceNo: string }> {
+  const periodStart = batch.periodStart;
+  const periodEnd = batch.periodEnd;
+  if (!periodEnd) {
+    throw new Error('ชุดวางบิลยังไม่ครบ D1 ทุกคน — ไม่สามารถออก invoice');
+  }
+
+  const gen = await generateBillingLinesForMobCycles(
+    db,
+    batch.poId,
+    batch.memberMobCycleIds,
+    periodStart,
+    periodEnd,
+  );
+  if (gen.lines.length === 0) {
+    throw new Error(
+      'ไม่มีรายการจาก timesheet — ตรวจว่าอนุมัติชุดวางบิลแล้วและ timesheet มี readyForBilling',
+    );
+  }
+
+  const poSnap = await getDoc(doc(db, 'purchase_orders', batch.poId));
+  if (!poSnap.exists()) throw new Error('ไม่พบ PO');
+  const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
+
+  const memberLabel =
+    batch.memberWorkerNames?.filter(Boolean).join(', ') ||
+    `${batch.memberWorkerIds.length} คน`;
+  const waveCodeLabel = `รอบเดินทาง · M1 ${batch.tripAnchorStartDate} · ${memberLabel}`;
+
+  const vatPercent = await resolveVatPercent(db, po.customerId, po.contractId);
+  const amountBeforeTax = roundMoney(gen.totalAmount);
+  const vatAmount = roundMoney((amountBeforeTax * vatPercent) / 100);
+  const totalAmount = roundMoney(amountBeforeTax + vatAmount);
+
+  const lines: CommercialInvoiceLine[] = gen.lines.map((l, idx) => ({
+    id: newLineId(),
+    displayOrder: idx,
+    description: l.description,
+    ...(l.workerId ? { workerId: l.workerId } : {}),
+    ...(l.workerName ? { workerName: l.workerName } : {}),
+    positionId: l.positionId,
+    eventType: l.eventType,
+    timesheetIds: l.timesheetIds,
+    quantity: l.quantity,
+    unitPrice: l.unitPrice,
+    amount: l.amount,
+    lineSource: 'timesheet' as const,
+  }));
+
+  const { code: invoiceNo } = await generateNextDocumentCode(db, 'commercial_invoice', {
+    actor: actor.displayName,
+    userId: actor.id,
+  });
+
+  const now = Date.now();
+  const payload: Omit<CommercialInvoice, 'id'> = {
+    invoiceNo,
+    status: 'DRAFT',
+    customerId: po.customerId,
+    contractId: po.contractId || undefined,
+    poId: batch.poId,
+    waveId: TRIP_BILLING_WAVE_PLACEHOLDER,
+    waveCode: waveCodeLabel,
+    periodStart,
+    periodEnd,
+    issueDate: issueDate || timestampToHtmlDateValue(now),
+    currency: 'THB',
+    vatPercent,
+    amountBeforeTax,
+    vatAmount,
+    withholdingTaxAmount: 0,
+    totalAmount,
+    lines,
+    generationWarnings: gen.warnings,
+    timesheetCount: gen.timesheetCount,
+    billingMode: 'TRIP',
+    sourceTripBillingBatchId: batch.id,
+    memberMobCycleIds: batch.memberMobCycleIds,
+    memberWorkerNames: batch.memberWorkerNames,
+    createdAt: now,
+    createdByUid: actor.id,
+    createdByName: actor.displayName,
+    updatedAt: now,
+  };
+
+  const ref = await addDoc(
+    collection(db, 'commercial_invoices'),
+    sanitizeFirestorePayload(payload as Record<string, unknown>),
+  );
+
+  await markTripBatchInvoiced(db, batch.id, ref.id);
+
+  await writeAuditLog(db, actor, {
+    actionType: 'CREATE_COMMERCIAL_INVOICE',
+    entityType: 'CommercialInvoice',
+    entityId: ref.id,
+    entityLabel: `${invoiceNo} (Trip batch)`,
+    sourceModule: 'commercial_invoices',
+    linkedIds: [po.customerId, batch.poId, batch.id],
+    afterSummary: `สร้างใบแจ้งหนี้ ${invoiceNo} จาก trip batch (${batch.memberMobCycleIds.length} คน)`,
+  });
+
+  return { id: ref.id, invoiceNo };
+}
+
+export async function ensureCommercialDraftInvoiceForTripBatch(
+  db: Firestore,
+  batch: TripBillingBatch,
+  actor: User,
+): Promise<{ ok: true; id: string; invoiceNo: string } | { ok: false; reason: string }> {
+  if (batch.status !== 'approved') {
+    return { ok: false, reason: 'ชุดวางบิลยังไม่ได้อนุมัติ — กด «อนุมัติวางบิล» ก่อนสร้าง invoice' };
+  }
+  const existing = await findCommercialInvoiceByTripBatch(db, batch.id);
+  if (existing?.id) {
+    return { ok: false, reason: `มีใบแจ้งหนี้แล้ว (${existing.invoiceNo || existing.id})` };
+  }
+  try {
+    const { id, invoiceNo } = await createCommercialDraftInvoiceForTripBatch(db, batch, actor);
+    return { ok: true, id, invoiceNo };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, reason: msg };
+  }
 }
 
 export async function createCommercialDraftInvoice(

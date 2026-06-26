@@ -607,6 +607,19 @@ service cloud.firestore {
       allow read: if rs19();
       allow write: if blockExecutiveWrite() && rs19();
     }
+    // Trip billing (M1→D1) — ซิงก์จาก mobilization + timesheet
+    match /mob_cycle_billing_reviews/{id} {
+      allow read: if rs0() || rs12();
+      allow create: if blockExecutiveWrite() && (rs0() || rs13());
+      allow update: if blockExecutiveWrite() && (rs0() || rs13());
+      allow delete: if blockExecutiveWrite() && rs0();
+    }
+    match /trip_billing_batches/{id} {
+      allow read: if rs0() || rs12();
+      allow create: if blockExecutiveWrite() && (rs0() || rs13());
+      allow update: if blockExecutiveWrite() && (rs0() || rs13());
+      allow delete: if blockExecutiveWrite() && rs0();
+    }
     match /withholding_at_source_items/{id} {
       allow read: if rs19();
       allow write: if blockExecutiveWrite() && rs19();

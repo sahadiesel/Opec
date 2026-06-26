@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { deleteField } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import type { PositionRate, Position, MainContract } from '@/lib/types';
+import type { PositionRate, Position, MainContract, ContractMobDemobLocation } from '@/lib/types';
 import type { OvertimeRuleKey } from '@/lib/contract-position-rate-extras';
 import { OVERTIME_RULE_OPTIONS, parseOvertimeRuleKeyFromSnapshot } from '@/lib/contract-position-rate-extras';
 import {
@@ -16,6 +16,7 @@ import {
   normalizeNormalWorkHoursFields,
 } from '@/lib/commercial/position-rate-sell';
 import { PositionRateFormFields } from './position-rate-form-fields';
+import { preparePositionRateMatrixPayload, sanitizePositionRateMatrix, hasSellPricing } from '@/lib/commercial/position-rate-matrix';
 
 type RatePolicy = NonNullable<MainContract['rateMultiplierPolicy']>;
 
@@ -24,6 +25,7 @@ interface ContractEditRateDialogProps {
   onOpenChange: (open: boolean) => void;
   rate: PositionRate | null;
   allPositions: Position[] | null;
+  mobDemobLocations: ContractMobDemobLocation[];
   effectiveRatePolicy: RatePolicy;
   canEditSellSide: boolean;
   canEditCostSide: boolean;
@@ -49,6 +51,7 @@ function rateToFormState(rate: PositionRate): Partial<PositionRate> {
     overtimeRule: opt ? `${opt.label} — ${opt.description}` : rate.overtimeRule,
     notes: rate.notes || '',
     active: rate.active,
+    rateMatrix: rate.rateMatrix,
   };
 }
 
@@ -57,6 +60,7 @@ export function ContractEditRateDialog({
   onOpenChange,
   rate,
   allPositions,
+  mobDemobLocations,
   effectiveRatePolicy,
   canEditSellSide,
   canEditCostSide,
@@ -111,11 +115,25 @@ export function ContractEditRateDialog({
       updatedAt: Date.now(),
     };
 
+    const sanitizedMatrix = sanitizePositionRateMatrix(form.rateMatrix);
+    if (sanitizedMatrix) payload.rateMatrix = sanitizedMatrix;
+    else payload.rateMatrix = deleteField();
+
     if (canEditSellSide) {
-      const on = Number(form.sellRateOnshore);
-      const off = Number(form.sellRateOffshore);
-      const onV = Number.isFinite(on) && on > 0 ? on : undefined;
-      const offV = Number.isFinite(off) && off > 0 ? off : undefined;
+      const synced = preparePositionRateMatrixPayload(
+        { ...rate, ...form, rateMatrix: sanitizedMatrix },
+        { syncLegacySell: true },
+      );
+      const onV =
+        synced.sellRateOnshore ??
+        (Number.isFinite(Number(form.sellRateOnshore)) && Number(form.sellRateOnshore) > 0
+          ? Number(form.sellRateOnshore)
+          : undefined);
+      const offV =
+        synced.sellRateOffshore ??
+        (Number.isFinite(Number(form.sellRateOffshore)) && Number(form.sellRateOffshore) > 0
+          ? Number(form.sellRateOffshore)
+          : undefined);
       payload.sellRateOnshore = onV != null ? onV : deleteField();
       payload.sellRateOffshore = offV != null ? offV : deleteField();
       payload.sellRate = legacySellRateMirror({
@@ -134,11 +152,11 @@ export function ContractEditRateDialog({
   const saveDisabled =
     !rate ||
     (!canEditSellSide && !canEditCostSide) ||
-    (canEditSellSide && legacySellRateMirror(form) <= 0);
+    (canEditSellSide && !hasSellPricing(form));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>แก้ไขอัตราราคาตำแหน่ง</DialogTitle>
           <DialogDescription>
@@ -151,6 +169,7 @@ export function ContractEditRateDialog({
             newRate={form}
             setNewRate={setForm}
             allPositions={allPositions}
+            mobDemobLocations={mobDemobLocations}
             canEditSellSide={canEditSellSide}
             canEditCostSide={canEditCostSide}
             canViewCostFields={canViewCostFields}

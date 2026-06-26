@@ -28,8 +28,9 @@ import {
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { doc, collection, query, where, addDoc, orderBy, getDocs, deleteField } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
-import { MainContract, PositionRate, PurchaseOrder, Customer, Position, User } from '@/lib/types';
+import { MainContract, PositionRate, PurchaseOrder, Customer, Position, User, ContractMobDemobLocation, ContractBillingMode } from '@/lib/types';
 import Link from 'next/link';
+import { billingModeLabel } from '@/lib/commercial/resolve-billing-mode';
 import { useToast } from '@/hooks/use-toast';
 import { canView, canEdit } from '@/lib/permissions';
 import { isSystemAdmin, isHrManager, isOperationManager, isSalesManager, canEditMasterContractCostBaseline } from '@/lib/permission-core';
@@ -59,6 +60,17 @@ import {
   legacySellRateMirror,
   normalizeNormalWorkHoursFields,
 } from '@/lib/commercial/position-rate-sell';
+import {
+  createEmptyPositionRateMatrix,
+  getEffectiveMobDemobLocations,
+  patchRateSheetCell,
+  preparePositionRateMatrixPayload,
+  sanitizeMobDemobLocations,
+  sanitizePositionRateMatrix,
+} from '@/lib/commercial/position-rate-matrix';
+import type { RateSheetColumnDef, RateSheetSide } from '@/lib/commercial/position-rate-matrix';
+import { ContractMobDemobLocationsSection } from './_components/contract-mob-demob-locations-section';
+import { ContractRateSheetSpreadsheet } from './_components/contract-rate-sheet-spreadsheet';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -102,6 +114,7 @@ function createInitialNewRateForm(): Partial<PositionRate> {
     costOtRules: { afterShift: 1.5, holiday: 1.0, publicHoliday: 1.0, sunday: 1.0, sundayOt: 1.5 },
     sellSpecialDays: [],
     costSpecialDays: [],
+    rateMatrix: createEmptyPositionRateMatrix(),
   };
 }
 
@@ -120,6 +133,7 @@ type ContractChangeLog = {
 };
 
 type MainContractTab = 'info' | 'rates' | 'pos' | 'logs';
+type RatesViewMode = 'summary' | 'sheet';
 
 function parseMainContractTab(raw: string | null): MainContractTab | null {
   if (raw === 'info' || raw === 'rates' || raw === 'pos' || raw === 'logs') return raw;
@@ -224,6 +238,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
 
   const [isEditing, setIsEditing] = useState(false);
   const [editedMC, setEditedMC] = useState<Partial<MainContract>>({});
+  const [billingModeDraft, setBillingModeDraft] = useState<ContractBillingMode>('MONTHLY');
 
   const [isAddRateOpen, setIsAddRateOpen] = useState(false);
   const [editingRateId, setEditingRateId] = useState<string | null>(null);
@@ -237,8 +252,10 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   const [activeMultDraft, setActiveMultDraft] = useState<
     NonNullable<MainContract['rateMultiplierPolicy']>['sell'] | null
   >(null);
+  const [activeMobDraft, setActiveMobDraft] = useState<ContractMobDemobLocation[] | null>(null);
   const [isCreatingRevision, setIsCreatingRevision] = useState(false);
   const [activeTab, setActiveTab] = useState<MainContractTab>('info');
+  const [ratesViewMode, setRatesViewMode] = useState<RatesViewMode>('sheet');
 
   useEffect(() => {
     const tab = parseMainContractTab(new URLSearchParams(window.location.search).get('tab'));
@@ -295,7 +312,10 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   useEffect(() => {
     // Sync form only when contract snapshot changes.
     // Edit mode now toggles explicit setEditedMC on edit/cancel actions.
-    if (contract) setEditedMC(contract);
+    if (contract) {
+      setEditedMC(contract);
+      setBillingModeDraft(contract.billingMode ?? 'MONTHLY');
+    }
   }, [contract]);
 
   useEffect(() => {
@@ -373,6 +393,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     if (!contract) {
       setActiveHolidayDraft(null);
       setActiveMultDraft(null);
+      setActiveMobDraft(null);
       return;
     }
     const active = contract.status === 'active';
@@ -380,6 +401,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     if (!active || supp) {
       setActiveHolidayDraft(null);
       setActiveMultDraft(null);
+      setActiveMobDraft(null);
       return;
     }
     const r = resolveContractHolidaySchedule(contract);
@@ -389,6 +411,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     });
     const pol = contract.rateMultiplierPolicy || DEFAULT_RATE_POLICY;
     setActiveMultDraft({ ...DEFAULT_RATE_POLICY.sell, ...pol.sell });
+    setActiveMobDraft(getEffectiveMobDemobLocations(contract).map((loc) => ({ ...loc })));
   }, [contract]);
 
   const handleSaveMaster = async () => {
@@ -406,6 +429,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     if ((editedMC.startDate ?? 0) !== (contract.startDate ?? 0)) changedFields.push('startDate');
     if ((editedMC.endDate ?? 0) !== (contract.endDate ?? 0)) changedFields.push('endDate');
     if ((editedMC.billingTerms ?? '') !== (contract.billingTerms ?? '')) changedFields.push('billingTerms');
+    if ((editedMC.billingMode ?? 'MONTHLY') !== (contract.billingMode ?? 'MONTHLY')) changedFields.push('billingMode');
     if ((editedMC.paymentTerms ?? '') !== (contract.paymentTerms ?? '')) changedFields.push('paymentTerms');
     if ((editedMC.vatPercent ?? 7) !== (contract.vatPercent ?? 7)) changedFields.push('vatPercent');
     if ((editedMC.notes ?? '') !== (contract.notes ?? '')) changedFields.push('notes');
@@ -435,6 +459,12 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       changedFields.push('contractHolidayScheduleSell');
     }
 
+    const mobLocsBefore = sanitizeMobDemobLocations(contract.mobDemobLocations);
+    const mobLocsAfter = sanitizeMobDemobLocations(editedMC.mobDemobLocations);
+    if (JSON.stringify(mobLocsAfter) !== JSON.stringify(mobLocsBefore)) {
+      changedFields.push('mobDemobLocations');
+    }
+
     const nextStatus = 'pending';
     const mergedSellPolicy = {
       ...sellPolicyAfter,
@@ -447,6 +477,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       contractCostWeeklyRestPattern: contract.contractCostWeeklyRestPattern,
       contractCostCalendarHolidays: contract.contractCostCalendarHolidays,
       contractCostSpecialDays: contract.contractCostSpecialDays,
+      ...(mobLocsAfter ? { mobDemobLocations: mobLocsAfter } : { mobDemobLocations: deleteField() }),
       rateMultiplierPolicy: {
         sell: mergedSellPolicy,
         cost: contract.rateMultiplierPolicy?.cost ?? DEFAULT_RATE_POLICY.cost,
@@ -532,6 +563,45 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       afterSummary: 'rateMultiplierPolicy',
     });
     toast({ title: 'บันทึกกฎตัวคูณสัญญาแล้ว' });
+  };
+
+  const handleSaveActiveMobDemobLocations = () => {
+    if (!mcRef || !contract || !activeMobDraft || !canEditActiveContractMultipliers) return;
+    if (contract.status !== 'active' || (contract.contractType || 'master') === 'supplemental') return;
+    const sanitized = sanitizeMobDemobLocations(activeMobDraft);
+    updateDocumentNonBlocking(mcRef, {
+      ...(sanitized ? { mobDemobLocations: sanitized } : { mobDemobLocations: deleteField() }),
+      updatedAt: Date.now(),
+    });
+    addContractChangeLog({
+      actionType: 'UPDATE_MOB_DEMOB_LOCATIONS',
+      changedFields: ['mobDemobLocations'],
+      beforeSummary: JSON.stringify(getEffectiveMobDemobLocations(contract)),
+      afterSummary: JSON.stringify(sanitized ?? []),
+    });
+    toast({ title: 'บันทึกจุด Mob/Demob แล้ว' });
+  };
+
+  const handleSaveBillingMode = () => {
+    if (!mcRef || !contract || !canModify) return;
+    if (contract.status !== 'active') return;
+    updateDocumentNonBlocking(mcRef, {
+      billingMode: billingModeDraft,
+      updatedAt: Date.now(),
+    });
+    addContractChangeLog({
+      actionType: 'UPDATE_CONTRACT_HEADER',
+      changedFields: ['billingMode'],
+      beforeSummary: contract.billingMode ?? 'MONTHLY',
+      afterSummary: billingModeDraft,
+    });
+    toast({
+      title: 'บันทึกโหมดวางบิลแล้ว',
+      description:
+        billingModeDraft === 'TRIP'
+          ? 'ออก invoice จากเมนู «ทำใบแจ้งหนี้แบบ Trip»'
+          : 'ออก invoice จากเมนู «ทำใบแจ้งหนี้แบบ Monthly» (ปิด PO+เดือน)',
+    });
   };
 
   const handleApproveContract = async () => {
@@ -659,7 +729,16 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       canEditSellSide && Number.isFinite(Number(newRate.sellRateOffshore)) && Number(newRate.sellRateOffshore) > 0
         ? Number(newRate.sellRateOffshore)
         : undefined;
-    const normalizedSellRate = canEditSellSide ? legacySellRateMirror({ ...newRate, sellRateOnshore: onSell, sellRateOffshore: offSell }) : 0;
+    const sanitizedMatrix = sanitizePositionRateMatrix(newRate.rateMatrix);
+    const matrixSync = preparePositionRateMatrixPayload(
+      { ...newRate, sellRateOnshore: onSell, sellRateOffshore: offSell, rateMatrix: sanitizedMatrix },
+      { syncLegacySell: canEditSellSide },
+    );
+    const normalizedSellRate = canEditSellSide
+      ? (matrixSync.sellRate ?? legacySellRateMirror({ ...newRate, sellRateOnshore: onSell, sellRateOffshore: offSell }))
+      : 0;
+    const finalOnSell = matrixSync.sellRateOnshore ?? onSell;
+    const finalOffSell = matrixSync.sellRateOffshore ?? offSell;
     const { costBaseline: _dropCost, ...newRateFields } = newRate;
     const policySell = effectiveRatePolicy.sell || {};
     const policyCost = effectiveRatePolicy.cost || {};
@@ -669,8 +748,9 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       ...newRateFields,
       positionId: newRate.positionId || '',
       sellRate: normalizedSellRate,
-      ...(onSell != null ? { sellRateOnshore: onSell } : {}),
-      ...(offSell != null ? { sellRateOffshore: offSell } : {}),
+      ...(finalOnSell != null ? { sellRateOnshore: finalOnSell } : {}),
+      ...(finalOffSell != null ? { sellRateOffshore: finalOffSell } : {}),
+      ...(sanitizedMatrix ? { rateMatrix: sanitizedMatrix } : {}),
       billingUnit: newRate.billingUnit || 'daily',
       ...normalizeNormalWorkHoursFields(newRate),
       overtimeRuleKey: otKey,
@@ -740,6 +820,84 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     });
     toast({ title: 'บันทึกอัตราราคาแล้ว' });
   };
+
+  const commitRateSheetCell = useCallback(
+    (
+      rate: PositionRate,
+      side: RateSheetSide,
+      col: RateSheetColumnDef,
+      value: number | undefined,
+    ) => {
+      if (!firestore || !contract) return;
+      if (!contractAllowsPositionRateMutation(contract)) {
+        showActiveRatesLockedToast();
+        return;
+      }
+      if (side === 'sell' && !canEditSellSide) return;
+      if (side === 'cost' && !canEditCostSide) return;
+
+      const matrix = patchRateSheetCell(rate.rateMatrix, side, col, value);
+      const payload: Record<string, unknown> = { updatedAt: Date.now() };
+      if (matrix) payload.rateMatrix = matrix;
+      else payload.rateMatrix = deleteField();
+
+      if (side === 'sell') {
+        const sync = preparePositionRateMatrixPayload({ ...rate, rateMatrix: matrix }, { syncLegacySell: true });
+        if (sync.sellRate != null) payload.sellRate = sync.sellRate;
+        if (sync.sellRateOnshore != null) payload.sellRateOnshore = sync.sellRateOnshore;
+        else if (col.category === 'onshore_working_day' && value == null) payload.sellRateOnshore = deleteField();
+        if (sync.sellRateOffshore != null) payload.sellRateOffshore = sync.sellRateOffshore;
+        else if (col.category === 'offshore_working_day' && value == null) payload.sellRateOffshore = deleteField();
+      }
+
+      updateDocumentNonBlocking(doc(firestore, 'main_contracts', id, 'position_rates', rate.id), payload);
+      addContractChangeLog({
+        actionType: 'UPDATE_RATE_SHEET_CELL',
+        changedFields: ['rateMatrix', ...(side === 'sell' ? ['sellRate', 'sellRateOnshore', 'sellRateOffshore'] : [])],
+        rateId: rate.id,
+        positionId: rate.positionId,
+        beforeSummary: JSON.stringify({ side, col: col.excelKey, matrix: rate.rateMatrix ?? null }),
+        afterSummary: JSON.stringify({ side, col: col.excelKey, value: value ?? null, matrix: matrix ?? null }),
+      });
+    },
+    [
+      firestore,
+      contract,
+      contractAllowsPositionRateMutation,
+      canEditSellSide,
+      canEditCostSide,
+      id,
+      showActiveRatesLockedToast,
+    ],
+  );
+
+  const handleRateSheetBulkImport = useCallback(
+    async (updates: { rateId: string; payload: Record<string, unknown>; positionLabel: string }[]) => {
+      if (!firestore || !contract) return { applied: 0, skipped: updates.length, warnings: ['ไม่มีสิทธิ์'] };
+      if (!contractAllowsPositionRateMutation(contract)) {
+        showActiveRatesLockedToast();
+        return { applied: 0, skipped: updates.length, warnings: [] };
+      }
+
+      let applied = 0;
+      for (const u of updates) {
+        updateDocumentNonBlocking(
+          doc(firestore, 'main_contracts', id, 'position_rates', u.rateId),
+          u.payload,
+        );
+        addContractChangeLog({
+          actionType: 'IMPORT_RATE_SHEET_ROW',
+          changedFields: Object.keys(u.payload).filter((k) => k !== 'updatedAt'),
+          rateId: u.rateId,
+          beforeSummary: 'excel_import',
+          afterSummary: JSON.stringify({ position: u.positionLabel, ...u.payload }),
+        });
+        applied++;
+      }
+      return { applied, skipped: 0, warnings: [] };
+    },
+    [firestore, contract, contractAllowsPositionRateMutation, id, showActiveRatesLockedToast],
+  );
 
   const commitSellRateSide = (rate: PositionRate, field: 'onshore' | 'offshore', raw: string) => {
     if (!firestore || !contract || !canEditSellSide) return;
@@ -950,6 +1108,18 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     (isActiveContract ? !canEditActiveContractMultipliers : !isEditing || !isPendingContract);
   const policySellLive = isActiveContract && activeMultDraft ? activeMultDraft : effectiveRatePolicy.sell;
 
+  const mobLocationsLive: ContractMobDemobLocation[] = (() => {
+    if (isSupplementalContract) return getEffectiveMobDemobLocations(inheritedPolicyContract || contract);
+    if (isActiveContract && activeMobDraft) return activeMobDraft;
+    if (isPendingContract && isEditing) {
+      return getEffectiveMobDemobLocations({ mobDemobLocations: editedMC.mobDemobLocations });
+    }
+    return getEffectiveMobDemobLocations(contract);
+  })();
+  const mobLocationsDisabled =
+    isSupplementalContract ||
+    (isActiveContract ? !canEditActiveContractMultipliers : !isEditing || !isPendingContract);
+
   const canMutatePositionRates =
     contractAllowsPositionRateMutation(contract);
 
@@ -1139,6 +1309,86 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   </div>
                 </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                  <div className="space-y-2">
+                    <Label>โหมดวางบิล (Billing Mode)</Label>
+                    <Select
+                      disabled={
+                        !canModify ||
+                        isSupplementalContract ||
+                        (isPendingContract ? !isEditing : !isActiveContract)
+                      }
+                      value={
+                        isPendingContract && isEditing
+                          ? (editedMC.billingMode ?? contract.billingMode ?? 'MONTHLY')
+                          : isActiveContract
+                            ? billingModeDraft
+                            : (contract.billingMode ?? 'MONTHLY')
+                      }
+                      onValueChange={(v) => {
+                        const mode = v as ContractBillingMode;
+                        if (isPendingContract && isEditing) {
+                          setEditedMC({ ...editedMC, billingMode: mode });
+                        } else if (isActiveContract) {
+                          setBillingModeDraft(mode);
+                        }
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="MONTHLY">MONTHLY — ปิด PO+เดือน แล้วออก invoice รวม</SelectItem>
+                        <SelectItem value="TRIP">TRIP — วางบิลตามรอบ M1→D1 (หลายคนต่อ invoice ได้)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      ปัจจุบัน: {billingModeLabel(
+                        isPendingContract && isEditing
+                          ? (editedMC.billingMode ?? contract.billingMode)
+                          : isActiveContract
+                            ? billingModeDraft
+                            : contract.billingMode,
+                      )}
+                      {' · '}
+                      Payroll ปิดรายเดือนเหมือนเดิมทั้งสองโหมด
+                    </p>
+                    {isActiveContract && canModify && !isSupplementalContract && (
+                      <Button type="button" variant="secondary" size="sm" onClick={handleSaveBillingMode}>
+                        บันทึกโหมดวางบิล
+                      </Button>
+                    )}
+                  </div>
+                  {(contract.billingMode === 'TRIP' ||
+                    billingModeDraft === 'TRIP' ||
+                    editedMC.billingMode === 'TRIP') && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/30">
+                      <p className="font-medium text-amber-900 dark:text-amber-100">ทำใบแจ้งหนี้แบบ Trip</p>
+                      <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
+                        หลังปิด Payroll รายเดือน → ไปที่{' '}
+                        <Link href="/accounting/trip-billing" className="font-medium text-primary underline">
+                          ทำใบแจ้งหนี้แบบ Trip
+                        </Link>
+                        {' '}→ เลือก PO → ซิงก์ → อนุมัติชุด → สร้าง Invoice
+                      </p>
+                    </div>
+                  )}
+                  {(contract.billingMode === 'MONTHLY' ||
+                    billingModeDraft === 'MONTHLY' ||
+                    editedMC.billingMode === 'MONTHLY' ||
+                    (!contract.billingMode && billingModeDraft !== 'TRIP' && editedMC.billingMode !== 'TRIP')) && (
+                    <div className="rounded-lg border border-slate-200 bg-muted/40 p-4 text-sm">
+                      <p className="font-medium">ใบแจ้งหนี้แบบ Monthly</p>
+                      <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
+                        หลังปิด PO+เดือน →{' '}
+                        <Link href="/draft-invoices" className="font-medium text-primary underline">
+                          ทำใบแจ้งหนี้แบบ Monthly
+                        </Link>
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-2 max-w-xs">
                   <Label>อัตรา VAT (%) — ใช้คำนวณใบแจ้งหนี้เรียกเก็บ (อ้างอิงสัญญานี้)</Label>
                   <Input
@@ -1272,6 +1522,22 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                 )}
 
                 {currentUser && (
+                  <ContractMobDemobLocationsSection
+                    locations={mobLocationsLive}
+                    disabled={mobLocationsDisabled}
+                    showSaveButton={isActiveContract && !isSupplementalContract && canEditActiveContractMultipliers}
+                    onSave={handleSaveActiveMobDemobLocations}
+                    onChange={(next) => {
+                      if (isActiveContract && activeMobDraft) {
+                        setActiveMobDraft(next);
+                        return;
+                      }
+                      setEditedMC({ ...editedMC, mobDemobLocations: next });
+                    }}
+                  />
+                )}
+
+                {currentUser && (
                   <div className="space-y-3 rounded-lg border bg-muted/10 p-4">
                     <div>
                       <Label className="text-base font-semibold">เงื่อนไขอัตราขายราย Event (ฝั่งลูกค้า)</Label>
@@ -1343,6 +1609,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                           setNewRate={setNewRate}
                           onAddPositionIdChange={applyAddPositionId}
                           allPositions={allPositions ?? null}
+                          mobDemobLocations={mobLocationsLive}
                           canEditSellSide={canEditSellSide}
                           canEditCostSide={canEditCostSide}
                           canViewCostFields={canViewCostFields}
@@ -1357,6 +1624,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                           }}
                           rate={editingRateRow}
                           allPositions={allPositions ?? null}
+                          mobDemobLocations={mobLocationsLive}
                           effectiveRatePolicy={effectiveRatePolicy}
                           canEditSellSide={canEditSellSide}
                           canEditCostSide={canEditCostSide}
@@ -1369,7 +1637,30 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   </div>
                 )}
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
+                <Tabs value={ratesViewMode} onValueChange={(v) => setRatesViewMode(v as RatesViewMode)}>
+                  <TabsList>
+                    <TabsTrigger value="sheet">Rate Sheet (Spreadsheet)</TabsTrigger>
+                    <TabsTrigger value="summary">สรุป / ชม.ปกติ</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="sheet" className="mt-4">
+                    <ContractRateSheetSpreadsheet
+                      contract={contract}
+                      rates={ratesSortedByPosition ?? []}
+                      positions={allPositions ?? null}
+                      mobDemobLocations={mobLocationsLive}
+                      canEditSell={canEditSellSide}
+                      canEditCost={canEditCostSide}
+                      canViewCost={canViewCostFields}
+                      canMutate={canMutatePositionRates}
+                      onCommitCell={commitRateSheetCell}
+                      onBulkImport={handleRateSheetBulkImport}
+                      onEditRate={canMutatePositionRates ? setEditingRateId : undefined}
+                    />
+                  </TabsContent>
+
+                  <TabsContent value="summary" className="mt-4">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -1613,6 +1904,8 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                     )}
                   </TableBody>
                 </Table>
+                  </TabsContent>
+                </Tabs>
               </CardContent>
             </Card>
           </TabsContent>

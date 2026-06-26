@@ -73,18 +73,44 @@ export function normalHoursCountedAsWork(
   return Math.max(0, Number(ts.normalHours) || 0);
 }
 
+/** ชม. OT รวม (ot15 + ot20 + ot30) — ใช้แสดงสรุปรายเดือน / payroll / billing */
+export function totalOtHoursFromTimesheet(
+  ts: Pick<DailyTimesheet, 'ot15Hours' | 'ot20Hours' | 'ot30Hours'> | undefined,
+): number {
+  if (!ts) return 0;
+  return (
+    Math.max(0, Number(ts.ot15Hours) || 0) +
+    Math.max(0, Number(ts.ot20Hours) || 0) +
+    Math.max(0, Number(ts.ot30Hours) || 0)
+  );
+}
+
+/** ชม. OT ที่นับในสรุปรายเดือน — เฉพาะวันทำงาน */
+export function otHoursCountedForWaveMonth(
+  ts: Pick<DailyTimesheet, 'eventType' | 'ot15Hours' | 'ot20Hours' | 'ot30Hours'> | undefined,
+): number {
+  if (!ts || ts.eventType !== 'work_day') return 0;
+  return totalOtHoursFromTimesheet(ts);
+}
+
+/** ชม. standby ต่อวันในสรุปรายเดือน — M1 / D1 / SB ใช้ค่าเดียวกัน (ไม่อ่าน normalHours จากใบงาน) */
+export const WAVE_MONTH_STANDBY_HOURS_PER_MOB_SB_DAY = 8;
+
+const WAVE_MONTH_STANDBY_EVENT_TYPES = new Set<RateConditionEventType>([
+  'standby_day',
+  'mobilization_day',
+  'demobilization_day',
+]);
+
 /**
- * ชม.ที่นับเป็น standby ในสรุปรายเดือน — standby_day และ mobilization_day (วันเดินทาง)
- * (auto PO Active มักมี normalHours 8/12; แถวที่ normalHours=0 ใช้ standbyUnits × 8)
+ * ชม.ที่นับเป็น standby ในสรุปรายเดือน — standby_day, mobilization_day (M1), demobilization_day (D1)
+ * วันละ 8 ชม. คงที่ (ไม่ใช้ normalHours ที่บันทึกใน PO Daily Board)
  */
 export function standbyHoursCountedForWaveMonth(
-  ts: Pick<DailyTimesheet, 'eventType' | 'normalHours' | 'standbyUnits'> | undefined,
+  ts: Pick<DailyTimesheet, 'eventType'> | undefined,
 ): number {
-  if (!ts || (ts.eventType !== 'standby_day' && ts.eventType !== 'mobilization_day')) return 0;
-  const nh = Number(ts.normalHours);
-  if (Number.isFinite(nh) && nh > 0) return nh;
-  const units = Math.max(0, Number(ts.standbyUnits ?? 1));
-  return units > 0 ? units * 8 : 0;
+  if (!ts || !WAVE_MONTH_STANDBY_EVENT_TYPES.has(ts.eventType as RateConditionEventType)) return 0;
+  return WAVE_MONTH_STANDBY_HOURS_PER_MOB_SB_DAY;
 }
 
 /**
@@ -170,6 +196,47 @@ export function sumStandbyHoursForWaveMonthRow(
       alternateAssignmentIds,
     );
     sum += standbyHoursCountedForWaveMonth(ts);
+  }
+  return sum;
+}
+
+/** รวมชม. OT ในเดือนต่อแถว — mirror sumWorkHoursForWaveMonthRow */
+export function sumOtHoursForWaveMonthRow(
+  assignment: Pick<
+    Assignment,
+    | 'poId'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'startDate'
+    | 'assignedDate'
+    | 'mobLocationEndDate'
+    | 'endDate'
+    | 'unassignedAt'
+  >,
+  waveId: string,
+  workerId: string,
+  rosterAssignmentId: string,
+  daysYmd: readonly string[],
+  sheetsByWaveWorker: Map<string, DailyTimesheet[]>,
+  flatMonthSheets: readonly DailyTimesheet[],
+  poScopeWaveId?: string | null,
+  alternateAssignmentIds?: readonly string[] | null,
+  _options?: { onlyWithinMobWindow?: boolean },
+): number {
+  let sum = 0;
+  for (const d of daysYmd) {
+    const ts = resolveTimesheetForWaveMonthCell(
+      waveId,
+      workerId,
+      d,
+      rosterAssignmentId,
+      sheetsByWaveWorker,
+      flatMonthSheets,
+      poScopeWaveId,
+      assignment,
+      alternateAssignmentIds,
+    );
+    sum += otHoursCountedForWaveMonth(ts);
   }
   return sum;
 }
@@ -354,13 +421,19 @@ export function timesheetCellSummary(ts: DailyTimesheet | undefined): string {
 }
 
 /**
- * กระดานสรุปรายเดือน — แสดงเฉพาะรหัสประเภทวัน (ไม่มีเลขชม.)
+ * กระดานสรุปรายเดือน — แสดงรหัสประเภทวัน + OT (เช่น W+5 = ทำงาน + OT 5 ชม.)
  * ไม่มีข้อมูล / วันไม่จ่าย (unpaid_leave) = " - "
  */
 export function timesheetWaveMonthCellDisplay(ts: DailyTimesheet | undefined): string {
   if (!ts) return ' - ';
   if (ts.eventType === 'unpaid_leave') return ' - ';
-  return timesheetEventAbbrev(ts.eventType);
+  const abbr = timesheetEventAbbrev(ts.eventType);
+  const ot = otHoursCountedForWaveMonth(ts);
+  if (ot > 0) {
+    const otLabel = Number.isInteger(ot) ? String(ot) : ot.toFixed(1);
+    return `${abbr}+${otLabel}`;
+  }
+  return abbr;
 }
 
 /**

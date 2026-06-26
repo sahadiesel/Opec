@@ -65,6 +65,7 @@ import {
   resolveTimesheetForWaveMonthCell,
   sumWorkHoursForWaveMonthRow,
   sumStandbyHoursForWaveMonthRow,
+  sumOtHoursForWaveMonthRow,
   timesheetWaveMonthCellDisplay,
   timesheetEventCellBadgeClasses,
 } from '@/lib/timesheet/wave-month-utils';
@@ -186,6 +187,7 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [editDate, setEditDate] = useState('');
   const [editEvent, setEditEvent] = useState<RateConditionEventType>('work_day');
   const [editHours, setEditHours] = useState(12);
+  const [editOtHours, setEditOtHours] = useState(0);
   const [editRemark, setEditRemark] = useState('');
   const [savingCell, setSavingCell] = useState(false);
   /** ยืนยันใน Dialog เดียว — ไม่ใช้ AlertDialog ซ้อน (กันค้าง overlay/focus) */
@@ -222,8 +224,13 @@ export default function WaveMonthTimesheetSummaryPage() {
     setEditDate(ts?.date ?? cellEdit.cellDate);
     setEditEvent((ts?.eventType as RateConditionEventType) ?? 'work_day');
     setEditHours(typeof ts?.normalHours === 'number' ? ts.normalHours : 12);
+    setEditOtHours(typeof ts?.ot15Hours === 'number' ? ts.ot15Hours : 0);
     setEditRemark(ts?.remark ?? '');
   }, [cellEdit]);
+
+  useEffect(() => {
+    if (editEvent !== 'work_day') setEditOtHours(0);
+  }, [editEvent]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -817,6 +824,34 @@ export default function WaveMonthTimesheetSummaryPage() {
     return m;
   }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments]);
 
+  /** รวมชม. OT ต่อแถว */
+  const rowOtHoursMonthTotalByKey = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const tr of tableRows) {
+      const { wave, rw, rosterAssignment } = tr;
+      const key = `${wave.id}|${rw.workerId}|${rosterAssignment.id}`;
+      const alternateMobIds = mobAssignments
+        .filter((mob) => mob.waveId === wave.id && mob.workerId === rw.workerId && mob.id !== rosterAssignment.id)
+        .map((mob) => mob.id);
+      m.set(
+        key,
+        sumOtHoursForWaveMonthRow(
+          rosterAssignment,
+          wave.id,
+          rw.workerId,
+          rosterAssignment.id,
+          days,
+          sheetsByWaveWorker,
+          monthSheetsForOpenPos,
+          poTimesheetScopeId(rosterAssignment.poId),
+          alternateMobIds,
+          { onlyWithinMobWindow: true },
+        ),
+      );
+    }
+    return m;
+  }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments]);
+
   /**
    * คนละหนึ่งแถวในงวดเดือน: ถ้าพนักงานถูกดึงจากหลาย wave / หลาย mobilization ที่ชี้ชุดลงเวลาเดียวกัน
    * (หรือมีหลายเอกสาร daily ซ้ำความหมาย) — เลือกแถวเดียวตามคะแนนจับคู่กับข้อมูลจริง + wave ที่ยังเปิดอยู่
@@ -1124,7 +1159,9 @@ export default function WaveMonthTimesheetSummaryPage() {
         ? `${worker.firstName || ''} ${worker.lastName || ''}`.trim() || workerName
         : workerName;
       const isUnpaid = editEvent === 'unpaid_leave';
+      const isWorkDay = editEvent === 'work_day';
       const nHours = isUnpaid ? 0 : Math.min(24, Math.max(0, Number(editHours) || 0));
+      const otHours = isWorkDay ? Math.min(24, Math.max(0, Number(editOtHours) || 0)) : 0;
 
       const payload: Partial<DailyTimesheet> = {
         ...(baseTs ? { ...baseTs, id: undefined } : {}),
@@ -1133,6 +1170,9 @@ export default function WaveMonthTimesheetSummaryPage() {
         date: editDate,
         eventType: editEvent,
         normalHours: nHours,
+        ot15Hours: otHours,
+        ot20Hours: 0,
+        ot30Hours: 0,
         remark: editRemark.trim() || undefined,
         waveId: wave.id,
         siteId: wave.id,
@@ -1143,7 +1183,6 @@ export default function WaveMonthTimesheetSummaryPage() {
         positionId,
         workMode: assignment.workMode ?? 'OFFSHORE',
         shiftType: 'DAY',
-        ot15Hours: 0,
         workerNameSnapshot: nameSnap,
       };
 
@@ -1178,6 +1217,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     editDate,
     editEvent,
     editHours,
+    editOtHours,
     editRemark,
     allWorkers,
   ]);
@@ -1530,7 +1570,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                       </p>
                       <p>
                         แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ ·{' '}
-                        <strong>รวมชม.</strong> = ชม.ทำงาน (W) และชม. Standby (SB/MO) แยกคอลัมน์ — รวมตามเซลล์ที่แสดงในแถว (ไม่นับวันที่เป็น «-»)
+                        <strong>รวมชม.</strong> = ชม.ทำงาน (W) · Standby (SB/M1/D1 วันละ 8 ชม.) · OT แยกคอลัมน์ — เซลล์รายวันแสดง W+5 เมื่อมี OT 5 ชม.
                       </p>
                     </CardDescription>
                   </div>
@@ -1584,11 +1624,19 @@ export default function WaveMonthTimesheetSummaryPage() {
                           </TableHead>
                           <TableHead
                             className="text-center font-bold min-w-[5.75rem] w-[5.75rem] shrink-0 text-[10px] leading-tight px-2"
-                            title="ชม. standby (SB/MO) รวมตามเซลล์ในแถวนี้"
+                            title="ชม. standby (SB/M1/D1) วันละ 8 ชม. — รวมตามเซลล์ในแถวนี้"
                           >
                             รวมชม.
                             <br />
                             <span className="font-normal text-muted-foreground">(Standby)</span>
+                          </TableHead>
+                          <TableHead
+                            className="text-center font-bold min-w-[5.75rem] w-[5.75rem] shrink-0 text-[10px] leading-tight px-2"
+                            title="ชม. OT รวมตามเซลล์ในแถวนี้"
+                          >
+                            รวมชม.
+                            <br />
+                            <span className="font-normal text-muted-foreground">(OT)</span>
                           </TableHead>
                         </TableRow>
                       </TableHeader>
@@ -1606,6 +1654,8 @@ export default function WaveMonthTimesheetSummaryPage() {
                             rowWorkHoursMonthTotalByKey.get(`${wave.id}|${rw.workerId}|${rosterAssignment.id}`) ?? 0;
                           const rowWorkerMonthStandbyTotal =
                             rowStandbyHoursMonthTotalByKey.get(`${wave.id}|${rw.workerId}|${rosterAssignment.id}`) ?? 0;
+                          const rowWorkerMonthOtTotal =
+                            rowOtHoursMonthTotalByKey.get(`${wave.id}|${rw.workerId}|${rosterAssignment.id}`) ?? 0;
                           const editableGrid =
                             canEditTs &&
                             !isMonthTimesheetRowLocked(
@@ -1678,6 +1728,9 @@ export default function WaveMonthTimesheetSummaryPage() {
                                           (editableGrid
                                             ? `คลิกแก้ไข · ${d} · ${ts.eventType} · ${ts.status}`
                                             : `${d} · ${ts.eventType} · ${ts.status}`) +
+                                          (ts.eventType === 'work_day' && (ts.ot15Hours ?? 0) > 0
+                                            ? ` · OT ${ts.ot15Hours} ชม.`
+                                            : '') +
                                           (!inMobWindow
                                             ? ' · วันนี้อยู่นอกหน้าต่าง mobilization บนเอกสาร — แสดงตามใบงานที่มีจริง'
                                             : '')
@@ -1722,9 +1775,15 @@ export default function WaveMonthTimesheetSummaryPage() {
                               </TableCell>
                               <TableCell
                                 className="text-center font-bold tabular-nums text-xs min-w-[5.75rem] w-[5.75rem] shrink-0 px-2 py-1.5 text-sky-800"
-                                title="ชม. standby (SB) รวมในแถวนี้"
+                                title="ชม. standby (SB/M1/D1) วันละ 8 ชม. รวมในแถวนี้"
                               >
                                 {rowWorkerMonthStandbyTotal}
+                              </TableCell>
+                              <TableCell
+                                className="text-center font-bold tabular-nums text-xs min-w-[5.75rem] w-[5.75rem] shrink-0 px-2 py-1.5 text-amber-800"
+                                title="ชม. OT รวมในแถวนี้"
+                              >
+                                {rowWorkerMonthOtTotal > 0 ? rowWorkerMonthOtTotal : '—'}
                               </TableCell>
                             </TableRow>
                           );
@@ -1733,7 +1792,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                     </Table>
                     <div className="border-t px-4 py-3 text-xs text-muted-foreground space-y-1">
                       <p>
-                        <strong>คีย์:</strong> ตัวอักษร = ประเภทวัน (W ทำงาน, SB สแตนด์บาย, T เดินทาง, M1 Mob, D1 Demob ฯลฯ) · เซลล์ «-» = ยังไม่มีบันทึกหรือวันไม่จ่าย —{' '}
+                        <strong>คีย์:</strong> ตัวอักษร = ประเภทวัน (W ทำงาน, SB สแตนด์บาย …) · <strong>W+5</strong> = ทำงาน + OT 5 ชม. · เซลล์ «-» = ยังไม่มีบันทึก —{' '}
                         <strong className="text-emerald-700">เขียว</strong>=ทำงาน{' '}
                         <strong className="text-sky-700">ฟ้า</strong>=สแตนด์บาย{' '}
                         <strong className="text-violet-700">ม่วง</strong>=เดินทาง{' '}
@@ -1828,6 +1887,31 @@ export default function WaveMonthTimesheetSummaryPage() {
                 {editEvent === 'unpaid_leave' ? (
                   <p className="text-xs text-muted-foreground">ลาไม่รับค่าจ้าง — ชั่วโมงจะถูกตั้งเป็น 0</p>
                 ) : null}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="wm-edit-ot-hours">OT ชม. (0–24)</Label>
+                <Input
+                  id="wm-edit-ot-hours"
+                  type="number"
+                  min={0}
+                  max={24}
+                  step={0.5}
+                  value={editOtHours}
+                  onChange={(e) => setEditOtHours(Number(e.target.value))}
+                  disabled={
+                    savingCell ||
+                    cellSaveAwaitingConfirm ||
+                    editEvent === 'unpaid_leave' ||
+                    editEvent !== 'work_day'
+                  }
+                />
+                {editEvent !== 'work_day' ? (
+                  <p className="text-xs text-muted-foreground">OT ใช้ได้เฉพาะวันทำงาน (Work day)</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    ตรงกับ Total OT ใน timesheet ลูกค้า — บันทึกเป็น ot15 สำหรับ payroll/billing
+                  </p>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="wm-edit-remark">หมายเหตุ (ถ้ามี)</Label>

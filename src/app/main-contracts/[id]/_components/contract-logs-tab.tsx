@@ -39,6 +39,7 @@ const fieldLabels: Record<string, string> = {
   startDate: 'วันที่เริ่ม',
   endDate: 'วันที่สิ้นสุด',
   billingTerms: 'Billing Terms',
+  billingMode: 'Billing Mode',
   paymentTerms: 'Payment Terms',
   notes: 'หมายเหตุ',
   position: 'ตำแหน่งงาน',

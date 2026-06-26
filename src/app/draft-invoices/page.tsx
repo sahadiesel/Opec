@@ -547,10 +547,22 @@ export default function DraftInvoicesPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 p-4 md:p-6 max-w-6xl mx-auto">
+        <Alert className="border-primary/30 bg-primary/5">
+          <Info className="h-4 w-4" />
+          <AlertTitle>ใบแจ้งหนี้แบบ Trip (Thai Nippon / Offshore)</AlertTitle>
+          <AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            PO โหมด TRIP ให้ใช้เมนู{' '}
+            <Link href="/accounting/trip-billing" className="font-medium text-primary underline">
+              ทำใบแจ้งหนี้แบบ Trip
+            </Link>
+            — หน้านี้ใช้สำหรับ Monthly (Guangzhou / ปิด PO+เดือน) เท่านั้น
+          </AlertDescription>
+        </Alert>
+
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
             <FileText className="h-7 w-7" />
-            รายการใบแจ้งหนี้ (เรียกเก็บลูกค้า)
+            ทำใบแจ้งหนี้แบบ Monthly
           </h1>
           <div className="flex flex-wrap items-center gap-2">
             <Input

@@ -89,7 +89,7 @@ export const MENU_PERMISSION_GROUPS: MenuPermissionGroup[] = [
         path: '/store',
         note: 'รวม vendors, PR, purchases, vendor bills',
       },
-      { moduleKey: 'draft_invoices', label: 'รายการใบแจ้งหนี้ (Invoice)', path: '/draft-invoices' },
+      { moduleKey: 'draft_invoices', label: 'ทำใบแจ้งหนี้แบบ Monthly', path: '/draft-invoices' },
       { moduleKey: 'operations_petty_cash', label: 'Petty Cash — เบิกหน้างาน', path: '/operations/petty-cash' },
     ],
   },

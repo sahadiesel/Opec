@@ -55,6 +55,8 @@ export interface GenerateBillingLinesOptions {
    * — ว่างหรือไม่ส่ง = ดึงทุก wave ใต้ PO (พฤติกรรมเดิม)
    */
   poMonthWaveIds?: readonly string[] | null;
+  /** Trip billing: จำกัดเฉพาะ mobCycleId ในชุดวางบิล */
+  mobCycleIds?: readonly string[] | null;
 }
 
 interface LineAcc {
@@ -492,6 +494,10 @@ export async function generateBillingLines(
   }
   const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
 
+  const mobCycleFilter = (options?.mobCycleIds ?? [])
+    .map((x) => String(x).trim())
+    .filter(Boolean);
+
   let mainContract: MainContract | undefined;
   if (po.contractId) {
     const mcSnap = await getDoc(doc(db, 'main_contracts', po.contractId));
@@ -500,15 +506,17 @@ export async function generateBillingLines(
     }
   }
 
-  const tsConstraints = [
-    where('purchaseOrderId', '==', poId),
-    where('readyForBilling', '==', true),
-    where('date', '>=', periodStart),
-    where('date', '<=', periodEnd),
-  ];
+  const tsConstraints = mobCycleFilter.length > 0
+    ? [where('readyForBilling', '==', true)]
+    : [
+        where('purchaseOrderId', '==', poId),
+        where('readyForBilling', '==', true),
+        where('date', '>=', periodStart),
+        where('date', '<=', periodEnd),
+      ];
   if (waveId) {
     tsConstraints.push(where('waveId', '==', waveId));
-  } else {
+  } else if (mobCycleFilter.length === 0) {
     const scope = (options?.poMonthWaveIds ?? [])
       .map((x) => String(x).trim())
       .filter(Boolean);
@@ -531,14 +539,69 @@ export async function generateBillingLines(
     }
   }
 
-  const [poLinesSnap, tsSnap, mobSnap] = await Promise.all([
+  const FIRESTORE_IN_MAX = 30;
+  const fetchTimesheets = async (): Promise<DailyTimesheet[]> => {
+    if (mobCycleFilter.length > 0) {
+      const byId = new Map<string, DailyTimesheet>();
+      const addTs = (ts: DailyTimesheet) => {
+        if (ts.date >= periodStart && ts.date <= periodEnd) byId.set(ts.id, ts);
+      };
+
+      for (let i = 0; i < mobCycleFilter.length; i += FIRESTORE_IN_MAX) {
+        const chunk = mobCycleFilter.slice(i, i + FIRESTORE_IN_MAX);
+        const snap = await getDocs(
+          query(
+            collection(db, 'daily_timesheets'),
+            where('mobCycleId', 'in', chunk),
+            where('readyForBilling', '==', true),
+          ),
+        );
+        for (const d of snap.docs) {
+          addTs({ ...d.data(), id: d.id } as DailyTimesheet);
+        }
+      }
+
+      for (const mobCycleId of mobCycleFilter) {
+        const reviewSnap = await getDoc(doc(db, 'mob_cycle_billing_reviews', mobCycleId));
+        if (!reviewSnap.exists()) continue;
+        const review = reviewSnap.data() as {
+          assignmentId?: string;
+          tripStartDate?: string;
+          tripEndDate?: string;
+        };
+        const assignmentId = String(review.assignmentId || '').trim();
+        const start = String(review.tripStartDate || periodStart).slice(0, 10);
+        const end = String(review.tripEndDate || periodEnd).slice(0, 10);
+        if (!assignmentId || !start) continue;
+
+        const snap = await getDocs(
+          query(
+            collection(db, 'daily_timesheets'),
+            where('assignmentId', '==', assignmentId),
+            where('date', '>=', start),
+            where('date', '<=', end),
+            where('readyForBilling', '==', true),
+          ),
+        );
+        for (const d of snap.docs) {
+          addTs({ ...d.data(), id: d.id } as DailyTimesheet);
+        }
+      }
+
+      return [...byId.values()];
+    }
+    const snap = await getDocs(query(collection(db, 'daily_timesheets'), ...tsConstraints));
+    return snap.docs.map((d) => ({ ...d.data(), id: d.id } as DailyTimesheet));
+  };
+
+  const [poLinesSnap, timesheetsRaw, mobSnap] = await Promise.all([
     getDocs(
       query(
         collection(db, 'purchase_orders', poId, 'po_lines'),
         where('status', '==', 'active'),
       ),
     ),
-    getDocs(query(collection(db, 'daily_timesheets'), ...tsConstraints)),
+    fetchTimesheets(),
     getDocs(query(collection(db, 'mobilizations'), where('poId', '==', poId))),
   ]);
 
@@ -550,9 +613,11 @@ export async function generateBillingLines(
     poLinesByPosition.set(pl.positionId, pl);
   }
 
-  const timesheetsRaw = tsSnap.docs.map(
-    (d) => ({ ...d.data(), id: d.id } as DailyTimesheet),
-  );
+  if (mobCycleFilter.length > 0) {
+    warnings.push(
+      `วางบิลตามรอบเดินทาง — ${mobCycleFilter.length} mob cycle · ช่วง ${periodStart} ถึง ${periodEnd}`,
+    );
+  }
 
   const mobById = new Map<string, Assignment>();
   for (const d of mobSnap.docs) {
@@ -670,6 +735,26 @@ export async function generateBillingLines(
     timesheetCount: timesheets.length,
     warnings: [...new Set(warnings)].filter((w) => !shouldOmitCommercialInvoiceGenerationWarning(w)),
   };
+}
+
+/** สร้างบรรทัดวางบิลจาก mob cycles ในชุด trip batch (หลายคนต่อ invoice) */
+export async function generateBillingLinesForMobCycles(
+  db: Firestore,
+  poId: string,
+  mobCycleIds: readonly string[],
+  periodStart: string,
+  periodEnd: string,
+): Promise<BillingLineGenerationResult> {
+  const ids = mobCycleIds.map((x) => String(x).trim()).filter(Boolean);
+  if (ids.length === 0) {
+    return {
+      lines: [],
+      totalAmount: 0,
+      timesheetCount: 0,
+      warnings: ['ไม่มี mob cycle ในชุดวางบิล'],
+    };
+  }
+  return generateBillingLines(db, poId, periodStart, periodEnd, undefined, { mobCycleIds: ids });
 }
 
 /**

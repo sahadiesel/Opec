@@ -128,7 +128,8 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
     title: 'ระบบลูกหนี้',
     icon: FileBadge,
     items: [
-      { key: 'draft_invoices', title: 'รายการใบแจ้งหนี้ ( Invoice )', href: '/draft-invoices', icon: FileText },
+      { key: 'draft_invoices', title: 'ทำใบแจ้งหนี้แบบ Monthly', href: '/draft-invoices', icon: FileText },
+      { key: 'draft_invoices', title: 'ทำใบแจ้งหนี้แบบ Trip', href: '/accounting/trip-billing', icon: Users },
       { key: 'tax_invoices', title: 'ใบกำกับภาษี', href: '/tax-invoices', icon: FileBadge },
       { key: 'receipts', title: 'ใบเสร็จรับเงิน (ลูกค้า)', href: '/receipts', icon: Receipt },
       { key: 'accounts_receivable', title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight },
@@ -338,9 +339,15 @@ const navGroups: NavGroup[] = [
       { key: 'store_inventory', title: UI_LABELS.STORE, href: '/store', icon: Warehouse },
       {
         key: 'draft_invoices',
-        title: 'รายการใบแจ้งหนี้ ( Invoice )',
+        title: 'ทำใบแจ้งหนี้แบบ Monthly',
         href: '/draft-invoices',
         icon: FileText,
+      },
+      {
+        key: 'draft_invoices',
+        title: 'ทำใบแจ้งหนี้แบบ Trip',
+        href: '/accounting/trip-billing',
+        icon: Users,
       },
       {
         key: 'operations_petty_cash',

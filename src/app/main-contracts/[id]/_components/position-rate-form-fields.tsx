@@ -4,11 +4,12 @@ import { useMemo } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import type { PositionRate, Position } from '@/lib/types';
+import type { PositionRate, Position, ContractMobDemobLocation } from '@/lib/types';
 import type { OvertimeRuleKey } from '@/lib/contract-position-rate-extras';
 import { OVERTIME_RULE_OPTIONS } from '@/lib/contract-position-rate-extras';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
 import { legacySellRateMirror, normalizeNormalWorkHoursFields } from '@/lib/commercial/position-rate-sell';
+import { PositionRateMatrixFields } from './position-rate-matrix-fields';
 
 export interface PositionRateFormFieldsProps {
   newRate: Partial<PositionRate>;
@@ -16,6 +17,7 @@ export interface PositionRateFormFieldsProps {
   /** โหมดเพิ่ม: เรียกแทนการ set positionId ตรงๆ เพื่อตรวจซ้ำในสัญญา */
   onAddPositionIdChange?: (positionId: string) => void;
   allPositions: Position[] | null;
+  mobDemobLocations?: ContractMobDemobLocation[];
   canEditSellSide: boolean;
   canEditCostSide: boolean;
   canViewCostFields: boolean;
@@ -30,11 +32,12 @@ export function PositionRateFormFields({
   onAddPositionIdChange,
   allPositions,
   canEditSellSide,
-  canEditCostSide: _canEditCostSide,
+  canEditCostSide,
   canViewCostFields,
   isSupplementalContract,
   positionMode,
   positionDisplayName,
+  mobDemobLocations = [],
 }: PositionRateFormFieldsProps) {
   const otKey = (newRate.overtimeRuleKey || 'MULT_1_5') as OvertimeRuleKey;
 
@@ -221,6 +224,28 @@ export function PositionRateFormFields({
         <Label>หมายเหตุ</Label>
         <Input value={newRate.notes || ''} onChange={(e) => setNewRate({ ...newRate, notes: e.target.value })} />
       </div>
+
+      <PositionRateMatrixFields
+        rateMatrix={newRate.rateMatrix}
+        onChange={(rateMatrix) => setNewRate({ ...newRate, rateMatrix })}
+        mobDemobLocations={mobDemobLocations}
+        canEditSell={canEditSellSide && !isSupplementalContract}
+        canEditCost={canEditCostSide}
+        canViewCost={canViewCostFields}
+        disabled={isSupplementalContract}
+        onWorkingDaySellChange={(onshore, offshore) => {
+          setNewRate({
+            ...newRate,
+            ...(onshore != null ? { sellRateOnshore: onshore } : {}),
+            ...(offshore != null ? { sellRateOffshore: offshore } : {}),
+            sellRate: legacySellRateMirror({
+              ...newRate,
+              sellRateOnshore: onshore ?? newRate.sellRateOnshore,
+              sellRateOffshore: offshore ?? newRate.sellRateOffshore,
+            }),
+          });
+        }}
+      />
     </div>
   );
 }

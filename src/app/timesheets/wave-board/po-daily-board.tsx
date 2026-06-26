@@ -104,6 +104,12 @@ const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'ไม่จ่ายค่าแรง (Unpaid)', value: 'unpaid_leave' },
 ];
 
+/** ช่องตัวเลขแคบ — ซ่อน spinner ไม่ให้บังตัวเลข */
+const PO_BOARD_HOURS_INPUT_CLASS =
+  'mx-auto block h-9 w-14 min-w-14 max-w-14 shrink-0 px-1.5 text-center font-bold tabular-nums [appearance:textfield] [-moz-appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
+
+const PO_BOARD_HOURS_CELL_CLASS = 'px-2 py-2 text-center';
+
 /** คอลัมน์สถานะ — แสดงรหัสจากประเภทวันที่บันทึกแล้วเท่านั้น (ไม่แสดง DRAFT) */
 function waveBoardStatusCode(
   persisted: boolean,
@@ -844,10 +850,14 @@ export function PoDailyBoardCard({
         }
 
         const isUnpaid = ts.eventType === 'unpaid_leave';
+        const isWorkDay = ts.eventType === 'work_day';
         payloads.push({
           ...ts,
           normalHours: isUnpaid ? 0 : (ts.normalHours ?? 0),
-          ot15Hours: 0,
+          ot15Hours: isWorkDay ? Math.max(0, Number(ts.ot15Hours) || 0) : 0,
+          ot20Hours: isWorkDay ? Math.max(0, Number(ts.ot20Hours) || 0) : 0,
+          ot30Hours: isWorkDay ? Math.max(0, Number(ts.ot30Hours) || 0) : 0,
+          mobCycleId: asgn.mobCycleId || buildMobCycleDocId(asgn.id, asgn.mobCycleNumber ?? 1),
           workerNameSnapshot: worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown',
           waveId: rowScopeId,
           siteId: rowScopeId,
@@ -1275,7 +1285,10 @@ export function PoDailyBoardCard({
                   <TableHead className="font-bold w-[8.5rem] min-w-[7rem]">วันที่มอบหมาย</TableHead>
                   <TableHead className="font-bold min-w-[5rem] max-w-[8rem]">ตำแหน่ง</TableHead>
                   <TableHead className="font-bold w-[148px] max-w-[160px] shrink-0">ประเภทวัน</TableHead>
-                  <TableHead className="font-bold text-center w-[5.5rem] shrink-0">ชั่วโมงปกติ</TableHead>
+                  <TableHead className="font-bold text-center w-[4.5rem] min-w-[4.5rem] shrink-0 px-2">ชั่วโมงปกติ</TableHead>
+                  <TableHead className="font-bold text-center w-[4.5rem] min-w-[4.5rem] shrink-0 px-2" title="ชม. OT (ot15 — ใช้คำนวณ payroll/billing)">
+                    OT ชม.
+                  </TableHead>
                   <TableHead className="font-bold w-[6.5rem] shrink-0 whitespace-nowrap">สถานะปัจจุบัน</TableHead>
                   <TableHead className="min-w-[6.5rem] text-center font-bold shrink-0">หยุด</TableHead>
                   <TableHead className="text-right pr-6 min-w-[6rem] w-[18%]">หมายเหตุ</TableHead>
@@ -1438,9 +1451,18 @@ export function PoDailyBoardCard({
                                   status: 'DRAFT' as DailyTimesheetStatus,
                                 };
                                 let nextHours = cur.normalHours ?? dft;
-                                if (v === 'unpaid_leave') nextHours = 0;
-                                else if (cur.eventType === 'unpaid_leave') nextHours = dft;
-                                return { ...prev, [asgn.id]: { ...cur, eventType: v, normalHours: nextHours } };
+                                let nextOt = cur.ot15Hours ?? 0;
+                                if (v === 'unpaid_leave') {
+                                  nextHours = 0;
+                                  nextOt = 0;
+                                } else if (cur.eventType === 'unpaid_leave') {
+                                  nextHours = dft;
+                                }
+                                if (v !== 'work_day') nextOt = 0;
+                                return {
+                                  ...prev,
+                                  [asgn.id]: { ...cur, eventType: v, normalHours: nextHours, ot15Hours: nextOt },
+                                };
                               });
                             }}
                           >
@@ -1457,14 +1479,14 @@ export function PoDailyBoardCard({
                           </Select>
                         )}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className={PO_BOARD_HOURS_CELL_CLASS}>
                         {afterMobEnd || isRowCleared ? (
                           <span className="flex h-9 items-center justify-center text-xs text-muted-foreground">—</span>
                         ) : (
                           <Input
                             disabled={rowEditLocked || row.eventType === 'unpaid_leave'}
                             type="number"
-                            className="h-9 text-center font-bold"
+                            className={PO_BOARD_HOURS_INPUT_CLASS}
                             value={row.normalHours}
                             onChange={(e) => {
                               const v = parseInt(e.target.value, 10) || 0;
@@ -1477,6 +1499,35 @@ export function PoDailyBoardCard({
                               setRosterData((p) => ({
                                 ...p,
                                 [asgn.id]: { ...(p[asgn.id] || {}), normalHours: v },
+                              }));
+                            }}
+                          />
+                        )}
+                      </TableCell>
+                      <TableCell className={PO_BOARD_HOURS_CELL_CLASS}>
+                        {afterMobEnd || isRowCleared || row.eventType !== 'work_day' ? (
+                          <span className="flex h-9 items-center justify-center text-xs text-muted-foreground">—</span>
+                        ) : (
+                          <Input
+                            disabled={rowEditLocked}
+                            type="number"
+                            min={0}
+                            max={24}
+                            step={0.5}
+                            className={PO_BOARD_HOURS_INPUT_CLASS}
+                            value={row.ot15Hours ?? 0}
+                            title="ชม. OT (ot15) — ตรงกับ Total OT ใน timesheet ลูกค้า"
+                            onChange={(e) => {
+                              const v = Math.max(0, Math.min(24, Number(e.target.value) || 0));
+                              setClearedRowIds((prev) => {
+                                if (!prev.has(asgn.id)) return prev;
+                                const next = new Set(prev);
+                                next.delete(asgn.id);
+                                return next;
+                              });
+                              setRosterData((p) => ({
+                                ...p,
+                                [asgn.id]: { ...(p[asgn.id] || {}), ot15Hours: v },
                               }));
                             }}
                           />
@@ -1609,7 +1660,7 @@ export function PoDailyBoardCard({
         </CardContent>
         <CardFooter className="bg-muted/20 border-t py-3 flex flex-wrap justify-between items-center gap-2">
           <p className="text-xs text-muted-foreground max-w-2xl">
-            บันทึกลง <span className="font-medium">daily timesheets</span> ต่อ assignment — ชั่วโมงเริ่มต้นจากสัญญา/บรรทัด PO ของแต่ละคน
+            บันทึกลง <span className="font-medium">daily timesheets</span> ต่อ assignment — ชั่วโมงปกติจากสัญญา/PO · ช่อง OT = ชม. OT (ot15) สำหรับ payroll และวางบิล
           </p>
           <div className="flex flex-wrap gap-2">
             <Button variant="link" className="text-xs h-auto p-0" asChild>

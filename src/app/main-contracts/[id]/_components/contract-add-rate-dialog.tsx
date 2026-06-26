@@ -3,8 +3,9 @@
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Plus } from 'lucide-react';
-import type { PositionRate, Position } from '@/lib/types';
+import type { PositionRate, Position, ContractMobDemobLocation } from '@/lib/types';
 import { legacySellRateMirror } from '@/lib/commercial/position-rate-sell';
+import { hasSellPricing } from '@/lib/commercial/position-rate-matrix';
 import { PositionRateFormFields } from './position-rate-form-fields';
 
 interface ContractAddRateDialogProps {
@@ -15,6 +16,7 @@ interface ContractAddRateDialogProps {
   /** ตรวจตำแหน่งซ้ำในสัญญาเมื่อเลือกจาก dropdown */
   onAddPositionIdChange?: (positionId: string) => void;
   allPositions: Position[] | null;
+  mobDemobLocations: ContractMobDemobLocation[];
   canEditSellSide: boolean;
   canEditCostSide: boolean;
   canViewCostFields: boolean;
@@ -30,6 +32,7 @@ export function ContractAddRateDialog({
   setNewRate,
   onAddPositionIdChange,
   allPositions,
+  mobDemobLocations,
   canEditSellSide,
   canEditCostSide,
   canViewCostFields,
@@ -44,7 +47,7 @@ export function ContractAddRateDialog({
           <Plus className="h-4 w-4" /> เพิ่มอัตราราคา
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>กำหนดอัตราราคาใหม่</DialogTitle>
           <DialogDescription>
@@ -57,6 +60,7 @@ export function ContractAddRateDialog({
           setNewRate={setNewRate}
           onAddPositionIdChange={onAddPositionIdChange}
           allPositions={allPositions}
+          mobDemobLocations={mobDemobLocations}
           canEditSellSide={canEditSellSide}
           canEditCostSide={canEditCostSide}
           canViewCostFields={canViewCostFields}
@@ -73,7 +77,7 @@ export function ContractAddRateDialog({
             disabled={
               !newRate.positionId ||
               (!canEditSellSide && !canEditCostSide) ||
-              (canEditSellSide && legacySellRateMirror(newRate) <= 0)
+              (canEditSellSide && !hasSellPricing(newRate))
             }
           >
             บันทึกอัตราราคา

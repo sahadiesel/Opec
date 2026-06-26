@@ -132,3 +132,48 @@ export const WaveRateSnapshotSchema = z.object({
   createdAt: z.number(),
   createdBy: z.string(),
 });
+
+const positiveRate = z.number().positive().optional();
+
+export const ContractMobDemobLocationSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  displayOrder: z.number().int().min(0),
+});
+
+export const PositionRateOffshoreSideSchema = z.object({
+  workingDay: positiveRate,
+  standbyDay: positiveRate,
+  otPerHour: positiveRate,
+  m1PerTrip: positiveRate,
+  d1PerTrip: positiveRate,
+  mobDemobRoundTrip: z.record(z.string(), positiveRate).optional(),
+});
+
+export const PositionRateOnshoreSideSchema = z.object({
+  workingDay: positiveRate,
+  standbyDay: positiveRate,
+  otNormalPerHour: positiveRate,
+  ot2PerHour: positiveRate,
+  ot3PerHour: positiveRate,
+});
+
+export const PositionRateWorkModeBundleSchema = z.object({
+  offshore: PositionRateOffshoreSideSchema.optional(),
+  onshore: PositionRateOnshoreSideSchema.optional(),
+});
+
+export const PositionRateMatrixSchema = z.object({
+  sell: PositionRateWorkModeBundleSchema.optional(),
+  cost: PositionRateWorkModeBundleSchema.optional(),
+});
+
+export const PositionRateSchema = z.object({
+  positionId: z.string().min(1),
+  sellRate: z.number().min(0),
+  sellRateOnshore: positiveRate,
+  sellRateOffshore: positiveRate,
+  billingUnit: z.enum(['daily', 'monthly', 'hourly']),
+  active: z.boolean(),
+  rateMatrix: PositionRateMatrixSchema.optional(),
+});
