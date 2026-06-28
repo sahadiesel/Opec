@@ -1,7 +1,18 @@
 'use client';
 
-import { doc, getDoc, setDoc, updateDoc, type Firestore } from 'firebase/firestore';
-import type { TripBillingBatch, User } from '@/lib/types';
+import {
+  collection,
+  deleteField,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+  type Firestore,
+} from 'firebase/firestore';
+import type { CommercialInvoice, TripBillingBatch, User } from '@/lib/types';
 import {
   markTimesheetsReadyForBillingByMobCycles,
   syncMobCycleBillingReviewsForPo,
@@ -87,6 +98,61 @@ export async function markTripBatchInvoiced(
     await setDoc(
       doc(db, REVIEW_COLLECTION, mobCycleId),
       { status: 'invoiced', updatedAt: now },
+      { merge: true },
+    );
+  }
+}
+
+/** ใบแจ้งหนี้ trip batch ยังใช้งานได้ (มีเอกสารและไม่ VOID) */
+export async function isTripBatchCommercialInvoiceActive(
+  db: Firestore,
+  batch: Pick<TripBillingBatch, 'id' | 'sourceCommercialInvoiceId'>,
+): Promise<boolean> {
+  if (batch.sourceCommercialInvoiceId) {
+    const snap = await getDoc(
+      doc(db, 'commercial_invoices', batch.sourceCommercialInvoiceId),
+    );
+    if (snap.exists()) {
+      const inv = snap.data() as CommercialInvoice;
+      if (inv.status !== 'VOID') return true;
+    }
+  }
+  const q = query(
+    collection(db, 'commercial_invoices'),
+    where('sourceTripBillingBatchId', '==', batch.id),
+  );
+  const snap = await getDocs(q);
+  for (const d of snap.docs) {
+    const inv = d.data() as CommercialInvoice;
+    if (inv.status !== 'VOID') return true;
+  }
+  return false;
+}
+
+/**
+ * คืนสถานะชุดวางบิลเมื่อใบแจ้งหนี้ถูกยกเลิก/ลบ — ให้สร้าง invoice ใหม่ได้
+ */
+export async function releaseTripBillingBatchAfterInvoiceRemoved(
+  db: Firestore,
+  batchId: string,
+): Promise<void> {
+  const ref = doc(db, BATCH_COLLECTION, batchId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const batch = { id: snap.id, ...(snap.data() as object) } as TripBillingBatch;
+  if (batch.status !== 'invoiced') return;
+
+  const now = Date.now();
+  await updateDoc(ref, {
+    status: 'approved',
+    sourceCommercialInvoiceId: deleteField(),
+    updatedAt: now,
+  });
+
+  for (const mobCycleId of batch.memberMobCycleIds ?? []) {
+    await setDoc(
+      doc(db, REVIEW_COLLECTION, mobCycleId),
+      { status: 'approved', updatedAt: now },
       { merge: true },
     );
   }

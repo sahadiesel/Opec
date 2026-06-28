@@ -3,11 +3,24 @@
  * (see `billing-line-generator.ts` `descriptionForLine`).
  * Position titles may stay in Thai; standard billing phrases are translated.
  */
+export function translateCommercialWaveCodeToEn(text: string): string {
+  let s = text;
+  if (!s) return s;
+
+  s = s.replace(/รอบเดินทาง/g, 'Trip cycle');
+  s = s.replace(/PO\+งวด\s*\(\s*รวม\s*wave\s*\)/gi, 'PO+month (all waves)');
+  s = s.replace(/(\d+)\s*คน\b/g, '$1 workers');
+  return s;
+}
+
 export function translateCommercialLineDescriptionToEn(text: string): string {
   let s = text;
   if (!s) return s;
 
   const sep = String.raw`[\s·\-\u2013\u2014]*`; // middle dot, hyphen, en/em dash
+
+  s = s.replace(/ค่า Mob\/Demob ไป-กลับ/gi, 'Mob/Demob round-trip fee');
+  s = s.replace(/ และอีก (\d+) คน/g, ' and $1 more');
 
   // Current billing style: (รวม 12 คน-วัน · พนักงาน 6 คน) or hyphen between segments
   s = s.replace(
@@ -55,8 +68,8 @@ export function translateCommercialLineDescriptionToEn(text: string): string {
   s = s.replace(/ค่าแรงวันทำงาน/g, 'Daily wage');
   s = s.replace(/สแตนด์บาย|สแตนบาย/g, 'Standby');
   s = s.replace(/วันเดินทาง/g, 'Travel day');
-  s = s.replace(/โมบิไลเซชัน/g, 'Mobilization');
   s = s.replace(/ดีโมบิไลเซชัน/g, 'Demobilization');
+  s = s.replace(/โมบิไลเซชัน/g, 'Mobilization');
   s = s.replace(/ส่วนลด\s*\/\s*ค่าเพิ่ม/g, 'Discount / surcharge');
   s = s.replace(/\(ระบุรายละเอียด\)/g, '(specify details)');
   s = s.replace(/หน่วย/g, 'units');

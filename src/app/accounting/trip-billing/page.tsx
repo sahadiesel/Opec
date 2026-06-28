@@ -38,6 +38,17 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Label } from '@/components/ui/label';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
@@ -47,6 +58,10 @@ import type { PurchaseOrder, TripBillingBatch, User } from '@/lib/types';
 import { billingModeLabel } from '@/lib/commercial/resolve-billing-mode';
 import { syncTripBillingForPo, approveTripBillingBatch } from '@/lib/services/trip-billing-service';
 import { ensureCommercialDraftInvoiceForTripBatch } from '@/lib/services/commercial-invoice-service';
+import {
+  resolveTripMobDemobLocationChoice,
+  type TripMobDemobLocationOption,
+} from '@/lib/services/trip-mob-demob-billing';
 
 function batchStatusBadge(status: TripBillingBatch['status']) {
   switch (status) {
@@ -76,6 +91,11 @@ export default function TripBillingPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [localBatches, setLocalBatches] = useState<TripBillingBatch[]>([]);
+  const [mobLocationDialog, setMobLocationDialog] = useState<{
+    batch: TripBillingBatch;
+    options: TripMobDemobLocationOption[];
+    selectedKey: string;
+  } | null>(null);
 
   const canSee = currentUser && canView(currentUser, 'draft_invoices');
 
@@ -161,10 +181,58 @@ export default function TripBillingPage() {
   };
 
   const handleCreateInvoice = async (batch: TripBillingBatch) => {
+    if (!firestore || !currentUser || !selectedPo?.contractId) {
+      toast({
+        variant: 'destructive',
+        title: 'สร้าง invoice ไม่ได้',
+        description: 'PO ไม่มีสัญญาหลัก — ตรวจ contractId ของ PO',
+      });
+      return;
+    }
+    setBusyId(`inv_${batch.id}`);
+    try {
+      const choice = await resolveTripMobDemobLocationChoice(
+        firestore,
+        selectedPo.contractId,
+        batch.memberMobCycleIds,
+      );
+      if (choice.kind === 'error') {
+        toast({ variant: 'destructive', title: 'สร้าง invoice ไม่ได้', description: choice.message });
+        return;
+      }
+      if (choice.kind === 'prompt') {
+        setMobLocationDialog({
+          batch,
+          options: choice.options,
+          selectedKey: choice.options[0]?.key ?? '',
+        });
+        return;
+      }
+      await doCreateInvoice(
+        batch,
+        choice.kind === 'auto' ? choice.mobLocationKey : undefined,
+      );
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'สร้าง invoice ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const doCreateInvoice = async (batch: TripBillingBatch, tripMobDemobLocationKey?: string) => {
     if (!firestore || !currentUser) return;
     setBusyId(`inv_${batch.id}`);
     try {
-      const res = await ensureCommercialDraftInvoiceForTripBatch(firestore, batch, currentUser as User);
+      const res = await ensureCommercialDraftInvoiceForTripBatch(
+        firestore,
+        batch,
+        currentUser as User,
+        tripMobDemobLocationKey ? { tripMobDemobLocationKey } : undefined,
+      );
       if (res.ok) {
         toast({ title: 'สร้าง invoice แล้ว', description: res.invoiceNo });
         router.push(`/draft-invoices/${res.id}`);
@@ -180,6 +248,13 @@ export default function TripBillingPage() {
     } finally {
       setBusyId(null);
     }
+  };
+
+  const confirmMobLocationAndCreate = async () => {
+    if (!mobLocationDialog?.selectedKey) return;
+    const { batch, selectedKey } = mobLocationDialog;
+    setMobLocationDialog(null);
+    await doCreateInvoice(batch, selectedKey);
   };
 
   if (userLoading || !authUser) {
@@ -303,8 +378,8 @@ export default function TripBillingPage() {
                   <TableBody>
                     {batches.map((batch) => {
                       const names =
-                        batch.memberWorkerNames?.join(', ') ||
-                        `${batch.memberWorkerIds.length} คน`;
+                        [...new Set(batch.memberWorkerNames ?? [])].filter(Boolean).join(', ') ||
+                        `${new Set(batch.memberWorkerIds ?? []).size || batch.memberWorkerIds?.length || 0} คน`;
                       const periodLabel = batch.periodEnd
                         ? `${formatStoredDateThaiBE(batch.periodStart)} – ${formatStoredDateThaiBE(batch.periodEnd)}`
                         : `${formatStoredDateThaiBE(batch.periodStart)} – (ยังทำงาน)`;
@@ -319,7 +394,8 @@ export default function TripBillingPage() {
                           <TableCell>
                             <div className="text-sm">{names}</div>
                             <div className="text-xs text-muted-foreground">
-                              {batch.memberMobCycleIds.length} mob cycle
+                              {new Set(batch.memberWorkerIds ?? []).size || batch.memberMobCycleIds.length}{' '}
+                              mob cycle
                             </div>
                           </TableCell>
                           <TableCell>{batchStatusBadge(batch.status)}</TableCell>
@@ -381,6 +457,57 @@ export default function TripBillingPage() {
           </Card>
         )}
       </div>
+
+      <AlertDialog
+        open={mobLocationDialog != null}
+        onOpenChange={(open) => {
+          if (!open) setMobLocationDialog(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>เลือกจุด Mob/Demob สำหรับค่า MOB</AlertDialogTitle>
+            <AlertDialogDescription>
+              สัญญากำหนดให้คิดค่า Mob/Demob ไป-กลับต่อคนต่อ trip — เลือกจุดที่ตรงกับการเดินทางของชุดนี้
+              (อัตราดึงจากตารางราคาสัญญา)
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {mobLocationDialog && (
+            <div className="space-y-2 py-2">
+              <Label htmlFor="trip-mob-location">จุด Mob/Demob</Label>
+              <Select
+                value={mobLocationDialog.selectedKey}
+                onValueChange={(key) =>
+                  setMobLocationDialog((prev) => (prev ? { ...prev, selectedKey: key } : null))
+                }
+              >
+                <SelectTrigger id="trip-mob-location">
+                  <SelectValue placeholder="เลือกจุด" />
+                </SelectTrigger>
+                <SelectContent>
+                  {mobLocationDialog.options.map((opt) => (
+                    <SelectItem key={opt.key} value={opt.key}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!mobLocationDialog?.selectedKey || busyId != null}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmMobLocationAndCreate();
+              }}
+            >
+              สร้าง Invoice
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppShell>
   );
 }

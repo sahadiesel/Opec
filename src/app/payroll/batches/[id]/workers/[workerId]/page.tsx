@@ -38,6 +38,10 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canPayrollPermission, canView, isMatrixControlledRole } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAdmin, isSimpleAccounting } from '@/lib/simple-tier-model';
+import {
+  loadPendingRetroForWorkerPayrollMonth,
+  retroAdjustmentsToPriorPeriodItemsWithPay,
+} from '@/lib/services/timesheet-retro-adjustment-service';
 import { PayrollService } from '@/lib/services/payroll-service';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateThaiBE } from '@/lib/date-thai';
@@ -228,6 +232,9 @@ export default function PayrollBatchWorkerLinePage({
   const [allowanceRows, setAllowanceRows] = useState<Array<{ label: string; amount: string }>>([
     { label: '', amount: '' },
   ]);
+  const [priorPeriodRows, setPriorPeriodRows] = useState<
+    Array<{ sourceYearMonth: string; label: string; amount: string }>
+  >([{ sourceYearMonth: '', label: '', amount: '' }]);
   const [deductionRows, setDeductionRows] = useState<Array<{ label: string; amount: string }>>([
     { label: '', amount: '' },
   ]);
@@ -238,6 +245,56 @@ export default function PayrollBatchWorkerLinePage({
   const [autoTimesheetUseFullTable, setAutoTimesheetUseFullTable] = useState(true);
   const [autoTimesheetMarginalRate, setAutoTimesheetMarginalRate] = useState(35);
   const [adjNotes, setAdjNotes] = useState('');
+  const [retroImportBusy, setRetroImportBusy] = useState(false);
+
+  const payrollApplyYearMonth = useMemo(
+    () => (period?.endDate ? period.endDate.slice(0, 7) : ''),
+    [period?.endDate],
+  );
+
+  const handleImportRetroAdjustments = useCallback(async () => {
+    if (!firestore || !payrollApplyYearMonth) return;
+    setRetroImportBusy(true);
+    try {
+      const rows = await loadPendingRetroForWorkerPayrollMonth(
+        firestore,
+        workerId,
+        payrollApplyYearMonth,
+      );
+      if (rows.length === 0) {
+        toast({
+          title: 'ไม่มีรายการแก้ไขย้อนหลัง',
+          description: `ไม่พบรายการที่ตั้งจ่ายในงวด ${payrollApplyYearMonth}`,
+        });
+        return;
+      }
+      const imported = await retroAdjustmentsToPriorPeriodItemsWithPay(firestore, rows);
+      setPriorPeriodRows((prev) => {
+        const kept = prev.filter((r) => r.label.trim() || r.amount.trim() || r.sourceYearMonth.trim());
+        return [
+          ...(kept.length ? kept : []),
+          ...imported.map((it) => ({
+            sourceYearMonth: it.sourceYearMonth,
+            label: it.label,
+            amount: String(it.amount),
+          })),
+        ];
+      });
+      const totalBaht = imported.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+      toast({
+        title: 'ดึงรายการแก้ไขย้อนหลังแล้ว',
+        description: `${rows.length} รายการ · รวม ฿${totalBaht.toLocaleString()} (คำนวณจากสูตร PO/ตำแหน่ง)`,
+      });
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'ดึงรายการไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setRetroImportBusy(false);
+    }
+  }, [firestore, payrollApplyYearMonth, workerId, toast]);
 
   useEffect(() => {
     if (!line) return;
@@ -247,6 +304,13 @@ export default function PayrollBatchWorkerLinePage({
           amount: String(x.amount),
         }))
       : [{ label: '', amount: '' }];
+    const pp = line.hrLineAdjustments?.priorPeriodAllowanceItems?.length
+      ? line.hrLineAdjustments.priorPeriodAllowanceItems.map((x) => ({
+          sourceYearMonth: x.sourceYearMonth,
+          label: x.label,
+          amount: String(x.amount),
+        }))
+      : [{ sourceYearMonth: '', label: '', amount: '' }];
     const d = line.hrLineAdjustments?.deductionItems?.length
       ? line.hrLineAdjustments.deductionItems.map((x) => ({
           label: x.label,
@@ -254,6 +318,7 @@ export default function PayrollBatchWorkerLinePage({
         }))
       : [{ label: '', amount: '' }];
     setAllowanceRows(a);
+    setPriorPeriodRows(pp);
     setDeductionRows(d);
     const mode = line.hrLineAdjustments?.workerPitMode;
     const base = line.hrLineAdjustments?.pitAutoSalaryBaseBaht;
@@ -411,8 +476,13 @@ export default function PayrollBatchWorkerLinePage({
     () =>
       allowanceRows
         .filter((r) => r.label.trim() && Number(r.amount) > 0)
+        .reduce((s, r) => s + (Number(r.amount) || 0), 0) +
+      priorPeriodRows
+        .filter(
+          (r) => /^\d{4}-\d{2}$/.test(r.sourceYearMonth.trim()) && r.label.trim() && Number(r.amount) > 0,
+        )
         .reduce((s, r) => s + (Number(r.amount) || 0), 0),
-    [allowanceRows],
+    [allowanceRows, priorPeriodRows],
   );
 
   /** Gross จากตาราง + เบี้ยเลี้ยง (สอดคล้องช่องแรก — ไม่อิง snapshot งวด) */
@@ -564,6 +634,15 @@ export default function PayrollBatchWorkerLinePage({
       const allowanceItems = allowanceRows
         .filter((r) => r.label.trim() && Number(r.amount) > 0)
         .map((r) => ({ label: r.label.trim(), amount: Number(r.amount) }));
+      const priorPeriodAllowanceItems = priorPeriodRows
+        .filter(
+          (r) => /^\d{4}-\d{2}$/.test(r.sourceYearMonth.trim()) && r.label.trim() && Number(r.amount) > 0,
+        )
+        .map((r) => ({
+          sourceYearMonth: r.sourceYearMonth.trim(),
+          label: r.label.trim(),
+          amount: Number(r.amount),
+        }));
       const deductionItems = deductionRows
         .filter((r) => r.label.trim() && Number(r.amount) > 0)
         .map((r) => ({ label: r.label.trim(), amount: Number(r.amount) }));
@@ -575,6 +654,7 @@ export default function PayrollBatchWorkerLinePage({
           : null;
       await svc.applyWorkerLineHrAdjustments(batchId, workerId, currentUser as User, {
         allowanceItems,
+        priorPeriodAllowanceItems,
         deductionItems,
         workerPitMode,
         pitWithholdingOverride:
@@ -609,6 +689,7 @@ export default function PayrollBatchWorkerLinePage({
     batchId,
     workerId,
     allowanceRows,
+    priorPeriodRows,
     deductionRows,
     workerPitMode,
     pitManualBaht,
@@ -921,6 +1002,96 @@ export default function PayrollBatchWorkerLinePage({
                     : null}
               </p>
             )}
+
+            <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50/60 p-4">
+              <div>
+                <Label className="font-bold text-amber-950">รายได้ย้อนหลัง (งวดที่ล็อคแล้ว) (+)</Label>
+                <p className="text-xs text-amber-900/80 mt-1 leading-snug">
+                  ใช้เมื่อ timesheet เดือนก่อนปิด payroll แล้ว แต่ต้องจ่าย OT / M1 / standby เพิ่มในงวดนี้ —
+                  สลิปจะแสดง «ส่วนเพิ่มจากงวด …» แยกจากรายได้งวดปัจจุบัน · ไม่เกี่ยวกับใบแจ้งหนี้ลูกค้า (Trip/Monthly)
+                </p>
+              </div>
+              {priorPeriodRows.map((row, i) => (
+                <div key={i} className="flex flex-wrap gap-2 items-end">
+                  <div className="w-36">
+                    <Label className="text-[11px] text-muted-foreground">งวดต้นทาง</Label>
+                    <Input
+                      type="month"
+                      value={row.sourceYearMonth}
+                      onChange={(e) => {
+                        const next = [...priorPeriodRows];
+                        next[i] = { ...next[i], sourceYearMonth: e.target.value };
+                        setPriorPeriodRows(next);
+                      }}
+                      disabled={!canSaveAdjustments}
+                    />
+                  </div>
+                  <div className="flex-1 min-w-[140px]">
+                    <Label className="text-[11px] text-muted-foreground">รายการ</Label>
+                    <Input
+                      placeholder="เช่น OT 29–31 พ.ค."
+                      value={row.label}
+                      onChange={(e) => {
+                        const next = [...priorPeriodRows];
+                        next[i] = { ...next[i], label: e.target.value };
+                        setPriorPeriodRows(next);
+                      }}
+                      disabled={!canSaveAdjustments}
+                    />
+                  </div>
+                  <div className="w-32">
+                    <Label className="text-[11px] text-muted-foreground">บาท</Label>
+                    <Input
+                      type="number"
+                      placeholder="บาท"
+                      value={row.amount}
+                      onChange={(e) => {
+                        const next = [...priorPeriodRows];
+                        next[i] = { ...next[i], amount: e.target.value };
+                        setPriorPeriodRows(next);
+                      }}
+                      disabled={!canSaveAdjustments}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    disabled={!canSaveAdjustments}
+                    onClick={() => setPriorPeriodRows((rows) => rows.filter((_, j) => j !== i))}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!canSaveAdjustments || retroImportBusy || !payrollApplyYearMonth}
+                onClick={() => void handleImportRetroAdjustments()}
+              >
+                {retroImportBusy ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4 mr-1" />
+                )}
+                ดึงจากแก้ไขย้อนหลัง timesheet
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={!canSaveAdjustments}
+                onClick={() =>
+                  setPriorPeriodRows((r) => [...r, { sourceYearMonth: '', label: '', amount: '' }])
+                }
+              >
+                <Plus className="h-4 w-4 mr-1" /> เพิ่มรายการย้อนหลัง
+              </Button>
+            </div>
+
+            <Separator />
 
             <div className="space-y-3">
               <Label className="font-bold">เบี้ยเลี้ยง / รายได้พิเศษ (+)</Label>

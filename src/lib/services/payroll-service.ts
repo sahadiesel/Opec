@@ -48,6 +48,11 @@ import {
   canHandoffWorkerPayrollToAccounting,
   canPreparePayroll,
 } from '@/lib/permissions';
+import {
+  normalizePriorPeriodAllowanceItems,
+  sumPriorPeriodAllowances,
+  sumRegularAllowances,
+} from '@/lib/payroll/prior-period-allowance';
 
 /** Input สำหรับปรับยอดรายคนงวดออฟฟิศ / ผู้บริหาร */
 export type ApplyOfficeLineHrAdjustmentsInput = {
@@ -1398,12 +1403,17 @@ export class PayrollService {
       label: String(x.label || '').trim(),
       amount: Math.max(0, Number(x.amount) || 0),
     }));
+    const priorPeriodAllowanceItems = (hrStored?.priorPeriodAllowanceItems ?? []).map((x) => ({
+      sourceYearMonth: String(x.sourceYearMonth || '').trim(),
+      label: String(x.label || '').trim(),
+      amount: Math.max(0, Number(x.amount) || 0),
+    }));
     const deductionItems = (hrStored?.deductionItems ?? []).map((x) => ({
       label: String(x.label || '').trim(),
       amount: Math.max(0, Number(x.amount) || 0),
     }));
 
-    const allowanceTotal = allowanceItems.reduce((s, x) => s + x.amount, 0);
+    const allowanceTotal = sumRegularAllowances(allowanceItems) + sumPriorPeriodAllowances(priorPeriodAllowanceItems);
     const effectiveGross = Math.max(0, workerGross + allowanceTotal);
 
     const rateSnap = d8Line.snapshot.rate;
@@ -1487,6 +1497,7 @@ export class PayrollService {
         : null;
     const hrLineAdjustments: HrPayrollLineAdjustments = {
       allowanceItems,
+      priorPeriodAllowanceItems: priorPeriodAllowanceItems.length ? priorPeriodAllowanceItems : undefined,
       deductionItems,
       workerPitMode: mode,
       pitAutoSalaryBaseBaht:
@@ -1572,6 +1583,7 @@ export class PayrollService {
     user: User,
     input: {
       allowanceItems: Array<{ label: string; amount: number }>;
+      priorPeriodAllowanceItems?: Array<{ sourceYearMonth: string; label: string; amount: number }>;
       deductionItems: Array<{ label: string; amount: number }>;
       /**
        * รูปแบบ ภงด.1 — ถ้าไม่ส่ง จะอนุมาจาก pitWithholdingOverride / maxMarginal (API เก่า)
@@ -1624,7 +1636,13 @@ export class PayrollService {
     const policies = await loadPayrollPoliciesFromFirestore(this.db);
     const resolved = resolvePayrollPoliciesForDate(asOf, policies, 'worker');
 
-    const allowanceTotal = input.allowanceItems.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+    const allowanceItems = input.allowanceItems.map((x) => ({
+      label: String(x.label || '').trim(),
+      amount: Math.max(0, Number(x.amount) || 0),
+    }));
+    const priorPeriodAllowanceItems = normalizePriorPeriodAllowanceItems(input.priorPeriodAllowanceItems);
+    const allowanceTotal =
+      sumRegularAllowances(allowanceItems) + sumPriorPeriodAllowances(priorPeriodAllowanceItems);
     const effectiveGross = Math.max(0, line.grossAmount + allowanceTotal);
 
     const rateSummary = line.d8Snapshot?.rate;
@@ -1701,6 +1719,7 @@ export class PayrollService {
         : null;
     const hrLineAdjustments = {
       allowanceItems: input.allowanceItems,
+      ...(priorPeriodAllowanceItems.length ? { priorPeriodAllowanceItems } : {}),
       deductionItems: input.deductionItems,
       workerPitMode: mode,
       pitAutoSalaryBaseBaht: mode === 'auto_salary_base' ? Math.max(0, Number(input.pitAutoSalaryBaseBaht) || 0) : null,

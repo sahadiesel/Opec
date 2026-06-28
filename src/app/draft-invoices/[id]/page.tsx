@@ -71,8 +71,8 @@ import {
   buildCommercialInvoicePrintHtml,
   openStandardPrintWindow,
 } from '@/lib/documents/standard-document-print';
-import { translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
-import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
+import { translateCommercialLineDescriptionToEn, translateCommercialWaveCodeToEn } from '@/lib/documents/commercial-line-description-en';
+import { printT, type PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { createTaxInvoiceDraftFromIssuedCommercial } from '@/lib/services/tax-invoice-from-commercial-service';
@@ -262,6 +262,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
   const docEn = printLocale === 'en';
   const moneyLoc = docEn ? 'en-GB' : 'th-TH';
+  const docL = printLocale as PrintDocumentLocale;
 
   const lineDescription = useMemo(() => {
     return (raw: string, workerName?: string) => {
@@ -270,6 +271,18 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       return base;
     };
   }, [printLocale]);
+
+  const waveDisplay = useMemo(() => {
+    const raw =
+      invoice?.waveId === QUOTATION_PO_WAVE_PLACEHOLDER
+        ? docEn
+          ? 'Quotation (no Wave / timesheet)'
+          : 'ใบเสนอราคา (ไม่มี Wave / timesheet)'
+        : invoice?.waveId === PO_MONTH_WAVE_PLACEHOLDER
+          ? invoice.waveCode || (docEn ? 'PO+month (all waves)' : 'PO+งวด (รวม wave)')
+          : invoice?.waveCode || '—';
+    return docEn ? translateCommercialWaveCodeToEn(raw) : raw;
+  }, [invoice?.waveCode, invoice?.waveId, docEn]);
 
   const lineCols = useMemo(() => {
     const L = printLocale as PrintDocumentLocale;
@@ -321,10 +334,29 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     );
   }
 
-  if (isLoading || !invoice) {
+  if (isLoading) {
     return (
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="p-6">กำลังโหลด…</div>
+      </AppShell>
+    );
+  }
+
+  if (!invoice) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="p-6 space-y-4">
+          <p className="text-muted-foreground">ไม่พบใบแจ้งหนี้ — อาจถูกลบหรือยกเลิกแล้ว</p>
+          <Button variant="outline" asChild>
+            <Link href="/draft-invoices">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              กลับรายการใบแจ้งหนี้
+            </Link>
+          </Button>
+          <Button variant="outline" asChild>
+            <Link href="/accounting/trip-billing">ไปหน้าทำใบแจ้งหนี้แบบ Trip</Link>
+          </Button>
+        </div>
       </AppShell>
     );
   }
@@ -557,7 +589,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               {statusBadge(invoice)}
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              ใบแจ้งหนี้เรียกเก็บ (ไม่ใช่ใบกำกับภาษี)
+              {printT(docL, 'commercialNotTaxInvoice')}
             </p>
           </div>
           <div className="print:hidden flex flex-wrap items-center gap-2 shrink-0">
@@ -755,24 +787,30 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
         <Card>
           <CardHeader>
-            <CardTitle>หัวเอกสาร</CardTitle>
-            <CardDescription>อ้างอิง PO / Wave (หรือ PO ใบเสนอราคา) และช่วงวางบิล</CardDescription>
+            <CardTitle>{docEn ? 'Document header' : 'หัวเอกสาร'}</CardTitle>
+            <CardDescription>
+              {docEn
+                ? 'PO / Wave reference and billing period'
+                : 'อ้างอิง PO / Wave (หรือ PO ใบเสนอราคา) และช่วงวางบิล'}
+            </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2 text-sm">
             <div className="flex items-start gap-2">
               <Building2 className="h-4 w-4 mt-0.5 text-muted-foreground" />
               <div>
-                <div className="text-muted-foreground text-xs">ลูกค้า</div>
+                <div className="text-muted-foreground text-xs">{printT(docL, 'customerInfo')}</div>
                 <div className="font-medium">{customer?.name ?? invoice.customerId}</div>
               </div>
             </div>
             <div>
-              <div className="text-muted-foreground text-xs">วันที่เอกสาร</div>
+              <div className="text-muted-foreground text-xs">{printT(docL, 'docDate')}</div>
               <div>{formatStoredDateThaiBE(invoice.issueDate)}</div>
             </div>
             <div>
               <div className="text-muted-foreground text-xs">
-                {invoice.waveId === QUOTATION_PO_WAVE_PLACEHOLDER ? 'ช่วงวางบิล' : 'ช่วง timesheet'}
+                {invoice.waveId === QUOTATION_PO_WAVE_PLACEHOLDER
+                  ? printT(docL, 'billingPeriod')
+                  : printT(docL, 'timesheetPeriod')}
               </div>
               <div>
                 {formatStoredDateThaiBE(invoice.periodStart)} — {formatStoredDateThaiBE(invoice.periodEnd)}
@@ -781,13 +819,12 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
             <div>
               <div className="text-muted-foreground text-xs">Wave</div>
               <div className="font-mono">
-                {invoice.waveId === QUOTATION_PO_WAVE_PLACEHOLDER ? (
-                  <span>ใบเสนอราคา (ไม่มี Wave / timesheet)</span>
-                ) : invoice.waveId === PO_MONTH_WAVE_PLACEHOLDER ? (
-                  <span>{invoice.waveCode || 'PO+งวด (รวม wave)'}</span>
+                {invoice.waveId === QUOTATION_PO_WAVE_PLACEHOLDER ||
+                invoice.waveId === PO_MONTH_WAVE_PLACEHOLDER ? (
+                  <span>{waveDisplay}</span>
                 ) : (
                   <>
-                    <span className="font-mono">{invoice.waveCode || '—'}</span>
+                    <span className="font-mono">{waveDisplay}</span>
                     <span className="text-muted-foreground text-xs ml-2 font-mono">
                       ({invoice.waveId.slice(0, 10)}…)
                     </span>
@@ -802,7 +839,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               </Link>
             </div>
             <div>
-              <div className="text-muted-foreground text-xs">ผู้สร้าง</div>
+              <div className="text-muted-foreground text-xs">{docEn ? 'Created by' : 'ผู้สร้าง'}</div>
               <div>{invoice.createdByName}</div>
             </div>
           </CardContent>
@@ -935,11 +972,14 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
         <Card>
           <CardHeader>
             <CardTitle>
-              รายการ (
-              {invoice.status === 'DRAFT' && canAct ? draftLines.length : (invoice.lines?.length ?? 0)} แถว)
+              {docEn ? 'Line items' : 'รายการ'} (
+              {invoice.status === 'DRAFT' && canAct ? draftLines.length : (invoice.lines?.length ?? 0)}{' '}
+              {docEn ? 'rows' : 'แถว'})
             </CardTitle>
             <CardDescription>
-              จาก timesheet ที่พร้อมวางบิล — รวม {invoice.timesheetCount ?? '—'} แถว timesheet
+              {docEn
+                ? `From billable timesheets — ${invoice.timesheetCount ?? '—'} timesheet row(s) total`
+                : `จาก timesheet ที่พร้อมวางบิล — รวม ${invoice.timesheetCount ?? '—'} แถว timesheet`}
               {invoice.waveId === PO_MONTH_WAVE_PLACEHOLDER && (
                 <span className="block mt-2 rounded-md border border-amber-200 bg-amber-50/90 px-3 py-2 text-sm text-amber-950">
                   <strong className="font-semibold">หมายเหตุ PO+งวด (รวมทุก wave):</strong> ยอดต่อตำแหน่งรวมจาก timesheet ทุก wave / mobilization ใต้ PO ในงวดวันที่เดียวกัน
@@ -970,27 +1010,26 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               <TableBody>
                 {(invoice.status === 'DRAFT' && canAct ? draftLines : invoice.lines ?? []).map((line) => {
                   const isManualLine = line.lineSource === 'manual';
+                  const displayDesc = lineDescription(line.description || '—', line.workerName);
+                  const showDescInput =
+                    invoice.status === 'DRAFT' && canAct && (!docEn || isManualLine);
                   return (
                   <TableRow key={line.id}>
                     <TableCell className="pl-6 max-w-md align-top">
-                      {invoice.status === 'DRAFT' && canAct ? (
-                        <>
-                          <Input
-                            className="font-medium text-sm h-9"
-                            value={line.description}
-                            onChange={(e) => patchDraftLine(line.id, { description: e.target.value })}
-                          />
-                          {docEn && !isManualLine && (
-                            <div className="text-xs text-muted-foreground mt-1 leading-snug">
-                              {lineDescription(line.description || '—', line.workerName)}
-                            </div>
-                          )}
-                        </>
+                      {showDescInput ? (
+                        <Input
+                          className="font-medium text-sm h-9"
+                          value={line.description}
+                          onChange={(e) => patchDraftLine(line.id, { description: e.target.value })}
+                        />
                       ) : (
-                        <div className="font-medium text-sm">
-                          {lineDescription(line.description || '—', line.workerName)}
-                        </div>
+                        <div className="font-medium text-sm leading-snug">{displayDesc}</div>
                       )}
+                      {invoice.status === 'DRAFT' && canAct && docEn && !isManualLine ? (
+                        <p className="text-xs text-muted-foreground mt-1 leading-snug">
+                          Switch to <strong>ไทย</strong> to edit auto-generated line text.
+                        </p>
+                      ) : null}
                       {isManualLine && (
                         <div className="text-xs text-muted-foreground mt-0.5">
                           {docEn ? 'Manual adjustment' : 'ปรับยอดด้วยมือ'}
@@ -1074,7 +1113,9 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 <div className="text-right space-y-1 w-full">
                   <div>
                     <span className="text-muted-foreground">
-                      {docEn ? `Before VAT (${invoice.vatPercent}%)` : `ยอดก่อน VAT (${invoice.vatPercent}%)`}{' '}
+                      {docEn
+                        ? `${printT(docL, 'subtotal')} (${invoice.vatPercent}% VAT)`
+                        : `ยอดก่อน VAT (${invoice.vatPercent}%)`}{' '}
                     </span>
                     <span className="font-mono font-medium">
                       ฿
@@ -1085,7 +1126,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                     </span>
                   </div>
                   <div>
-                    <span className="text-muted-foreground">VAT </span>
+                    <span className="text-muted-foreground">{printT(docL, 'vat')} </span>
                     <span className="font-mono font-medium">
                       ฿
                       {(invoice.status === 'DRAFT' && canAct ? previewTotals.vat : invoice.vatAmount).toLocaleString(
@@ -1095,7 +1136,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                     </span>
                   </div>
                   <div className="text-lg font-bold text-primary pt-2">
-                    {docEn ? 'Total' : 'รวม'} ฿
+                    {printT(docL, 'grandTotal')} ฿
                     {(invoice.status === 'DRAFT' && canAct ? previewTotals.total : invoice.totalAmount).toLocaleString(
                       moneyLoc,
                       { minimumFractionDigits: 2 },

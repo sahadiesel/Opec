@@ -28,11 +28,16 @@ import type {
   WaveMonthTimesheetReview,
 } from '@/lib/types';
 import { resolveBillingMode } from '@/lib/commercial/resolve-billing-mode';
+import { sellSnapshotForWorkMode } from '@/lib/commercial/position-rate-sell';
 import { resolveWaveMonthPeriodBounds } from '@/lib/timesheet/wave-month-payroll-bridge';
 import { resolvePoMonthPeriodBounds } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { generateBillingLines, generateBillingLinesForMobCycles } from '@/lib/services/billing-line-generator';
-import { markTripBatchInvoiced } from '@/lib/services/trip-billing-service';
+import {
+  markTripBatchInvoiced,
+  releaseTripBillingBatchAfterInvoiceRemoved,
+} from '@/lib/services/trip-billing-service';
+import { resolveTripMobDemobLocationChoice } from '@/lib/services/trip-mob-demob-billing';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { writeAuditLog } from '@/lib/services/audit-service';
@@ -63,6 +68,18 @@ function newLineId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
     : `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function isTripCommercialInvoice(cur: Pick<
+  CommercialInvoice,
+  'billingMode' | 'waveId' | 'sourceTripBillingBatchId' | 'memberMobCycleIds'
+>): boolean {
+  return (
+    cur.billingMode === 'TRIP' ||
+    cur.waveId === TRIP_BILLING_WAVE_PLACEHOLDER ||
+    Boolean(cur.sourceTripBillingBatchId) ||
+    (cur.memberMobCycleIds?.length ?? 0) > 0
+  );
 }
 
 /** VAT สำหรับใบแจ้งหนี้เรียกเก็บ — อ้างอิงสัญญาหลักก่อน แล้วจึงใบเสนอราคาที่ระบุ แล้วจึง quotation ของลูกค้า */
@@ -283,7 +300,9 @@ export async function createCommercialDraftFromQuotationPoLines(
   if (activePoLines.length > 0) {
     lines = activePoLines.map((line, idx) => {
       const qty = Math.max(0, Number(line.quantity) || 0);
-      const unit = roundMoney(Number(line.sellRateSnapshot) || 0);
+      const unit = roundMoney(
+        sellSnapshotForWorkMode(line, po.poWorkMode ?? 'OFFSHORE'),
+      );
       const amount = roundMoney(qty * unit);
       const loc = (line.workLocation || '').trim();
       const unitLabel = line.billingUnitSnapshot || 'unit';
@@ -640,11 +659,38 @@ export async function createCommercialDraftInvoiceForTripBatch(
   batch: TripBillingBatch,
   actor: User,
   issueDate?: string,
+  options?: { tripMobDemobLocationKey?: string },
 ): Promise<{ id: string; invoiceNo: string }> {
   const periodStart = batch.periodStart;
   const periodEnd = batch.periodEnd;
   if (!periodEnd) {
     throw new Error('ชุดวางบิลยังไม่ครบ D1 ทุกคน — ไม่สามารถออก invoice');
+  }
+
+  const poSnapEarly = await getDoc(doc(db, 'purchase_orders', batch.poId));
+  if (!poSnapEarly.exists()) throw new Error('ไม่พบ PO');
+  const poEarly = { ...poSnapEarly.data(), id: poSnapEarly.id } as PurchaseOrder;
+
+  let tripMobDemobLocationKey = (options?.tripMobDemobLocationKey || '').trim() || undefined;
+  if (poEarly.contractId) {
+    const mcSnap = await getDoc(doc(db, 'main_contracts', poEarly.contractId));
+    if (mcSnap.exists()) {
+      const mc = mcSnap.data() as MainContract;
+      if (mc.tripBillMobDemobFee) {
+        const choice = await resolveTripMobDemobLocationChoice(
+          db,
+          poEarly.contractId,
+          batch.memberMobCycleIds,
+        );
+        if (choice.kind === 'error') throw new Error(choice.message);
+        if (choice.kind === 'prompt' && !tripMobDemobLocationKey) {
+          throw new Error('ต้องเลือกจุด Mob/Demob ก่อนสร้าง invoice');
+        }
+        if (!tripMobDemobLocationKey && choice.kind === 'auto') {
+          tripMobDemobLocationKey = choice.mobLocationKey;
+        }
+      }
+    }
   }
 
   const gen = await generateBillingLinesForMobCycles(
@@ -653,11 +699,20 @@ export async function createCommercialDraftInvoiceForTripBatch(
     batch.memberMobCycleIds,
     periodStart,
     periodEnd,
+    tripMobDemobLocationKey ? { tripMobDemobLocationKey } : undefined,
   );
   if (gen.lines.length === 0) {
     throw new Error(
       'ไม่มีรายการจาก timesheet — ตรวจว่าอนุมัติชุดวางบิลแล้วและ timesheet มี readyForBilling',
     );
+  }
+  if (tripMobDemobLocationKey) {
+    const hasMobLine = gen.lines.some((l) => l.eventType === 'trip_mob_demob_round_trip');
+    if (!hasMobLine) {
+      throw new Error(
+        'สัญญากำหนดให้คิดค่า MOB แต่ไม่สร้างบรรทัดได้ — ตรวจอัตรา Mob/Demob ในตารางราคาสัญญา',
+      );
+    }
   }
 
   const poSnap = await getDoc(doc(db, 'purchase_orders', batch.poId));
@@ -719,6 +774,7 @@ export async function createCommercialDraftInvoiceForTripBatch(
     sourceTripBillingBatchId: batch.id,
     memberMobCycleIds: batch.memberMobCycleIds,
     memberWorkerNames: batch.memberWorkerNames,
+    ...(tripMobDemobLocationKey ? { tripMobDemobLocationKey } : {}),
     createdAt: now,
     createdByUid: actor.id,
     createdByName: actor.displayName,
@@ -749,6 +805,7 @@ export async function ensureCommercialDraftInvoiceForTripBatch(
   db: Firestore,
   batch: TripBillingBatch,
   actor: User,
+  options?: { tripMobDemobLocationKey?: string },
 ): Promise<{ ok: true; id: string; invoiceNo: string } | { ok: false; reason: string }> {
   if (batch.status !== 'approved') {
     return { ok: false, reason: 'ชุดวางบิลยังไม่ได้อนุมัติ — กด «อนุมัติวางบิล» ก่อนสร้าง invoice' };
@@ -758,7 +815,13 @@ export async function ensureCommercialDraftInvoiceForTripBatch(
     return { ok: false, reason: `มีใบแจ้งหนี้แล้ว (${existing.invoiceNo || existing.id})` };
   }
   try {
-    const { id, invoiceNo } = await createCommercialDraftInvoiceForTripBatch(db, batch, actor);
+    const { id, invoiceNo } = await createCommercialDraftInvoiceForTripBatch(
+      db,
+      batch,
+      actor,
+      undefined,
+      options,
+    );
     return { ok: true, id, invoiceNo };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -1116,6 +1179,10 @@ export async function voidCommercialInvoice(
     linkedIds: [cur.customerId, cur.poId, cur.waveId],
     afterSummary: 'ยกเลิกใบแจ้งหนี้ (รอสร้างใหม่จากงวด / PO)',
   });
+
+  if (cur.sourceTripBillingBatchId) {
+    await releaseTripBillingBatchAfterInvoiceRemoved(db, cur.sourceTripBillingBatchId);
+  }
 }
 
 /** ลบเอกสารถาวรจาก Firestore — กฎ: admin ได้ทุกสถานะ, ผู้ใช้ภายในอื่นได้เฉพาะ DRAFT (ดู firestore.rules) */
@@ -1128,6 +1195,10 @@ export async function deleteCommercialInvoice(
   const snap = await getDoc(ref);
   if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
   const cur = snap.data() as CommercialInvoice;
+
+  if (cur.sourceTripBillingBatchId) {
+    await releaseTripBillingBatchAfterInvoiceRemoved(db, cur.sourceTripBillingBatchId);
+  }
 
   await deleteDoc(ref);
 
@@ -1166,18 +1237,67 @@ export async function regenerateCommercialDraftInvoiceFromTimesheets(
   }
 
   const isPoMonth = cur.waveId === PO_MONTH_WAVE_PLACEHOLDER;
-  const gen = await generateBillingLines(
-    db,
-    cur.poId,
-    cur.periodStart,
-    cur.periodEnd,
-    isPoMonth ? undefined : cur.waveId,
-  );
+  const isTrip = isTripCommercialInvoice(cur);
+
+  let gen: Awaited<ReturnType<typeof generateBillingLines>>;
+  let tripMobDemobLocationKey = (cur.tripMobDemobLocationKey || '').trim() || undefined;
+
+  if (isTrip) {
+    let mobCycleIds = cur.memberMobCycleIds ?? [];
+    if (mobCycleIds.length === 0 && cur.sourceTripBillingBatchId) {
+      const batchSnap = await getDoc(
+        doc(db, 'trip_billing_batches', cur.sourceTripBillingBatchId),
+      );
+      if (batchSnap.exists()) {
+        mobCycleIds = (batchSnap.data() as TripBillingBatch).memberMobCycleIds ?? [];
+      }
+    }
+    if (mobCycleIds.length === 0) {
+      throw new Error(
+        'ใบ Trip billing ไม่มี memberMobCycleIds — ยกเลิกแล้วสร้าง invoice ใหม่จากหน้า Trip Billing',
+      );
+    }
+    const poSnap = await getDoc(doc(db, 'purchase_orders', cur.poId));
+    const contractId = poSnap.exists()
+      ? String((poSnap.data() as PurchaseOrder).contractId || '').trim()
+      : '';
+    if (contractId && !tripMobDemobLocationKey) {
+      const choice = await resolveTripMobDemobLocationChoice(db, contractId, mobCycleIds);
+      if (choice.kind === 'auto') {
+        tripMobDemobLocationKey = choice.mobLocationKey;
+      } else if (choice.kind === 'error') {
+        throw new Error(choice.message);
+      } else if (choice.kind === 'prompt') {
+        throw new Error(
+          'สัญญามีหลายจุด Mob/Demob — ยกเลิกใบนี้แล้วสร้างใหม่จาก Trip Billing เพื่อเลือกจุดค่า MOB',
+        );
+      }
+    }
+    gen = await generateBillingLinesForMobCycles(
+      db,
+      cur.poId,
+      mobCycleIds,
+      cur.periodStart,
+      cur.periodEnd,
+      tripMobDemobLocationKey ? { tripMobDemobLocationKey } : undefined,
+    );
+  } else {
+    gen = await generateBillingLines(
+      db,
+      cur.poId,
+      cur.periodStart,
+      cur.periodEnd,
+      isPoMonth ? undefined : cur.waveId,
+    );
+  }
+
   if (gen.lines.length === 0) {
     throw new Error(
-      isPoMonth
-        ? 'ไม่มีรายการจาก timesheet — ตรวจช่วงงวด / readyForBilling ของ timesheet ใต้ PO นี้ (ทุก wave)'
-        : 'ไม่มีรายการจาก timesheet — ตรวจช่วงวันที่ / wave / สถานะ readyForBilling',
+      isTrip
+        ? 'ไม่มีรายการจาก timesheet — ตรวจ mob cycle / readyForBilling / อนุมัติชุดวางบิล'
+        : isPoMonth
+          ? 'ไม่มีรายการจาก timesheet — ตรวจช่วงงวด / readyForBilling ของ timesheet ใต้ PO นี้ (ทุก wave)'
+          : 'ไม่มีรายการจาก timesheet — ตรวจช่วงวันที่ / wave / สถานะ readyForBilling',
     );
   }
 
@@ -1217,6 +1337,25 @@ export async function regenerateCommercialDraftInvoiceFromTimesheets(
   };
   if (isPoMonth) {
     payload.waveCode = 'PO+งวด (รวม wave)';
+  }
+  if (isTrip) {
+    if (tripMobDemobLocationKey) {
+      payload.tripMobDemobLocationKey = tripMobDemobLocationKey;
+    }
+    const mobIds = cur.memberMobCycleIds?.length
+      ? cur.memberMobCycleIds
+      : undefined;
+    if (!mobIds?.length && cur.sourceTripBillingBatchId) {
+      const batchSnap = await getDoc(
+        doc(db, 'trip_billing_batches', cur.sourceTripBillingBatchId),
+      );
+      if (batchSnap.exists()) {
+        const fromBatch = (batchSnap.data() as TripBillingBatch).memberMobCycleIds ?? [];
+        if (fromBatch.length > 0) {
+          payload.memberMobCycleIds = fromBatch;
+        }
+      }
+    }
   }
 
   await updateDoc(ref, sanitizeFirestorePayload(payload) as Record<string, unknown>);

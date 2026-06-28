@@ -315,6 +315,7 @@ const COLLECTIONS_REQUIRING_PRESERVED_LOGIC: readonly string[] = [
   'workers/{workerId}',
   'daily_timesheets/{id}',
   'payroll_correction_requests/{id}',
+  'timesheet_retro_adjustments/{id}',
   'leave_requests/{id}',
 ];
 

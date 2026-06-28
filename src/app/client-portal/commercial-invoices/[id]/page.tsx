@@ -28,7 +28,7 @@ import { uploadCommercialPaymentProof } from '@/lib/storage/commercial-payment-p
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { DisputeService } from '@/lib/services/dispute-service';
 import { buildCommercialInvoicePrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
-import { translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
+import { translateCommercialLineDescriptionToEn, translateCommercialWaveCodeToEn } from '@/lib/documents/commercial-line-description-en';
 import { Separator } from '@/components/ui/separator';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
@@ -332,7 +332,10 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
           </p>
           {invoice.waveCode && (
             <p className="text-muted-foreground">
-              Wave: <span className="font-mono">{invoice.waveCode}</span>
+              Wave:{' '}
+              <span className="font-mono">
+                {en ? translateCommercialWaveCodeToEn(invoice.waveCode) : invoice.waveCode}
+              </span>
             </p>
           )}
         </CardContent>

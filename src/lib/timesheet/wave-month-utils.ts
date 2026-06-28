@@ -240,6 +240,144 @@ export function sumOtHoursForWaveMonthRow(
   return sum;
 }
 
+/** ชม. OT ที่เพิ่มจากแก้ไขย้อนหลัง (delta) */
+export function retroAddedOtHours(
+  adjustments: readonly { addedOt15Hours?: number; addedOt20Hours?: number; addedOt30Hours?: number; status?: string }[],
+): number {
+  return adjustments
+    .filter((a) => a.status !== 'void')
+    .reduce(
+      (s, a) =>
+        s +
+        Math.max(0, Number(a.addedOt15Hours) || 0) +
+        Math.max(0, Number(a.addedOt20Hours) || 0) +
+        Math.max(0, Number(a.addedOt30Hours) || 0),
+      0,
+    );
+}
+
+export function retroAddedStandbyHours(
+  adjustments: readonly { addedStandbyHours?: number; status?: string }[],
+): number {
+  return adjustments
+    .filter((a) => a.status !== 'void')
+    .reduce((s, a) => s + Math.max(0, Number(a.addedStandbyHours) || 0), 0);
+}
+
+export function retroAddedM1Trips(
+  adjustments: readonly { addedM1Trips?: number; status?: string }[],
+): number {
+  return adjustments
+    .filter((a) => a.status !== 'void')
+    .reduce((s, a) => s + Math.max(0, Number(a.addedM1Trips) || 0), 0);
+}
+
+export function retroAddedD1Trips(
+  adjustments: readonly { addedD1Trips?: number; status?: string }[],
+): number {
+  return adjustments
+    .filter((a) => a.status !== 'void')
+    .reduce((s, a) => s + Math.max(0, Number(a.addedD1Trips) || 0), 0);
+}
+
+export function retroCellKey(assignmentId: string, dateYmd: string): string {
+  return `${assignmentId}|${dateYmd}`;
+}
+
+/** มีใบงาน LOCKED ในเดือนนี้ = payroll ปิดงวดแล้วอย่างน้อยบางส่วน */
+export function monthHasPayrollLockedTimesheets(
+  monthYm: string,
+  sheets: readonly DailyTimesheet[],
+): boolean {
+  const ym = monthYm.trim();
+  if (!/^\d{4}-\d{2}$/.test(ym)) return false;
+  return sheets.some(
+    (ts) => String(ts.date || '').startsWith(ym) && ts.status === 'LOCKED',
+  );
+}
+
+/** แก้ไขในเดือนนี้ต้องผ่าน retro เท่านั้น — ไม่แก้ daily_timesheets ตรง */
+export function isRetroOnlyPayrollMonth(
+  monthYm: string,
+  monthSheets: readonly DailyTimesheet[],
+  poMonthReviews: readonly { status?: string }[] | undefined,
+): boolean {
+  if (monthHasPayrollLockedTimesheets(monthYm, monthSheets)) return true;
+  for (const r of poMonthReviews ?? []) {
+    if (r.status === 'approved' || r.status === 'entry_locked') return true;
+  }
+  return false;
+}
+
+export function hasActiveRetroAdjustments(
+  adjustments: readonly { status?: string }[] | undefined,
+): boolean {
+  return (adjustments ?? []).some((a) => a.status !== 'void');
+}
+
+/**
+ * แสดงเซลล์รายเดือนรวมแก้ไขย้อนหลัง — ต่อท้าย † เมื่อมีการแก้ไข
+ */
+export function timesheetWaveMonthCellDisplayWithRetro(
+  ts: DailyTimesheet | undefined,
+  retroAdjustments: readonly {
+    addedOt15Hours?: number;
+    addedOt20Hours?: number;
+    addedOt30Hours?: number;
+    addedStandbyHours?: number;
+    addedM1Trips?: number;
+    addedD1Trips?: number;
+    status?: string;
+  }[] = [],
+): string {
+  const activeRetro = retroAdjustments.filter((a) => a.status !== 'void');
+  if (!ts) {
+    const m1 = retroAddedM1Trips(activeRetro);
+    const d1 = retroAddedD1Trips(activeRetro);
+    const sb = retroAddedStandbyHours(activeRetro);
+    if (m1 > 0) return m1 > 1 ? `M1+${m1}†` : 'M1†';
+    if (d1 > 0) return d1 > 1 ? `D1+${d1}†` : 'D1†';
+    if (sb > 0) return `SB+${sb}†`;
+    const ot = retroAddedOtHours(activeRetro);
+    if (ot > 0) return `W+${ot}†`;
+    return ' - ';
+  }
+  if (ts.eventType === 'unpaid_leave') return ' - ';
+  const abbr = timesheetEventAbbrev(ts.eventType);
+  const baseOt = otHoursCountedForWaveMonth(ts);
+  const retroOt = ts.eventType === 'work_day' ? retroAddedOtHours(activeRetro) : 0;
+  const retroSb =
+    ts.eventType === 'mobilization_day' ||
+    ts.eventType === 'demobilization_day' ||
+    ts.eventType === 'standby_day'
+      ? retroAddedStandbyHours(activeRetro)
+      : 0;
+  const retroM1 =
+    ts.eventType === 'mobilization_day' ? retroAddedM1Trips(activeRetro) : retroAddedM1Trips(activeRetro);
+  const retroD1 =
+    ts.eventType === 'demobilization_day' ? retroAddedD1Trips(activeRetro) : retroAddedD1Trips(activeRetro);
+  const ot = baseOt + retroOt;
+  const hasRetro = hasActiveRetroAdjustments(activeRetro);
+  let label: string;
+  if (ot > 0) {
+    const otLabel = Number.isInteger(ot) ? String(ot) : ot.toFixed(1);
+    label = `${abbr}+${otLabel}`;
+  } else if (retroM1 > 0) {
+    label = retroM1 > 1 ? `${abbr}+${retroM1}` : abbr;
+  } else if (retroD1 > 0) {
+    label = retroD1 > 1 ? `${abbr}+${retroD1}` : abbr;
+  } else if (retroSb > 0) {
+    label = `${abbr}+${retroSb}`;
+  } else {
+    label = abbr;
+  }
+  return hasRetro ? `${label}†` : label;
+}
+
+export function timesheetRetroCellRingClasses(hasRetro: boolean): string {
+  return hasRetro ? 'ring-2 ring-red-500/75 ring-offset-1' : '';
+}
+
 /**
  * จับคู่เซลล์รายเดือนกับ daily_timesheet — รองรับกรณี waveId ในเอกสารไม่ตรงกับแถว (เช่น บันทึกจาก wave อื่น/ข้อมูลเก่า)
  * ลำดับ: ตรงกุญแจ wave|คน ก่อน — จากนั้น PO scope (`po_ts_scope_<poId>` จากกระดาน PO) — แล้วจึงค้นตาม worker + วันที่ + assignment

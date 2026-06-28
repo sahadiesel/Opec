@@ -1,4 +1,5 @@
-import { jobModeSellLabel, sellSnapshotForWorkMode } from '@/lib/commercial/position-rate-sell';
+import { displayPoLineSellRateForWorkMode } from '@/lib/commercial/po-line-rate-snapshot';
+import { jobModeSellLabel } from '@/lib/commercial/position-rate-sell';
 import type { Assignment, JobMode, POLine, PurchaseOrder } from '@/lib/types';
 
 export function resolvePortalPoWorkMode(po: Pick<PurchaseOrder, 'poWorkMode'>): JobMode {
@@ -7,10 +8,10 @@ export function resolvePortalPoWorkMode(po: Pick<PurchaseOrder, 'poWorkMode'>): 
 
 /** ราคาขายต่อหน่วยตามโหมดงานของ PO (Onshore / Offshore) */
 export function resolvePortalPoLineSellRate(
-  line: Pick<POLine, 'sellRateSnapshot' | 'sellRateSnapshotOnshore' | 'sellRateSnapshotOffshore'>,
+  line: POLine,
   po: Pick<PurchaseOrder, 'poWorkMode'>,
 ): number {
-  return sellSnapshotForWorkMode(line, resolvePortalPoWorkMode(po));
+  return displayPoLineSellRateForWorkMode(line, resolvePortalPoWorkMode(po));
 }
 
 export function portalPoWorkModeLabel(mode: JobMode, locale: 'en' | 'th'): string {

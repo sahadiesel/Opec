@@ -40,6 +40,7 @@ import type {
   Wave,
   WaveMonthTimesheetReview,
   Worker,
+  TimesheetRetroAdjustment,
 } from '@/lib/types';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import { useToast } from '@/hooks/use-toast';
@@ -67,8 +68,23 @@ import {
   sumStandbyHoursForWaveMonthRow,
   sumOtHoursForWaveMonthRow,
   timesheetWaveMonthCellDisplay,
+  timesheetWaveMonthCellDisplayWithRetro,
   timesheetEventCellBadgeClasses,
+  timesheetRetroCellRingClasses,
+  hasActiveRetroAdjustments,
+  retroAddedOtHours,
+  retroAddedM1Trips as sumRetroAddedM1Trips,
+  retroAddedD1Trips as sumRetroAddedD1Trips,
+  retroCellKey,
+  isRetroOnlyPayrollMonth,
 } from '@/lib/timesheet/wave-month-utils';
+import { createTimesheetRetroAdjustment } from '@/lib/services/timesheet-retro-adjustment-service';
+import {
+  computeRetroAdjustmentPayFromFirestore,
+  retroContractRatesUrl,
+  RetroRateMatrixMissingError,
+  type RetroMissingRateInfo,
+} from '@/lib/payroll/retro-adjustment-pay';
 import { OPEN_WAVE_STATUSES_FOR_TIMESHEET } from '@/lib/constants/timesheet-wave';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import {
@@ -106,6 +122,18 @@ import {
 function ymNow(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function defaultApplyPayrollYmAfter(sourceYm: string): string {
+  const [y, m] = sourceYm.split('-').map(Number);
+  if (!y || !m) return ymNow();
+  let nm = m + 1;
+  let ny = y;
+  if (nm > 12) {
+    nm = 1;
+    ny += 1;
+  }
+  return `${ny}-${String(nm).padStart(2, '0')}`;
 }
 
 function chunkIds<T>(arr: T[], size: number): T[][] {
@@ -162,6 +190,58 @@ type CellEditContext = {
   timesheet: DailyTimesheet | undefined;
 };
 
+function isTimesheetPayrollLocked(ts: DailyTimesheet | undefined): boolean {
+  return (
+    !!ts?.status &&
+    ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED'].includes(ts.status as DailyTimesheetStatus)
+  );
+}
+
+function buildSyntheticTimesheetForRetro(input: {
+  workerId: string;
+  workerName: string;
+  assignment: Assignment;
+  wave: Wave;
+  po: PurchaseOrder | undefined;
+  cellDate: string;
+  existingTs?: DailyTimesheet;
+}): DailyTimesheet {
+  const { workerId, workerName, assignment, wave, po, cellDate, existingTs } = input;
+  const contractId = (assignment.contractId || po?.contractId || '').trim();
+  const poLineId = (assignment.poLineId || wave.poLineId || '').trim();
+  const positionId = (assignment.positionId || '').trim();
+  const id = `${workerId}_${assignment.id}_${cellDate}`;
+  const eventType = (existingTs?.eventType as RateConditionEventType) ?? 'mobilization_day';
+  return {
+    id,
+    workerId,
+    assignmentId: assignment.id,
+    date: cellDate,
+    eventType,
+    normalHours: existingTs?.normalHours ?? 12,
+    ot15Hours: existingTs?.ot15Hours ?? 0,
+    ot20Hours: 0,
+    ot30Hours: 0,
+    waveId: wave.id,
+    siteId: wave.id,
+    purchaseOrderId: assignment.poId || wave.poId,
+    poLineId,
+    contractId,
+    customerId: wave.customerId || '',
+    positionId,
+    workMode: assignment.workMode ?? 'OFFSHORE',
+    shiftType: 'DAY',
+    workerNameSnapshot: existingTs?.workerNameSnapshot || workerName,
+    status: existingTs?.status ?? 'LOCKED',
+  } as DailyTimesheet;
+}
+
+type RetroEditContext = {
+  timesheet: DailyTimesheet;
+  workerName: string;
+  po: PurchaseOrder | undefined;
+};
+
 export default function WaveMonthTimesheetSummaryPage() {
   const router = useRouter();
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -184,6 +264,18 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [mobLoading, setMobLoading] = useState(false);
   const [extraWaves, setExtraWaves] = useState<Wave[]>([]);
   const [cellEdit, setCellEdit] = useState<CellEditContext | null>(null);
+  const [retroEdit, setRetroEdit] = useState<RetroEditContext | null>(null);
+  const [retroAddedOt, setRetroAddedOt] = useState(0);
+  const [retroAddedStandby, setRetroAddedStandby] = useState(0);
+  const [retroAddedM1Trips, setRetroAddedM1Trips] = useState(0);
+  const [retroAddedD1Trips, setRetroAddedD1Trips] = useState(0);
+  const [retroApplyYm, setRetroApplyYm] = useState('');
+  const [retroReason, setRetroReason] = useState('');
+  const [retroSaving, setRetroSaving] = useState(false);
+  const [retroPayPreview, setRetroPayPreview] = useState<number | null>(null);
+  const [retroPayPreviewLoading, setRetroPayPreviewLoading] = useState(false);
+  const [retroPayMissing, setRetroPayMissing] = useState<RetroMissingRateInfo[]>([]);
+  const [retroPayContractId, setRetroPayContractId] = useState('');
   const [editDate, setEditDate] = useState('');
   const [editEvent, setEditEvent] = useState<RateConditionEventType>('work_day');
   const [editHours, setEditHours] = useState(12);
@@ -227,6 +319,74 @@ export default function WaveMonthTimesheetSummaryPage() {
     setEditOtHours(typeof ts?.ot15Hours === 'number' ? ts.ot15Hours : 0);
     setEditRemark(ts?.remark ?? '');
   }, [cellEdit]);
+
+  useEffect(() => {
+    if (!retroEdit) return;
+    setRetroAddedOt(0);
+    setRetroAddedStandby(0);
+    setRetroAddedM1Trips(retroEdit.timesheet.eventType === 'mobilization_day' ? 1 : 0);
+    setRetroAddedD1Trips(retroEdit.timesheet.eventType === 'demobilization_day' ? 1 : 0);
+    setRetroApplyYm(defaultApplyPayrollYmAfter(monthYm));
+    setRetroReason('');
+    setRetroPayPreview(null);
+    setRetroPayMissing([]);
+    setRetroPayContractId('');
+  }, [retroEdit, monthYm]);
+
+  useEffect(() => {
+    if (!firestore || !retroEdit) {
+      setRetroPayPreview(null);
+      setRetroPayPreviewLoading(false);
+      setRetroPayMissing([]);
+      setRetroPayContractId('');
+      return;
+    }
+    const ot = Math.max(0, Number(retroAddedOt) || 0);
+    const sb = Math.max(0, Number(retroAddedStandby) || 0);
+    const m1 = Math.max(0, Number(retroAddedM1Trips) || 0);
+    const d1 = Math.max(0, Number(retroAddedD1Trips) || 0);
+    if (ot + sb + m1 + d1 <= 0) {
+      setRetroPayPreview(null);
+      setRetroPayPreviewLoading(false);
+      setRetroPayMissing([]);
+      setRetroPayContractId('');
+      return;
+    }
+    let cancelled = false;
+    setRetroPayPreviewLoading(true);
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const result = await computeRetroAdjustmentPayFromFirestore(firestore, retroEdit.timesheet, {
+            addedOt15Hours: retroEdit.timesheet.eventType === 'work_day' ? ot : undefined,
+            addedStandbyHours:
+              retroEdit.timesheet.eventType === 'mobilization_day' ||
+              retroEdit.timesheet.eventType === 'demobilization_day' ||
+              retroEdit.timesheet.eventType === 'standby_day'
+                ? sb
+                : undefined,
+            addedM1Trips: retroEdit.timesheet.eventType === 'mobilization_day' ? m1 : undefined,
+            addedD1Trips: retroEdit.timesheet.eventType === 'demobilization_day' ? d1 : undefined,
+          });
+          if (cancelled) return;
+          setRetroPayPreview(result.ok ? result.amountBaht : null);
+          setRetroPayMissing(result.missingRates);
+          setRetroPayContractId(result.contractId);
+        } catch {
+          if (!cancelled) {
+            setRetroPayPreview(null);
+            setRetroPayMissing([]);
+          }
+        } finally {
+          if (!cancelled) setRetroPayPreviewLoading(false);
+        }
+      })();
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [firestore, retroEdit, retroAddedOt, retroAddedStandby, retroAddedM1Trips, retroAddedD1Trips]);
 
   useEffect(() => {
     if (editEvent !== 'work_day') setEditOtHours(0);
@@ -473,6 +633,43 @@ export default function WaveMonthTimesheetSummaryPage() {
     for (const r of poMonthRows ?? []) m.set(r.poId, r);
     return m;
   }, [poMonthRows]);
+
+  const retroAdjustmentsQuery = useMemoFirebase(
+    () =>
+      firestore && canViewTs && monthYm && /^\d{4}-\d{2}$/.test(monthYm)
+        ? query(collection(firestore, 'timesheet_retro_adjustments'), where('sourceYearMonth', '==', monthYm))
+        : null,
+    [firestore, canViewTs, monthYm],
+  );
+  const { data: retroAdjustmentRows } = useCollection<TimesheetRetroAdjustment>(retroAdjustmentsQuery as any);
+  const retroByTimesheetId = useMemo(() => {
+    const m = new Map<string, TimesheetRetroAdjustment[]>();
+    for (const r of retroAdjustmentRows ?? []) {
+      if (r.status === 'void') continue;
+      const list = m.get(r.sourceTimesheetId) ?? [];
+      list.push(r);
+      m.set(r.sourceTimesheetId, list);
+    }
+    return m;
+  }, [retroAdjustmentRows]);
+
+  const retroByCellKey = useMemo(() => {
+    const m = new Map<string, TimesheetRetroAdjustment[]>();
+    for (const r of retroAdjustmentRows ?? []) {
+      if (r.status === 'void') continue;
+      if (!r.assignmentId || !r.workDateYmd) continue;
+      const k = retroCellKey(r.assignmentId, r.workDateYmd);
+      const list = m.get(k) ?? [];
+      list.push(r);
+      m.set(k, list);
+    }
+    return m;
+  }, [retroAdjustmentRows]);
+
+  const retroOnlyPayrollMonth = useMemo(
+    () => isRetroOnlyPayrollMonth(monthYm, monthSheetsForOpenPos, poMonthRows ?? undefined),
+    [monthYm, monthSheetsForOpenPos, poMonthRows],
+  );
 
   /** เติมรายวันอัตโนมัติของวันนี้ (เขตไทย) — เหมือน PO Daily Board เพื่อให้หน้ารายเดือนเห็นข้อมูลโดยไม่ต้องเปิดกระดานรายวัน */
   const silentPoActiveAutoDailyIds = useMemo(() => {
@@ -824,7 +1021,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     return m;
   }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments]);
 
-  /** รวมชม. OT ต่อแถว */
+  /** รวมชม. OT ต่อแถว — รวมแก้ไขย้อนหลัง */
   const rowOtHoursMonthTotalByKey = useMemo(() => {
     const m = new Map<string, number>();
     for (const tr of tableRows) {
@@ -833,24 +1030,36 @@ export default function WaveMonthTimesheetSummaryPage() {
       const alternateMobIds = mobAssignments
         .filter((mob) => mob.waveId === wave.id && mob.workerId === rw.workerId && mob.id !== rosterAssignment.id)
         .map((mob) => mob.id);
-      m.set(
-        key,
-        sumOtHoursForWaveMonthRow(
-          rosterAssignment,
+      let sum = sumOtHoursForWaveMonthRow(
+        rosterAssignment,
+        wave.id,
+        rw.workerId,
+        rosterAssignment.id,
+        days,
+        sheetsByWaveWorker,
+        monthSheetsForOpenPos,
+        poTimesheetScopeId(rosterAssignment.poId),
+        alternateMobIds,
+        { onlyWithinMobWindow: true },
+      );
+      for (const d of days) {
+        const ts = resolveTimesheetForWaveMonthCell(
           wave.id,
           rw.workerId,
+          d,
           rosterAssignment.id,
-          days,
           sheetsByWaveWorker,
           monthSheetsForOpenPos,
           poTimesheetScopeId(rosterAssignment.poId),
+          rosterAssignment,
           alternateMobIds,
-          { onlyWithinMobWindow: true },
-        ),
-      );
+        );
+        if (ts) sum += retroAddedOtHours(retroByTimesheetId.get(ts.id) ?? []);
+      }
+      m.set(key, sum);
     }
     return m;
-  }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments]);
+  }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments, retroByTimesheetId]);
 
   /**
    * คนละหนึ่งแถวในงวดเดือน: ถ้าพนักงานถูกดึงจากหลาย wave / หลาย mobilization ที่ชี้ชุดลงเวลาเดียวกัน
@@ -1040,6 +1249,47 @@ export default function WaveMonthTimesheetSummaryPage() {
         toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขลงเวลา' });
         return;
       }
+      const tsLocked = isTimesheetPayrollLocked(ts);
+      if (tsLocked) {
+        setRetroEdit({ timesheet: ts!, workerName: rw.name, po });
+        return;
+      }
+      if (retroOnlyPayrollMonth) {
+        const assignment = ts
+          ? waveMobs.find((m) => m.id === ts.assignmentId) ?? waveMobs.find((m) => m.workerId === rw.workerId)
+          : waveMobs.find((m) => m.workerId === rw.workerId);
+        if (!assignment) {
+          toast({
+            variant: 'destructive',
+            title: 'ไม่พบการมอบหมาย',
+            description: 'เพิ่ม Mobilization / Assignment ใน Wave ก่อน',
+          });
+          return;
+        }
+        const inMobWindow = isYmdEditableForAssignmentTimesheet(assignment, cellDate, {
+          hasPersistedTimesheetOnDate: !!ts,
+        });
+        if (!inMobWindow && !ts) {
+          toast({
+            variant: 'destructive',
+            title: 'วันนี้ลงเวลาไม่ได้',
+            description: 'อยู่นอกช่วง mobilization',
+          });
+          return;
+        }
+        const retroTs =
+          ts ??
+          buildSyntheticTimesheetForRetro({
+            workerId: rw.workerId,
+            workerName: rw.name,
+            assignment,
+            wave,
+            po,
+            cellDate,
+          });
+        setRetroEdit({ timesheet: retroTs, workerName: rw.name, po });
+        return;
+      }
       if (isMonthTimesheetRowLocked(po?.id ? poMonthByPoId.get(po.id) : undefined, monthReview)) {
         toast({
           variant: 'destructive',
@@ -1047,17 +1297,6 @@ export default function WaveMonthTimesheetSummaryPage() {
           description: 'เอกสาร PO+งวดถูกล็อก/ส่งตรวจแล้ว หรืองวดราย wave เดิมล็อกแล้ว',
         });
         return;
-      }
-      if (ts?.status) {
-        const locked = ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED'].includes(ts.status as DailyTimesheetStatus);
-        if (locked) {
-          toast({
-            variant: 'destructive',
-            title: 'รายการถูกล็อกทางบัญชีแล้ว',
-            description: 'ไม่สามารถแก้จากตารางรายเดือนได้',
-          });
-          return;
-        }
       }
       const assignment = ts
         ? waveMobs.find((m) => m.id === ts.assignmentId) ?? waveMobs.find((m) => m.workerId === rw.workerId)
@@ -1093,12 +1332,20 @@ export default function WaveMonthTimesheetSummaryPage() {
         timesheet: ts,
       });
     },
-    [canEditTs, toast, poMonthByPoId],
+    [canEditTs, toast, poMonthByPoId, retroOnlyPayrollMonth],
   );
 
   const performSaveCellEdit = useCallback(async () => {
     if (!firestore || !currentUser || !cellEdit) return;
     const { wave, po, monthReview, workerId, workerName, assignment, timesheet: openedTs } = cellEdit;
+    if (retroOnlyPayrollMonth) {
+      toast({
+        variant: 'destructive',
+        title: 'งวด payroll ปิดแล้ว',
+        description: 'ใช้ «แก้ไขย้อนหลัง» แทน — จะจ่ายในงวดถัดไปโดยไม่แก้ใบงานต้นทาง',
+      });
+      return;
+    }
     if (!canEditTs || isMonthTimesheetRowLocked(po?.id ? poMonthByPoId.get(po.id) : undefined, monthReview)) {
       toast({
         variant: 'destructive',
@@ -1220,6 +1467,69 @@ export default function WaveMonthTimesheetSummaryPage() {
     editOtHours,
     editRemark,
     allWorkers,
+    retroOnlyPayrollMonth,
+  ]);
+
+  const performSaveRetroEdit = useCallback(async () => {
+    if (!firestore || !currentUser || !retroEdit || !canEditTs) return;
+    setRetroSaving(true);
+    try {
+      const ev = retroEdit.timesheet.eventType;
+      await createTimesheetRetroAdjustment(firestore, currentUser as User, {
+        sourceTimesheet: retroEdit.timesheet,
+        sourceYearMonth: monthYm,
+        applyPayrollYearMonth: retroApplyYm.trim(),
+        addedOt15Hours: ev === 'work_day' ? retroAddedOt : undefined,
+        addedStandbyHours:
+          ev === 'mobilization_day' || ev === 'demobilization_day' || ev === 'standby_day'
+            ? retroAddedStandby
+            : undefined,
+        addedM1Trips: ev === 'mobilization_day' ? retroAddedM1Trips : undefined,
+        addedD1Trips: ev === 'demobilization_day' ? retroAddedD1Trips : undefined,
+        reason: retroReason.trim(),
+      });
+      toast({
+        title: 'บันทึกแก้ไขย้อนหลังแล้ว',
+        description:
+          retroPayPreview != null && retroPayPreview > 0
+            ? `ยอดจ่ายประมาณ ฿${retroPayPreview.toLocaleString()} · จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)}`
+            : `แสดงบนตารางพร้อมเครื่องหมาย † — จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)}`,
+      });
+      setRetroEdit(null);
+    } catch (e: unknown) {
+      if (e instanceof RetroRateMatrixMissingError) {
+        setRetroPayMissing(e.missingRates);
+        setRetroPayContractId(e.contractId);
+      }
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกแก้ไขย้อนหลังไม่สำเร็จ',
+        description:
+          e instanceof RetroRateMatrixMissingError
+            ? `${e.message} — ไปที่สัญญา → แท็บต้นทุน (Cost) → ใส่อัตราให้ครบ`
+            : e instanceof Error && /permission/i.test(e.message)
+              ? `${e.message} — ถ้าเพิ่งอัปเดตระบบ ลอง refresh หน้าแล้วบันทึกใหม่`
+              : e instanceof Error
+                ? e.message
+                : String(e),
+      });
+    } finally {
+      setRetroSaving(false);
+    }
+  }, [
+    firestore,
+    currentUser,
+    retroEdit,
+    canEditTs,
+    monthYm,
+    retroApplyYm,
+    retroAddedOt,
+    retroAddedStandby,
+    retroAddedM1Trips,
+    retroAddedD1Trips,
+    retroReason,
+    retroPayPreview,
+    toast,
   ]);
 
   const loading = tsLoadingSoft || mobLoading || posLoading || contractsLoading || wavesLoading;
@@ -1702,7 +2012,26 @@ export default function WaveMonthTimesheetSummaryPage() {
                                 const inMobWindow = isYmdEditableForAssignmentTimesheet(rosterAssignment, d, {
                                   hasPersistedTimesheetOnDate: !!ts,
                                 });
-                                const cellLabel = timesheetWaveMonthCellDisplay(ts);
+                                const retroForCell = (() => {
+                                  const seen = new Set<string>();
+                                  const out: TimesheetRetroAdjustment[] = [];
+                                  for (const r of ts ? retroByTimesheetId.get(ts.id) ?? [] : []) {
+                                    if (seen.has(r.id)) continue;
+                                    seen.add(r.id);
+                                    out.push(r);
+                                  }
+                                  for (const r of retroByCellKey.get(retroCellKey(rosterAssignment.id, d)) ?? []) {
+                                    if (seen.has(r.id)) continue;
+                                    seen.add(r.id);
+                                    out.push(r);
+                                  }
+                                  return out;
+                                })();
+                                const cellLabel = timesheetWaveMonthCellDisplayWithRetro(ts, retroForCell);
+                                const hasRetro = hasActiveRetroAdjustments(retroForCell);
+                                const tsLocked = isTimesheetPayrollLocked(ts);
+                                const cellClickable =
+                                  canEditTs && (tsLocked || retroOnlyPayrollMonth || editableGrid);
                                 return (
                                   <TableCell key={d} className="px-0.5 text-center text-[11px] leading-none">
                                     {!inMobWindow && !ts ? (
@@ -1715,21 +2044,30 @@ export default function WaveMonthTimesheetSummaryPage() {
                                     ) : ts ? (
                                       <button
                                         type="button"
-                                        disabled={!editableGrid}
+                                        disabled={!cellClickable}
                                         onClick={() =>
                                           openCellEdit(wave, po, monthReview, rw, d, ts, waveMobs)
                                         }
                                         className={cn(
                                           'inline-flex max-w-full justify-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                                          !editableGrid && 'cursor-not-allowed opacity-60',
-                                          editableGrid && 'cursor-pointer hover:opacity-90',
+                                          !cellClickable && 'cursor-not-allowed opacity-60',
+                                          cellClickable && 'cursor-pointer hover:opacity-90',
                                         )}
                                         title={
-                                          (editableGrid
-                                            ? `คลิกแก้ไข · ${d} · ${ts.eventType} · ${ts.status}`
-                                            : `${d} · ${ts.eventType} · ${ts.status}`) +
+                                          (retroOnlyPayrollMonth
+                                            ? `คลิกแก้ไขย้อนหลัง · ${d}`
+                                            : editableGrid
+                                              ? `คลิกแก้ไข · ${d} · ${ts.eventType} · ${ts.status}`
+                                              : `${d} · ${ts.eventType} · ${ts.status}`) +
                                           (ts.eventType === 'work_day' && (ts.ot15Hours ?? 0) > 0
                                             ? ` · OT ${ts.ot15Hours} ชม.`
+                                            : '') +
+                                          (hasRetro
+                                            ? ` · แก้ไขย้อนหลัง (+OT ${retroAddedOtHours(retroForCell)} ชม.` +
+                                              (sumRetroAddedM1Trips(retroForCell) > 0
+                                                ? ` · M1 +${sumRetroAddedM1Trips(retroForCell)} trip`
+                                                : '') +
+                                              ')'
                                             : '') +
                                           (!inMobWindow
                                             ? ' · วันนี้อยู่นอกหน้าต่าง mobilization บนเอกสาร — แสดงตามใบงานที่มีจริง'
@@ -1740,6 +2078,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                                           className={cn(
                                             'inline-flex items-center justify-center rounded-sm border px-1 py-0.5 text-[11px] font-medium leading-none min-w-[1.125rem]',
                                             timesheetEventCellBadgeClasses(ts.eventType, ts.status),
+                                            timesheetRetroCellRingClasses(hasRetro),
                                             !inMobWindow && 'ring-1 ring-amber-500/45',
                                           )}
                                         >
@@ -1749,19 +2088,26 @@ export default function WaveMonthTimesheetSummaryPage() {
                                     ) : (
                                       <button
                                         type="button"
-                                        title={editableGrid ? `เพิ่มรายการ · ${d}` : undefined}
-                                        disabled={!editableGrid}
+                                        title={
+                                          retroOnlyPayrollMonth
+                                            ? `เพิ่มแก้ไขย้อนหลัง · ${d}`
+                                            : editableGrid
+                                              ? `เพิ่มรายการ · ${d}`
+                                              : undefined
+                                        }
+                                        disabled={!(retroOnlyPayrollMonth || editableGrid) || !canEditTs}
                                         onClick={() =>
                                           openCellEdit(wave, po, monthReview, rw, d, undefined, waveMobs)
                                         }
                                         className={cn(
-                                          'inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-sm py-0.5 font-medium text-muted-foreground/80 text-[11px] leading-none',
-                                          editableGrid &&
-                                            'cursor-pointer hover:bg-muted/60 text-muted-foreground',
-                                          !editableGrid && 'cursor-default opacity-45',
+                                          'inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-sm py-0.5 font-medium text-[11px] leading-none',
+                                          (retroOnlyPayrollMonth || editableGrid) &&
+                                            canEditTs &&
+                                            'cursor-pointer hover:bg-muted/60 text-muted-foreground/80',
+                                          !(retroOnlyPayrollMonth || editableGrid) && 'cursor-default opacity-45 text-muted-foreground/40',
                                         )}
                                       >
-                                        {' - '}
+                                        {hasRetro ? cellLabel : ' - '}
                                       </button>
                                     )}
                                   </TableCell>
@@ -1792,11 +2138,17 @@ export default function WaveMonthTimesheetSummaryPage() {
                     </Table>
                     <div className="border-t px-4 py-3 text-xs text-muted-foreground space-y-1">
                       <p>
-                        <strong>คีย์:</strong> ตัวอักษร = ประเภทวัน (W ทำงาน, SB สแตนด์บาย …) · <strong>W+5</strong> = ทำงาน + OT 5 ชม. · เซลล์ «-» = ยังไม่มีบันทึก —{' '}
+                        <strong>คีย์:</strong> ตัวอักษร = ประเภทวัน (W ทำงาน, SB สแตนด์บาย …) · <strong>W+5</strong> = ทำงาน + OT 5 ชม. · <strong>†</strong> = มีแก้ไขย้อนหลัง (วงแหวนแดง) · เซลล์ «-» = ยังไม่มีบันทึก —{' '}
                         <strong className="text-emerald-700">เขียว</strong>=ทำงาน{' '}
                         <strong className="text-sky-700">ฟ้า</strong>=สแตนด์บาย{' '}
                         <strong className="text-violet-700">ม่วง</strong>=เดินทาง{' '}
                         <strong className="text-orange-700">ส้ม</strong>=Mob/Demob (ดู tooltip)
+                        {retroOnlyPayrollMonth ? (
+                          <>
+                            {' '}
+                            · <strong className="text-red-700">งวด payroll ปิดแล้ว</strong> — คลิกเซลล์เพื่อ «แก้ไขย้อนหลัง» (จ่ายงวดถัดไป)
+                          </>
+                        ) : null}
                       </p>
                       <p>
                         <strong>ขอบสถานะ:</strong> วงแหวน <span className="text-amber-600">เหลืองทองหนา</span> = DRAFT —
@@ -1965,6 +2317,224 @@ export default function WaveMonthTimesheetSummaryPage() {
                 </Button>
               </>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!retroEdit} onOpenChange={(open) => !open && setRetroEdit(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>แก้ไขย้อนหลัง (ใบงานล็อคแล้ว)</DialogTitle>
+            <DialogDescription>
+              ไม่แก้ข้อมูลต้นทาง — บันทึก OT / M1 / D1 / standby ที่เพิ่มแยกต่างหาก แสดงบนตารางพร้อมเครื่องหมาย † และจ่ายในงวดที่เลือก
+            </DialogDescription>
+          </DialogHeader>
+          {retroEdit ? (
+            <div className="space-y-4 text-sm">
+              <div className="rounded-md border bg-muted/40 px-3 py-2 space-y-1">
+                <p>
+                  <span className="text-muted-foreground">พนักงาน:</span>{' '}
+                  <strong>{retroEdit.workerName}</strong>
+                </p>
+                <p>
+                  <span className="text-muted-foreground">วันที่:</span>{' '}
+                  <strong>{retroEdit.timesheet.date}</strong> · {retroEdit.timesheet.eventType}
+                  {isTimesheetPayrollLocked(retroEdit.timesheet) ? (
+                    <> · <span className="text-amber-800">LOCKED</span></>
+                  ) : retroOnlyPayrollMonth ? (
+                    <> · <span className="text-red-800">payroll ปิดแล้ว</span></>
+                  ) : null}
+                </p>
+              </div>
+              {retroEdit.timesheet.eventType === 'work_day' ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="retro-ot">OT ชม. ที่เพิ่ม (0–24)</Label>
+                  <Input
+                    id="retro-ot"
+                    type="number"
+                    min={0}
+                    max={24}
+                    step={0.5}
+                    value={retroAddedOt}
+                    onChange={(e) => setRetroAddedOt(Number(e.target.value))}
+                    disabled={retroSaving}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    ของเดิมในสลิป: OT {retroEdit.timesheet.ot15Hours ?? 0} ชม. — ค่านี้เป็น <strong>ชม.เพิ่ม</strong> ไม่ใช่ยอดรวม
+                  </p>
+                </div>
+              ) : retroEdit.timesheet.eventType === 'mobilization_day' ? (
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="retro-m1">M1 trip ที่เพิ่ม</Label>
+                    <Input
+                      id="retro-m1"
+                      type="number"
+                      min={0}
+                      max={5}
+                      step={1}
+                      value={retroAddedM1Trips}
+                      onChange={(e) => setRetroAddedM1Trips(Number(e.target.value))}
+                      disabled={retroSaving}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      คิดตามอัตรา <strong>OFF M1 (ต้นทุน/trip)</strong> ในตารางสัญญา — ใช้เมื่อเพิ่ม/แก้ M1 หลังปิด payroll
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="retro-sb-m1">ชม. M1 เพิ่ม (ถ้ามี — 0–24)</Label>
+                    <Input
+                      id="retro-sb-m1"
+                      type="number"
+                      min={0}
+                      max={24}
+                      step={0.5}
+                      value={retroAddedStandby}
+                      onChange={(e) => setRetroAddedStandby(Number(e.target.value))}
+                      disabled={retroSaving}
+                    />
+                  </div>
+                </div>
+              ) : retroEdit.timesheet.eventType === 'demobilization_day' ? (
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="retro-d1">D1 trip ที่เพิ่ม</Label>
+                    <Input
+                      id="retro-d1"
+                      type="number"
+                      min={0}
+                      max={5}
+                      step={1}
+                      value={retroAddedD1Trips}
+                      onChange={(e) => setRetroAddedD1Trips(Number(e.target.value))}
+                      disabled={retroSaving}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="retro-sb-d1">ชม. D1 เพิ่ม (ถ้ามี — 0–24)</Label>
+                    <Input
+                      id="retro-sb-d1"
+                      type="number"
+                      min={0}
+                      max={24}
+                      step={0.5}
+                      value={retroAddedStandby}
+                      onChange={(e) => setRetroAddedStandby(Number(e.target.value))}
+                      disabled={retroSaving}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label htmlFor="retro-sb">Standby/M1/D1 ชม. ที่เพิ่ม (0–24)</Label>
+                  <Input
+                    id="retro-sb"
+                    type="number"
+                    min={0}
+                    max={24}
+                    step={0.5}
+                    value={retroAddedStandby}
+                    onChange={(e) => setRetroAddedStandby(Number(e.target.value))}
+                    disabled={retroSaving}
+                  />
+                </div>
+              )}
+              <div className="space-y-1.5">
+                <Label htmlFor="retro-apply-ym">จ่ายในงวด payroll</Label>
+                <Input
+                  id="retro-apply-ym"
+                  type="month"
+                  value={retroApplyYm}
+                  onChange={(e) => setRetroApplyYm(e.target.value)}
+                  disabled={retroSaving}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="retro-reason">เหตุผล (บังคับ)</Label>
+                <Textarea
+                  id="retro-reason"
+                  rows={2}
+                  value={retroReason}
+                  onChange={(e) => setRetroReason(e.target.value)}
+                  disabled={retroSaving}
+                  placeholder="เช่น OT 29–31 พ.ค. ลืมลงก่อนปิด payroll"
+                />
+              </div>
+              <div className="rounded-md border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-sm">
+                <span className="text-muted-foreground">ยอดจ่ายเพิ่ม (จากตารางอัตรา): </span>
+                {retroPayPreviewLoading ? (
+                  <span className="inline-flex items-center gap-1 text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> กำลังคำนวณ…
+                  </span>
+                ) : retroPayMissing.length > 0 ? (
+                  <span className="text-amber-900 font-medium">— ยังใส่อัตราไม่ครบ</span>
+                ) : retroPayPreview != null && retroPayPreview > 0 ? (
+                  <strong className="text-emerald-900 font-mono tabular-nums">
+                    ฿{retroPayPreview.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </strong>
+                ) : (
+                  <span className="text-muted-foreground">— กรอกชม. OT/standby เพื่อคำนวณ</span>
+                )}
+                <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
+                  ดึงจากตารางอัตราสัญญา ฝั่ง <strong>ต้นทุน (Cost)</strong> — เช่น OFF OT/hr, OFF M1/trip
+                </p>
+              </div>
+              {retroPayMissing.length > 0 ? (
+                <Alert variant="destructive" className="border-amber-300 bg-amber-50 text-amber-950">
+                  <AlertTitle className="text-sm">ยังไม่ได้ใส่อัตราในตารางสัญญา</AlertTitle>
+                  <AlertDescription className="text-xs space-y-2">
+                    <ul className="list-disc pl-4">
+                      {retroPayMissing.map((m, i) => (
+                        <li key={i}>{m.fieldLabel}</li>
+                      ))}
+                    </ul>
+                    <p>
+                      เปิดสัญญา → สลับเป็น <strong>ต้นทุน (Cost)</strong> → กรอกช่องที่ขาด (ไม่ใช่แท็บราคาขาย)
+                      {retroPayContractId ? (
+                        <>
+                          {' '}
+                          <Link
+                            href={retroContractRatesUrl(retroPayContractId)}
+                            className="font-medium underline"
+                            target="_blank"
+                          >
+                            ไปตารางอัตราสัญญา
+                          </Link>
+                        </>
+                      ) : null}
+                    </p>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" disabled={retroSaving} onClick={() => setRetroEdit(null)}>
+              ยกเลิก
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                retroSaving ||
+                !retroEdit ||
+                retroPayMissing.length > 0 ||
+                (() => {
+                  const hasDelta =
+                    retroAddedOt > 0 ||
+                    retroAddedStandby > 0 ||
+                    retroAddedM1Trips > 0 ||
+                    retroAddedD1Trips > 0;
+                  return (
+                    hasDelta &&
+                    (retroPayPreviewLoading || retroPayPreview == null || retroPayPreview <= 0)
+                  );
+                })()
+              }
+              onClick={() => void performSaveRetroEdit()}
+            >
+              {retroSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              บันทึกแก้ไขย้อนหลัง
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

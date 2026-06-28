@@ -29,7 +29,6 @@ import {
 } from 'lucide-react';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { doc, collection, query, where, updateDoc, getDocs, writeBatch, deleteField } from 'firebase/firestore';
-import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { 
   PurchaseOrder, 
   POLine, 
@@ -45,6 +44,7 @@ import {
 } from '@/lib/types';
 import Link from 'next/link';
 import { billingModeLabel } from '@/lib/commercial/resolve-billing-mode';
+import { resyncPoLineRateSnapshotsForPo } from '@/lib/commercial/po-line-rate-snapshot';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
 import { writeAuditLog } from '@/lib/services/audit-service';
@@ -154,6 +154,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     }
     if (!poRef || !currentUser || !po || !firestore) return;
     const billingModeValue = editedPO.billingMode;
+    const prevWorkMode = po.poWorkMode ?? 'OFFSHORE';
+    const nextWorkMode = editedPO.poWorkMode ?? 'OFFSHORE';
+    const workModeChanged = prevWorkMode !== nextWorkMode;
     const payload: Record<string, unknown> = {
       ...editedPO,
       updatedAt: Date.now(),
@@ -163,10 +166,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     } else {
       payload.billingMode = deleteField();
     }
-    updateDocumentNonBlocking(poRef, payload);
+    await updateDoc(poRef, payload);
     setIsEditing(false);
 
-    // Audit Log
     writeAuditLog(firestore, currentUser, {
       actionType: 'UPDATE',
       entityType: 'PurchaseOrder',
@@ -175,8 +177,28 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
       changedFields: Object.keys(editedPO),
       sourceModule: 'commercial',
       purchaseOrderId: id,
-      afterSummary: 'Updated purchase order header details'
+      afterSummary: workModeChanged
+        ? `Updated PO header — work mode ${prevWorkMode} → ${nextWorkMode}`
+        : 'Updated purchase order header details',
     });
+
+    let rateSyncMsg = '';
+    if (workModeChanged && po.contractId) {
+      try {
+        const positionsById = new Map((allPositions ?? []).map((p) => [p.id, p]));
+        const { updated } = await resyncPoLineRateSnapshotsForPo(
+          firestore,
+          { id: po.id, contractId: po.contractId, poWorkMode: nextWorkMode },
+          positionsById,
+        );
+        if (updated > 0) {
+          rateSyncMsg = ` — อัปเดตราคา ${updated} บรรทัดตามโหมด ${nextWorkMode === 'ONSHORE' ? 'Onshore' : 'Offshore'}`;
+        }
+      } catch (e) {
+        console.warn(e);
+        rateSyncMsg = ' — ซิงก์ราคาบรรทัดไม่สำเร็จ (ลองกด «ซิงก์ราคาจากสัญญา»)';
+      }
+    }
 
     try {
       await rebuildAllPoActiveBundlesForCustomer(firestore, po.customerId);
@@ -184,7 +206,10 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
       console.warn(e);
     }
 
-    toast({ title: "บันทึกสำเร็จ", description: "ข้อมูล Customer PO ถูกอัปเดตแล้ว" });
+    toast({
+      title: 'บันทึกสำเร็จ',
+      description: `ข้อมูล Customer PO ถูกอัปเดตแล้ว${rateSyncMsg}`,
+    });
   };
 
   const handleApprovePO = async () => {
@@ -200,6 +225,22 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
         poWorkMode: po.poWorkMode ?? 'OFFSHORE',
         updatedAt: Date.now(),
       });
+      if (po.contractId) {
+        try {
+          const positionsById = new Map((allPositions ?? []).map((p) => [p.id, p]));
+          await resyncPoLineRateSnapshotsForPo(
+            firestore,
+            {
+              id: po.id,
+              contractId: po.contractId,
+              poWorkMode: po.poWorkMode ?? 'OFFSHORE',
+            },
+            positionsById,
+          );
+        } catch (e) {
+          console.warn('PO line rate sync on approve failed', e);
+        }
+      }
       writeAuditLog(firestore, currentUser, {
         actionType: 'UPDATE',
         entityType: 'PurchaseOrder',

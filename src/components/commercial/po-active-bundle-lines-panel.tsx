@@ -38,7 +38,7 @@ import {
 } from '@/components/ui/select';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { formatDateRangeThaiBE } from '@/lib/date-thai';
-import { Plus, ChevronRight, Loader2, Calendar, CheckCircle2, Pencil, Trash2 } from 'lucide-react';
+import { Plus, ChevronRight, Loader2, Calendar, CheckCircle2, Pencil, Trash2, RefreshCw } from 'lucide-react';
 import type {
   Assignment,
   MainContract,
@@ -51,11 +51,13 @@ import { assignmentCountsTowardQuota } from '@/lib/ops/po-fulfillment-read-model
 import { isMainContractEligibleForPoActiveWorkflow } from '@/lib/ops/po-active-eligibility';
 import { sortPositionRatesByDisplayName } from '@/lib/position-display';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
-import { defaultLaborDailyFromPosition } from '@/lib/payroll/timesheet-labor-base-cost';
 import {
-  buildPoLineSellSnapshots,
+  buildPoLineRateSnapshotFromContract,
+  displayPoLineSellRateForWorkMode,
+  resyncPoLineRateSnapshotsForPo,
+} from '@/lib/commercial/po-line-rate-snapshot';
+import {
   jobModeSellLabel,
-  sellSnapshotForWorkMode,
 } from '@/lib/commercial/position-rate-sell';
 import { writeAuditLog } from '@/lib/services/audit-service';
 import { useToast } from '@/hooks/use-toast';
@@ -426,6 +428,31 @@ export function PoActiveBundleLinesPanel({
   const [isSavingLine, setIsSavingLine] = useState(false);
   const [lineToDelete, setLineToDelete] = useState<POLine | null>(null);
   const [isDeletingLine, setIsDeletingLine] = useState(false);
+  const [isResyncingRates, setIsResyncingRates] = useState(false);
+
+  const primaryContractId = bundlePos[0]?.contractId ?? '';
+  const contractRatesQuery = useMemoFirebase(
+    () =>
+      firestore && primaryContractId
+        ? collection(firestore, 'main_contracts', primaryContractId, 'position_rates')
+        : null,
+    [firestore, primaryContractId],
+  );
+  const { data: contractRatesRaw } = useCollection<PositionRate>(contractRatesQuery);
+  const contractRatesByPosition = useMemo(() => {
+    const map = new Map<string, PositionRate>();
+    for (const r of contractRatesRaw ?? []) {
+      if (r.active === false) continue;
+      map.set(r.positionId, r);
+    }
+    return map;
+  }, [contractRatesRaw]);
+
+  const positionsById = useMemo(() => {
+    const map = new Map<string, Position>();
+    for (const p of allPositions ?? []) map.set(p.id, p);
+    return map;
+  }, [allPositions]);
 
   useEffect(() => {
     if (!isAddOpen) return;
@@ -491,13 +518,7 @@ export function PoActiveBundleLinesPanel({
     }
     const pos = allPositions?.find((p) => p.id === newLine.positionId);
     const poWorkMode = po.poWorkMode ?? 'OFFSHORE';
-    const sellSnaps = buildPoLineSellSnapshots(rate, poWorkMode);
-    const costBaselineSnapshot = defaultLaborDailyFromPosition(pos) || 0;
-    const billingUnitSnapshot = rate.billingUnit || 'daily';
-    const overtimeRuleSnapshot = rate.overtimeRule || '1.5x of Hourly Rate';
-    const sellOtRulesSnapshot = rate.sellOtRules ? { ...rate.sellOtRules } : undefined;
-    const costOtRulesSnapshot = rate.costOtRules ? { ...rate.costOtRules } : undefined;
-    const normalWorkHoursSnapshot = rate.normalWorkHours;
+    const snapshot = buildPoLineRateSnapshotFromContract(rate, poWorkMode, pos);
 
     const poLinesCol = collection(firestore, 'purchase_orders', po.id, 'po_lines');
     setIsAddingLine(true);
@@ -508,21 +529,9 @@ export function PoActiveBundleLinesPanel({
         quantity: Number(newLine.quantity) || 1,
         startDate: newLine.startDate || po.startDate || Date.now(),
         endDate: newLine.endDate || po.endDate || Date.now(),
-        sellRateSnapshot: sellSnaps.sellRateSnapshot,
-        costBaselineSnapshot,
-        billingUnitSnapshot,
-        overtimeRuleSnapshot,
         status: 'active',
+        ...snapshot,
       };
-      if (sellSnaps.sellRateSnapshotOnshore != null) {
-        linePayload.sellRateSnapshotOnshore = sellSnaps.sellRateSnapshotOnshore;
-      }
-      if (sellSnaps.sellRateSnapshotOffshore != null) {
-        linePayload.sellRateSnapshotOffshore = sellSnaps.sellRateSnapshotOffshore;
-      }
-      if (sellOtRulesSnapshot) linePayload.sellOtRulesSnapshot = sellOtRulesSnapshot;
-      if (costOtRulesSnapshot) linePayload.costOtRulesSnapshot = costOtRulesSnapshot;
-      if (normalWorkHoursSnapshot) linePayload.normalWorkHoursSnapshot = normalWorkHoursSnapshot;
       const wl = (newLine.workLocation || '').trim();
       if (wl) linePayload.workLocation = wl;
 
@@ -568,23 +577,50 @@ export function PoActiveBundleLinesPanel({
     const rate = rates.find((r) => r.positionId === positionId);
     if (!rate) return null;
     const pos = allPositions?.find((p) => p.id === positionId);
-    const sellSnaps = buildPoLineSellSnapshots(rate, po.poWorkMode ?? 'OFFSHORE');
-    const payload: Record<string, unknown> = {
-      sellRateSnapshot: sellSnaps.sellRateSnapshot,
-      costBaselineSnapshot: defaultLaborDailyFromPosition(pos) || 0,
-      billingUnitSnapshot: rate.billingUnit || 'daily',
-      overtimeRuleSnapshot: rate.overtimeRule || '1.5x of Hourly Rate',
-    };
-    if (sellSnaps.sellRateSnapshotOnshore != null) {
-      payload.sellRateSnapshotOnshore = sellSnaps.sellRateSnapshotOnshore;
+    return buildPoLineRateSnapshotFromContract(rate, po.poWorkMode ?? 'OFFSHORE', pos);
+  };
+
+  const handleResyncRatesFromContract = async () => {
+    if (!canEditPo || !firestore) return;
+    setIsResyncingRates(true);
+    try {
+      let totalUpdated = 0;
+      let totalSkipped = 0;
+      for (const po of bundlePos) {
+        if (po.status === 'closed' || !po.contractId) continue;
+        const { updated, skipped } = await resyncPoLineRateSnapshotsForPo(
+          firestore,
+          po,
+          positionsById,
+        );
+        totalUpdated += updated;
+        totalSkipped += skipped;
+      }
+      if (totalUpdated === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีบรรทัดที่อัปเดต',
+          description:
+            totalSkipped > 0
+              ? 'ตรวจว่าบรรทัด active และมีตำแหน่งในตารางราคาสัญญา'
+              : 'ไม่พบบรรทัดใต้ PO',
+        });
+        return;
+      }
+      toast({
+        title: 'อัปเดตราคาจากสัญญาแล้ว',
+        description: `ปรับ snapshot ${totalUpdated} บรรทัดตามโหมด ${jobModeSellLabel(bundlePos[0]?.poWorkMode ?? 'OFFSHORE')}${totalSkipped > 0 ? ` (ข้าม ${totalSkipped})` : ''}`,
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ซิงก์ราคาไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setIsResyncingRates(false);
     }
-    if (sellSnaps.sellRateSnapshotOffshore != null) {
-      payload.sellRateSnapshotOffshore = sellSnaps.sellRateSnapshotOffshore;
-    }
-    if (rate.sellOtRules) payload.sellOtRulesSnapshot = { ...rate.sellOtRules };
-    if (rate.costOtRules) payload.costOtRulesSnapshot = { ...rate.costOtRules };
-    if (rate.normalWorkHours) payload.normalWorkHoursSnapshot = rate.normalWorkHours;
-    return payload;
   };
 
   const handleSaveEditLine = async () => {
@@ -740,6 +776,21 @@ export function PoActiveBundleLinesPanel({
               >
                 <Plus className="h-4 w-4" /> เพิ่มบรรทัด
               </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2 h-9"
+                disabled={isResyncingRates}
+                title="ดึงราคาขายจากตารางสัญญาใหม่ตามโหมด Onshore/Offshore ของ PO"
+                onClick={() => void handleResyncRatesFromContract()}
+              >
+                {isResyncingRates ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                ซิงก์ราคาจากสัญญา
+              </Button>
               <AddLineDialogWithRates
                 po={selectedPoForAdd}
                 open={isAddOpen}
@@ -833,7 +884,15 @@ export function PoActiveBundleLinesPanel({
                     <TableCell className="text-right">
                       {(() => {
                         const poWorkMode = po?.poWorkMode ?? 'OFFSHORE';
-                        const sellUnit = sellSnapshotForWorkMode(line, poWorkMode);
+                        const contractRate =
+                          po?.contractId === primaryContractId
+                            ? contractRatesByPosition.get(line.positionId)
+                            : undefined;
+                        const sellUnit = displayPoLineSellRateForWorkMode(
+                          line,
+                          poWorkMode,
+                          contractRate,
+                        );
                         return (
                           <>
                             <span className="text-green-700 font-bold text-sm">

@@ -781,6 +781,10 @@ service cloud.firestore {
       allow read: if isInternalUser();
       allow write: if internalWriteOk();
     }
+    match /timesheet_retro_adjustments/{id} {
+      allow read: if isInternalUser();
+      allow write: if internalWriteOk();
+    }
     match /withholding_certificate_documents/{docId}/audit_logs/{logId} {
       allow read: if isInternalUser();
       allow write: if blockExecutiveWrite() && internalStaffFirestoreActor();

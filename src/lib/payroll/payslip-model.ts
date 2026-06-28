@@ -9,6 +9,7 @@ import type {
   PayslipWorkDaySplit,
   DailyTimesheet,
 } from '@/lib/types';
+import { formatPriorPeriodAllowancePayslipLabel } from '@/lib/payroll/prior-period-allowance';
 import { formatDateThaiBE, formatOfficePayrollRunPeriodLabelThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { leaveSummaryLabelTh } from '@/lib/payroll/office-payroll-period-deductions';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
@@ -209,8 +210,18 @@ export function buildWorkerPayslipIncomeLines(line: PayrollBatchLine): PayslipLi
   const allowanceItems = (line.hrLineAdjustments?.allowanceItems ?? []).filter(
     (x) => (Number(x.amount) || 0) > 0,
   );
+  const priorPeriodItems = (line.hrLineAdjustments?.priorPeriodAllowanceItems ?? []).filter(
+    (x) => (Number(x.amount) || 0) > 0,
+  );
 
   const lines: PayslipLineItem[] = [];
+
+  for (const it of priorPeriodItems) {
+    lines.push({
+      label: formatPriorPeriodAllowancePayslipLabel(it),
+      amount: round2(Number(it.amount) || 0),
+    });
+  }
 
   for (const it of allowanceItems) {
     lines.push({
@@ -249,7 +260,7 @@ export function buildWorkerPayslipIncomeLines(line: PayrollBatchLine): PayslipLi
   const fromSnapshot = line.d8Snapshot?.earningsComponents;
   const baseEb = { ...(fromSnapshot && Object.keys(fromSnapshot).length > 0 ? fromSnapshot : line.earningsBreakdown || {}) };
 
-  if (allowanceItems.length > 0) {
+  if (allowanceItems.length > 0 || priorPeriodItems.length > 0) {
     delete baseEb.hr_allowances;
   }
 
@@ -282,10 +293,19 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
   const allowanceItems = (line.hrLineAdjustments?.allowanceItems ?? []).filter(
     (x) => (Number(x.amount) || 0) > 0,
   );
-  const lines: PayslipLineItem[] = allowanceItems.map((it) => ({
-    label: it.label?.trim() || 'รายได้เพิ่ม (HR)',
-    amount: round2(Number(it.amount) || 0),
-  }));
+  const priorPeriodItems = (line.hrLineAdjustments?.priorPeriodAllowanceItems ?? []).filter(
+    (x) => (Number(x.amount) || 0) > 0,
+  );
+  const lines: PayslipLineItem[] = [
+    ...priorPeriodItems.map((it) => ({
+      label: formatPriorPeriodAllowancePayslipLabel(it),
+      amount: round2(Number(it.amount) || 0),
+    })),
+    ...allowanceItems.map((it) => ({
+      label: it.label?.trim() || 'รายได้เพิ่ม (HR)',
+      amount: round2(Number(it.amount) || 0),
+    })),
+  ];
 
   let normalDays = 0;
   let normalAmount = 0;

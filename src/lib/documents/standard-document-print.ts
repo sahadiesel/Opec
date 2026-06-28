@@ -51,7 +51,7 @@ import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
 import { amountToEnglishBahtText } from '@/lib/documents/english-baht-text';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
-import { translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
+import { translateCommercialLineDescriptionToEn, translateCommercialWaveCodeToEn } from '@/lib/documents/commercial-line-description-en';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { sumLineAmounts } from '@/lib/purchase/pr-totals';
 
@@ -1010,6 +1010,7 @@ function resolveCommercialPrintDocumentRef(
     (invoice.waveId && invoice.waveId !== QUOTATION_PO_WAVE_ID ? invoice.waveId.trim() : '') ||
     DOC_REF_EMPTY;
   if (wave === QUOTATION_PO_WAVE_ID) wave = DOC_REF_EMPTY;
+  if (locale === 'en') wave = translateCommercialWaveCodeToEn(wave);
 
   return {
     firstRowIsQuotation: false,

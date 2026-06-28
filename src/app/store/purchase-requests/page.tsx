@@ -23,7 +23,6 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canApprovePurchaseAsManager, isSystemAdmin } from '@/lib/permissions';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { PurchaseRequest, PurchaseRequestStatus, User, Vendor } from '@/lib/types';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -69,14 +68,22 @@ function statusBadge(s: PurchaseRequestStatus) {
   return <Badge className={c.className}>{c.label}</Badge>;
 }
 
-function tabFilter(tab: string, r: Pick<PurchaseRequest, 'status' | 'linkedPurchaseId'>): boolean {
-  const s = effectivePrStatus(r);
-  if (tab === 'all') return true;
-  if (tab === 'drafts') return s === 'DRAFT';
-  if (tab === 'pending') return s === 'PENDING_APPROVAL';
-  if (tab === 'approved')
-    return s === 'APPROVED' || s === 'PO_ISSUED' || s === 'REJECTED' || s === 'CANCELLED';
-  return true;
+const PR_STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: 'all', label: 'ทั้งหมด' },
+  { value: 'DRAFT', label: 'ฉบับร่าง' },
+  { value: 'PENDING_APPROVAL', label: 'รออนุมัติ' },
+  { value: 'APPROVED', label: 'อนุมัติแล้ว' },
+  { value: 'PO_ISSUED', label: 'ออก PO แล้ว' },
+  { value: 'REJECTED', label: 'ไม่อนุมัติ' },
+  { value: 'CANCELLED', label: 'ยกเลิก' },
+];
+
+function statusFilterMatches(
+  filter: string,
+  r: Pick<PurchaseRequest, 'status' | 'linkedPurchaseId'>,
+): boolean {
+  if (filter === 'all') return true;
+  return effectivePrStatus(r) === filter;
 }
 
 export default function StorePurchaseRequestsPage() {
@@ -152,7 +159,7 @@ export default function StorePurchaseRequestsPage() {
   const vendorsQuery = useMemoFirebase(() => (firestore && ok ? collection(firestore, 'vendors') : null), [firestore, ok]);
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
-  const [tab, setTab] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [monthYm, setMonthYm] = useState<string>('all');
 
   const monthOptions = useMemo(() => {
@@ -169,7 +176,7 @@ export default function StorePurchaseRequestsPage() {
   const rows = useMemo(() => {
     const qq = q.trim().toLowerCase();
     return (list || [])
-      .filter((r) => tabFilter(tab, r))
+      .filter((r) => statusFilterMatches(statusFilter, r))
       .filter((r) => {
         if (monthYm === 'all') return true;
         const d = new Date(r.createdAt);
@@ -184,7 +191,7 @@ export default function StorePurchaseRequestsPage() {
           (vendors?.find((v) => v.id === r.vendorId)?.vendorName || '').toLowerCase().includes(qq)
         );
       });
-  }, [list, q, tab, vendors, monthYm]);
+  }, [list, q, statusFilter, vendors, monthYm]);
 
   if (isUserLoading || userLoading || !currentUser) {
     return (
@@ -236,42 +243,44 @@ export default function StorePurchaseRequestsPage() {
           </p>
         )}
 
-        <Tabs value={tab} onValueChange={setTab} className="w-full">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <TabsList>
-              <TabsTrigger value="all">ทั้งหมด</TabsTrigger>
-              <TabsTrigger value="drafts">ฉบับร่าง</TabsTrigger>
-              <TabsTrigger value="pending">รออนุมัติ</TabsTrigger>
-              <TabsTrigger value="approved">สรุปผล</TabsTrigger>
-            </TabsList>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="relative w-full sm:max-w-sm">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  className="h-10 pl-9"
-                  placeholder="ค้นหาเลขที่ หัวข้อ หรือคู่ค้า..."
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                />
-              </div>
-              <Select value={monthYm} onValueChange={setMonthYm}>
-                <SelectTrigger className="h-10 w-full sm:w-[200px]">
-                  <SelectValue placeholder="เดือน" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">ทุกเดือน</SelectItem>
-                  {monthOptions.map((ym) => (
-                    <SelectItem key={ym} value={ym}>
-                      {ym}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+        <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-0.5">
+          <div className="relative min-w-[12rem] flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="h-10 pl-9"
+              placeholder="ค้นหาเลขที่ หัวข้อ หรือคู่ค้า..."
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
           </div>
-        </Tabs>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="h-10 w-[11rem] shrink-0">
+              <SelectValue placeholder="สถานะ" />
+            </SelectTrigger>
+            <SelectContent>
+              {PR_STATUS_FILTER_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={monthYm} onValueChange={setMonthYm}>
+            <SelectTrigger className="h-10 w-[10.5rem] shrink-0 ml-auto">
+              <SelectValue placeholder="เดือน" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">ทุกเดือน</SelectItem>
+              {monthOptions.map((ym) => (
+                <SelectItem key={ym} value={ym}>
+                  {ym}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
-        <Card className="mt-2 border-none shadow-md">
+        <Card className="border-none shadow-md">
           <CardHeader>
             <CardTitle className="text-lg">รายการ PR</CardTitle>
           </CardHeader>

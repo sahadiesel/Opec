@@ -239,6 +239,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
   const [isEditing, setIsEditing] = useState(false);
   const [editedMC, setEditedMC] = useState<Partial<MainContract>>({});
   const [billingModeDraft, setBillingModeDraft] = useState<ContractBillingMode>('MONTHLY');
+  const [tripBillMobDemobFeeDraft, setTripBillMobDemobFeeDraft] = useState(false);
 
   const [isAddRateOpen, setIsAddRateOpen] = useState(false);
   const [editingRateId, setEditingRateId] = useState<string | null>(null);
@@ -315,6 +316,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     if (contract) {
       setEditedMC(contract);
       setBillingModeDraft(contract.billingMode ?? 'MONTHLY');
+      setTripBillMobDemobFeeDraft(contract.tripBillMobDemobFee === true);
     }
   }, [contract]);
 
@@ -430,6 +432,9 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     if ((editedMC.endDate ?? 0) !== (contract.endDate ?? 0)) changedFields.push('endDate');
     if ((editedMC.billingTerms ?? '') !== (contract.billingTerms ?? '')) changedFields.push('billingTerms');
     if ((editedMC.billingMode ?? 'MONTHLY') !== (contract.billingMode ?? 'MONTHLY')) changedFields.push('billingMode');
+    if ((editedMC.tripBillMobDemobFee === true) !== (contract.tripBillMobDemobFee === true)) {
+      changedFields.push('tripBillMobDemobFee');
+    }
     if ((editedMC.paymentTerms ?? '') !== (contract.paymentTerms ?? '')) changedFields.push('paymentTerms');
     if ((editedMC.vatPercent ?? 7) !== (contract.vatPercent ?? 7)) changedFields.push('vatPercent');
     if ((editedMC.notes ?? '') !== (contract.notes ?? '')) changedFields.push('notes');
@@ -587,13 +592,14 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
     if (contract.status !== 'active') return;
     updateDocumentNonBlocking(mcRef, {
       billingMode: billingModeDraft,
+      tripBillMobDemobFee: tripBillMobDemobFeeDraft,
       updatedAt: Date.now(),
     });
     addContractChangeLog({
       actionType: 'UPDATE_CONTRACT_HEADER',
-      changedFields: ['billingMode'],
-      beforeSummary: contract.billingMode ?? 'MONTHLY',
-      afterSummary: billingModeDraft,
+      changedFields: ['billingMode', 'tripBillMobDemobFee'],
+      beforeSummary: `${contract.billingMode ?? 'MONTHLY'} · mobFee=${contract.tripBillMobDemobFee === true}`,
+      afterSummary: `${billingModeDraft} · mobFee=${tripBillMobDemobFeeDraft}`,
     });
     toast({
       title: 'บันทึกโหมดวางบิลแล้ว',
@@ -1355,22 +1361,65 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                     </p>
                     {isActiveContract && canModify && !isSupplementalContract && (
                       <Button type="button" variant="secondary" size="sm" onClick={handleSaveBillingMode}>
-                        บันทึกโหมดวางบิล
+                        บันทึกการตั้งค่าวางบิล Trip
                       </Button>
                     )}
                   </div>
                   {(contract.billingMode === 'TRIP' ||
                     billingModeDraft === 'TRIP' ||
                     editedMC.billingMode === 'TRIP') && (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/30">
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-4 text-sm dark:border-amber-900 dark:bg-amber-950/30 space-y-3">
                       <p className="font-medium text-amber-900 dark:text-amber-100">ทำใบแจ้งหนี้แบบ Trip</p>
-                      <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
+                      <p className="text-muted-foreground text-xs leading-relaxed">
                         หลังปิด Payroll รายเดือน → ไปที่{' '}
                         <Link href="/accounting/trip-billing" className="font-medium text-primary underline">
                           ทำใบแจ้งหนี้แบบ Trip
                         </Link>
                         {' '}→ เลือก PO → ซิงก์ → อนุมัติชุด → สร้าง Invoice
                       </p>
+                      <div className="space-y-2 max-w-md pt-1 border-t border-amber-200/80 dark:border-amber-800">
+                        <Label>คิดค่า Mob/Demob ไป-กลับ (MOB fee) ใน invoice Trip</Label>
+                        <Select
+                          disabled={
+                            !canModify ||
+                            isSupplementalContract ||
+                            (isPendingContract ? !isEditing : !isActiveContract)
+                          }
+                          value={
+                            isPendingContract && isEditing
+                              ? editedMC.tripBillMobDemobFee === true
+                                ? 'yes'
+                                : 'no'
+                              : isActiveContract
+                                ? tripBillMobDemobFeeDraft
+                                  ? 'yes'
+                                  : 'no'
+                                : contract.tripBillMobDemobFee === true
+                                  ? 'yes'
+                                  : 'no'
+                          }
+                          onValueChange={(v) => {
+                            const enabled = v === 'yes';
+                            if (isPendingContract && isEditing) {
+                              setEditedMC({ ...editedMC, tripBillMobDemobFee: enabled });
+                            } else if (isActiveContract) {
+                              setTripBillMobDemobFeeDraft(enabled);
+                            }
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="no">ไม่มี — ไม่เพิ่มบรรทัดค่า MOB</SelectItem>
+                            <SelectItem value="yes">มี — 1 คน / 1 trip = 1 ค่า MOB (จากตารางราคา)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          อัตราดึงจากคอลัมน์ Mob/Demob ในตารางราคา offshore — ถ้ามีหลายจุด (เช่น Songkhla / Sattahip)
+                          ระบบจะถามตอนสร้าง invoice
+                        </p>
+                      </div>
                     </div>
                   )}
                   {(contract.billingMode === 'MONTHLY' ||

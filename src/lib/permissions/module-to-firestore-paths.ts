@@ -275,6 +275,7 @@ export const MODULE_FIRESTORE_SPECS: ModuleFirestoreSpec[] = [
       { path: 'monthly_timesheet_photo_bundles/{id}', shape: 'crud' },
       { path: 'po_month_timesheet_photo_bundles/{id}', shape: 'crud' },
       { path: 'wave_month_timesheet_photo_bundles/{id}', shape: 'crud' },
+      { path: 'timesheet_retro_adjustments/{id}', shape: 'crud' },
     ],
   },
   {
@@ -291,6 +292,7 @@ export const MODULE_FIRESTORE_SPECS: ModuleFirestoreSpec[] = [
       { path: 'payroll_policies/{id}', shape: 'crud' },
       { path: 'worker_payment_profiles/{id}', shape: 'crud' },
       { path: 'payroll_correction_requests/{id}', shape: 'crud' },
+      { path: 'timesheet_retro_adjustments/{id}', shape: 'crud' },
       { path: 'payroll_wht_certificates/{id}', shape: 'crud' },
     ],
   },

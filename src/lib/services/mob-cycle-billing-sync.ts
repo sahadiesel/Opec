@@ -20,6 +20,7 @@ import type {
   TripBillingBatchStatus,
 } from '@/lib/types';
 import { buildMobCycleDocId } from '@/lib/ops/mob-cycle-ids';
+import { sanitizeFirestorePayload } from '@/lib/utils';
 
 const REVIEW_COLLECTION = 'mob_cycle_billing_reviews';
 const BATCH_COLLECTION = 'trip_billing_batches';
@@ -110,32 +111,150 @@ async function loadTimesheetsForAssignment(
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) } as DailyTimesheet));
 }
 
-/** แยก timesheet ตามรอบ mobilization */
+function isTripActivityTimesheet(ts: DailyTimesheet): boolean {
+  const et = String(ts.eventType || '');
+  return (
+    et === 'mobilization_day' ||
+    et === 'demobilization_day' ||
+    et === 'work_day' ||
+    et === 'standby_day'
+  );
+}
+
+function listDemobDatesYmd(allTimesheets: DailyTimesheet[]): string[] {
+  return allTimesheets
+    .filter((t) => t.eventType === 'demobilization_day')
+    .map((t) => String(t.date || '').slice(0, 10))
+    .filter(Boolean)
+    .sort();
+}
+
+function nextCalendarDayYmd(ymd: string): string {
+  const d = new Date(`${ymd}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return ymd;
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * วันปิดรอบ mobilization — D1 ติดกันหลายวัน = trip เดียว (ใช้วันสุดท้ายของชุด)
+ */
+function listDemobCycleEndDates(allTimesheets: DailyTimesheet[]): string[] {
+  const d1Dates = listDemobDatesYmd(allTimesheets);
+  if (d1Dates.length === 0) return [];
+  const ends: string[] = [];
+  let groupLast = d1Dates[0]!;
+  for (let i = 1; i < d1Dates.length; i += 1) {
+    const curr = d1Dates[i]!;
+    if (curr === nextCalendarDayYmd(groupLast)) {
+      groupLast = curr;
+    } else {
+      ends.push(groupLast);
+      groupLast = curr;
+    }
+  }
+  ends.push(groupLast);
+  return ends;
+}
+
+type MobCycleSegment = {
+  cycleNumber: number;
+  timesheets: DailyTimesheet[];
+};
+
+/**
+ * แบ่งรอบ mobilization ตาม D1 เท่านั้น — M1 หลายวันติดกัน = trip เดียว
+ * ไม่ใช้ mobCycleId บน timesheet (มัก tag ผิดเมื่อ M1 2 วัน)
+ */
+function deriveMobCycleSegments(allTimesheets: DailyTimesheet[]): MobCycleSegment[] {
+  const activity = [...allTimesheets]
+    .filter((t) => {
+      const d = String(t.date || '').slice(0, 10);
+      return d && isTripActivityTimesheet(t);
+    })
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  if (activity.length === 0) return [];
+
+  const cycleEndDates = listDemobCycleEndDates(allTimesheets);
+  if (cycleEndDates.length === 0) {
+    return [{ cycleNumber: 1, timesheets: activity }];
+  }
+
+  const segments: MobCycleSegment[] = [];
+  for (let ci = 0; ci < cycleEndDates.length; ci += 1) {
+    const endDate = cycleEndDates[ci]!;
+    const prevEnd = ci > 0 ? cycleEndDates[ci - 1]! : undefined;
+    const seg = activity.filter((ts) => {
+      const d = String(ts.date || '').slice(0, 10);
+      if (!prevEnd) return d <= endDate;
+      return d > prevEnd && d <= endDate;
+    });
+    if (seg.length > 0) segments.push({ cycleNumber: ci + 1, timesheets: seg });
+  }
+
+  const lastEnd = cycleEndDates[cycleEndDates.length - 1]!;
+  const open = activity.filter((ts) => String(ts.date || '').slice(0, 10) > lastEnd);
+  if (open.length > 0) {
+    segments.push({ cycleNumber: cycleEndDates.length + 1, timesheets: open });
+  }
+
+  return segments;
+}
+
+/** แยก timesheet ตามรอบ mobilization — อิง D1 เป็นขอบเขตรอบ */
 function filterTimesheetsForCycle(
   allTimesheets: DailyTimesheet[],
-  assignment: Assignment,
+  _assignment: Assignment,
   cycleNumber: number,
 ): DailyTimesheet[] {
-  const mobCycleId = buildMobCycleDocId(assignment.id, cycleNumber);
-  const currentCycle = Math.max(1, assignment.mobCycleNumber ?? 1);
-  const finishYmd = String(assignment.mobLocationEndDate || '').slice(0, 10);
+  const seg = deriveMobCycleSegments(allTimesheets).find((s) => s.cycleNumber === cycleNumber);
+  return seg?.timesheets ?? [];
+}
 
-  return allTimesheets.filter((ts) => {
-    const tsMob = String(ts.mobCycleId || '').trim();
-    if (tsMob) return tsMob === mobCycleId;
+/**
+ * Timesheet ในรอบ mobilization ตาม segment (D1 boundaries) — ใช้ trip billing ให้ตรงตารางรายเดือน
+ * ไม่ดึงทั้ง assignment ตามช่วงวันที่ (กัน work_day auto เติมช่องว่างเกิน)
+ */
+export async function loadTimesheetsForMobCycleBilling(
+  db: Firestore,
+  review: MobCycleBillingReview,
+): Promise<DailyTimesheet[]> {
+  const assignmentId = String(review.assignmentId || '').trim();
+  if (!assignmentId) return [];
 
-    const date = String(ts.date || '').slice(0, 10);
-    if (!date) return false;
+  const all = await loadTimesheetsForAssignment(db, assignmentId);
+  const cycleNum = parseCycleNumberFromMobCycleId(review.mobCycleId);
+  const start = String(review.tripStartDate || '').slice(0, 10);
+  const end = String(review.tripEndDate || review.tripStartDate || start).slice(0, 10);
 
-    if (cycleNumber < currentCycle) {
-      return finishYmd ? date <= finishYmd : cycleNumber === 1;
+  let segmented: DailyTimesheet[];
+  if (cycleNum != null) {
+    segmented = filterTimesheetsForCycle(
+      all,
+      { id: assignmentId } as Assignment,
+      cycleNum,
+    );
+  } else {
+    segmented = all.filter((t) => {
+      const d = String(t.date || '').slice(0, 10);
+      return d && d >= start && d <= end;
+    });
+  }
+
+  const byId = new Map<string, DailyTimesheet>();
+  for (const ts of segmented) byId.set(ts.id, ts);
+
+  const taggedSnap = await getDocs(
+    query(collection(db, 'daily_timesheets'), where('mobCycleId', '==', review.mobCycleId)),
+  );
+  for (const d of taggedSnap.docs) {
+    if (!byId.has(d.id)) {
+      byId.set(d.id, { id: d.id, ...(d.data() as object) } as DailyTimesheet);
     }
-    if (cycleNumber === currentCycle) {
-      if (currentCycle === 1 || !finishYmd) return true;
-      return date > finishYmd;
-    }
-    return false;
-  });
+  }
+
+  return [...byId.values()];
 }
 
 function listCycleNumbersToSync(
@@ -144,19 +263,17 @@ function listCycleNumbersToSync(
   existingReviews: MobCycleBillingReview[],
 ): number[] {
   const cycles = new Set<number>();
-  const current = Math.max(1, assignment.mobCycleNumber ?? 1);
-  for (let n = 1; n <= current; n += 1) cycles.add(n);
-
-  for (const ts of allTimesheets) {
-    const fromId = parseCycleNumberFromMobCycleId(String(ts.mobCycleId || ''));
-    if (fromId) cycles.add(fromId);
+  for (const seg of deriveMobCycleSegments(allTimesheets)) {
+    cycles.add(seg.cycleNumber);
   }
 
   for (const r of existingReviews) {
-    if (r.assignmentId !== assignment.id) continue;
+    if (r.assignmentId !== assignment.id || r.status !== 'invoiced') continue;
     const fromReview = parseCycleNumberFromMobCycleId(r.mobCycleId);
     if (fromReview) cycles.add(fromReview);
   }
+
+  if (cycles.size === 0 && allTimesheets.some(isTripActivityTimesheet)) cycles.add(1);
 
   return [...cycles].sort((a, b) => a - b);
 }
@@ -202,8 +319,9 @@ function buildReviewFromTimesheets(
   const batchId = tripBillingBatchDocId(po.id, assignment.waveId, tripAnchorStartDate);
 
   const demobTs = timesheets.find((t) => t.eventType === 'demobilization_day');
+  const positionId = String(assignment.positionId || '').trim();
 
-  return {
+  return sanitizeFirestorePayload({
     id: mobCycleId,
     mobCycleId,
     assignmentId: assignment.id,
@@ -213,7 +331,7 @@ function buildReviewFromTimesheets(
     contractId: po.contractId,
     customerId: po.customerId,
     waveId: assignment.waveId,
-    positionId: undefined,
+    ...(positionId ? { positionId } : {}),
     tripAnchorStartDate,
     tripStartDate,
     tripEndDate,
@@ -223,7 +341,7 @@ function buildReviewFromTimesheets(
     demobilizationTimesheetId: demobTs?.id,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
-  };
+  }) as MobCycleBillingReview;
 }
 
 /** ซิงก์ review ต่อ mobilization ใต้ PO — อ่านจาก timesheets + assignment */
@@ -252,6 +370,7 @@ export async function syncMobCycleBillingReviewsForPo(
     const allTimesheets = await loadTimesheetsForAssignment(db, assignment.id);
     const assignmentReviews = existingForPo.filter((r) => r.assignmentId === assignment.id);
     const cycleNumbers = listCycleNumbersToSync(assignment, allTimesheets, assignmentReviews);
+    const syncedForAssignment = new Set<string>();
 
     for (const cycleNumber of cycleNumbers) {
       const mobCycleId = resolveMobCycleId(assignment, cycleNumber);
@@ -265,14 +384,51 @@ export async function syncMobCycleBillingReviewsForPo(
         existing,
         now,
       );
-      if (!review) continue;
-      await setDoc(doc(db, REVIEW_COLLECTION, review.id), review, { merge: true });
+      if (!review) {
+        if (existing?.status === 'invoiced') {
+          reviews.push(existing);
+          syncedForAssignment.add(existing.id);
+        }
+        continue;
+      }
+      await setDoc(
+        doc(db, REVIEW_COLLECTION, review.id),
+        sanitizeFirestorePayload(review as Record<string, unknown>),
+        { merge: true },
+      );
+      syncedForAssignment.add(review.id);
       reviews.push(review);
+    }
+
+    for (const stale of assignmentReviews) {
+      if (syncedForAssignment.has(stale.id)) continue;
+      if (stale.status === 'invoiced' || stale.status === 'void') continue;
+      await setDoc(
+        doc(db, REVIEW_COLLECTION, stale.id),
+        sanitizeFirestorePayload({ status: 'void' as const, updatedAt: now }),
+        { merge: true },
+      );
     }
   }
 
   const batches = await syncTripBillingBatchesForPo(db, po, reviews, now);
   return { reviews, batches };
+}
+
+/** คนเดียวในชุดวางบิล — เก็บรอบที่ M1 เริ่มเร็วสุด (กันซ้ำจาก sync เก่า) */
+function dedupeBatchMembersByWorker(
+  members: MobCycleBillingReview[],
+): MobCycleBillingReview[] {
+  const byWorker = new Map<string, MobCycleBillingReview>();
+  for (const m of members) {
+    const wid = String(m.workerId || '').trim();
+    if (!wid) continue;
+    const prev = byWorker.get(wid);
+    if (!prev || m.tripAnchorStartDate < prev.tripAnchorStartDate) {
+      byWorker.set(wid, m);
+    }
+  }
+  return [...byWorker.values()];
 }
 
 async function syncTripBillingBatchesForPo(
@@ -300,8 +456,12 @@ async function syncTripBillingBatchesForPo(
 
   const batches: TripBillingBatch[] = [];
 
-  for (const [batchId, members] of byBatch) {
-    const anchor = members[0]?.tripAnchorStartDate ?? '';
+  for (const [batchId, rawMembers] of byBatch) {
+    const members = dedupeBatchMembersByWorker(rawMembers);
+    const anchor = members.reduce(
+      (min, m) => (m.tripAnchorStartDate < min ? m.tripAnchorStartDate : min),
+      members[0]?.tripAnchorStartDate ?? '',
+    );
     const waveId = members[0]?.waveId;
     const periodStart = members.reduce(
       (min, m) => (m.tripStartDate < min ? m.tripStartDate : min),
@@ -316,7 +476,22 @@ async function syncTripBillingBatchesForPo(
           )
         : undefined;
 
-    const existing = existingById.get(batchId);
+    const existingRaw = existingById.get(batchId);
+    let existing = existingRaw;
+    if (existing?.status === 'invoiced') {
+      const { isTripBatchCommercialInvoiceActive, releaseTripBillingBatchAfterInvoiceRemoved } =
+        await import('@/lib/services/trip-billing-service');
+      const stillActive = await isTripBatchCommercialInvoiceActive(db, existing);
+      if (!stillActive) {
+        await releaseTripBillingBatchAfterInvoiceRemoved(db, existing.id);
+        existing = {
+          ...existing,
+          status: 'approved',
+          sourceCommercialInvoiceId: undefined,
+        };
+      }
+    }
+
     const status = deriveBatchStatus(members, existing?.status);
 
     const batch: TripBillingBatch = {
@@ -332,7 +507,8 @@ async function syncTripBillingBatchesForPo(
       periodStart,
       periodEnd,
       status,
-      sourceCommercialInvoiceId: existing?.sourceCommercialInvoiceId,
+      sourceCommercialInvoiceId:
+        status === 'invoiced' ? existing?.sourceCommercialInvoiceId : undefined,
       submittedAt: existing?.submittedAt,
       reviewedAt: existing?.reviewedAt,
       reviewedByUserId: existing?.reviewedByUserId,
@@ -342,8 +518,23 @@ async function syncTripBillingBatchesForPo(
       updatedAt: now,
     };
 
-    await setDoc(doc(db, BATCH_COLLECTION, batch.id), batch, { merge: true });
+    await setDoc(
+      doc(db, BATCH_COLLECTION, batch.id),
+      sanitizeFirestorePayload(batch as Record<string, unknown>),
+      { merge: true },
+    );
     batches.push(batch);
+  }
+
+  const activeBatchIds = new Set(batches.map((b) => b.id));
+  for (const [id, existing] of existingById) {
+    if (activeBatchIds.has(id)) continue;
+    if (existing.status === 'invoiced' || existing.status === 'void') continue;
+    await setDoc(
+      doc(db, BATCH_COLLECTION, id),
+      sanitizeFirestorePayload({ status: 'void' as const, updatedAt: now }),
+      { merge: true },
+    );
   }
 
   return batches;
@@ -393,8 +584,6 @@ async function markAssignmentTimesheetsReadyForBilling(
   let n = 0;
   for (const d of snap.docs) {
     if (seenIds.has(d.id)) continue;
-    const data = d.data();
-    if (data.status === 'LOCKED') continue;
     batch.update(d.ref, { readyForBilling: true, updatedAt: ts });
     seenIds.add(d.id);
     updated++;
@@ -430,8 +619,6 @@ export async function markTimesheetsReadyForBillingByMobCycles(
     let n = 0;
     for (const d of snap.docs) {
       if (seenIds.has(d.id)) continue;
-      const data = d.data();
-      if (data.status === 'LOCKED') continue;
       batch.update(d.ref, { readyForBilling: true, updatedAt: ts });
       seenIds.add(d.id);
       updated++;

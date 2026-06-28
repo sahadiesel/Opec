@@ -19,12 +19,23 @@ import type {
   PurchaseOrder,
   RateConditionEventType,
   MainContract,
+  JobMode,
+  MobCycleBillingReview,
+  TimesheetRetroAdjustment,
+  PositionRate,
 } from '@/lib/types';
 import { isYmdWithinAssignmentMobTimesheetWindow } from '@/lib/constants/timesheet-ui';
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
-import { sellSnapshotForWorkMode } from '@/lib/commercial/position-rate-sell';
-import { derivePackageNormalHourlyRate, PACKAGE_OT_TIER_MULT } from '@/lib/commercial/package-hourly-rate';
-import { parseWorkDayHours } from '@/lib/commercial/package-work-day-hours';
+import {
+  resolveBillingMatrixEventDayRate,
+  resolveBillingMatrixOtHourlyRate,
+  resolveBillingSellWorkingDayRate,
+} from '@/lib/commercial/position-rate-sell';
+import {
+  buildPoWorkModeMapFromPurchaseOrders,
+  resolveEffectivePayrollJobMode,
+} from '@/lib/payroll/timesheet-labor-base-cost';
+import type { StatedPackageHours } from '@/lib/commercial/package-hourly-rate';
 import { resolveSellRestDay, type SellRestDayResolution } from '@/lib/commercial/sell-rest-day';
 
 export interface GeneratedBillingLine {
@@ -57,6 +68,8 @@ export interface GenerateBillingLinesOptions {
   poMonthWaveIds?: readonly string[] | null;
   /** Trip billing: จำกัดเฉพาะ mobCycleId ในชุดวางบิล */
   mobCycleIds?: readonly string[] | null;
+  /** Trip billing + สัญญา tripBillMobDemobFee: จุด mob/demob ที่เลือกตอนสร้าง invoice */
+  tripMobDemobLocationKey?: string;
 }
 
 interface LineAcc {
@@ -127,6 +140,153 @@ function dedupeTimesheetsForBilling(tsList: readonly DailyTimesheet[]): DailyTim
   return out.sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
 }
 
+function timesheetHasBillableOtHours(ts: DailyTimesheet): boolean {
+  return (
+    Math.max(0, Number(ts.ot15Hours) || 0) +
+      Math.max(0, Number(ts.ot20Hours) || 0) +
+      Math.max(0, Number(ts.ot30Hours) || 0) >
+    0
+  );
+}
+
+function isTripBillingTimesheetBillable(ts: DailyTimesheet): boolean {
+  if (ts.readyForBilling === true) return true;
+  if (ts.status === 'LOCKED') return true;
+  return false;
+}
+
+/**
+ * รวมชม. retro เข้า timesheet ชั่วคราวเพื่อคำนวณ **ใบแจ้งหนี้ลูกค้า (อัตราขาย)** เท่านั้น
+ * — ไม่แก้ daily_timesheets ไม่กระทบ payroll (จ่ายลูกจ้างผ่าน priorPeriodAllowanceItems ในงวด applyPayrollYearMonth)
+ */
+function mergeRetroDeltasIntoTimesheets(
+  timesheets: DailyTimesheet[],
+  retros: readonly TimesheetRetroAdjustment[],
+): DailyTimesheet[] {
+  const byTsId = new Map<string, TimesheetRetroAdjustment[]>();
+  for (const r of retros) {
+    if (r.status === 'void') continue;
+    const sid = String(r.sourceTimesheetId || '').trim();
+    if (!sid) continue;
+    const list = byTsId.get(sid) ?? [];
+    list.push(r);
+    byTsId.set(sid, list);
+  }
+
+  return timesheets.map((ts) => {
+    const adj = byTsId.get(ts.id);
+    if (!adj?.length) return ts;
+    let o15 = Math.max(0, Number(ts.ot15Hours) || 0);
+    let o20 = Math.max(0, Number(ts.ot20Hours) || 0);
+    let o30 = Math.max(0, Number(ts.ot30Hours) || 0);
+    for (const r of adj) {
+      o15 += Math.max(0, Number(r.addedOt15Hours) || 0);
+      o20 += Math.max(0, Number(r.addedOt20Hours) || 0);
+      o30 += Math.max(0, Number(r.addedOt30Hours) || 0);
+    }
+    return { ...ts, ot15Hours: o15, ot20Hours: o20, ot30Hours: o30 };
+  });
+}
+
+/** ใบงานต้นทางของ retro ที่อยู่ในรอบแต่ไม่ถูกดึงมา (เช่น LOCKED ก่อนแก้ readyForBilling) */
+async function enrichTimesheetsForRetroSources(
+  db: Firestore,
+  timesheets: DailyTimesheet[],
+  retros: readonly TimesheetRetroAdjustment[],
+  periodStart: string,
+  periodEnd: string,
+): Promise<DailyTimesheet[]> {
+  const byId = new Map(timesheets.map((t) => [t.id, t]));
+  for (const r of retros) {
+    if (r.status === 'void') continue;
+    const sid = String(r.sourceTimesheetId || '').trim();
+    if (!sid || byId.has(sid)) continue;
+    const snap = await getDoc(doc(db, 'daily_timesheets', sid));
+    if (!snap.exists()) continue;
+    const ts = { id: snap.id, ...(snap.data() as object) } as DailyTimesheet;
+    const d = String(ts.date || '').slice(0, 10);
+    if (d < periodStart || d > periodEnd) continue;
+    if (ts.eventType !== 'work_day') continue;
+    byId.set(ts.id, ts);
+  }
+  return [...byId.values()];
+}
+
+/**
+ * Trip billing — ตัด work_day ที่ไม่ใช่การทำงานจริงบนไซต์:
+ * - วันเดียวกับ M1 (มี mobilization_day แล้ว)
+ * - ตั้งแต่วัน D1 เป็นต้นไป
+ * - แถว PO Active auto ที่ไม่มี OT (เติมช่องว่าง — ไม่ตรงตารางรายเดือน)
+ */
+export function filterTimesheetsForTripMobCycleBilling(
+  timesheets: readonly DailyTimesheet[],
+): { timesheets: DailyTimesheet[]; warnings: string[] } {
+  const warnings: string[] = [];
+  const mobDaysByWorker = new Map<string, Set<string>>();
+  const d1DaysByWorker = new Map<string, Set<string>>();
+
+  for (const ts of timesheets) {
+    const wid = String(ts.workerId || '').trim();
+    const d = String(ts.date || '').slice(0, 10);
+    if (!wid || !d) continue;
+    if (ts.eventType === 'mobilization_day') {
+      const set = mobDaysByWorker.get(wid) ?? new Set<string>();
+      set.add(d);
+      mobDaysByWorker.set(wid, set);
+    }
+    if (ts.eventType === 'demobilization_day') {
+      const set = d1DaysByWorker.get(wid) ?? new Set<string>();
+      set.add(d);
+      d1DaysByWorker.set(wid, set);
+    }
+  }
+
+  let droppedMobOverlap = 0;
+  let droppedAfterD1 = 0;
+  let droppedAutoGap = 0;
+
+  const out = timesheets.filter((ts) => {
+    if (ts.eventType !== 'work_day') return true;
+    const wid = String(ts.workerId || '').trim();
+    const d = String(ts.date || '').slice(0, 10);
+    if (!wid || !d) return true;
+
+    if (mobDaysByWorker.get(wid)?.has(d)) {
+      droppedMobOverlap++;
+      return false;
+    }
+
+    const firstD1 = [...(d1DaysByWorker.get(wid) ?? [])].sort()[0];
+    if (firstD1 && d >= firstD1) {
+      droppedAfterD1++;
+      return false;
+    }
+
+    if (ts.poActiveAutoDaily === true && !timesheetHasBillableOtHours(ts)) {
+      droppedAutoGap++;
+      return false;
+    }
+
+    return true;
+  });
+
+  if (droppedMobOverlap > 0) {
+    warnings.push(
+      `Trip billing: ตัด work_day ${droppedMobOverlap} วันที่ซ้ำกับ M1 — วางบิลเฉพาะ mobilization_day`,
+    );
+  }
+  if (droppedAfterD1 > 0) {
+    warnings.push(`Trip billing: ตัด work_day ${droppedAfterD1} วันที่อยู่ในช่วง D1 ขึ้นไป`);
+  }
+  if (droppedAutoGap > 0) {
+    warnings.push(
+      `Trip billing: ตัด work_day อัตโนมัติ ${droppedAutoGap} วัน (ไม่มี OT / ไม่ได้ลงในตาราง) — ไม่วางบิล`,
+    );
+  }
+
+  return { timesheets: out, warnings };
+}
+
 /**
  * คำเตือนที่สร้างก่อนแก้ไข / ข้อมูล eventType มีช่องว่าง — ลาไม่จ่ายไม่คิดบิลอยู่แล้ว ไม่ต้องแสดง
  */
@@ -156,128 +316,139 @@ function applySellRestMultiplier(
 }
 
 /**
- * work_day จากแพ็กขาย PO (sellRateSnapshot) สมมาตรกับ payroll: แพ็ก 8/12 + ตัวคูณขาย + tier + วันพิเศษฝั่งขาย
- * - ตัวคูณขาย OT ≤ 1: เก็บรายวันแบบแบน (ไม่แยก OT) × ตัวคูณวันหยุดขาย
- * - ตัวคูณขาย OT > 1: แยก 8 ชม. + overflow normal + ot15/20/30 เหมือนฝั่งต้นทุน
+ * work_day — ราคารายวันจากสัญญา/PO (แพ็ก 8 ชม. onshore / 12 ชม. offshore) × 1 คน-วันต่อแถว
+ * OT แยกเฉพาะชม.ที่เกินแพ็ก (normalHours − statedHours) + ot15/20/30 — ไม่แตกชม.ปกติเป็นรายชม.
  */
-function workDayFromPackageBilling(
+function resolveStatedPackageHoursForBilling(
+  poLine: POLine,
+  workMode: JobMode,
+): StatedPackageHours {
+  const snap = poLine.normalWorkHoursSnapshot;
+  if (snap === 12) return 12;
+  if (snap === 8) return 8;
+  return workMode === 'OFFSHORE' ? 12 : 8;
+}
+
+function sellOtMultiplierForBilling(
+  poLine: POLine,
+  mainContract: MainContract | undefined,
+): number {
+  return (
+    Number(poLine.sellOtRulesSnapshot?.afterShift) ||
+    Number(mainContract?.rateMultiplierPolicy?.sell?.otAfterShift) ||
+    1.5
+  );
+}
+
+function overflowOtEventType(sellOtMult: number): string {
+  if (sellOtMult >= 2.5) return 'ot_3.0';
+  if (sellOtMult >= 1.75) return 'ot_2.0';
+  return 'ot_1.5';
+}
+
+function workDayFromDayRateBilling(
   ts: DailyTimesheet,
   poLine: POLine,
   mainContract: MainContract | undefined,
   map: Map<string, LineAcc>,
-  warnings: string[],
+  workMode: JobMode,
+  contractRate?: PositionRate,
 ) {
-  const sellRate = Number(sellSnapshotForWorkMode(poLine, ts.workMode) || 0);
+  const rateCtx = { poLine, workMode, contractRate };
+  const sellRate = resolveBillingSellWorkingDayRate(rateCtx);
   if (sellRate <= 0) return;
 
-  const sellOtMult =
-    Number(poLine.sellOtRulesSnapshot?.afterShift) ||
-    Number(mainContract?.rateMultiplierPolicy?.sell?.otAfterShift) ||
-    1;
+  const statedHours = resolveStatedPackageHoursForBilling(poLine, workMode);
+  const sellOtMult = sellOtMultiplierForBilling(poLine, mainContract);
+  const matrixOtHourly = resolveBillingMatrixOtHourlyRate(rateCtx);
 
-  const statedHours = poLine.normalWorkHoursSnapshot === 12 ? 12 : 8;
+  const nh = Math.max(0, ts.normalHours || 0);
+  const o15 = Math.max(0, ts.ot15Hours || 0);
+  const o20 = Math.max(0, ts.ot20Hours || 0);
+  const o30 = Math.max(0, ts.ot30Hours || 0);
+  const overflowNormal = Math.max(0, nh - statedHours);
+
+  if (nh <= 0 && o15 + o20 + o30 <= 0 && overflowNormal <= 0) return;
+
   const sellRest = resolveSellRestDay(ts.date, mainContract);
-  const w = ts.workerNameSnapshot;
   const wid = ts.workerId;
   const pos = ts.positionId;
   const tid = [ts.id];
+  const hourlyFromDayRate = sellRate / statedHours;
+  const otHourlyBase = matrixOtHourly ?? hourlyFromDayRate;
 
-  if (sellOtMult <= 1) {
-    let amt = sellRate;
+  if (nh > 0) {
+    let dayAmt = sellRate;
     if (sellRest.active && sellRest.kind === 'public_holiday') {
-      amt *= Math.max(0, sellRest.publicHolidayWrap ?? 1);
+      dayAmt *= Math.max(0, sellRest.publicHolidayWrap ?? 1);
     } else if (sellRest.active && sellRest.kind === 'weekly_rest') {
-      amt *= Math.max(0, sellRest.weeklyNormalMult ?? 1);
+      dayAmt *= Math.max(0, sellRest.weeklyNormalMult ?? 1);
     }
-    pushAcc(map, accKey(pos, 'work_day', amt), {
+    pushAcc(map, accKey(pos, 'work_day', dayAmt), {
       workerId: wid,
       positionId: pos,
       eventType: 'work_day',
       timesheetIds: tid,
-      amount: amt,
+      amount: dayAmt,
       quantity: 1,
     });
+  }
+
+  const pushOtLine = (
+    eventType: string,
+    hours: number,
+    rawAmount: number,
+  ) => {
+    if (hours <= 0 || rawAmount <= 0) return;
+    const amt = applySellRestMultiplier(rawAmount, sellRest, 'ot');
+    if (amt <= 0) return;
+    const up = amt / hours;
+    pushAcc(map, accKey(pos, eventType, up), {
+      workerId: wid,
+      positionId: pos,
+      eventType,
+      timesheetIds: tid,
+      amount: amt,
+      quantity: hours,
+    });
+  };
+
+  if (matrixOtHourly != null) {
+    if (overflowNormal > 0) {
+      const overflowMult = sellOtMult / 1.5;
+      pushOtLine(
+        overflowOtEventType(sellOtMult),
+        overflowNormal,
+        overflowNormal * matrixOtHourly * overflowMult,
+      );
+    }
+    if (o15 > 0) {
+      pushOtLine('ot_1.5', o15, o15 * matrixOtHourly);
+    }
+    if (o20 > 0) {
+      pushOtLine('ot_2.0', o20, o20 * matrixOtHourly * (2 / 1.5));
+    }
+    if (o30 > 0) {
+      pushOtLine('ot_3.0', o30, o30 * matrixOtHourly * 2);
+    }
     return;
   }
 
-  const h = derivePackageNormalHourlyRate(sellRate, statedHours, sellOtMult);
-  if (h <= 0) {
-    warnings.push(`${w} (${ts.date}): ไม่สามารถคำนวณฐานชม.ขายจากแพ็ก — ข้าม`);
-    return;
+  if (overflowNormal > 0) {
+    pushOtLine(
+      overflowOtEventType(sellOtMult),
+      overflowNormal,
+      overflowNormal * otHourlyBase * sellOtMult,
+    );
   }
-
-  const wh = parseWorkDayHours(ts);
-  const normalPart0 = wh.legalNormal * h;
-  const overflowPart0 = wh.overflowNormal * h * sellOtMult;
-  const tier15 = wh.o15 * h * PACKAGE_OT_TIER_MULT.OT_1_5;
-  const tier20 = wh.o20 * h * PACKAGE_OT_TIER_MULT.OT_2_0;
-  const tier30 = wh.o30 * h * PACKAGE_OT_TIER_MULT.OT_3_0;
-
-  const normalPart = applySellRestMultiplier(normalPart0, sellRest, 'normal');
-  const overflowPart = applySellRestMultiplier(overflowPart0, sellRest, 'ot');
-  const t15 = applySellRestMultiplier(tier15, sellRest, 'ot');
-  const t20 = applySellRestMultiplier(tier20, sellRest, 'ot');
-  const t30 = applySellRestMultiplier(tier30, sellRest, 'ot');
-
-  if (wh.legalNormal > 0 && normalPart > 0) {
-    const q = wh.legalNormal;
-    const up = normalPart / q;
-    pushAcc(map, accKey(pos, 'work_day', up), {
-      workerId: wid,
-      positionId: pos,
-      eventType: 'work_day',
-      timesheetIds: tid,
-      amount: normalPart,
-      quantity: q,
-    });
+  if (o15 > 0) {
+    pushOtLine('ot_1.5', o15, o15 * otHourlyBase * 1.5);
   }
-  if (wh.overflowNormal > 0 && overflowPart > 0) {
-    const q = wh.overflowNormal;
-    const up = overflowPart / q;
-    pushAcc(map, accKey(pos, 'sell_overflow_normal', up), {
-      workerId: wid,
-      positionId: pos,
-      eventType: 'sell_overflow_normal',
-      timesheetIds: tid,
-      amount: overflowPart,
-      quantity: q,
-    });
+  if (o20 > 0) {
+    pushOtLine('ot_2.0', o20, o20 * otHourlyBase * 2);
   }
-  if (wh.o15 > 0 && t15 > 0) {
-    const q = wh.o15;
-    const up = t15 / q;
-    pushAcc(map, accKey(pos, 'ot_1.5', up), {
-      workerId: wid,
-      positionId: pos,
-      eventType: 'ot_1.5',
-      timesheetIds: tid,
-      amount: t15,
-      quantity: q,
-    });
-  }
-  if (wh.o20 > 0 && t20 > 0) {
-    const q = wh.o20;
-    const up = t20 / q;
-    pushAcc(map, accKey(pos, 'ot_2.0', up), {
-      workerId: wid,
-      positionId: pos,
-      eventType: 'ot_2.0',
-      timesheetIds: tid,
-      amount: t20,
-      quantity: q,
-    });
-  }
-  if (wh.o30 > 0 && t30 > 0) {
-    const q = wh.o30;
-    const up = t30 / q;
-    pushAcc(map, accKey(pos, 'ot_3.0', up), {
-      workerId: wid,
-      positionId: pos,
-      eventType: 'ot_3.0',
-      timesheetIds: tid,
-      amount: t30,
-      quantity: q,
-    });
+  if (o30 > 0) {
+    pushOtLine('ot_3.0', o30, o30 * otHourlyBase * 3);
   }
 }
 
@@ -360,17 +531,29 @@ function billingNonWorkDayFromPoAndContract(
   mainContract: MainContract | undefined,
   map: Map<string, LineAcc>,
   warnings: string[],
+  workMode: JobMode,
+  contractRate?: PositionRate,
 ) {
   if (isUnpaidLeaveEvent(ts.eventType)) return;
 
-  const sellRate = sellSnapshotForWorkMode(poLine, ts.workMode);
+  const rateCtx = { poLine, workMode, contractRate };
+  const matrixDayRate = resolveBillingMatrixEventDayRate(
+    rateCtx,
+    ts.eventType as RateConditionEventType,
+  );
+  const sellRate =
+    matrixDayRate ??
+    resolveBillingSellWorkingDayRate(rateCtx);
   const otRules: OtRulesSnapshot = poLine.sellOtRulesSnapshot || {};
   const wid = ts.workerId;
   const pos = ts.positionId;
   const tid = [ts.id];
 
   if (PO_FALLBACK_FLAT_DAILY_EVENTS.includes(ts.eventType as RateConditionEventType)) {
-    const mult = poFallbackSellDayMultiplier(mainContract, ts.eventType, otRules);
+    const mult =
+      matrixDayRate != null
+        ? 1
+        : poFallbackSellDayMultiplier(mainContract, ts.eventType, otRules);
     const amt = sellRate * mult;
     pushAcc(map, accKey(pos, ts.eventType, amt), {
       workerId: wid,
@@ -427,11 +610,7 @@ function billingQuantityPhrase(acc: LineAcc): string {
   }
 
   if (acc.eventType === 'work_day') {
-    const mandayLike = tsN > 0 && q === tsN;
-    if (mandayLike) {
-      return `รวม ${q} คน-วัน${workerBit}`;
-    }
-    return `รวม ${q} ชม. (ชม.ปกติในแพ็กขาย)${workerBit}`;
+    return `รวม ${q} คน-วัน${workerBit}`;
   }
 
   return `รวม ${q} คน-วัน${workerBit}`;
@@ -539,56 +718,61 @@ export async function generateBillingLines(
     }
   }
 
-  const FIRESTORE_IN_MAX = 30;
+  /** Retro ที่รวมใน Trip invoice — ใช้สร้างคำเตือนแยกจาก payroll */
+  let tripCommercialRetroAdjustments: TimesheetRetroAdjustment[] = [];
+
   const fetchTimesheets = async (): Promise<DailyTimesheet[]> => {
     if (mobCycleFilter.length > 0) {
       const byId = new Map<string, DailyTimesheet>();
-      const addTs = (ts: DailyTimesheet) => {
+      const addTs = (raw: DailyTimesheet) => {
+        const ts = raw;
+        if (!isTripBillingTimesheetBillable(ts)) return;
         if (ts.date >= periodStart && ts.date <= periodEnd) byId.set(ts.id, ts);
       };
 
-      for (let i = 0; i < mobCycleFilter.length; i += FIRESTORE_IN_MAX) {
-        const chunk = mobCycleFilter.slice(i, i + FIRESTORE_IN_MAX);
-        const snap = await getDocs(
-          query(
-            collection(db, 'daily_timesheets'),
-            where('mobCycleId', 'in', chunk),
-            where('readyForBilling', '==', true),
-          ),
-        );
-        for (const d of snap.docs) {
-          addTs({ ...d.data(), id: d.id } as DailyTimesheet);
-        }
-      }
+      const { loadTimesheetsForMobCycleBilling } = await import(
+        '@/lib/services/mob-cycle-billing-sync'
+      );
+      const { loadTimesheetRetroAdjustmentsForMonth } = await import(
+        '@/lib/services/timesheet-retro-adjustment-service'
+      );
+
+      const allRetro: TimesheetRetroAdjustment[] = [];
 
       for (const mobCycleId of mobCycleFilter) {
         const reviewSnap = await getDoc(doc(db, 'mob_cycle_billing_reviews', mobCycleId));
         if (!reviewSnap.exists()) continue;
-        const review = reviewSnap.data() as {
-          assignmentId?: string;
-          tripStartDate?: string;
-          tripEndDate?: string;
-        };
-        const assignmentId = String(review.assignmentId || '').trim();
+        const review = {
+          id: reviewSnap.id,
+          ...(reviewSnap.data() as object),
+        } as MobCycleBillingReview;
+
+        const segmentTs = await loadTimesheetsForMobCycleBilling(db, review);
+        for (const ts of segmentTs) addTs(ts);
+
         const start = String(review.tripStartDate || periodStart).slice(0, 10);
         const end = String(review.tripEndDate || periodEnd).slice(0, 10);
-        if (!assignmentId || !start) continue;
-
-        const snap = await getDocs(
-          query(
-            collection(db, 'daily_timesheets'),
-            where('assignmentId', '==', assignmentId),
-            where('date', '>=', start),
-            where('date', '<=', end),
-            where('readyForBilling', '==', true),
-          ),
-        );
-        for (const d of snap.docs) {
-          addTs({ ...d.data(), id: d.id } as DailyTimesheet);
+        const aid = String(review.assignmentId || '').trim();
+        if (aid && start && end) {
+          const months = new Set<string>();
+          months.add(start.slice(0, 7));
+          months.add(end.slice(0, 7));
+          for (const ym of months) {
+            const rows = await loadTimesheetRetroAdjustmentsForMonth(db, ym);
+            for (const r of rows) {
+              if (r.assignmentId !== aid) continue;
+              const d = String(r.workDateYmd || '').slice(0, 10);
+              if (d < start || d > end) continue;
+              allRetro.push(r);
+            }
+          }
         }
       }
 
-      return [...byId.values()];
+      let list = [...byId.values()];
+      list = await enrichTimesheetsForRetroSources(db, list, allRetro, periodStart, periodEnd);
+      tripCommercialRetroAdjustments = allRetro;
+      return mergeRetroDeltasIntoTimesheets(list, allRetro);
     }
     const snap = await getDocs(query(collection(db, 'daily_timesheets'), ...tsConstraints));
     return snap.docs.map((d) => ({ ...d.data(), id: d.id } as DailyTimesheet));
@@ -617,6 +801,12 @@ export async function generateBillingLines(
     warnings.push(
       `วางบิลตามรอบเดินทาง — ${mobCycleFilter.length} mob cycle · ช่วง ${periodStart} ถึง ${periodEnd}`,
     );
+    if (tripCommercialRetroAdjustments.length > 0) {
+      const { buildTripCommercialRetroBillingWarnings } = await import(
+        '@/lib/services/timesheet-retro-adjustment-service'
+      );
+      warnings.push(...buildTripCommercialRetroBillingWarnings(tripCommercialRetroAdjustments));
+    }
   }
 
   const mobById = new Map<string, Assignment>();
@@ -633,8 +823,14 @@ export async function generateBillingLines(
     return isYmdWithinAssignmentMobTimesheetWindow(a, ts.date);
   });
   const beforeBillingDedupe = inMobWindow.length;
-  const timesheets = dedupeTimesheetsForBilling(inMobWindow);
+  let timesheets = dedupeTimesheetsForBilling(inMobWindow);
   const billingDeduped = beforeBillingDedupe - timesheets.length;
+
+  if (mobCycleFilter.length > 0) {
+    const tripFiltered = filterTimesheetsForTripMobCycleBilling(timesheets);
+    timesheets = tripFiltered.timesheets;
+    warnings.push(...tripFiltered.warnings);
+  }
 
   const payrollMobDropped = timesheetsRaw.length - inMobWindow.length;
   if (payrollMobDropped > 0) {
@@ -672,6 +868,20 @@ export async function generateBillingLines(
     );
   }
 
+  const contractRatesByPosition = new Map<string, PositionRate>();
+  if (po.contractId) {
+    const ratesSnap = await getDocs(
+      collection(db, 'main_contracts', po.contractId, 'position_rates'),
+    );
+    for (const d of ratesSnap.docs) {
+      const rate = { id: d.id, ...(d.data() as object) } as PositionRate;
+      if (rate.active === false) continue;
+      contractRatesByPosition.set(rate.positionId, rate);
+    }
+  }
+
+  const poWorkModeMap = buildPoWorkModeMapFromPurchaseOrders([po]);
+
   const positionLabels = await loadPositionLabels(db, [
     ...poLines.map((pl) => pl.positionId),
     ...timesheets.map((t) => t.positionId),
@@ -681,6 +891,8 @@ export async function generateBillingLines(
 
   for (const ts of timesheets) {
     const poLine = poLinesByPosition.get(ts.positionId);
+    const workMode = resolveEffectivePayrollJobMode(ts, poWorkModeMap);
+    const contractRate = contractRatesByPosition.get(ts.positionId);
 
     if (!poLine) {
       if (!isUnpaidLeaveEvent(ts.eventType)) {
@@ -690,15 +902,23 @@ export async function generateBillingLines(
     }
 
     if (ts.eventType === 'work_day') {
-      if (Number(sellSnapshotForWorkMode(poLine, ts.workMode) || 0) <= 0) {
+      if (resolveBillingSellWorkingDayRate({ poLine, workMode, contractRate }) <= 0) {
         warnings.push(`ข้าม work_day ${ts.date} — ราคาขายใน PO line เป็น 0`);
         continue;
       }
-      workDayFromPackageBilling(ts, poLine, mainContract, accMap, warnings);
+      workDayFromDayRateBilling(ts, poLine, mainContract, accMap, workMode, contractRate);
       continue;
     }
 
-    billingNonWorkDayFromPoAndContract(ts, poLine, mainContract, accMap, warnings);
+    billingNonWorkDayFromPoAndContract(
+      ts,
+      poLine,
+      mainContract,
+      accMap,
+      warnings,
+      workMode,
+      contractRate,
+    );
   }
 
   const lines: GeneratedBillingLine[] = [];
@@ -744,6 +964,7 @@ export async function generateBillingLinesForMobCycles(
   mobCycleIds: readonly string[],
   periodStart: string,
   periodEnd: string,
+  options?: Pick<GenerateBillingLinesOptions, 'tripMobDemobLocationKey'>,
 ): Promise<BillingLineGenerationResult> {
   const ids = mobCycleIds.map((x) => String(x).trim()).filter(Boolean);
   if (ids.length === 0) {
@@ -754,7 +975,81 @@ export async function generateBillingLinesForMobCycles(
       warnings: ['ไม่มี mob cycle ในชุดวางบิล'],
     };
   }
-  return generateBillingLines(db, poId, periodStart, periodEnd, undefined, { mobCycleIds: ids });
+  const base = await generateBillingLines(db, poId, periodStart, periodEnd, undefined, {
+    mobCycleIds: ids,
+  });
+
+  const poSnap = await getDoc(doc(db, 'purchase_orders', poId));
+  if (!poSnap.exists()) return base;
+  const po = poSnap.data() as PurchaseOrder;
+  const contractId = String(po.contractId || '').trim();
+  if (!contractId) {
+    base.warnings.push('ไม่สามารถเพิ่มค่า MOB — PO ไม่มีสัญญาหลัก');
+    return base;
+  }
+
+  const mcSnap = await getDoc(doc(db, 'main_contracts', contractId));
+  if (!mcSnap.exists()) {
+    base.warnings.push('ไม่สามารถเพิ่มค่า MOB — ไม่พบสัญญาหลัก');
+    return base;
+  }
+  const contract = { id: mcSnap.id, ...(mcSnap.data() as object) } as MainContract;
+  if (!contract.tripBillMobDemobFee) {
+    return base;
+  }
+
+  let mobKey = (options?.tripMobDemobLocationKey || '').trim();
+  if (!mobKey) {
+    const { resolveTripMobDemobLocationChoice } = await import('@/lib/services/trip-mob-demob-billing');
+    const choice = await resolveTripMobDemobLocationChoice(db, contractId, ids);
+    if (choice.kind === 'auto') {
+      mobKey = choice.mobLocationKey;
+    } else if (choice.kind === 'error') {
+      base.warnings.push(choice.message);
+      return base;
+    } else if (choice.kind === 'prompt') {
+      base.warnings.push(
+        'สัญญากำหนดให้คิดค่า MOB — เลือกจุด Mob/Demob ตอนสร้าง invoice จากหน้า Trip Billing (หรือบันทึก tripMobDemobLocationKey บนใบนี้)',
+      );
+      return base;
+    }
+  }
+
+  if (!mobKey) {
+    return base;
+  }
+
+  const { loadContractPositionRatesByPositionId, loadTripMobDemobMembers, generateTripMobDemobBillingLines } =
+    await import('@/lib/services/trip-mob-demob-billing');
+  const members = await loadTripMobDemobMembers(db, ids);
+  const ratesByPosition = await loadContractPositionRatesByPositionId(db, contractId);
+  const mobGen = await generateTripMobDemobBillingLines(
+    db,
+    contract,
+    members,
+    ratesByPosition,
+    mobKey,
+  );
+
+  if (mobGen.lines.length === 0 && base.lines.length === 0) {
+    return {
+      lines: [],
+      totalAmount: 0,
+      timesheetCount: base.timesheetCount,
+      warnings: [...new Set([...base.warnings, ...mobGen.warnings])],
+    };
+  }
+
+  const lines = [...base.lines, ...mobGen.lines];
+  const totalAmount = roundMoney(lines.reduce((s, l) => s + l.amount, 0));
+  return {
+    lines,
+    totalAmount,
+    timesheetCount: base.timesheetCount,
+    warnings: [...new Set([...base.warnings, ...mobGen.warnings])].filter(
+      (w) => !shouldOmitCommercialInvoiceGenerationWarning(w),
+    ),
+  };
 }
 
 /**

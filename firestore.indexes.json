@@ -166,6 +166,23 @@
       ]
     },
     {
+      "collectionGroup": "daily_timesheets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "mobCycleId", "order": "ASCENDING" },
+        { "fieldPath": "readyForBilling", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "daily_timesheets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assignmentId", "order": "ASCENDING" },
+        { "fieldPath": "readyForBilling", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "tax_invoices",
       "queryScope": "COLLECTION",
       "fields": [

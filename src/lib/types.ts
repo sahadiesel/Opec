@@ -939,6 +939,11 @@ export interface MainContract {
   /** MONTHLY = ปิด PO+เดือนแล้วออก invoice รวม | TRIP = วางบิลตามรอบ M1→D1 (หลายคนต่อ invoice ได้) */
   billingMode?: ContractBillingMode;
   /**
+   * TRIP billing — คิดค่า Mob/Demob ไป-กลับ (round trip) ต่อคนต่อรอบเดินทาง
+   * อัตราจากตารางราคาสัญญา (mobDemobRoundTrip) — ไม่รวม M1/D1 รายวัน
+   */
+  tripBillMobDemobFee?: boolean;
+  /**
    * @deprecated ถูก sync ฝั่งสัญญา (เฟส 4–6) — ไม่ใช้ block อนุมัติแล้ว; ดูฐานต้นทุนได้ที่ /positions
    * รัน `migrate:phase6` เพื่อลบ field เหล่านี้จาก Firestore
    */
@@ -1404,6 +1409,49 @@ export interface DailyTimesheet {
   lockedBy?: string;
 }
 
+export type TimesheetRetroAdjustmentStatus = 'approved' | 'applied' | 'void';
+
+/**
+ * แก้ไขย้อนหลังบนใบงานที่ล็อคแล้ว — ไม่แก้ daily_timesheets ต้นทาง
+ * แสดงบนตารางรายเดือนรวมกับของเดิม + เครื่องหมายว่าเป็นการแก้ไข
+ */
+export interface TimesheetRetroAdjustment {
+  id: string;
+  sourceTimesheetId: string;
+  workerId: string;
+  workerNameSnapshot: string;
+  assignmentId: string;
+  purchaseOrderId: string;
+  waveId?: string;
+  workDateYmd: string;
+  /** งวดปฏิทินของใบงานต้นทาง YYYY-MM */
+  sourceYearMonth: string;
+  /** งวด payroll ที่ตั้งใจจ่าย YYYY-MM */
+  applyPayrollYearMonth: string;
+  /** ชม. OT / standby ที่เพิ่ม (delta — ไม่แทนที่ของเดิม) */
+  addedOt15Hours?: number;
+  addedOt20Hours?: number;
+  addedOt30Hours?: number;
+  addedStandbyHours?: number;
+  /** รอบ M1/D1 ที่เพิ่ม (ต่อ trip จากตารางอัตรา) */
+  addedM1Trips?: number;
+  addedD1Trips?: number;
+  /** ประเภทวันที่แก้ (เมื่อไม่มีใบงานต้นทาง — แสดงบนตาราง) */
+  retroEventType?: RateConditionEventType;
+  reason: string;
+  status: TimesheetRetroAdjustmentStatus;
+  /** ยอดจ่ายที่คำนวณจากสูตร payroll ณ เวลาบันทึก (บาท) */
+  computedPayAmountBaht?: number;
+  computedPaySnapshotAt?: number;
+  requestedByUserId: string;
+  requestedByName: string;
+  requestedAt: number;
+  appliedAt?: number;
+  appliedPayrollBatchId?: string;
+  payrollWorkerLineId?: string;
+  updatedAt: number;
+}
+
 /**
  * ส่งตรวจ timesheet รอบเดือนต่อ Wave — Payroll/Officer ส่งจากหน้าสรุปรายเดือน
  * ให้ Operations/HR Manager อนุมัติก่อนนำไปคำนวณ payroll / ออก Draft Invoice
@@ -1853,6 +1901,8 @@ export interface CommercialInvoice {
   billingMode?: ContractBillingMode;
   memberMobCycleIds?: string[];
   memberWorkerNames?: string[];
+  /** จุด mob/demob ที่เลือกตอนสร้าง invoice แบบ Trip (เมื่อสัญญา tripBillMobDemobFee) */
+  tripMobDemobLocationKey?: string;
   /** ฝั่ง OPEC ส่งให้ลูกค้าเห็นใน portal (DRAFT → PENDING_CUSTOMER) */
   sentToCustomerAt?: number;
   sentToCustomerByUid?: string;
@@ -2278,8 +2328,18 @@ export interface PayrollBatchIncomeSegment {
   payslipWorkDaySplit?: PayslipWorkDaySplit | null;
 }
 
+/** รายได้จากงวดที่ล็อคแล้ว — จ่ายเพิ่มในงวดถัดไป (เช่น OT ที่พลาดใน payroll เดือนก่อน) */
+export interface PriorPeriodAllowanceItem {
+  /** งวดต้นทาง YYYY-MM */
+  sourceYearMonth: string;
+  label: string;
+  amount: number;
+}
+
 export interface HrPayrollLineAdjustments {
   allowanceItems: Array<{ label: string; amount: number }>;
+  /** รายได้ย้อนหลังจากงวดที่ปิด payroll แล้ว — แสดงบนสลิปแยกพร้อมระบุงวดต้นทาง */
+  priorPeriodAllowanceItems?: PriorPeriodAllowanceItem[];
   deductionItems: Array<{ label: string; amount: number }>;
   /**
    * รูปแบบ ภงด. — ถ้าไม่ระบุ (ข้อมูลเก่า) อนุมานจาก pitWithholdingOverride / pitWithholdingOverrideMaxMarginalRatePercent
