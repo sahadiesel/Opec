@@ -18,6 +18,7 @@ import {
 } from '@/lib/leaves/policy';
 import type { OfficeLeaveRequestDoc, OfficeLeaveType } from '@/lib/leaves/types';
 import { officeStaffAppliesScanTimeDeductions } from '@/lib/payroll/office-staff-payroll-attendance-basis';
+import { countPartialMonthUnpaidWorkDays } from '@/lib/payroll/office-payroll-partial-month';
 import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import type { CalendarHolidayEntry } from '@/lib/contract-position-rate-extras';
 import {
@@ -172,15 +173,60 @@ export function computeOfficePayrollPeriodAdjustments(
     attendanceSummary: null,
   };
 
-  if (input.staff.salaryType !== 'MONTHLY' || input.staff.monthlyAttendanceExempt) {
+  if (input.staff.salaryType !== 'MONTHLY') {
     return empty;
   }
 
   const baseSalary = Math.max(0, Number(input.staff.monthlySalary) || 0);
   if (baseSalary <= 0) return empty;
 
-  const applyScan = officeStaffAppliesScanTimeDeductions(input.staff);
   const rates = absenceLatePayrollRates(baseSalary, input.monthlyWorkNorm);
+  const staffStartYmd = input.staff.startDate?.slice(0, 10);
+  const employmentEndYmd = input.staff.employmentEndDate?.slice(0, 10);
+  const { preEmploymentDays, postEmploymentDays } = countPartialMonthUnpaidWorkDays(
+    input.periodStart,
+    input.periodEnd,
+    input.staff,
+    input.weeklyRestPattern,
+    input.calendarHolidays,
+  );
+  const preEmploymentDeductionAmount = round2(preEmploymentDays * rates.perDay);
+  const postEmploymentDeductionAmount = round2(postEmploymentDays * rates.perDay);
+
+  const preStatutoryDeductions: Array<{ code: string; amount: number }> = [];
+  if (preEmploymentDeductionAmount > 0) {
+    preStatutoryDeductions.push({ code: 'pre_employment_deduction', amount: preEmploymentDeductionAmount });
+  }
+  if (postEmploymentDeductionAmount > 0) {
+    preStatutoryDeductions.push({ code: 'post_employment_deduction', amount: postEmploymentDeductionAmount });
+  }
+
+  const partialMonthAttendanceSummary: OfficePayrollLineAttendanceSummary | null =
+    preEmploymentDays > 0 || postEmploymentDays > 0
+      ? {
+          scanDeductionsApplied: false,
+          lateMinutes: 0,
+          scanAbsenceDays: 0,
+          unpaidLeaveDays: 0,
+          lateDeductionAmount: 0,
+          scanAbsenceDeductionAmount: 0,
+          unpaidLeaveDeductionAmount: 0,
+          preEmploymentDays,
+          postEmploymentDays,
+          preEmploymentDeductionAmount,
+          postEmploymentDeductionAmount,
+        }
+      : null;
+
+  if (input.staff.monthlyAttendanceExempt) {
+    return {
+      preStatutoryDeductions,
+      leaveSummary: [],
+      attendanceSummary: partialMonthAttendanceSummary,
+    };
+  }
+
+  const applyScan = officeStaffAppliesScanTimeDeductions(input.staff);
   const periodYmds = enumerateYmdsInclusive(input.periodStart, input.periodEnd);
   const year = Number(input.periodStart.slice(0, 4)) || new Date().getFullYear();
 
@@ -198,6 +244,8 @@ export function computeOfficePayrollPeriodAdjustments(
 
   for (const ymd of periodYmds) {
     if (!isScheduledWorkDay(ymd, input.weeklyRestPattern, input.calendarHolidays)) continue;
+    if (staffStartYmd && ymd < staffStartYmd) continue;
+    if (employmentEndYmd && ymd > employmentEndYmd) continue;
 
     const dayLeaves = expandedAll.filter((d) => d.ymd === ymd);
     const approvedLeave = dayLeaves.filter((d) => d.status === 'APPROVED');
@@ -265,7 +313,6 @@ export function computeOfficePayrollPeriodAdjustments(
   const scanAbsenceDeductionAmount = round2(totalScanAbsenceDays * rates.perDay);
   const unpaidLeaveDeductionAmount = round2(unpaidLeaveDays * rates.perDay);
 
-  const preStatutoryDeductions: Array<{ code: string; amount: number }> = [];
   if (applyScan && lateDeductionAmount > 0) {
     preStatutoryDeductions.push({ code: 'late_deduction', amount: lateDeductionAmount });
   }
@@ -284,6 +331,14 @@ export function computeOfficePayrollPeriodAdjustments(
     lateDeductionAmount,
     scanAbsenceDeductionAmount,
     unpaidLeaveDeductionAmount,
+    ...(preEmploymentDays > 0 || postEmploymentDays > 0
+      ? {
+          preEmploymentDays,
+          postEmploymentDays,
+          preEmploymentDeductionAmount,
+          postEmploymentDeductionAmount,
+        }
+      : {}),
   };
 
   return { preStatutoryDeductions, leaveSummary, attendanceSummary };

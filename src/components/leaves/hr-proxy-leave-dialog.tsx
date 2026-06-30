@@ -259,6 +259,22 @@ export function HrProxyLeaveDialog({
     }
   }
 
+  function openSubmitConfirm() {
+    if (!reason.trim()) {
+      toast({ variant: 'destructive', title: 'กรุณาระบุเหตุผลก่อนส่งคำขอ' });
+      return;
+    }
+    if (!startDate || !endDate || requestedDays <= 0) {
+      toast({ variant: 'destructive', title: 'กรุณาเลือกช่วงวันลาให้ถูกต้อง' });
+      return;
+    }
+    if (leaveType === 'VACATION' && !eligibleVac) {
+      toast({ variant: 'destructive', title: 'พนักงานคนนี้ยังไม่มีสิทธิ์ลาพักร้อน' });
+      return;
+    }
+    setConfirmSubmitOpen(true);
+  }
+
   async function handleSubmitConfirmed() {
     if (!selectedStaff || !firestore) return;
     if (!reason.trim()) {
@@ -282,6 +298,7 @@ export function HrProxyLeaveDialog({
         const { createdAt: _c, createdByUid: _u, createdByName: _n, ...upd } = buildPayload('SUBMITTED');
         await updateDoc(doc(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION, draftDocId), {
           ...upd,
+          status: 'SUBMITTED',
           updatedAt: ts,
         });
       } else {
@@ -406,7 +423,9 @@ export function HrProxyLeaveDialog({
             </div>
 
             <div className="space-y-2">
-              <Label>เหตุผล</Label>
+              <Label>
+                เหตุผล <span className="text-destructive">*</span>
+              </Label>
               <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="บังคับเมื่อส่งคำขอ — ร่างว่างได้" />
             </div>
 
@@ -431,7 +450,7 @@ export function HrProxyLeaveDialog({
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {isEditing && editLeave?.status === 'SUBMITTED' ? 'บันทึกการแก้ไข' : 'บันทึกฉบับร่าง (ยังไม่เข้าคิว)'}
             </Button>
-            <Button type="button" onClick={() => setConfirmSubmitOpen(true)} disabled={busy || !staffId}>
+            <Button type="button" onClick={openSubmitConfirm} disabled={busy || !staffId || !reason.trim()}>
               ส่งเข้าคิวอนุมัติ
             </Button>
           </DialogFooter>

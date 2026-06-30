@@ -110,6 +110,8 @@ function humanizeDeductionKey(key: string): string {
     late_deduction: 'หักมาสาย',
     absence_deduction: 'หักขาดงาน (จากสแกน)',
     unpaid_leave_deduction: 'หักลาเกินสิทธิ์ / ลาไม่อนุมัติ',
+    pre_employment_deduction: 'หักก่อนวันเริ่มงาน (เงินเดือนไม่เต็มเดือน)',
+    post_employment_deduction: 'หักหลังวันสิ้นสุดการจ้าง',
   };
   return map[key] || key.replace(/_/g, ' ');
 }

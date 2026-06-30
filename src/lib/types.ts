@@ -2208,6 +2208,11 @@ export interface OfficePayrollLineAttendanceSummary {
   lateDeductionAmount: number;
   scanAbsenceDeductionAmount: number;
   unpaidLeaveDeductionAmount: number;
+  /** วันทำงานในงวดก่อนวันเริ่มจ้าง (หักเงินเดือนไม่เต็มเดือน) */
+  preEmploymentDays?: number;
+  postEmploymentDays?: number;
+  preEmploymentDeductionAmount?: number;
+  postEmploymentDeductionAmount?: number;
 }
 
 /** งวดเงินเดือนผู้บริหาร — โครงเดียวกับ office แต่คนละคอลเลกชันและสิทธิ์เฉพาะบัญชี */

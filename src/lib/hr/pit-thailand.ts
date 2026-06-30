@@ -144,6 +144,15 @@ export const DEFAULT_SOCIAL_SECURITY_EMPLOYEE_RATE_PERCENT = 5;
  */
 export const DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT = 15_000;
 
+/** เพดาน ปสง. ตามประกาศ กสร. เมื่อไม่มีค่าใน HR settings (ใช้ asOf งวดจ่าย) */
+export function statutorySocialSecurityMonthlyCeilingBaht(asOfDate: string): number {
+  const ymd = String(asOfDate || '').slice(0, 10);
+  if (ymd >= '2032-01-01') return 23_000;
+  if (ymd >= '2029-01-01') return 20_000;
+  if (ymd >= '2026-01-01') return 17_500;
+  return DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT;
+}
+
 export function cloneDefaultPitBands(): PitProgressiveBand[] {
   return DEFAULT_PIT_PROGRESSIVE_BANDS.map((b) => ({ ...b }));
 }

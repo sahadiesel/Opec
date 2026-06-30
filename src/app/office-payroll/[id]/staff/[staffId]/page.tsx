@@ -57,6 +57,11 @@ function snapshotDeductionLabel(
 ): string {
   if (key === 'social_security') return 'ประกันสังคม';
   if (key === 'pit_withholding') return 'ภาษี ณ ที่จ่าย (ภงด.)';
+  if (key === 'pre_employment_deduction') return 'หักก่อนวันเริ่มงาน (เงินเดือนไม่เต็มเดือน)';
+  if (key === 'post_employment_deduction') return 'หักหลังวันสิ้นสุดการจ้าง';
+  if (key === 'late_deduction') return 'หักมาสาย';
+  if (key === 'absence_deduction') return 'หักขาดงาน (จากสแกน)';
+  if (key === 'unpaid_leave_deduction') return 'หักลาเกินสิทธิ์ / ลาไม่อนุมัติ';
   const m = /^manual_ded_(\d+)$/.exec(key);
   if (m) {
     const idx = Number(m[1]);

@@ -7,7 +7,6 @@ import {
   doc,
   query,
   where,
-  orderBy,
   limit,
   updateDoc,
   serverTimestamp,
@@ -74,16 +73,20 @@ export default function OfficeLeavesApprovalQueuePage() {
         ? query(
             collection(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION),
             where('status', '==', 'SUBMITTED'),
-            orderBy('createdAt', 'desc'),
             limit(200),
           )
         : null,
     [firestore, approvalGate],
   );
 
-  const { data: pendingLeaves, isLoading } = useCollection<OfficeLeaveRequestDoc & { id: string }>(
-    pendingQ as any,
-  );
+  const { data: pendingLeavesRaw, isLoading, error: pendingError } = useCollection<
+    OfficeLeaveRequestDoc & { id: string }
+  >(pendingQ as any);
+
+  const rows = useMemo(() => {
+    const list = pendingLeavesRaw ?? [];
+    return [...list].sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+  }, [pendingLeavesRaw]);
 
   const [approving, setApproving] = useState<(OfficeLeaveRequestDoc & { id: string }) | null>(null);
   const [rejecting, setRejecting] = useState<(OfficeLeaveRequestDoc & { id: string }) | null>(null);
@@ -154,8 +157,6 @@ export default function OfficeLeavesApprovalQueuePage() {
     );
   }
 
-  const rows = pendingLeaves ?? [];
-
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="mx-auto max-w-5xl space-y-6 px-4 py-8 pb-16">
@@ -187,7 +188,11 @@ export default function OfficeLeavesApprovalQueuePage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
-            {isLoading ? (
+            {pendingError ? (
+              <p className="py-10 px-4 text-center text-sm text-destructive">
+                โหลดคิวอนุมัติไม่สำเร็จ — {pendingError.message}
+              </p>
+            ) : isLoading ? (
               <div className="flex justify-center py-12">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>

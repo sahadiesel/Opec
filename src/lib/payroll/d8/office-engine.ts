@@ -16,8 +16,8 @@ export type OfficePayrollD8Input = {
   /** หักเพิ่ม — ลงเป็น manual_ded_i ใน snapshot */
   hrDeductionItems?: Array<{ label: string; amount: number }>;
   /**
-   * หักก่อนคำนวณ ปสง. และ ภงด.1 (เช่น ขาด/สาย/ลาไม่จ่ายที่ปรับจากเงินเดือน)
-   * — ยอดรวมจะลดฐานที่นำไปคิดประกันสังคมและภาษี และลงใน deductions ตาม code
+   * หักก่อนคำนวณ ภงด.1 (เช่น ขาด/สาย/ลาไม่จ่ายที่ปรับจากเงินเดือน)
+   * — ลดฐานภาษีเท่านั้น; ประกันสังคม office ใช้ฐานเงินเดือน (base) อย่างเดียว
    */
   preStatutoryDeductions?: Array<{ code: string; amount: number }>;
   /** false = ไม่หักประกันสังคมในงวดนี้ */
@@ -58,8 +58,9 @@ export function computeOfficePayrollLineD8(input: OfficePayrollD8Input): {
   const statutoryEarningsBase = Math.max(0, Math.round((grossPay - preStatutoryTotal) * 100) / 100);
 
   const deductSs = input.deductSocialSecurity !== false;
-  /** ปสง. ยังใช้ฐานเงินได้เต็มงวด (ก่อนหักขาด/สาย) — ตามที่ระบุให้หักก่อนคำนวณภาษีเท่านั้น */
-  const ss = deductSs ? socialSecurityFromPolicy(grossPay, input.policies.sso) : 0;
+  const ssoWageBase = Math.max(0, Math.round(Number(input.baseSalary) * 100) / 100);
+  /** ปสง. office — ฐานเงินเดือนอย่างเดียว (ไม่รวม OT / เบี้ยเลี้ยง / หักขาด·สาย·ลา) */
+  const ss = deductSs ? socialSecurityFromPolicy(ssoWageBase, input.policies.sso, input.asOfDate) : 0;
 
   const pitMode = input.pitMode ?? 'SYSTEM';
   let pit: number;

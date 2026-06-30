@@ -2,6 +2,7 @@ import {
   DEFAULT_SOCIAL_SECURITY_EMPLOYEE_RATE_PERCENT,
   DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT,
   normalizePitBands,
+  statutorySocialSecurityMonthlyCeilingBaht,
 } from '@/lib/hr/pit-thailand';
 import {
   monthlyEmployeePITWithholding,
@@ -16,10 +17,24 @@ export function roundSocialSecurityBahtHalfUp(amount: number): number {
   return Math.floor(v * 100 + 0.5) / 100;
 }
 
-export function socialSecurityFromPolicy(grossForSS: number, policy: PayrollPolicyRecord | null): number {
+export function resolveSocialSecurityMonthlyCeilingBaht(
+  policy: PayrollPolicyRecord | null,
+  asOfDate?: string,
+): number {
+  const fromPolicy = Number(policy?.config?.monthlyCeilingBaht);
+  if (Number.isFinite(fromPolicy) && fromPolicy > 0) return fromPolicy;
+  if (asOfDate) return statutorySocialSecurityMonthlyCeilingBaht(asOfDate);
+  return DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT;
+}
+
+export function socialSecurityFromPolicy(
+  grossForSS: number,
+  policy: PayrollPolicyRecord | null,
+  asOfDate?: string,
+): number {
   if (!policy) return 0;
   const rate = Number(policy.config.employeeRatePercent ?? DEFAULT_SOCIAL_SECURITY_EMPLOYEE_RATE_PERCENT) / 100;
-  const ceiling = Number(policy.config.monthlyCeilingBaht ?? DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT);
+  const ceiling = resolveSocialSecurityMonthlyCeilingBaht(policy, asOfDate);
   const base = Math.min(Math.max(0, grossForSS), ceiling);
   return roundSocialSecurityBahtHalfUp(base * rate);
 }

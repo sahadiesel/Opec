@@ -83,11 +83,14 @@ export function sumApprovedOfficeOvertimePayInPeriod(
     const approvedHours = Number(r.approvedOtHours ?? r.requestedOtHours);
     if (!Number.isFinite(approvedHours) || approvedHours <= 0) continue;
 
+    const payrollSalary = Math.max(0, Number(computeOpts.monthlySalary) || 0);
     const salarySnapshot = Number(r.monthlySalarySnapshot);
     const salary =
-      Number.isFinite(salarySnapshot) && salarySnapshot > 0
-        ? salarySnapshot
-        : Math.max(0, Number(computeOpts.monthlySalary) || 0);
+      payrollSalary > 0
+        ? payrollSalary
+        : Number.isFinite(salarySnapshot) && salarySnapshot > 0
+          ? salarySnapshot
+          : 0;
 
     const breakdown = computeOfficeOvertimePayAmount(
       salary,
