@@ -145,14 +145,19 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
     if (!firestore || !canMutate || !lines?.length || autoMyProfileSyncDone.current) return;
     if (!isLocked && !officeRunNeedsMyProfileIndexSync(lines)) return;
     autoMyProfileSyncDone.current = true;
-    void syncOfficeRunMyProfileIndex(firestore, id, lines, 'office_payroll_runs', run?.payrollMonth).then(({ synced, skipped }) => {
-      if (synced > 0) {
-        toast({
-          title: 'อัปเดต My Profile แล้ว',
-          description: `สร้าง index สลิป ${synced} รายการ${skipped ? ` (ข้าม ${skipped})` : ''}`,
-        });
-      }
-    });
+    void syncOfficeRunMyProfileIndex(firestore, id, lines, 'office_payroll_runs', run?.payrollMonth)
+      .then(({ synced, skipped }) => {
+        if (synced > 0) {
+          toast({
+            title: 'อัปเดต My Profile แล้ว',
+            description: `สร้าง index สลิป ${synced} รายการ${skipped ? ` (ข้าม ${skipped})` : ''}`,
+          });
+        }
+      })
+      .catch((e) => {
+        autoMyProfileSyncDone.current = false;
+        console.warn('[office-payroll] My Profile index sync failed', e);
+      });
   }, [firestore, canMutate, lines, id, isLocked, toast, run?.payrollMonth]);
 
   const handlePrintSettlementList = useCallback(async () => {

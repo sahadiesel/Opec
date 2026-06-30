@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -12,7 +13,6 @@ import {
   query,
   serverTimestamp,
   updateDoc,
-  where,
 } from 'firebase/firestore';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
@@ -54,6 +63,7 @@ import {
   Plus,
   Printer,
   Send,
+  Trash2,
   XCircle,
 } from 'lucide-react';
 import {
@@ -66,8 +76,10 @@ import {
 import { useAppUser } from '@/hooks/use-app-user';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
-import { canViewHrPayrollFlowSubsection } from '@/lib/navigation/nav-access';
-import type { OfficeStaff } from '@/lib/types';
+import { canViewHrPayrollFlowSubsection, canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
+import { isSystemAdmin } from '@/lib/permission-core';
+import { isSimpleAdmin } from '@/lib/simple-tier-model';
+import type { OfficeStaff, OfficePayrollRun } from '@/lib/types';
 import type { OfficeLeaveEntitlementsDoc } from '@/lib/attendance/types';
 import {
   HR_CONFIGURATION_COLLECTION,
@@ -94,6 +106,16 @@ import {
 } from '@/lib/documents/office-leave-summary-list-print';
 import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import { HrProxyLeaveDialog } from '@/components/leaves/hr-proxy-leave-dialog';
+import {
+  calculatedPayrollRunsNeedingRecalcAfterLeaveChange,
+  canEditOfficeLeaveRequest,
+} from '@/lib/leaves/office-leave-payroll-edit-policy';
+import {
+  officeLeaveMatchesCalendarYear,
+  sortOfficeLeaveRequestsNewestFirst,
+} from '@/lib/leaves/office-leave-request-firestore';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Info } from 'lucide-react';
 
 const BE_YEAR_OFFSET = 543;
 
@@ -150,6 +172,8 @@ function leaveMatchesMonthYearFilter(
     }
     return false;
   }
+
+  if (typeof yearBe !== 'number' || typeof month !== 'number') return false;
 
   const ceYear = ceYearFromBe(yearBe);
   const m = String(month).padStart(2, '0');
@@ -259,6 +283,19 @@ export default function HrLeavesManagementPage() {
   const { toast } = useToast();
 
   const canManage = !!currentUser && canViewHrPayrollFlowSubsection(currentUser, null, false);
+  const canApproveLeaves = useMemo(
+    () =>
+      !!currentUser &&
+      canViewHrApprovalSubsection(
+        currentUser,
+        isSystemAdmin(currentUser) || isSimpleAdmin(currentUser),
+      ),
+    [currentUser],
+  );
+  const canDeleteLeaves = useMemo(
+    () => !!currentUser && (isSystemAdmin(currentUser) || isSimpleAdmin(currentUser)),
+    [currentUser],
+  );
 
   const [yearFilter, setYearFilter] = useState<'ALL' | number>('ALL');
   const [monthFilter, setMonthFilter] = useState<'ALL' | number>('ALL');
@@ -304,24 +341,33 @@ export default function HrLeavesManagementPage() {
     };
   }, [firestore, canManage, toast]);
 
-  /** leave requests — กรองปีที่ Firestore เมื่อเลือกปี พ.ศ. เฉพาะเจาะจง */
+  /** โหลดทั้ง collection แล้วกรอง/เรียงฝั่ง client — หลีกเลี่ยง orderBy ที่ทำให้ doc หายเมื่อไม่มี index/createdAt */
   const requestsQuery = useMemoFirebase(() => {
     if (!firestore || !canManage) return null;
-    const col = collection(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION);
-    if (yearFilter === 'ALL') {
-      return query(col, orderBy('createdAt', 'desc'), limit(3000));
-    }
-    const ceYear = ceYearFromBe(yearFilter);
-    return query(col, where('year', '==', ceYear), orderBy('createdAt', 'desc'), limit(2000));
-  }, [firestore, canManage, yearFilter]);
+    return query(collection(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION), limit(5000));
+  }, [firestore, canManage]);
 
-  const { data: leaves, isLoading: leavesLoading } = useCollection<OfficeLeaveRequestDoc>(
-    requestsQuery as any,
-  );
+  const {
+    data: leaves,
+    isLoading: leavesLoading,
+    error: leavesQueryError,
+  } = useCollection<OfficeLeaveRequestDoc>(requestsQuery as any);
+
+  const payrollRunsQuery = useMemoFirebase(() => {
+    if (!firestore || !canManage) return null;
+    return query(collection(firestore, 'office_payroll_runs'), orderBy('createdAt', 'desc'), limit(48));
+  }, [firestore, canManage]);
+
+  const { data: payrollRunsRaw } = useCollection<OfficePayrollRun>(payrollRunsQuery as any);
+  const payrollRuns = payrollRunsRaw ?? [];
 
   const filteredLeaves = useMemo(() => {
-    const rows = leaves ?? [];
+    const rows = sortOfficeLeaveRequestsNewestFirst(leaves ?? []);
     return rows.filter((r) => {
+      if (yearFilter !== 'ALL') {
+        const ceYear = ceYearFromBe(yearFilter);
+        if (!officeLeaveMatchesCalendarYear(r, ceYear)) return false;
+      }
       if (!leaveMatchesMonthYearFilter(r, yearFilter, monthFilter)) return false;
       if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
       if (typeFilter !== 'ALL' && r.leaveType !== typeFilter) return false;
@@ -329,6 +375,11 @@ export default function HrLeavesManagementPage() {
       return true;
     });
   }, [leaves, yearFilter, monthFilter, statusFilter, typeFilter, staffFilter]);
+
+  const pendingCountAll = useMemo(
+    () => (leaves ?? []).filter((r) => r.status === 'SUBMITTED').length,
+    [leaves],
+  );
 
   const summaryRows = useMemo(
     () => buildLeaveSummaryRows(filteredLeaves, officeStaff, entCfg, staffFilter),
@@ -347,6 +398,8 @@ export default function HrLeavesManagementPage() {
 
   const [approving, setApproving] = useState<OfficeLeaveRequestDoc & { id: string } | null>(null);
   const [rejecting, setRejecting] = useState<OfficeLeaveRequestDoc & { id: string } | null>(null);
+  const [deletingLeave, setDeletingLeave] = useState<(OfficeLeaveRequestDoc & { id: string }) | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [submitBusy, setSubmitBusy] = useState(false);
   const [proxyDialogOpen, setProxyDialogOpen] = useState(false);
@@ -451,7 +504,21 @@ export default function HrLeavesManagementPage() {
     setProxyDialogOpen(true);
   }
 
+  const calculatedOpenRuns = useMemo(
+    () => payrollRuns.filter((r) => r.status === 'CALCULATED'),
+    [payrollRuns],
+  );
+
   function openEditLeaveDialog(row: OfficeLeaveRequestDoc & { id: string }) {
+    if (!canEditOfficeLeaveRequest(row, payrollRuns)) {
+      toast({
+        variant: 'destructive',
+        title: 'แก้ไขใบลาไม่ได้',
+        description:
+          'งวดเงินเดือนเดือนนี้ถูกส่งอนุมัติหรือล็อกแล้ว — แก้ได้เฉพาะงวดที่ยัง «คำนวณแล้ว (ยังไม่ส่งขออนุมัติ)»',
+      });
+      return;
+    }
     setEditingLeave(row);
     setProxyDialogOpen(true);
   }
@@ -461,12 +528,29 @@ export default function HrLeavesManagementPage() {
     if (!open) setEditingLeave(null);
   }
 
-  function handleLeavePersisted(result: { id: string; status: OfficeLeaveStatus }) {
+  function handleLeavePersisted(result: {
+    id: string;
+    status: OfficeLeaveStatus;
+    leave?: Pick<OfficeLeaveRequestDoc, 'startDate' | 'endDate'>;
+  }) {
     setActiveTab('requests');
+    setStatusFilter('ALL');
     if (result.status === 'SUBMITTED') {
-      setStatusFilter('SUBMITTED');
+      toast({
+        title: 'คำขออยู่ในสถานะรออนุมัติ',
+        description: 'ตั้งตัวกรองเป็น «ทุกสถานะ» แล้ว — หาแถวสถานะ «รออนุมัติ» หรือไปศูนย์อนุมัติวันลา',
+      });
     } else if (result.status === 'DRAFT') {
       setStatusFilter('DRAFT');
+    }
+    if (result.leave) {
+      const runs = calculatedPayrollRunsNeedingRecalcAfterLeaveChange(result.leave, payrollRuns);
+      if (runs.length > 0) {
+        toast({
+          title: 'แก้ไขใบลาแล้ว',
+          description: `มีงวดเงินเดือนที่คำนวณแล้ว (${runs.map((r) => r.payrollRunNo).join(', ')}) — กด «คำนวณ/สร้างรายละเอียด» ใหม่ที่เมนูงวดจ่าย`,
+        });
+      }
     }
   }
 
@@ -515,7 +599,7 @@ export default function HrLeavesManagementPage() {
         description: 'ผู้จัดการจะเห็นในศูนย์อนุมัติ → อนุมัติวันลา',
       });
       setActiveTab('requests');
-      setStatusFilter('SUBMITTED');
+      setStatusFilter('ALL');
     } catch (e) {
       toast({
         variant: 'destructive',
@@ -524,6 +608,36 @@ export default function HrLeavesManagementPage() {
       });
     } finally {
       setSubmitBusy(false);
+    }
+  }
+
+  async function handleConfirmDeleteLeave() {
+    if (!firestore || !deletingLeave || !canDeleteLeaves) return;
+    setDeleteBusy(true);
+    try {
+      await deleteDoc(doc(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION, deletingLeave.id));
+      toast({
+        title: 'ลบใบลาแล้ว',
+        description: `${deletingLeave.staffNameSnapshot} — ${OFFICE_LEAVE_TYPE_LABELS[deletingLeave.leaveType]} ${deletingLeave.days} วัน`,
+      });
+      if (deletingLeave.status === 'APPROVED') {
+        const runs = calculatedPayrollRunsNeedingRecalcAfterLeaveChange(deletingLeave, payrollRuns);
+        if (runs.length > 0) {
+          toast({
+            title: 'แนะนำคำนวณงวดเงินเดือนใหม่',
+            description: `ใบลาที่อนุมัติถูกลบแล้ว — งวด ${runs.map((r) => r.payrollRunNo).join(', ')} อาจต้องคำนวณใหม่`,
+          });
+        }
+      }
+      setDeletingLeave(null);
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -687,6 +801,51 @@ export default function HrLeavesManagementPage() {
           </CardContent>
         </Card>
 
+        {pendingCountAll > 0 ? (
+          <Alert className="border-amber-300 bg-amber-50/80 dark:bg-amber-950/20">
+            <Info className="h-4 w-4" />
+            <AlertTitle>มี {pendingCountAll} คำขอรออนุมัติ (ทั้งระบบ)</AlertTitle>
+            <AlertDescription className="text-sm">
+              {canApproveLeaves ? (
+                <>
+                  อนุมัติหรือไม่อนุมัติได้ที่{' '}
+                  <Link href="/hr/approval-center/office-leaves" className="font-medium text-primary underline">
+                    ศูนย์อนุมัติ → อนุมัติวันลา
+                  </Link>
+                  {' '}(ไม่ใช่ปุ่มอนุมัติในตารางด้านล่างสำหรับฝ่ายที่สร้างใบลา)
+                </>
+              ) : (
+                <>
+                  ส่งเข้าคิวแล้ว — รอผู้จัดการอนุมัติที่{' '}
+                  <Link href="/hr/approval-center/office-leaves" className="font-medium text-primary underline">
+                    ศูนย์อนุมัติวันลา
+                  </Link>
+                </>
+              )}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        {calculatedOpenRuns.length > 0 ? (
+          <Alert>
+            <Info className="h-4 w-4" />
+            <AlertTitle>งวดเงินเดือนที่คำนวณแล้ว (ยังไม่ส่งอนุมัติ)</AlertTitle>
+            <AlertDescription className="text-sm space-y-1">
+              <p>
+                {calculatedOpenRuns.map((r) => r.payrollRunNo).join(', ')} — ยังแก้ไขใบลา/วันลาได้
+                (รวมใบที่อนุมัติแล้ว) เพื่อให้ยอดถูกต้องก่อนส่งอนุมัติงวดจ่าย
+              </p>
+              <p>
+                หลังแก้ใบลาแล้ว กด{' '}
+                <Link href="/office-payroll" className="font-medium text-primary underline">
+                  คำนวณ/สร้างรายละเอียด
+                </Link>{' '}
+                ที่งวดเดิมอีกครั้ง
+              </p>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'summary' | 'requests')}>
           <TabsList>
             <TabsTrigger value="summary">สรุปวันลา</TabsTrigger>
@@ -822,7 +981,11 @@ export default function HrLeavesManagementPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="p-0">
-                {leavesLoading ? (
+                {leavesQueryError ? (
+                  <p className="py-10 px-4 text-center text-sm text-destructive">
+                    โหลดคำขอลาไม่สำเร็จ — {leavesQueryError.message}
+                  </p>
+                ) : leavesLoading ? (
                   <div className="flex justify-center py-8">
                     <Loader2 className="h-5 w-5 animate-spin" />
                   </div>
@@ -843,7 +1006,12 @@ export default function HrLeavesManagementPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredLeaves.map((r) => (
+                        {filteredLeaves.map((r) => {
+                          const rowEditable = canEditOfficeLeaveRequest(
+                            r as OfficeLeaveRequestDoc,
+                            payrollRuns,
+                          );
+                          return (
                           <TableRow key={r.id}>
                             <TableCell className="font-medium whitespace-nowrap">
                               {r.staffNameSnapshot}
@@ -903,7 +1071,7 @@ export default function HrLeavesManagementPage() {
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
                                   <DropdownMenuItem
-                                    disabled={r.status !== 'DRAFT' && r.status !== 'SUBMITTED'}
+                                    disabled={!rowEditable}
                                     onSelect={() =>
                                       openEditLeaveDialog({ ...(r as OfficeLeaveRequestDoc), id: r.id })
                                     }
@@ -918,25 +1086,43 @@ export default function HrLeavesManagementPage() {
                                   >
                                     <Send className="h-4 w-4 mr-2 text-primary" /> ส่งให้อนุมัติ
                                   </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    disabled={r.status !== 'SUBMITTED'}
-                                    onSelect={() =>
-                                      setApproving({ ...(r as OfficeLeaveRequestDoc), id: r.id })
-                                    }
-                                  >
-                                    <CheckCircle2 className="h-4 w-4 mr-2 text-green-600" /> อนุมัติ
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    disabled={r.status !== 'SUBMITTED'}
-                                    className="text-destructive"
-                                    onSelect={() => {
-                                      setRejecting({ ...(r as OfficeLeaveRequestDoc), id: r.id });
-                                      setRejectReason('');
-                                    }}
-                                  >
-                                    <XCircle className="h-4 w-4 mr-2" /> ไม่อนุมัติ
-                                  </DropdownMenuItem>
+                                  {canApproveLeaves ? (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem
+                                        disabled={r.status !== 'SUBMITTED'}
+                                        onSelect={() =>
+                                          setApproving({ ...(r as OfficeLeaveRequestDoc), id: r.id })
+                                        }
+                                      >
+                                        <CheckCircle2 className="h-4 w-4 mr-2 text-green-600" /> อนุมัติ
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        disabled={r.status !== 'SUBMITTED'}
+                                        className="text-destructive"
+                                        onSelect={() => {
+                                          setRejecting({ ...(r as OfficeLeaveRequestDoc), id: r.id });
+                                          setRejectReason('');
+                                        }}
+                                      >
+                                        <XCircle className="h-4 w-4 mr-2" /> ไม่อนุมัติ
+                                      </DropdownMenuItem>
+                                    </>
+                                  ) : null}
+                                  {canDeleteLeaves ? (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem
+                                        disabled={deleteBusy}
+                                        className="text-destructive focus:text-destructive"
+                                        onSelect={() =>
+                                          setDeletingLeave({ ...(r as OfficeLeaveRequestDoc), id: r.id })
+                                        }
+                                      >
+                                        <Trash2 className="h-4 w-4 mr-2" /> ลบรายการ (ถังขยะ)
+                                      </DropdownMenuItem>
+                                    </>
+                                  ) : null}
                                   <DropdownMenuSeparator />
                                   <DropdownMenuItem disabled className="text-xs text-muted-foreground">
                                     สร้างโดย {r.createdByName || r.createdByUid}
@@ -945,7 +1131,8 @@ export default function HrLeavesManagementPage() {
                               </DropdownMenu>
                             </TableCell>
                           </TableRow>
-                        ))}
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>
@@ -1042,6 +1229,50 @@ export default function HrLeavesManagementPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <AlertDialog
+          open={!!deletingLeave}
+          onOpenChange={(open) => {
+            if (!open && !deleteBusy) setDeletingLeave(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ลบใบลานี้ถาวร?</AlertDialogTitle>
+              <AlertDialogDescription className="space-y-2">
+                <span>
+                  จะลบคำขอของ <strong>{deletingLeave?.staffNameSnapshot}</strong> —{' '}
+                  {deletingLeave && OFFICE_LEAVE_TYPE_LABELS[deletingLeave.leaveType]}{' '}
+                  {deletingLeave?.days} วัน (
+                  {deletingLeave ? formatDateThaiBE(deletingLeave.startDate) : ''}
+                  {deletingLeave && deletingLeave.endDate !== deletingLeave.startDate
+                    ? ` – ${formatDateThaiBE(deletingLeave.endDate)}`
+                    : ''}
+                  ) ออกจากระบบ
+                </span>
+                {deletingLeave?.status === 'APPROVED' ? (
+                  <span className="block text-destructive text-xs">
+                    ใบลานี้อนุมัติแล้ว — หากมีงวดเงินเดือนที่คำนวณไปแล้ว ให้คำนวณงวดใหม่หลังลบ
+                  </span>
+                ) : null}
+                <span className="block text-xs text-muted-foreground">
+                  การลบไม่สามารถกู้คืนได้ — ใช้เฉพาะเมื่อบันทึกผิดหรือทดสอบข้อมูล
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteBusy}>ยกเลิก</AlertDialogCancel>
+              <Button
+                variant="destructive"
+                disabled={deleteBusy}
+                onClick={() => void handleConfirmDeleteLeave()}
+              >
+                {deleteBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                ลบถาวร
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {firestore && currentUser && (
           <HrProxyLeaveDialog

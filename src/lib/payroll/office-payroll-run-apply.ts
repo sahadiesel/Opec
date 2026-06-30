@@ -20,6 +20,7 @@ import {
 } from '@/lib/payroll/d8';
 import { assertOfficeStaffListPayrollIdentityComplete } from '@/lib/payroll/office-staff-payroll-identity';
 import { computeOfficePayrollPeriodAdjustments } from '@/lib/payroll/office-payroll-period-deductions';
+import { resolveOfficePayrollEffectiveBaseSalary } from '@/lib/payroll/office-payroll-partial-month';
 import { sumApprovedOfficeOvertimePayInPeriod } from '@/lib/payroll/office-overtime-pay';
 import { loadOfficePayrollRunComputationContext } from '@/lib/payroll/office-payroll-run-context';
 import {
@@ -150,7 +151,7 @@ export async function applyStandardOfficeRunLines(
     const lineId = standardOfficePayrollLineDocId(staff.staffCode, runId);
     const lineDoc = doc(linesCol, lineId);
 
-    const baseSalary = staff.monthlySalary || 0;
+    const contractBaseSalary = staff.monthlySalary || 0;
     const allowance = 0;
     const bonus = 0;
 
@@ -173,20 +174,25 @@ export async function applyStandardOfficeRunLines(
       run.payrollPeriodEnd,
       payrollCtx.approvedOvertimeRequests,
       {
-        monthlySalary: baseSalary,
+        monthlySalary: contractBaseSalary,
         monthlyWorkNorm: payrollCtx.monthlyWorkNorm,
       },
+    );
+
+    const { effectiveBaseSalary, payrollPreStatutoryDeductions } = resolveOfficePayrollEffectiveBaseSalary(
+      contractBaseSalary,
+      periodAdj.preStatutoryDeductions,
     );
 
     const d8 = computeOfficePayrollLineD8({
       asOfDate: asOf,
       policies: officePolicies,
-      baseSalary,
+      baseSalary: effectiveBaseSalary,
       allowance,
       bonus,
       overtimeAmount,
       otherIncome: 0,
-      preStatutoryDeductions: periodAdj.preStatutoryDeductions,
+      preStatutoryDeductions: payrollPreStatutoryDeductions,
     });
 
     const newLine: OfficePayrollLine = {
@@ -198,7 +204,7 @@ export async function applyStandardOfficeRunLines(
       staffName: staff.fullName,
       department: staff.department,
       positionTitle: staff.positionTitle,
-      baseSalary,
+      baseSalary: effectiveBaseSalary,
       allowance,
       bonus,
       overtimeAmount,
@@ -211,8 +217,8 @@ export async function applyStandardOfficeRunLines(
       d8Snapshot: d8.snapshot,
       leaveSummary: periodAdj.leaveSummary.length ? periodAdj.leaveSummary : undefined,
       attendanceSummary: periodAdj.attendanceSummary,
-      periodPreStatutoryDeductions: periodAdj.preStatutoryDeductions.length
-        ? periodAdj.preStatutoryDeductions
+      periodPreStatutoryDeductions: payrollPreStatutoryDeductions.length
+        ? payrollPreStatutoryDeductions
         : undefined,
       createdAt: Date.now(),
       updatedAt: Date.now(),

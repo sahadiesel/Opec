@@ -15,6 +15,7 @@ import {
   type OfficePayrollRunComputationContext,
 } from '@/lib/payroll/office-payroll-run-context';
 import { officeStaffAppliesScanTimeDeductions } from '@/lib/payroll/office-staff-payroll-attendance-basis';
+import { normalizeStaffDateYmd } from '@/lib/payroll/office-staff-date-ymd';
 import { isHrSettingsCalendarHolidayYmd } from '@/lib/payroll/worker-global-labor-policy';
 import type { OfficePayrollRun, OfficeStaff } from '@/lib/types';
 
@@ -83,8 +84,8 @@ export function findIncompleteScanAttendanceDaysForStaff(
 
   const periodYmds = enumerateYmdsInclusive(input.periodStart, input.periodEnd);
   const attendanceByYmd = new Map(input.attendanceDayRows.map((r) => [r.ymd, r]));
-  const staffStartYmd = staff.startDate?.slice(0, 10);
-  const employmentEndYmd = staff.employmentEndDate?.slice(0, 10);
+  const staffStartYmd = normalizeStaffDateYmd(staff.startDate);
+  const employmentEndYmd = normalizeStaffDateYmd(staff.employmentEndDate);
   const incompleteDays: OfficeScanAttendanceIncompleteDay[] = [];
 
   for (const ymd of periodYmds) {

@@ -207,14 +207,42 @@ export type OfficeScanInEvaluation = {
   lateMinutes: number;
 };
 
+/** ช่วงที่พนักงานต้องมาทำงานจริง (หลังหักลาครึ่งวัน) */
+export type OfficePayrollWorkingHalf = 'FULL' | 'MORNING' | 'AFTERNOON';
+
 export function evaluateOfficeScanInForPayroll(
   effectiveInMinutesFromMidnight: number | null,
   cfg: MonthlyWorkNormPolicyConfig,
+): OfficeScanInEvaluation {
+  return evaluateOfficeScanInForPayrollHalf(effectiveInMinutesFromMidnight, cfg, 'FULL');
+}
+
+/**
+ * ประเมินสาย/ขาดจากเวลาเข้า — รองรับลาครึ่งวัน (ทำงานเฉพาะเช้าหรือบ่าย)
+ */
+export function evaluateOfficeScanInForPayrollHalf(
+  effectiveInMinutesFromMidnight: number | null,
+  cfg: MonthlyWorkNormPolicyConfig,
+  workingHalf: OfficePayrollWorkingHalf,
 ): OfficeScanInEvaluation {
   if (effectiveInMinutesFromMidnight === null) return { absenceDayFraction: 0, lateMinutes: 0 };
   const b = officeShiftMinuteBounds(cfg);
   if (!b) return { absenceDayFraction: 0, lateMinutes: 0 };
   const t = effectiveInMinutesFromMidnight;
+
+  if (workingHalf === 'AFTERNOON') {
+    if (t > b.afternoonEndMin) return { absenceDayFraction: 0.5, lateMinutes: 0 };
+    if (t < b.afternoonStartMin) return { absenceDayFraction: 0, lateMinutes: 0 };
+    const lateAfternoon = Math.max(0, t - b.afternoonLateCutoffMin);
+    return { absenceDayFraction: 0, lateMinutes: lateAfternoon };
+  }
+
+  if (workingHalf === 'MORNING') {
+    if (t > b.morningEndMin) return { absenceDayFraction: 0.5, lateMinutes: 0 };
+    const lateMorning = Math.max(0, t - b.morningLateCutoffMin);
+    return { absenceDayFraction: 0, lateMinutes: lateMorning };
+  }
+
   if (t > b.afternoonEndMin) {
     return { absenceDayFraction: 1, lateMinutes: 0 };
   }

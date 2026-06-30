@@ -272,6 +272,16 @@ export default function OfficePayrollStaffLinePage({
   const hrExtra = hrAllowanceTotal(line);
   const bundleNoHr =
     (line.allowance ?? 0) + (line.bonus ?? 0) + (line.overtimeAmount ?? 0) + (line.otherIncome ?? 0);
+  const att = line.attendanceSummary;
+  const contractBaseSalary =
+    att?.preEmploymentDeductionAmount || att?.postEmploymentDeductionAmount
+      ? Math.round(
+          (line.baseSalary +
+            (att.preEmploymentDeductionAmount ?? 0) +
+            (att.postEmploymentDeductionAmount ?? 0)) *
+            100,
+        ) / 100
+      : null;
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -356,6 +366,17 @@ export default function OfficePayrollStaffLinePage({
                   <TableCell>ฐานเงินเดือน</TableCell>
                   <TableCell className="text-right tabular-nums">฿{line.baseSalary.toLocaleString()}</TableCell>
                 </TableRow>
+                {contractBaseSalary != null && contractBaseSalary !== line.baseSalary ? (
+                  <TableRow>
+                    <TableCell className="text-muted-foreground text-xs">
+                      ฐานตามสัญญา (ก่อนหักวันก่อนเริ่มงาน
+                      {att?.preEmploymentDays ? ` ${att.preEmploymentDays} วัน` : ''})
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground text-xs">
+                      ฿{contractBaseSalary.toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ) : null}
                 <TableRow>
                   <TableCell>เบี้ยเลี้ยง / โบนัส / โอที / รายได้อื่น (ถ้ามี)</TableCell>
                   <TableCell className="text-right tabular-nums">฿{bundleNoHr.toLocaleString()}</TableCell>

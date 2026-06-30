@@ -20,6 +20,7 @@ import {
   vacationEligibleFromDate,
 } from '@/lib/leaves/policy';
 import type { OfficeLeaveHalfDaySession, OfficeLeaveRequestDoc, OfficeLeaveType } from '@/lib/leaves/types';
+import { prepareOfficeLeaveRequestForFirestore } from '@/lib/leaves/office-leave-request-firestore';
 import {
   Dialog,
   DialogContent,
@@ -40,16 +41,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateThaiBE } from '@/lib/date-thai';
@@ -76,7 +67,11 @@ export type HrProxyLeaveDialogProps = {
   /** เปิดแก้ไขใบลาที่มีอยู่ (DRAFT / SUBMITTED) */
   editLeave?: (OfficeLeaveRequestDoc & { id: string }) | null;
   /** หลังบันทึกสำเร็จ — ให้หน้า HR สลับไปแท็บรายการคำขอ */
-  onLeavePersisted?: (result: { id: string; status: OfficeLeaveRequestDoc['status'] }) => void;
+  onLeavePersisted?: (result: {
+    id: string;
+    status: OfficeLeaveRequestDoc['status'];
+    leave?: Pick<OfficeLeaveRequestDoc, 'startDate' | 'endDate'>;
+  }) => void;
 };
 
 export function HrProxyLeaveDialog({
@@ -99,7 +94,7 @@ export function HrProxyLeaveDialog({
   const [halfDaySession, setHalfDaySession] = useState<OfficeLeaveHalfDaySession>('MORNING');
   const [draftDocId, setDraftDocId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [confirmSubmitOpen, setConfirmSubmitOpen] = useState(false);
+  const [submitConfirmStep, setSubmitConfirmStep] = useState(false);
 
   const selectedStaff = useMemo(
     () => officeStaff.find((s) => s.id === staffId) ?? null,
@@ -168,6 +163,7 @@ export function HrProxyLeaveDialog({
     setEndDate(todayYmdBkk());
     setHalfDaySession('MORNING');
     setLeaveType('SICK');
+    setSubmitConfirmStep(false);
   }
 
   function closeDialog() {
@@ -180,14 +176,14 @@ export function HrProxyLeaveDialog({
   ): Omit<OfficeLeaveRequestDoc, 'status'> & { status: typeof status } {
     if (!selectedStaff) throw new Error('no staff');
     const ts = Date.now();
-    return {
+    const payload = {
       staffId: selectedStaff.id,
       staffNameSnapshot: selectedStaff.fullName,
       staffDepartmentSnapshot: selectedStaff.department || '',
       staffLinkedUserId: selectedStaff.linkedUserId || '',
       leaveType,
-      startDate,
-      endDate: isHalfDay ? startDate : endDate,
+      startDate: startDate.slice(0, 10),
+      endDate: (isHalfDay ? startDate : endDate).slice(0, 10),
       days: requestedDays,
       reason: reason.trim(),
       isHalfDay,
@@ -199,12 +195,16 @@ export function HrProxyLeaveDialog({
       createdAt: editLeave?.createdAt ?? ts,
       updatedAt: ts,
     };
+    return prepareOfficeLeaveRequestForFirestore(payload) as typeof payload;
   }
 
-  function draftSaveStatus(): 'DRAFT' | 'SUBMITTED' {
+  function draftSaveStatus(): OfficeLeaveRequestDoc['status'] {
     if (editLeave?.status === 'SUBMITTED') return 'SUBMITTED';
+    if (editLeave?.status === 'APPROVED') return 'APPROVED';
     return 'DRAFT';
   }
+
+  const editingApproved = editLeave?.status === 'APPROVED';
 
   async function handleSaveDraft() {
     if (!selectedStaff || !firestore) return;
@@ -225,15 +225,26 @@ export function HrProxyLeaveDialog({
       if (draftDocId) {
         const p = buildPayload(draftSaveStatus());
         const { createdAt: _c, createdByUid: _u, createdByName: _n, ...upd } = p;
+        const savedStatus = draftSaveStatus();
         await updateDoc(doc(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION, draftDocId), {
           ...upd,
+          status: savedStatus,
           updatedAt: ts,
         });
         toast({
           title: isEditing ? 'บันทึกการแก้ไขแล้ว' : 'บันทึกฉบับร่างแล้ว',
-          description: 'ยังไม่เข้าคิวอนุมัติ — กด «ส่งเข้าคิวอนุมัติ» หรือ ⋮ → ส่งให้อนุมัติ',
+          description:
+            savedStatus === 'APPROVED'
+              ? 'คงสถานะอนุมัติแล้ว — หากมีงวด CALCULATED ให้คำนวณงวดเงินเดือนใหม่'
+              : savedStatus === 'SUBMITTED'
+                ? 'ยังอยู่ในคิวรออนุมัติ'
+                : 'ยังไม่เข้าคิวอนุมัติ — กด «ส่งเข้าคิวอนุมัติ» หรือ ⋮ → ส่งให้อนุมัติ',
         });
-        onLeavePersisted?.({ id: draftDocId, status: draftSaveStatus() });
+        onLeavePersisted?.({
+          id: draftDocId,
+          status: savedStatus,
+          leave: { startDate, endDate: isHalfDay ? startDate : endDate },
+        });
       } else {
         const p = buildPayload('DRAFT');
         const ref = await addDoc(collection(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION), {
@@ -246,7 +257,11 @@ export function HrProxyLeaveDialog({
           title: 'สร้างฉบับร่างแล้ว',
           description: 'ยังไม่เข้าคิวอนุมัติ — กด «ส่งเข้าคิวอนุมัติ» เมื่อพร้อม',
         });
-        onLeavePersisted?.({ id: ref.id, status: 'DRAFT' });
+        onLeavePersisted?.({
+          id: ref.id,
+          status: 'DRAFT',
+          leave: { startDate, endDate: isHalfDay ? startDate : endDate },
+        });
       }
     } catch (e) {
       toast({
@@ -272,11 +287,18 @@ export function HrProxyLeaveDialog({
       toast({ variant: 'destructive', title: 'พนักงานคนนี้ยังไม่มีสิทธิ์ลาพักร้อน' });
       return;
     }
-    setConfirmSubmitOpen(true);
+    setSubmitConfirmStep(true);
   }
 
   async function handleSubmitConfirmed() {
-    if (!selectedStaff || !firestore) return;
+    if (!selectedStaff || !firestore) {
+      toast({
+        variant: 'destructive',
+        title: 'ส่งไม่ได้',
+        description: !selectedStaff ? 'กรุณาเลือกพนักงาน' : 'ไม่สามารถเชื่อมต่อฐานข้อมูลได้',
+      });
+      return;
+    }
     if (!reason.trim()) {
       toast({ variant: 'destructive', title: 'กรุณาระบุเหตุผลก่อนส่งคำขอ' });
       return;
@@ -289,22 +311,24 @@ export function HrProxyLeaveDialog({
       toast({ variant: 'destructive', title: 'พนักงานคนนี้ยังไม่มีสิทธิ์ลาพักร้อน' });
       return;
     }
-    setConfirmSubmitOpen(false);
     setBusy(true);
     try {
       const ts = Date.now();
       let savedId = draftDocId;
       if (draftDocId) {
         const { createdAt: _c, createdByUid: _u, createdByName: _n, ...upd } = buildPayload('SUBMITTED');
+        const createdAt = editLeave?.createdAt ?? ts;
         await updateDoc(doc(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION, draftDocId), {
           ...upd,
           status: 'SUBMITTED',
+          createdAt,
           updatedAt: ts,
         });
       } else {
         const raw = buildPayload('SUBMITTED');
         const ref = await addDoc(collection(firestore, OFFICE_LEAVE_REQUESTS_COLLECTION), {
           ...raw,
+          status: 'SUBMITTED',
           createdAt: ts,
           updatedAt: ts,
         });
@@ -312,9 +336,16 @@ export function HrProxyLeaveDialog({
       }
       toast({
         title: 'ส่งคำขอแล้ว',
-        description: 'สถานะ «รออนุมัติ» — ดูที่แท็บคำขอทั้งหมด หรือ HR → ศูนย์อนุมัติ → อนุมัติวันลา',
+        description: `สถานะ «รออนุมัติ» (id ${savedId?.slice(0, 8)}…) — ดูที่แท็บคำขอทั้งหมด หรือศูนย์อนุมัติ → อนุมัติวันลา`,
       });
-      if (savedId) onLeavePersisted?.({ id: savedId, status: 'SUBMITTED' });
+      if (savedId) {
+        onLeavePersisted?.({
+          id: savedId,
+          status: 'SUBMITTED',
+          leave: { startDate, endDate: isHalfDay ? startDate : endDate },
+        });
+      }
+      setSubmitConfirmStep(false);
       closeDialog();
     } catch (e) {
       toast({
@@ -327,10 +358,45 @@ export function HrProxyLeaveDialog({
     }
   }
 
+  const submitConfirmSummary = selectedStaff
+    ? `${selectedStaff.fullName} · ${OFFICE_LEAVE_TYPE_LABELS[leaveType]} ${requestedDays} วัน · ${formatDateThaiBE(startDate)}${
+        !isHalfDay && endDate !== startDate ? ` – ${formatDateThaiBE(endDate)}` : isHalfDay ? ` (${halfDaySession === 'MORNING' ? 'ครึ่งเช้า' : 'ครึ่งบ่าย'})` : ''
+      }`
+    : '';
+
   return (
     <>
       <Dialog open={open} onOpenChange={(v) => (v ? onOpenChange(true) : closeDialog())}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          {submitConfirmStep ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>ยืนยันส่งคำขอลาแทนพนักงาน</DialogTitle>
+                <DialogDescription>
+                  คำขอจะปรากฏในคิว &quot;อนุมัติวันลา&quot; ให้ผู้จัดการพิจารณา — ต้องการดำเนินการหรือไม่?
+                </DialogDescription>
+              </DialogHeader>
+              <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
+                <p className="font-medium">{submitConfirmSummary}</p>
+                <p className="text-muted-foreground text-xs">เหตุผล: {reason.trim()}</p>
+              </div>
+              <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setSubmitConfirmStep(false)}
+                  disabled={busy}
+                >
+                  ยกเลิก
+                </Button>
+                <Button type="button" onClick={() => void handleSubmitConfirmed()} disabled={busy}>
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                  {busy ? 'กำลังส่ง…' : 'ยืนยันส่ง'}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
           <DialogHeader>
             <DialogTitle>{isEditing ? 'แก้ไขใบลา' : 'สร้างใบลาแทนพนักงาน'}</DialogTitle>
             <DialogDescription>
@@ -448,29 +514,20 @@ export function HrProxyLeaveDialog({
             </Button>
             <Button type="button" variant="secondary" onClick={() => void handleSaveDraft()} disabled={busy || !staffId}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {isEditing && editLeave?.status === 'SUBMITTED' ? 'บันทึกการแก้ไข' : 'บันทึกฉบับร่าง (ยังไม่เข้าคิว)'}
+              {isEditing && (editLeave?.status === 'SUBMITTED' || editLeave?.status === 'APPROVED')
+                ? 'บันทึกการแก้ไข'
+                : 'บันทึกฉบับร่าง (ยังไม่เข้าคิว)'}
             </Button>
-            <Button type="button" onClick={openSubmitConfirm} disabled={busy || !staffId || !reason.trim()}>
-              ส่งเข้าคิวอนุมัติ
-            </Button>
+            {!editingApproved ? (
+              <Button type="button" onClick={openSubmitConfirm} disabled={busy || !staffId || !reason.trim()}>
+                ส่งเข้าคิวอนุมัติ
+              </Button>
+            ) : null}
           </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
-
-      <AlertDialog open={confirmSubmitOpen} onOpenChange={setConfirmSubmitOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>ยืนยันส่งคำขอลาแทนพนักงาน</AlertDialogTitle>
-            <AlertDialogDescription>
-              คำขอจะปรากฏในคิว &quot;อนุมัติวันลา&quot; ให้ผู้จัดการพิจารณา — ต้องการดำเนินการหรือไม่?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void handleSubmitConfirmed()}>ยืนยันส่ง</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   );
 }

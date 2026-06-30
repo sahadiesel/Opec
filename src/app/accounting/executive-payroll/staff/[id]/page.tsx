@@ -149,6 +149,20 @@ export default function ExecutivePayrollStaffEditorPage({
       };
     }
     const uid = (form.linkedUserId || '').trim();
+    // setDoc() cannot include deleteField() — omit optional link fields on create
+    if (isNew) {
+      if (!uid) return {};
+      const u =
+        (allUsers?.find((x) => x.id === uid) as User | undefined) ?? linkedUserFromFirestore ?? undefined;
+      if (!u) return { linkedUserId: uid };
+      const lines = buildUserAccessSummaryLines(u);
+      return {
+        linkedUserId: uid,
+        ...(u.displayName?.trim() ? { linkedUserDisplayName: u.displayName.trim() } : {}),
+        ...(u.email?.trim() ? { linkedUserDisplayEmail: u.email.trim() } : {}),
+        ...(lines.length ? { linkedUserAccessSummary: lines } : {}),
+      };
+    }
     if (!uid) {
       return {
         linkedUserId: deleteField(),
@@ -160,7 +174,7 @@ export default function ExecutivePayrollStaffEditorPage({
     const u =
       (allUsers?.find((x) => x.id === uid) as User | undefined) ?? linkedUserFromFirestore ?? undefined;
     if (!u) {
-      if (!isNew && existing?.linkedUserId === uid) {
+      if (existing?.linkedUserId === uid) {
         return {
           linkedUserId: uid,
           linkedUserDisplayName: existing.linkedUserDisplayName,

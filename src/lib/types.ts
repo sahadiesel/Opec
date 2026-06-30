@@ -2208,8 +2208,9 @@ export interface OfficePayrollLineAttendanceSummary {
   lateDeductionAmount: number;
   scanAbsenceDeductionAmount: number;
   unpaidLeaveDeductionAmount: number;
-  /** วันทำงานในงวดก่อนวันเริ่มจ้าง (หักเงินเดือนไม่เต็มเดือน) */
+  /** วันปฏิทินในงวดก่อนวันเริ่มจ้าง (หักเงินเดือนไม่เต็มเดือน — เงินเดือน÷30) */
   preEmploymentDays?: number;
+  /** วันปฏิทินในงวดหลังวันสิ้นสุดการจ้าง */
   postEmploymentDays?: number;
   preEmploymentDeductionAmount?: number;
   postEmploymentDeductionAmount?: number;

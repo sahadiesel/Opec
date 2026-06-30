@@ -49,6 +49,13 @@ export async function syncOfficeRunMyProfileIndex(
       continue;
     }
 
+    const lineRef = doc(firestore, runCollection, runId, 'lines', line.id);
+    const lineSnap = await getDoc(lineRef);
+    if (!lineSnap.exists()) {
+      skipped++;
+      continue;
+    }
+
     const staffSnap = await getDoc(doc(firestore, 'office_staff', line.staffId));
     if (!staffSnap.exists()) {
       skipped++;
@@ -77,7 +84,7 @@ export async function syncOfficeRunMyProfileIndex(
     ops++;
 
     batch.update(
-      doc(firestore, runCollection, runId, 'lines', line.id),
+      lineRef,
       stripUndefinedForFirestore({ subjectLinkedUserId: linked }),
     );
     ops++;

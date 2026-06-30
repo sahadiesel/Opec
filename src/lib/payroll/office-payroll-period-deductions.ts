@@ -6,9 +6,10 @@ import type { AttendanceDayEffectiveRow } from '@/lib/attendance/correction-merg
 import type { OfficeLeaveEntitlementsDoc } from '@/lib/attendance/types';
 import {
   absenceLatePayrollRates,
-  evaluateOfficeScanInForPayroll,
+  evaluateOfficeScanInForPayrollHalf,
   monthlyWorkNormFromUnknownConfig,
   type MonthlyWorkNormPolicyConfig,
+  type OfficePayrollWorkingHalf,
 } from '@/lib/hr/monthly-work-norm-policy';
 import {
   entitlementForStaff,
@@ -16,9 +17,10 @@ import {
   OFFICE_LEAVE_TYPE_LABELS,
   vacationEligibleFromDate,
 } from '@/lib/leaves/policy';
-import type { OfficeLeaveRequestDoc, OfficeLeaveType } from '@/lib/leaves/types';
+import type { OfficeLeaveRequestDoc, OfficeLeaveHalfDaySession, OfficeLeaveType } from '@/lib/leaves/types';
 import { officeStaffAppliesScanTimeDeductions } from '@/lib/payroll/office-staff-payroll-attendance-basis';
 import { countPartialMonthUnpaidWorkDays } from '@/lib/payroll/office-payroll-partial-month';
+import { normalizeStaffDateYmd } from '@/lib/payroll/office-staff-date-ymd';
 import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import type { CalendarHolidayEntry } from '@/lib/contract-position-rate-extras';
 import {
@@ -74,7 +76,22 @@ type ExpandedLeaveDay = {
   fraction: number;
   leaveType: OfficeLeaveType;
   status: OfficeLeaveRequestDoc['status'];
+  halfDaySession?: OfficeLeaveHalfDaySession | null;
 };
+
+/** ช่วงที่ต้องมาทำงานจริง — ลาครึ่งเช้า = ทำงานบ่าย, ลาครึ่งบ่าย = ทำงานเช้า */
+function resolvePayrollWorkingHalf(
+  approvedFraction: number,
+  approvedLeaves: ExpandedLeaveDay[],
+): OfficePayrollWorkingHalf {
+  if (approvedFraction >= 1) return 'FULL';
+  if (approvedFraction <= 0) return 'FULL';
+  const half = approvedLeaves.find((l) => l.status === 'APPROVED' && l.fraction > 0 && l.fraction < 1);
+  if (!half?.halfDaySession) return 'FULL';
+  if (half.halfDaySession === 'MORNING') return 'AFTERNOON';
+  if (half.halfDaySession === 'AFTERNOON') return 'MORNING';
+  return 'FULL';
+}
 
 /** ขยายคำขอลาเป็นวันเดียวๆ ที่ทับกับงวดจ่าย */
 export function expandLeaveRequestDaysInPeriod(
@@ -94,7 +111,13 @@ export function expandLeaveRequestDaysInPeriod(
   const out: ExpandedLeaveDay[] = [];
   if (req.isHalfDay) {
     if (rs >= ps && rs <= pe) {
-      out.push({ ymd: rs, fraction: 0.5, leaveType: req.leaveType, status: req.status });
+      out.push({
+        ymd: rs,
+        fraction: 0.5,
+        leaveType: req.leaveType,
+        status: req.status,
+        halfDaySession: req.halfDaySession ?? null,
+      });
     }
     return out;
   }
@@ -181,14 +204,12 @@ export function computeOfficePayrollPeriodAdjustments(
   if (baseSalary <= 0) return empty;
 
   const rates = absenceLatePayrollRates(baseSalary, input.monthlyWorkNorm);
-  const staffStartYmd = input.staff.startDate?.slice(0, 10);
-  const employmentEndYmd = input.staff.employmentEndDate?.slice(0, 10);
+  const staffStartYmd = normalizeStaffDateYmd(input.staff.startDate);
+  const employmentEndYmd = normalizeStaffDateYmd(input.staff.employmentEndDate);
   const { preEmploymentDays, postEmploymentDays } = countPartialMonthUnpaidWorkDays(
     input.periodStart,
     input.periodEnd,
     input.staff,
-    input.weeklyRestPattern,
-    input.calendarHolidays,
   );
   const preEmploymentDeductionAmount = round2(preEmploymentDays * rates.perDay);
   const postEmploymentDeductionAmount = round2(postEmploymentDays * rates.perDay);
@@ -265,12 +286,13 @@ export function computeOfficePayrollPeriodAdjustments(
 
     if (applyScan) {
       const remainingFraction = Math.max(0, 1 - approvedFraction);
+      const workingHalf = resolvePayrollWorkingHalf(approvedFraction, approvedLeave);
       if (!hasScan) {
         totalScanAbsenceDays += remainingFraction;
         continue;
       }
       const inMin = bangkokMinutesFromMidnight(row!.effectiveInMs!);
-      const ev = evaluateOfficeScanInForPayroll(inMin, input.monthlyWorkNorm);
+      const ev = evaluateOfficeScanInForPayrollHalf(inMin, input.monthlyWorkNorm, workingHalf);
       totalScanAbsenceDays += ev.absenceDayFraction * remainingFraction;
       totalLateMinutes += ev.lateMinutes;
     }
