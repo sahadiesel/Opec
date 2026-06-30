@@ -172,6 +172,10 @@ export async function applyStandardOfficeRunLines(
       run.payrollPeriodStart,
       run.payrollPeriodEnd,
       payrollCtx.approvedOvertimeRequests,
+      {
+        monthlySalary: baseSalary,
+        monthlyWorkNorm: payrollCtx.monthlyWorkNorm,
+      },
     );
 
     const d8 = computeOfficePayrollLineD8({

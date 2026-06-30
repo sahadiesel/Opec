@@ -567,17 +567,17 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                 </div>
               </CardHeader>
               <CardContent className="p-0">
-                <Table>
+                <Table className="table-fixed w-full">
                   <TableHeader className="bg-muted/30">
                     <TableRow>
-                      <TableHead>พนักงาน & ตำแหน่ง</TableHead>
-                      <TableHead>ฐานเงินเดือน</TableHead>
-                      <TableHead className="text-right">ยอดรวม (Gross)</TableHead>
-                      <TableHead className="text-right">รายการหัก</TableHead>
-                      <TableHead className="text-right font-bold">สุทธิ (Net)</TableHead>
-                      <TableHead className="text-center w-[88px] px-1">ใบหักฯ</TableHead>
-                      <TableHead className="text-right w-[100px]">สลิป</TableHead>
-                      <TableHead className="text-right">จัดการ</TableHead>
+                      <TableHead className="w-[24%]">พนักงาน & ตำแหน่ง</TableHead>
+                      <TableHead className="w-[13%] text-center">ฐานเงินเดือน</TableHead>
+                      <TableHead className="w-[13%] text-center">ยอดรวม (Gross)</TableHead>
+                      <TableHead className="w-[13%] text-center">รายการหัก</TableHead>
+                      <TableHead className="w-[13%] text-center font-bold">สุทธิ (Net)</TableHead>
+                      <TableHead className="w-[8%] text-center px-1">ใบหักฯ</TableHead>
+                      <TableHead className="w-[8%] text-center">สลิป</TableHead>
+                      <TableHead className="w-[8%] text-center">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -594,47 +594,59 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                         const slipModel = buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined);
                         return (
                           <TableRow key={line.id} className="hover:bg-muted/20">
-                            <TableCell>
+                            <TableCell className="align-middle">
                               <div className="flex flex-col">
                                 <span className="font-bold text-sm text-primary">{line.staffName}</span>
                                 <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                                  <Building2 className="h-2.5 w-2.5" /> {line.department} | {line.positionTitle}
+                                  <Building2 className="h-2.5 w-2.5 shrink-0" /> {line.department} | {line.positionTitle}
                                 </span>
                               </div>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="text-center align-middle tabular-nums">
                               <span className="text-sm font-medium">฿{line.baseSalary.toLocaleString()}</span>
                             </TableCell>
-                            <TableCell className="text-right font-medium">฿{line.grossPay.toLocaleString()}</TableCell>
-                            <TableCell className="text-right text-red-600">-฿{line.deductions.toLocaleString()}</TableCell>
-                            <TableCell className="text-right font-black text-green-700">฿{line.netPay.toLocaleString()}</TableCell>
+                            <TableCell className="text-center align-middle tabular-nums font-medium">
+                              ฿{line.grossPay.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-center align-middle tabular-nums text-red-600">
+                              -฿{line.deductions.toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-center align-middle tabular-nums font-black text-green-700">
+                              ฿{line.netPay.toLocaleString()}
+                            </TableCell>
                             <TableCell className="text-center align-middle px-1">
-                              {firestore && run ? (
-                                <OfficePayrollWhtSingleDialog
-                                  firestore={firestore}
-                                  run={run}
-                                  line={line}
-                                  periodLabel={officeWhtPeriodLabel}
-                                  companyProfile={companyProfileForWht ?? null}
-                                  currentUser={currentUser as AppUser}
-                                  disabled={!canOfficeWhtPreview}
-                                  disabledTitle={officeWhtDisabledReason}
-                                />
-                              ) : (
-                                '—'
-                              )}
+                              <div className="flex justify-center">
+                                {firestore && run ? (
+                                  <OfficePayrollWhtSingleDialog
+                                    firestore={firestore}
+                                    run={run}
+                                    line={line}
+                                    periodLabel={officeWhtPeriodLabel}
+                                    companyProfile={companyProfileForWht ?? null}
+                                    currentUser={currentUser as AppUser}
+                                    disabled={!canOfficeWhtPreview}
+                                    disabledTitle={officeWhtDisabledReason}
+                                  />
+                                ) : (
+                                  '—'
+                                )}
+                              </div>
                             </TableCell>
-                            <TableCell className="text-right">
-                              <PayslipDialog model={slipModel} />
+                            <TableCell className="text-center align-middle">
+                              <div className="flex justify-center">
+                                <PayslipDialog model={slipModel} />
+                              </div>
                             </TableCell>
-                            <TableCell className="text-right">
-                              <Button variant="ghost" size="icon" asChild title="รายละเอียดรายคน">
+                            <TableCell className="text-center align-middle">
+                              <div className="flex justify-center">
+                                <Button variant="ghost" size="icon" asChild title="รายละเอียดรายคน">
                                 <Link
                                   href={`/office-payroll/${id}/staff/${encodeURIComponent(line.staffId)}`}
                                 >
                                   <ChevronRight className="h-4 w-4" />
                                 </Link>
                               </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         );
