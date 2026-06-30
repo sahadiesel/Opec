@@ -81,6 +81,11 @@ import {
   isOfficeStaffEligibleForStandardOfficeRun,
 } from '@/lib/payroll/office-payroll-run-apply';
 import { listOfficeStaffPayrollIdentityBlockers } from '@/lib/payroll/office-staff-payroll-identity';
+import {
+  loadOfficeScanAttendanceBlockersForRun,
+  scanAttendanceBlockerSummaryTh,
+  type OfficeScanAttendanceBlocker,
+} from '@/lib/payroll/office-scan-attendance-readiness';
 import { fetchOfficePayrollMonthConsolidation, type OfficePayrollMonthConsolidation } from '@/lib/payroll/office-month-staff-aggregate';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
@@ -239,6 +244,8 @@ export default function OfficePayrollPage() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [scanAttendanceBlockers, setScanAttendanceBlockers] = useState<OfficeScanAttendanceBlocker[]>([]);
+  const [loadingScanAttendanceBlockers, setLoadingScanAttendanceBlockers] = useState(false);
   const [newRun, setNewRun] = useState<Partial<OfficePayrollRun>>(() => initNewRunState());
   const [selectedStaffIds, setSelectedStaffIds] = useState<Set<string>>(() => new Set());
   const [createStaffSearch, setCreateStaffSearch] = useState('');
@@ -330,6 +337,60 @@ export default function OfficePayrollPage() {
     return listOfficeStaffPayrollIdentityBlockers(selected);
   }, [allOfficeStaff, selectedStaffIds]);
 
+  const selectedStaffForCreate = useMemo(() => {
+    if (!allOfficeStaff) return [];
+    const byId = new Map(allOfficeStaff.map((s) => [s.id, s]));
+    const selected: OfficeStaff[] = [];
+    for (const id of selectedStaffIds) {
+      const s = byId.get(id);
+      if (s) selected.push(s);
+    }
+    return selected;
+  }, [allOfficeStaff, selectedStaffIds]);
+
+  useEffect(() => {
+    if (!isDialogOpen || !firestore || !newRun.payrollMonth || !newRun.payrollPeriodStart || !newRun.payrollPeriodEnd) {
+      setScanAttendanceBlockers([]);
+      return;
+    }
+    if (selectedStaffForCreate.length === 0) {
+      setScanAttendanceBlockers([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingScanAttendanceBlockers(true);
+    void loadOfficeScanAttendanceBlockersForRun(
+      firestore as Firestore,
+      {
+        payrollMonth: newRun.payrollMonth,
+        payrollPeriodStart: newRun.payrollPeriodStart,
+        payrollPeriodEnd: newRun.payrollPeriodEnd,
+      },
+      selectedStaffForCreate,
+    )
+      .then((blockers) => {
+        if (!cancelled) setScanAttendanceBlockers(blockers);
+      })
+      .catch(() => {
+        if (!cancelled) setScanAttendanceBlockers([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingScanAttendanceBlockers(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isDialogOpen,
+    firestore,
+    newRun.payrollMonth,
+    newRun.payrollPeriodStart,
+    newRun.payrollPeriodEnd,
+    selectedStaffForCreate,
+  ]);
+
   const handleCreateRun = async () => {
     if (!canCreateOfficePayroll) {
       toast({ variant: "destructive", title: "ไม่มีสิทธิ์", description: "คุณไม่มีสิทธิ์สร้างงวดเงินเดือนออฟฟิศ" });
@@ -373,6 +434,15 @@ export default function OfficePayrollPage() {
         description: identityBlockers
           .map((b) => `${b.staff.fullName} (${b.staff.staffCode}): ${b.reasons.join(' · ')}`)
           .join('\n'),
+      });
+      return;
+    }
+
+    if (scanAttendanceBlockers.length > 0) {
+      toast({
+        variant: 'destructive',
+        title: 'การบันทึกเวลาจากการสแกนยังไม่ครบ',
+        description: scanAttendanceBlockers.map(scanAttendanceBlockerSummaryTh).join('\n'),
       });
       return;
     }
@@ -800,6 +870,31 @@ export default function OfficePayrollPage() {
                       </AlertDescription>
                     </Alert>
                   )}
+                  {loadingScanAttendanceBlockers && selectedStaffForCreate.length > 0 && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="h-3 w-3 animate-spin" /> กำลังตรวจสอบการบันทึกเวลาจากการสแกน…
+                    </p>
+                  )}
+                  {!loadingScanAttendanceBlockers && scanAttendanceBlockers.length > 0 && (
+                    <Alert className="bg-amber-50 border-amber-300 dark:bg-amber-950/30 dark:border-amber-800 py-2">
+                      <AlertTitle className="text-xs font-bold flex items-center gap-1.5">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                        การบันทึกเวลาจากการสแกนยังไม่ครบ ({scanAttendanceBlockers.length} คน)
+                      </AlertTitle>
+                      <AlertDescription className="text-[11px] leading-snug space-y-1">
+                        {scanAttendanceBlockers.map((b) => (
+                          <p key={b.staff.id}>{scanAttendanceBlockerSummaryTh(b)}</p>
+                        ))}
+                        <p className="pt-1 text-muted-foreground">
+                          แก้ไขเวลาให้ครบที่{' '}
+                          <Link href="/hr/attendance" className="underline font-semibold">
+                            หน้าจัดการลงเวลา
+                          </Link>{' '}
+                          ก่อนสร้างงวดและคำนวณเงินเดือน
+                        </p>
+                      </AlertDescription>
+                    </Alert>
+                  )}
                   {lockedOutForCreate.length > 0 && (
                     <Alert className="bg-amber-50 border-amber-200 py-2">
                       <AlertTitle className="text-xs font-bold">อยู่งวดจ่ายอื่นในเดือนนี้แล้ว ({lockedOutForCreate.length} คน)</AlertTitle>
@@ -815,7 +910,7 @@ export default function OfficePayrollPage() {
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>
                   ยกเลิก
                 </Button>
-                <Button onClick={() => void handleCreateRun()} className="bg-primary font-bold" disabled={isCreating || !canCreateOfficePayroll || selectedPayrollIdentityBlockers.length > 0}>
+                <Button onClick={() => void handleCreateRun()} className="bg-primary font-bold" disabled={isCreating || !canCreateOfficePayroll || selectedPayrollIdentityBlockers.length > 0 || loadingScanAttendanceBlockers || scanAttendanceBlockers.length > 0}>
                   {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                   สร้างงวดและคำนวณ
                 </Button>

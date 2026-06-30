@@ -24,12 +24,26 @@ import type { User, OfficeStaff } from '@/lib/types';
 import {
   ATTENDANCE_PUNCHES_COLLECTION,
   ATTENDANCE_DAY_OVERRIDES_COLLECTION,
+  ATTENDANCE_OVERTIME_REQUESTS_COLLECTION,
+  ATTENDANCE_CORRECTION_REQUESTS_COLLECTION,
 } from '@/lib/attendance/constants';
 import type {
   AttendancePunchDoc,
   AttendanceSubjectType,
   AttendanceDayOverrideDoc,
+  AttendanceOvertimeRequestDoc,
+  AttendanceCorrectionRequestDoc,
 } from '@/lib/attendance/types';
+import {
+  attendanceOvertimeHoursForRequest,
+  formatAttendanceOvertimeHours,
+  latestOvertimeRequestBySubjectDay,
+  sumApprovedOvertimeHoursForSubject,
+} from '@/lib/attendance/overtime-display';
+import {
+  attendanceDayPendingNotes,
+  latestCorrectionRequestBySubjectDay,
+} from '@/lib/attendance/pending-request-display';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -258,7 +272,7 @@ function dayKindBadges(
   const tags = dayTypeTags(ymd, weeklyRestPattern, calendarHolidayLabel);
   if (tags.length === 0) return <span className="text-muted-foreground text-xs">วันทำงาน</span>;
   return (
-    <div className="flex flex-wrap gap-1">
+    <div className="flex flex-wrap gap-1 justify-center">
       {tags.map((t) => (
         <Badge key={t} variant="outline" className="text-[10px] font-normal">
           {t}
@@ -386,6 +400,40 @@ export default function HrAttendanceManagePage() {
 
   const { data: overrideRows } = useCollection<AttendanceDayOverrideDoc>(overridesQuery as any);
 
+  const overtimeRequestsQuery = useMemoFirebase(() => {
+    if (!firestore || !canUse) return null;
+    return query(
+      collection(firestore as Firestore, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION),
+      where('payrollMonth', '==', payrollMonth),
+    );
+  }, [firestore, canUse, payrollMonth]);
+
+  const { data: overtimeRequestRows } = useCollection<AttendanceOvertimeRequestDoc>(
+    overtimeRequestsQuery as any,
+  );
+
+  const overtimeBySubjectDay = useMemo(
+    () => latestOvertimeRequestBySubjectDay(overtimeRequestRows ?? []),
+    [overtimeRequestRows],
+  );
+
+  const correctionRequestsQuery = useMemoFirebase(() => {
+    if (!firestore || !canUse) return null;
+    return query(
+      collection(firestore as Firestore, ATTENDANCE_CORRECTION_REQUESTS_COLLECTION),
+      where('payrollMonth', '==', payrollMonth),
+    );
+  }, [firestore, canUse, payrollMonth]);
+
+  const { data: correctionRequestRows } = useCollection<AttendanceCorrectionRequestDoc>(
+    correctionRequestsQuery as any,
+  );
+
+  const correctionBySubjectDay = useMemo(
+    () => latestCorrectionRequestBySubjectDay(correctionRequestRows ?? []),
+    [correctionRequestRows],
+  );
+
   const leaveRequestsQuery = useMemoFirebase(() => {
     if (!firestore || !canUse) return null;
     const ceYear = Number(payrollMonth.slice(0, 4));
@@ -430,6 +478,7 @@ export default function HrAttendanceManagePage() {
       const subjectOverrides = overridesBySubject.get(key) ?? [];
       const dayRows = buildAttendanceDayRows(ymDs, punches as AttendancePunchDoc[], subjectOverrides);
       const daysRecorded = countDaysWithEffectiveRecord(dayRows);
+      const approvedOtHoursTotal = sumApprovedOvertimeHoursForSubject(key, overtimeRequestRows ?? []);
       return {
         key,
         staff,
@@ -440,11 +489,12 @@ export default function HrAttendanceManagePage() {
         dayRows,
         daysRecorded,
         workingDaysInCalendarMonth,
+        approvedOtHoursTotal,
       };
     });
     entries.sort((a, b) => a.name.localeCompare(b.name, 'th'));
     return entries;
-  }, [activeOfficeStaff, grouped, ymDs, overridesBySubject, workingDaysInCalendarMonth]);
+  }, [activeOfficeStaff, grouped, ymDs, overridesBySubject, workingDaysInCalendarMonth, overtimeRequestRows]);
 
   const summaryRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -629,7 +679,7 @@ export default function HrAttendanceManagePage() {
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="w-full space-y-6">
         <div className="flex items-start gap-3">
           <Button variant="ghost" size="icon" asChild className="shrink-0 mt-0.5">
             <Link href="/timesheets">
@@ -718,13 +768,14 @@ export default function HrAttendanceManagePage() {
               </p>
             )}
             {!punchesLoading && !staffLoading && !punchesError && !staffError && summaryRows.length > 0 && (
-              <Table>
+              <Table className="w-full">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-10" />
                     <TableHead>พนักงาน</TableHead>
                     <TableHead className="text-right">วันทำงานตามปฏิทิน</TableHead>
                     <TableHead className="text-right">วันที่มีบันทึกเวลา</TableHead>
+                    <TableHead className="text-right whitespace-nowrap">ชม. OT</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -759,18 +810,25 @@ export default function HrAttendanceManagePage() {
                             {row.workingDaysInCalendarMonth}
                           </TableCell>
                           <TableCell className="text-right align-top tabular-nums">{row.daysRecorded}</TableCell>
+                          <TableCell className="text-right align-top tabular-nums font-mono">
+                            {row.approvedOtHoursTotal > 0
+                              ? formatAttendanceOvertimeHours(row.approvedOtHoursTotal)
+                              : '—'}
+                          </TableCell>
                         </TableRow>
                         {isOpen && (
                           <TableRow className="bg-muted/10 hover:bg-muted/10 border-b">
-                            <TableCell colSpan={4} className="p-3">
-                              <Table>
+                            <TableCell colSpan={5} className="p-3">
+                              <Table className="table-fixed w-full">
                                 <TableHeader>
                                   <TableRow>
-                                    <TableHead className="w-[140px]">วันที่</TableHead>
-                                    <TableHead>ประเภทวัน</TableHead>
-                                    <TableHead className="whitespace-nowrap">เข้างาน</TableHead>
-                                    <TableHead className="whitespace-nowrap">ออกงาน</TableHead>
-                                    <TableHead className="w-[140px] text-right">จัดการ</TableHead>
+                                    <TableHead className="w-[10%] text-center">วันที่</TableHead>
+                                    <TableHead className="w-[20%] text-center">ประเภทวัน</TableHead>
+                                    <TableHead className="w-[12.5%] whitespace-nowrap text-center">เข้างาน</TableHead>
+                                    <TableHead className="w-[12.5%] whitespace-nowrap text-center">ออกงาน</TableHead>
+                                    <TableHead className="w-[12.5%] whitespace-nowrap text-center">ชม. OT</TableHead>
+                                    <TableHead className="w-[12.5%] text-center">จัดการ</TableHead>
+                                    <TableHead className="w-[20%] text-center">หมายเหตุ</TableHead>
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -787,6 +845,14 @@ export default function HrAttendanceManagePage() {
                                     const outCorrectedBadge = attendanceOutCorrectedByOverride(d);
                                     const resetKey = `${row.staffId}:${d.ymd}`;
                                     const resetBusy = resetBusyKey === resetKey;
+                                    const dayKey = `${row.key}:${d.ymd}`;
+                                    const otDisplay = attendanceOvertimeHoursForRequest(
+                                      overtimeBySubjectDay.get(dayKey),
+                                    );
+                                    const pendingNotes = attendanceDayPendingNotes({
+                                      correction: correctionBySubjectDay.get(dayKey),
+                                      overtime: overtimeBySubjectDay.get(dayKey),
+                                    });
                                     return (
                                       <TableRow
                                         key={d.ymd}
@@ -795,18 +861,18 @@ export default function HrAttendanceManagePage() {
                                           d.override && 'border-l-2 border-l-primary',
                                         )}
                                       >
-                                        <TableCell className="font-mono text-sm whitespace-nowrap align-top">
+                                        <TableCell className="font-mono text-sm whitespace-nowrap text-center align-middle">
                                           {formatDateThaiBE(d.ymd)}
                                         </TableCell>
-                                        <TableCell className="align-top">
+                                        <TableCell className="text-center align-middle">
                                           {dayKindBadges(d.ymd, weeklyRestPattern, calendarHolidayLabel)}
                                         </TableCell>
-                                        <TableCell className="font-mono text-sm align-top">
+                                        <TableCell className="font-mono text-sm text-center align-middle">
                                           {d.effectiveInMs != null ? (
-                                            <span>
+                                            <span className="inline-flex items-center justify-center gap-2">
                                               {formatBangkokHmFromUtcMs(d.effectiveInMs)}
                                               {inCorrectedBadge ? (
-                                                <Badge variant="secondary" className="ml-2 text-[9px]">
+                                                <Badge variant="secondary" className="text-[9px]">
                                                   หลังแก้
                                                 </Badge>
                                               ) : null}
@@ -815,12 +881,12 @@ export default function HrAttendanceManagePage() {
                                             <span className="text-muted-foreground">—</span>
                                           )}
                                         </TableCell>
-                                        <TableCell className="font-mono text-sm align-top">
+                                        <TableCell className="font-mono text-sm text-center align-middle">
                                           {d.effectiveOutMs != null ? (
-                                            <span>
+                                            <span className="inline-flex items-center justify-center gap-2">
                                               {formatBangkokHmFromUtcMs(d.effectiveOutMs)}
                                               {outCorrectedBadge ? (
-                                                <Badge variant="secondary" className="ml-2 text-[9px]">
+                                                <Badge variant="secondary" className="text-[9px]">
                                                   หลังแก้
                                                 </Badge>
                                               ) : null}
@@ -829,16 +895,23 @@ export default function HrAttendanceManagePage() {
                                             <span className="text-muted-foreground">—</span>
                                           )}
                                         </TableCell>
-                                        <TableCell className="text-right align-top">
+                                        <TableCell className="font-mono text-sm text-center align-middle tabular-nums">
+                                          {otDisplay.hours != null ? (
+                                            formatAttendanceOvertimeHours(otDisplay.hours)
+                                          ) : (
+                                            <span className="text-muted-foreground">—</span>
+                                          )}
+                                        </TableCell>
+                                        <TableCell className="text-center align-middle">
                                           {canRequestCorrection || canAdminReset ? (
-                                            <div className="flex flex-col items-end gap-1">
+                                            <div className="mx-auto inline-flex w-max flex-col items-stretch gap-1">
                                               {canRequestCorrection ? (
                                                 <>
                                                   <Button
                                                     type="button"
                                                     variant="outline"
                                                     size="sm"
-                                                    className="h-8"
+                                                    className="h-8 w-full"
                                                     onClick={() =>
                                                       openCorrection({
                                                         subjectType: 'office_staff',
@@ -858,7 +931,7 @@ export default function HrAttendanceManagePage() {
                                                     type="button"
                                                     variant="secondary"
                                                     size="sm"
-                                                    className="h-8"
+                                                    className="h-8 w-full"
                                                     onClick={() =>
                                                       openOvertimeRequest({
                                                         subjectType: 'office_staff',
@@ -877,7 +950,7 @@ export default function HrAttendanceManagePage() {
                                                   type="button"
                                                   variant="destructive"
                                                   size="sm"
-                                                  className="h-8"
+                                                  className="h-8 w-full"
                                                   disabled={resetBusy}
                                                   onClick={() =>
                                                     openResetConfirm({
@@ -903,6 +976,22 @@ export default function HrAttendanceManagePage() {
                                             </div>
                                           ) : (
                                             <span className="text-[11px] text-muted-foreground">—</span>
+                                          )}
+                                        </TableCell>
+                                        <TableCell className="text-center align-middle text-xs leading-snug">
+                                          {pendingNotes.length > 0 ? (
+                                            <div className="flex flex-col items-center gap-1">
+                                              {pendingNotes.map((note) => (
+                                                <span
+                                                  key={note}
+                                                  className="text-amber-700 dark:text-amber-400"
+                                                >
+                                                  {note}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            <span className="text-muted-foreground">—</span>
                                           )}
                                         </TableCell>
                                       </TableRow>

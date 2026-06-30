@@ -22,6 +22,10 @@ import { assertOfficeStaffListPayrollIdentityComplete } from '@/lib/payroll/offi
 import { computeOfficePayrollPeriodAdjustments } from '@/lib/payroll/office-payroll-period-deductions';
 import { sumApprovedOfficeOvertimePayInPeriod } from '@/lib/payroll/office-overtime-pay';
 import { loadOfficePayrollRunComputationContext } from '@/lib/payroll/office-payroll-run-context';
+import {
+  listScanAttendanceBlockersForOfficePayroll,
+  scanAttendanceBlockersErrorMessage,
+} from '@/lib/payroll/office-scan-attendance-readiness';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
 import { standardOfficePayrollLineDocId } from '@/lib/payroll/office-payroll-line-ids';
 import {
@@ -122,12 +126,17 @@ export async function applyStandardOfficeRunLines(
 ): Promise<ApplyOfficeRunLinesResult> {
   assertOfficeStaffListPayrollIdentityComplete(staffList);
 
-  await deleteAllLinesForOfficeRun(firestore, runId);
-
   const asOf = run.payrollPeriodEnd || `${run.payrollMonth}-28`;
   const policyRecords = await loadPayrollPoliciesFromFirestore(firestore);
   const officePolicies = resolvePayrollPoliciesForDate(asOf, policyRecords, 'office');
   const payrollCtx = await loadOfficePayrollRunComputationContext(firestore, run, policyRecords);
+
+  const scanAttendanceBlockers = listScanAttendanceBlockersForOfficePayroll(staffList, payrollCtx, run);
+  if (scanAttendanceBlockers.length > 0) {
+    throw new Error(scanAttendanceBlockersErrorMessage(scanAttendanceBlockers));
+  }
+
+  await deleteAllLinesForOfficeRun(firestore, runId);
 
   const linesCol = collection(firestore, 'office_payroll_runs', runId, 'lines');
   const batch = writeBatch(firestore);

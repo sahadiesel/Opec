@@ -13,7 +13,8 @@ import {
   Users, 
   Calendar, 
   Lock, 
-  AlertCircle, 
+  AlertCircle,
+  AlertTriangle,
   CheckCircle2, 
   History,
   Calculator,
@@ -61,6 +62,11 @@ import {
   applyStandardOfficeRunLines,
   isOfficeStaffEligibleForStandardOfficeRun,
 } from '@/lib/payroll/office-payroll-run-apply';
+import {
+  loadOfficeScanAttendanceBlockersForRun,
+  scanAttendanceBlockerSummaryTh,
+  type OfficeScanAttendanceBlocker,
+} from '@/lib/payroll/office-scan-attendance-readiness';
 import {
   officeRunNeedsMyProfileIndexSync,
   syncOfficeRunMyProfileIndex,
@@ -131,6 +137,8 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [listPrintBusy, setListPrintBusy] = useState(false);
+  const [scanAttendanceBlockers, setScanAttendanceBlockers] = useState<OfficeScanAttendanceBlocker[]>([]);
+  const [loadingScanAttendanceBlockers, setLoadingScanAttendanceBlockers] = useState(false);
   const autoMyProfileSyncDone = useRef(false);
 
   useEffect(() => {
@@ -209,6 +217,44 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
   const staffQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'office_staff') : null), [firestore, isAuthorized]);
   const { data: allStaff } = useCollection<OfficeStaff>(staffQuery as any);
 
+  const staffListForPayroll = useMemo(() => {
+    if (!allStaff) return [];
+    if (lines && lines.length > 0) {
+      const byId = new Map(allStaff.map((s) => [s.id, s]));
+      const staffList: OfficeStaff[] = [];
+      for (const line of lines) {
+        const s = byId.get(line.staffId);
+        if (s) staffList.push(s);
+      }
+      return staffList;
+    }
+    return allStaff.filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s));
+  }, [allStaff, lines]);
+
+  useEffect(() => {
+    if (!firestore || !run || staffListForPayroll.length === 0) {
+      setScanAttendanceBlockers([]);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingScanAttendanceBlockers(true);
+    void loadOfficeScanAttendanceBlockersForRun(firestore, run, staffListForPayroll)
+      .then((blockers) => {
+        if (!cancelled) setScanAttendanceBlockers(blockers);
+      })
+      .catch(() => {
+        if (!cancelled) setScanAttendanceBlockers([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingScanAttendanceBlockers(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, run, staffListForPayroll]);
+
   const canSubmitForReview = useMemo(
     () => Boolean(currentUser && canSubmitOfficeRunForManagerReview(currentUser) && canMutate),
     [currentUser, canMutate]
@@ -269,28 +315,18 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
 
   const handleCalculate = async () => {
     if (!firestore || !run || !allStaff) return;
+    if (scanAttendanceBlockers.length > 0) {
+      toast({
+        variant: 'destructive',
+        title: 'การบันทึกเวลาจากการสแกนยังไม่ครบ',
+        description: scanAttendanceBlockers.map(scanAttendanceBlockerSummaryTh).join('\n'),
+      });
+      return;
+    }
     setIsProcessing(true);
 
     try {
-      let staffList: OfficeStaff[];
-      if (lines && lines.length > 0) {
-        const byId = new Map(allStaff.map((s) => [s.id, s]));
-        staffList = [];
-        for (const line of lines) {
-          const s = byId.get(line.staffId);
-          if (!s) {
-            toast({
-              variant: 'destructive',
-              title: 'ข้อมูลไม่สอดคล้อง',
-              description: `ไม่พบทะเบียนพนักงาน: ${line.staffName} (${line.staffId})`,
-            });
-            return;
-          }
-          staffList.push(s);
-        }
-      } else {
-        staffList = allStaff.filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s));
-      }
+      const staffList = staffListForPayroll;
 
       if (staffList.length === 0) {
         toast({
@@ -299,6 +335,20 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
           description: 'ยังไม่มีบรรทัดรายคน หรือไม่มีพนักงานที่พร้อมคำนวณ (ACTIVE / ไม่ใช่ executive / ไม่ถูกกันจากงวดนี้)',
         });
         return;
+      }
+
+      if (lines && lines.length > 0) {
+        const byId = new Map(allStaff.map((s) => [s.id, s]));
+        for (const line of lines) {
+          if (!byId.get(line.staffId)) {
+            toast({
+              variant: 'destructive',
+              title: 'ข้อมูลไม่สอดคล้อง',
+              description: `ไม่พบทะเบียนพนักงาน: ${line.staffName} (${line.staffId})`,
+            });
+            return;
+          }
+        }
       }
 
       await applyStandardOfficeRunLines(firestore, id, run, staffList, { newStatus: 'CALCULATED' });
@@ -452,6 +502,35 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
           </TabsList>
 
           <TabsContent value="lines" className="mt-6 space-y-6">
+            {!isLocked && canMutate && (run.status === 'DRAFT' || run.status === 'CALCULATED') && (
+              <>
+                {loadingScanAttendanceBlockers && staffListForPayroll.length > 0 && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" /> กำลังตรวจสอบการบันทึกเวลาจากการสแกน…
+                  </p>
+                )}
+                {!loadingScanAttendanceBlockers && scanAttendanceBlockers.length > 0 && (
+                  <Alert className="bg-amber-50 border-amber-300 dark:bg-amber-950/30 dark:border-amber-800">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle className="font-bold">
+                      การบันทึกเวลาจากการสแกนยังไม่ครบ — แก้ไขก่อนคำนวณเงินเดือน ({scanAttendanceBlockers.length} คน)
+                    </AlertTitle>
+                    <AlertDescription className="text-sm leading-snug space-y-1">
+                      {scanAttendanceBlockers.map((b) => (
+                        <p key={b.staff.id}>{scanAttendanceBlockerSummaryTh(b)}</p>
+                      ))}
+                      <p className="pt-1">
+                        ไปที่{' '}
+                        <Link href="/hr/attendance" className="underline font-semibold">
+                          หน้าจัดการลงเวลา
+                        </Link>{' '}
+                        เพื่อขอแก้ไขเวลาให้ครบ (เข้างานและออกงาน)
+                      </p>
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </>
+            )}
             <Card>
               <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
                 <div>
@@ -476,7 +555,11 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                     </Button>
                   )}
                   {!isLocked && canMutate && (run.status === 'DRAFT' || run.status === 'CALCULATED') && (
-                    <Button onClick={handleCalculate} disabled={isProcessing} className="bg-blue-600 hover:bg-blue-700">
+                    <Button
+                      onClick={handleCalculate}
+                      disabled={isProcessing || loadingScanAttendanceBlockers || scanAttendanceBlockers.length > 0}
+                      className="bg-blue-600 hover:bg-blue-700"
+                    >
                       {isProcessing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Calculator className="h-4 w-4 mr-2" />}
                       {run.status === 'DRAFT' ? 'คำนวณเงินเดือนพนักงาน' : 'คำนวณใหม่ (Refresh)'}
                     </Button>
