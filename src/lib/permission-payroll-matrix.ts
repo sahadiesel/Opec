@@ -105,7 +105,7 @@ export function resolvePayrollMatrixDecision(
       return 'deny';
     }
     if (resource === 'payroll_office') {
-      if (['view', 'create', 'edit', 'submit'].includes(action)) return 'allow';
+      if (['view', 'create', 'edit', 'submit', 'create_batch', 'edit_batch'].includes(action)) return 'allow';
       if (action === 'approve' || action === 'lock' || action === 'finance_approve') return 'deny';
       return 'deny';
     }
@@ -130,7 +130,7 @@ export function resolvePayrollMatrixDecision(
       return 'deny';
     }
     if (resource === 'payroll_office') {
-      if (action === 'view' || action === 'create' || action === 'edit' || action === 'submit') return 'allow';
+      if (['view', 'create', 'edit', 'submit', 'create_batch', 'edit_batch'].includes(action)) return 'allow';
       if (action === 'approve' || action === 'lock' || action === 'finance_approve') return 'deny';
       return 'deny';
     }
@@ -162,7 +162,8 @@ export function resolvePayrollMatrixDecision(
       return 'deny';
     }
     if (resource === 'payroll_office') {
-      if (['view', 'create', 'edit', 'submit', 'approve', 'lock'].includes(action)) return 'allow';
+      if (['view', 'create', 'edit', 'submit', 'create_batch', 'edit_batch', 'approve', 'lock'].includes(action))
+        return 'allow';
       if (action === 'finance_approve') return 'deny';
       return 'deny';
     }

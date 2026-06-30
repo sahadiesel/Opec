@@ -768,6 +768,11 @@ export function getPermissions(
     return clonePermission({ view: true, create: true, edit: true, delete: false, approve: false });
   }
 
+  /** HR Officer: งวดจ่าย — ดู/สร้าง/ปรับยอดรายคน (อนุมัติ/ล็อกงวด matrix กันไว้) */
+  if (isPrimaryHrOfficer(u) && (moduleKey === 'office_payroll' || moduleKey === 'worker_payroll')) {
+    return clonePermission({ view: true, create: true, edit: true, delete: false, approve: false });
+  }
+
   /** HR Officer: อ่านลูกค้า/สัญญา/PO สำหรับคิว PO Active — ไม่แก้ commercial */
   if (isPrimaryHrOfficer(u) && HR_OFFICER_PO_STAFFING_READ_KEYS.has(moduleKey)) {
     return clonePermission(READ_ONLY);

@@ -158,6 +158,10 @@ service cloud.firestore {
     function blockExecutiveWrite() { return !isExecutiveViewer(); }
     function internalWriteOk() { return isInternalUser() && blockExecutiveWrite(); }
     function rs0() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']); }
+    /** งวดเงินเดือนออฟฟิศ — HR officer ปรับยอดรายคน / สร้างงวด (ไม่ขยาย rs0 ทั้งระบบ) */
+    function rsOfficePayrollWrite() {
+      return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'operations_manager']);
+    }
     function rs1() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'operations_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'accounting_manager', 'accounting_officer']) || (isClientPortalUser() && userRole() in ['client_user']); }
     function rs2() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'hr_officer', 'payroll_officer', 'sales_manager', 'sales_officer', 'operations_manager', 'operations_officer', 'accounting_manager', 'accounting_officer']); }
     function rs3() { return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'hr_manager', 'sales_manager', 'operations_manager', 'accounting_manager']); }
@@ -543,17 +547,17 @@ service cloud.firestore {
     }
     match /office_payroll_runs/{id} {
       allow read: if rs0();
-      allow write: if blockExecutiveWrite() && rs0();
+      allow write: if blockExecutiveWrite() && rsOfficePayrollWrite();
     }
     match /office_payroll_runs/{runId}/lines/{lineId} {
       allow read: if rs0()
         || isInternalUser()
         || (isSignedIn() && resource.data.subjectLinkedUserId == request.auth.uid);
-      allow write: if blockExecutiveWrite() && rs0();
+      allow write: if blockExecutiveWrite() && rsOfficePayrollWrite();
     }
     match /office_payroll_runs/{runId}/{document=**} {
       allow read: if rs0();
-      allow write: if blockExecutiveWrite() && rs0();
+      allow write: if blockExecutiveWrite() && rsOfficePayrollWrite();
     }
     match /payment_export_batches/{id} {
       allow read: if rs0();
@@ -858,7 +862,7 @@ service cloud.firestore {
           && exists(/databases/$(database)/documents/office_staff/$(staffId))
           && get(/databases/$(database)/documents/office_staff/$(staffId)).data.linkedUserId == request.auth.uid
         );
-      allow write: if blockExecutiveWrite() && rs0() || rs14();
+      allow write: if blockExecutiveWrite() && (rs0() || rs14() || rsOfficePayrollWrite());
     }
     match /workers/{workerId}/self_payroll_lines/{lineId} {
       allow read: if isInternalUser()
