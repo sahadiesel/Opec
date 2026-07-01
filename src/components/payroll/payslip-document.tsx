@@ -32,8 +32,6 @@ const PAYSLIP_STYLES = `
 .payslip-net { margin-top: 16px; padding: 14px 16px; border-radius: 10px; background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); border: 1px solid #6ee7b7; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .payslip-net-label { font-size: 15px; font-weight: 800; color: #065f46; }
 .payslip-net-amt { font-size: 22px; font-weight: 900; color: #047857; font-variant-numeric: tabular-nums; }
-.payslip-foot { margin-top: 16px; padding: 10px 12px; font-size: 10px; color: #64748b; border: 1px dashed #cbd5e1; border-radius: 6px; line-height: 1.5; }
-.payslip-foot strong { color: #334155; }
 .payslip-disclaimer { margin-top: 12px; text-align: center; font-size: 9px; color: #94a3b8; }
 @media print {
   .payslip-root { max-width: none; padding: 0; }
@@ -179,15 +177,6 @@ export function PayslipDocument({ model, className }: { model: PayslipViewModel;
           หมายเหตุ: ยอดรับสุทธิอ้างอิงจาก snapshot บน Payroll Line อาจต่างจากผลลบแบบง่ายเล็กน้อยจากการปัดเศษหรือการปรับยอด
         </p>
       ) : null}
-
-      <div className="payslip-foot">
-        <strong>Policy / engine ที่ใช้ตอน generate</strong>
-        <div style={{ marginTop: 4 }}>{model.policyVersionLabel}</div>
-      </div>
-
-      <p className="payslip-disclaimer">
-        เอกสารนี้อ้างอิง snapshot บน Payroll Line — ไม่คำนวณย้อนหลังจากการตั้งค่าปัจจุบัน
-      </p>
     </div>
   );
 }

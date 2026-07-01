@@ -78,6 +78,16 @@ export function escapeHtmlDoc(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/** จัดหมายเหตุเอกสารให้ขึ้นบรรทัดตาม textarea (รองรับข้อมูลเก่าที่บันทึกเป็นบรรทัดเดียว) */
+export function formatDocumentNotesForPrint(notes: string): string {
+  const normalized = notes.replace(/\r\n/g, '\n').trim();
+  if (!normalized) return '';
+  if (normalized.includes('\n')) return normalized;
+  return normalized
+    .replace(/\s+(?=(?:Job Assignment No\.|Project Name\s*:|Subcontact No\s*:))/gi, '\n')
+    .trim();
+}
+
 /**
  * Chrome/Edge use `document.title` as the default "Save as" name for Print → PDF.
  * Strip characters invalid on common filesystems.
@@ -314,6 +324,35 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     vertical-align: top;
   }
   .sd-totals-wrap { display: flex; justify-content: flex-end; margin-top: 8px; }
+  .sd-totals-notes-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 16px 24px;
+    margin-top: 8px;
+    align-items: start;
+  }
+  .sd-totals-notes-row .sd-totals-wrap { margin-top: 0; }
+  .sd-notes-box {
+    border: 1px solid #bae6fd;
+    border-radius: 4px;
+    padding: 8px 10px;
+    min-height: 72px;
+    font-size: 9.5pt;
+    color: #404040;
+  }
+  .sd-notes-box-title {
+    margin: 0 0 6px 0;
+    font-size: 8pt;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #64748b;
+  }
+  .sd-notes-box-body {
+    margin: 0;
+    white-space: pre-line;
+    line-height: 1.45;
+  }
   .sd-totals { width: 280px; font-size: 10pt; }
   .sd-totals-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #f4f4f5; }
   .sd-totals-row.sd-grand { border-bottom: none; margin-top: 6px; padding-top: 8px; }
@@ -475,6 +514,7 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     line-height: 1.32;
   }
   .sd-page--commercial .sd-totals-wrap { margin-top: 4px; }
+  .sd-page--commercial .sd-totals-notes-row { margin-top: 4px; }
   .sd-page--commercial .sd-notes { margin-top: 6px; }
   .sd-page--commercial .sd-sign-footer {
     margin-top: 5mm;
@@ -765,6 +805,25 @@ export function buildStandardTotalsBlockHtml(params: {
       ${body}
       ${words}
     </div>
+  </div>`;
+}
+
+/** ยอดรวมขวา + กล่องหมายเหตุซ้าย (ใบแจ้งหนี้เรียกเก็บ) */
+export function buildStandardTotalsWithNotesRowHtml(params: {
+  totalsParams: Parameters<typeof buildStandardTotalsBlockHtml>[0];
+  notes?: string;
+  notesTitle?: string;
+}): string {
+  const totalsHtml = buildStandardTotalsBlockHtml(params.totalsParams);
+  const notesTrim = formatDocumentNotesForPrint(params.notes ?? '');
+  if (!notesTrim) return totalsHtml;
+  const notesBox = `<div class="sd-notes-box">
+    <p class="sd-notes-box-title">${escapeHtmlDoc(params.notesTitle ?? 'Notes')}</p>
+    <p class="sd-notes-box-body">${escapeHtmlDoc(notesTrim)}</p>
+  </div>`;
+  return `<div class="sd-totals-notes-row">
+    ${notesBox}
+    ${totalsHtml}
   </div>`;
 }
 
@@ -1174,13 +1233,14 @@ export function buildCommercialInvoicePrintHtml(params: {
       ${lineRows || `<tr><td colspan="5" style="text-align:center;color:#737373">${escapeHtmlDoc(emptyLines)}</td></tr>`}
     </tbody>
   </table>`;
-  const totalsHtml = buildStandardTotalsBlockHtml({
-    rows: totalRows,
-    amountInWords: totalWords,
+  const totalsHtml = buildStandardTotalsWithNotesRowHtml({
+    totalsParams: {
+      rows: totalRows,
+      amountInWords: totalWords,
+    },
+    notes: invoice.notes,
+    notesTitle: printT(L, 'termsNotes'),
   });
-  const notesBlock = invoice.notes?.trim()
-    ? `<p class="sd-notes"><strong>${escapeHtmlDoc(printT(L, 'notes'))}:</strong> ${escapeHtmlDoc(invoice.notes.trim())}</p>`
-    : '';
   const statusNote =
     invoice.status === 'VOID'
       ? `<p class="sd-notes"><strong>${escapeHtmlDoc(printT(L, 'status'))}:</strong> ${escapeHtmlDoc(printT(L, 'voidedDoc'))}</p>`
@@ -1189,8 +1249,7 @@ export function buildCommercialInvoicePrintHtml(params: {
   ${docRefHtml}
   ${tableHtml}
   ${totalsHtml}
-  ${statusNote}
-  ${notesBlock}`;
+  ${statusNote}`;
   const rightSignName =
     invoice.status === 'ISSUED' && invoice.customerApprovedByName?.trim()
       ? invoice.customerApprovedByName.trim()
