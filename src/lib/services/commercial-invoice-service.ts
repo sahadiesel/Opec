@@ -719,10 +719,7 @@ export async function createCommercialDraftInvoiceForTripBatch(
   if (!poSnap.exists()) throw new Error('ไม่พบ PO');
   const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
 
-  const memberLabel =
-    batch.memberWorkerNames?.filter(Boolean).join(', ') ||
-    `${batch.memberWorkerIds.length} คน`;
-  const waveCodeLabel = `รอบเดินทาง · M1 ${batch.tripAnchorStartDate} · ${memberLabel}`;
+  const waveCodeLabel = `รอบเดินทาง · M1 ${batch.tripAnchorStartDate}`;
 
   const vatPercent = await resolveVatPercent(db, po.customerId, po.contractId);
   const amountBeforeTax = roundMoney(gen.totalAmount);

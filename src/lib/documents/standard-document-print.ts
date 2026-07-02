@@ -1038,13 +1038,32 @@ function formatQuotationRefForPrint(q: Quotation, locale: PrintDocumentLocale): 
   return no || ext || DOC_REF_EMPTY;
 }
 
+function isTripBillingWaveRef(invoice: CommercialInvoice): boolean {
+  if (invoice.sourceTripBillingBatchId) return true;
+  const w = invoice.waveCode?.trim() || '';
+  if (w.startsWith('รอบเดินทาง')) return true;
+  return /^Trip cycle\b/i.test(translateCommercialWaveCodeToEn(w));
+}
+
+/** Wave/Trip บนหน้าพิมพ์ — แสดงเฉพาะช่วงวันที่รอบ (ไม่มี M1 / ชื่อพนักงาน) */
+function formatTripBillingWaveRefForPrint(
+  invoice: CommercialInvoice,
+  locale: PrintDocumentLocale,
+): string {
+  const range =
+    locale === 'en'
+      ? formatStoredDateRangeGregorian(invoice.periodStart, invoice.periodEnd)
+      : formatStoredDateRangeThaiBE(invoice.periodStart, invoice.periodEnd);
+  return range && range !== '—' ? range : DOC_REF_EMPTY;
+}
+
 function resolveCommercialPrintDocumentRef(
   invoice: CommercialInvoice,
   purchaseOrder: PurchaseOrder | null | undefined,
   mainContract: MainContract | null | undefined,
   quotation: Quotation | null | undefined,
   locale: PrintDocumentLocale,
-): { firstRowIsQuotation: boolean; firstValue: string; customerPo: string; wave: string } {
+): { firstRowIsQuotation: boolean; firstValue: string; customerPo: string; wave: string; waveIsTripPeriod?: boolean } {
   const customerPo =
     purchaseOrder?.customerPONumber?.trim() ||
     purchaseOrder?.poCode?.trim() ||
@@ -1068,27 +1087,38 @@ function resolveCommercialPrintDocumentRef(
     invoice.waveCode?.trim() ||
     (invoice.waveId && invoice.waveId !== QUOTATION_PO_WAVE_ID ? invoice.waveId.trim() : '') ||
     DOC_REF_EMPTY;
+  let waveIsTripPeriod = false;
   if (wave === QUOTATION_PO_WAVE_ID) wave = DOC_REF_EMPTY;
-  if (locale === 'en') wave = translateCommercialWaveCodeToEn(wave);
+  else if (isTripBillingWaveRef(invoice)) {
+    wave = formatTripBillingWaveRefForPrint(invoice, locale);
+    waveIsTripPeriod = true;
+  } else if (locale === 'en') wave = translateCommercialWaveCodeToEn(wave);
 
   return {
     firstRowIsQuotation: false,
     firstValue: contractNo,
     customerPo,
     wave,
+    waveIsTripPeriod,
   };
 }
 
 function buildCommercialDocumentReferenceHtml(
   L: PrintDocumentLocale,
-  ref: { firstRowIsQuotation: boolean; firstValue: string; customerPo: string; wave: string },
+  ref: {
+    firstRowIsQuotation: boolean;
+    firstValue: string;
+    customerPo: string;
+    wave: string;
+    waveIsTripPeriod?: boolean;
+  },
 ): string {
   const l1 = printT(L, ref.firstRowIsQuotation ? 'docRefLine1Quotation' : 'docRefLine1');
   const l2 = printT(L, 'docRefLine2');
-  const l3 = printT(L, 'docRefLine3');
+  const l3 = printT(L, ref.waveIsTripPeriod ? 'docRefLine3Period' : 'docRefLine3');
   const c1 = printT(L, ref.firstRowIsQuotation ? 'docRefLine1QuotationCompact' : 'docRefLine1Compact');
   const c2 = printT(L, 'docRefLine2Compact');
-  const c3 = printT(L, 'docRefLine3Compact');
+  const c3 = printT(L, ref.waveIsTripPeriod ? 'docRefLine3PeriodCompact' : 'docRefLine3Compact');
   const lab = (full: string, compact: string) =>
     `<strong class="sd-doc-ref-lbl sd-doc-ref-lbl--full">${escapeHtmlDoc(full)}</strong><strong class="sd-doc-ref-lbl sd-doc-ref-lbl--compact">${escapeHtmlDoc(compact)}</strong>`;
   return `<div class="sd-doc-ref sd-doc-ref--inline">

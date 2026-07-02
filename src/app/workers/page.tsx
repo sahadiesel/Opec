@@ -69,7 +69,7 @@ import { assertWorkerCanBeDeleted, deleteWorkerWithAuditLog } from '@/lib/servic
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
-import { effectiveWorkerJobStatus, displayWorkerRegistryJobStatus, workerRegistryJobStatusBadgeProps } from '@/lib/ops/worker-effective-job-status';
+import { effectiveWorkerJobStatus, displayWorkerRegistryJobStatus, workerRegistryJobStatusBadgeProps, type WorkerRegistryJobStatusDisplay } from '@/lib/ops/worker-effective-job-status';
 import { isWorkerDispatchReady } from '@/lib/worker-readiness';
 
 type WorkerSortKey = 'name' | 'hours';
@@ -108,6 +108,28 @@ function compareWorkersByHours(
   const hb = workerTotalHours(b, hoursMap);
   if (ha !== hb) return dir === 'asc' ? ha - hb : hb - ha;
   return compareWorkersByName(a, b, 'asc');
+}
+
+type WorkerJobStatusFilter = 'all' | WorkerRegistryJobStatusDisplay;
+
+const WORKER_JOB_STATUS_FILTER_OPTIONS: { value: WorkerJobStatusFilter; label: string }[] = [
+  { value: 'all', label: 'ทุกสถานะงาน' },
+  { value: 'AVAILABLE', label: 'AVAILABLE' },
+  { value: 'NOT_READY', label: 'NOT READY' },
+  { value: 'ASSIGNED', label: 'ASSIGNED' },
+  { value: 'ON_SITE', label: 'ON_SITE' },
+  { value: 'ON_LEAVE', label: 'ON_LEAVE' },
+  { value: 'INACTIVE', label: 'INACTIVE' },
+  { value: 'BLACKLISTED', label: 'BLACKLISTED' },
+];
+
+function workerMatchesJobStatusFilter(
+  worker: Worker,
+  mobilizations: Assignment[] | null | undefined,
+  filter: WorkerJobStatusFilter,
+): boolean {
+  if (filter === 'all') return true;
+  return displayWorkerRegistryJobStatus(worker, mobilizations) === filter;
 }
 
 function getInitialNewWorker(): Partial<Worker> {
@@ -244,6 +266,7 @@ export default function WorkersPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [positionFilter, setPositionFilter] = useState('all');
+  const [jobStatusFilter, setJobStatusFilter] = useState<WorkerJobStatusFilter>('all');
   const [workerSearchQuery, setWorkerSearchQuery] = useState('');
   const [workerSort, setWorkerSort] = useState<{ key: WorkerSortKey; dir: WorkerSortDir }>({
     key: 'name',
@@ -256,16 +279,23 @@ export default function WorkersPage() {
     return (workers ?? []).filter((w) => w.currentPositionId === positionFilter);
   }, [workers, positionFilter]);
 
+  const jobStatusFilteredWorkers = useMemo(() => {
+    if (jobStatusFilter === 'all') return positionFilteredWorkers;
+    return positionFilteredWorkers.filter((w) =>
+      workerMatchesJobStatusFilter(w, allMobilizations ?? [], jobStatusFilter),
+    );
+  }, [positionFilteredWorkers, jobStatusFilter, allMobilizations]);
+
   const searchFilteredWorkers = useMemo(() => {
     const q = workerSearchQuery.trim().toLowerCase();
-    if (!q) return positionFilteredWorkers;
-    return positionFilteredWorkers.filter((w) => {
+    if (!q) return jobStatusFilteredWorkers;
+    return jobStatusFilteredWorkers.filter((w) => {
       const name = `${w.firstName || ''} ${w.lastName || ''}`.toLowerCase();
       const nid = (w.thaiNationalId || '').toLowerCase();
       const code = (w.workerCode || '').toLowerCase();
       return name.includes(q) || nid.includes(q) || code.includes(q);
     });
-  }, [positionFilteredWorkers, workerSearchQuery]);
+  }, [jobStatusFilteredWorkers, workerSearchQuery]);
 
   const filteredWorkers = useMemo(() => {
     const list = [...searchFilteredWorkers];
@@ -481,6 +511,18 @@ export default function WorkersPage() {
                 ))}
               </SelectContent>
             </Select>
+            <Select value={jobStatusFilter} onValueChange={(v) => setJobStatusFilter(v as WorkerJobStatusFilter)}>
+              <SelectTrigger className="h-11 min-w-[220px]">
+                <SelectValue placeholder="กรองตามสถานะงาน" />
+              </SelectTrigger>
+              <SelectContent>
+                {WORKER_JOB_STATUS_FILTER_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex items-center gap-2">
             {canCreateWorkers && payroll('worker', 'create') && (
@@ -669,7 +711,9 @@ export default function WorkersPage() {
                           ? 'ยังไม่มีข้อมูลคนงานในระบบ'
                           : workerSearchQuery.trim()
                             ? 'ไม่พบข้อมูลตามคำค้นหา — ลองคำอื่นหรือล้างช่องค้นหา'
-                            : 'ไม่พบข้อมูลคนงานตามตำแหน่งที่เลือก'}
+                            : positionFilter !== 'all' || jobStatusFilter !== 'all'
+                              ? 'ไม่พบข้อมูลคนงานตามตัวกรองที่เลือก'
+                              : 'ไม่พบข้อมูลคนงาน'}
                       </TableCell>
                     </TableRow>
                   )}

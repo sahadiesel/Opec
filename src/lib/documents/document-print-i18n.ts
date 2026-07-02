@@ -100,6 +100,9 @@ export const printDocStrings = {
     docRefLine1Compact: 'เลขที่สัญญา',
     docRefLine2Compact: 'เลขที่ PO',
     docRefLine3Compact: 'Wave',
+    /** แถวที่ 3 เมื่อเป็นใบ Trip — แสดงเฉพาะช่วงวันที่รอบ */
+    docRefLine3Period: '1.3 รอบ',
+    docRefLine3PeriodCompact: 'รอบ',
     /** แถวที่ 1 เมื่อใบแจ้งหนี้มาจาก PO สายใบเสนอราคา */
     docRefLine1Quotation: '1.1 เลขที่ใบเสนอราคา',
     docRefLine1QuotationCompact: 'เลขที่ QT',
@@ -176,6 +179,8 @@ export const printDocStrings = {
     docRefLine1Compact: 'Contract no.',
     docRefLine2Compact: 'PO no.',
     docRefLine3Compact: 'Wave',
+    docRefLine3Period: '1.3 Period',
+    docRefLine3PeriodCompact: 'Period',
     docRefLine1Quotation: '1.1 Quotation no.',
     docRefLine1QuotationCompact: 'Quotation no.',
     docRefWaveQuotationPlaceholder: '— (Quotation — no Wave)',

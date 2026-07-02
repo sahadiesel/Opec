@@ -3,9 +3,9 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { CalendarDays, Save, Loader2, Zap, Lock, Pause, Pencil, Undo2, Sparkles, ArrowLeft, AlertCircle } from 'lucide-react';
+import { CalendarDays, Save, Loader2, Zap, Lock, Pause, Pencil, Undo2, Sparkles, ArrowLeft, ListFilter } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -189,6 +189,18 @@ function assignmentAwaitingRemobAfterFinish(asgn: Assignment): boolean {
   return !isAssignmentDraftAwaitingFirstMobOnly(asgn);
 }
 
+type PoDailyBoardRowFilter = 'all' | 'filled';
+
+/** แถวมี timesheet บันทึกแล้วสำหรับวันที่เลือก (คอลัมน์สถานะไม่ว่าง) */
+function poDailyBoardRowHasTimesheetOnDate(
+  assignmentId: string,
+  clearedRowIds: Set<string>,
+  persistedAssignmentIds: Set<string>,
+): boolean {
+  if (clearedRowIds.has(assignmentId)) return false;
+  return persistedAssignmentIds.has(assignmentId);
+}
+
 function assignmentYmdEditableOnPoDailyBoard(
   asgn: Assignment,
   dateYmd: string,
@@ -280,6 +292,7 @@ export function PoDailyBoardCard({
   const [clearedRowIds, setClearedRowIds] = useState<Set<string>>(() => new Set());
   const [billingModesByPo, setBillingModesByPo] = useState<PoBillingModeRow[] | null>(null);
   const [billingProceedHref, setBillingProceedHref] = useState<string | null>(null);
+  const [rowDisplayFilter, setRowDisplayFilter] = useState<PoDailyBoardRowFilter>('all');
 
   const billingProceedCopy = useMemo(
     () => (billingModesByPo?.length ? buildBillingModeProceedCopy(billingModesByPo) : null),
@@ -507,6 +520,13 @@ export function PoDailyBoardCard({
     const roster = pickRosterLinePerWorker(inScope);
     return [...roster].sort((a, b) => compareAssignmentWorkerNamesTh(a, b, workers));
   }, [mobsForPo, targetDate, workers, rosterFilterYm]);
+
+  const visibleAssignmentRows = useMemo(() => {
+    if (rowDisplayFilter === 'all') return assignmentRows;
+    return assignmentRows.filter((asgn) =>
+      poDailyBoardRowHasTimesheetOnDate(asgn.id, clearedRowIds, persistedAssignmentIds),
+    );
+  }, [assignmentRows, rowDisplayFilter, clearedRowIds, persistedAssignmentIds]);
 
   const activeEligibleAssignmentIds = useMemo(
     () => assignmentRows.filter((a) => isAssignmentEligibleForPoActiveAutoDaily(a)).map((a) => a.id),
@@ -1140,40 +1160,10 @@ export function PoDailyBoardCard({
             <div>
               <CardTitle className="text-lg flex flex-wrap items-center gap-2">
                 <CalendarDays className="h-5 w-5 shrink-0 opacity-90" aria-hidden />
-                {isBundle ? (
-                  <>
-                    <span>ชุด PO Active</span>
-                    <span className="font-mono text-sm opacity-95">
-                      {posList.map((p) => p.poCode).join(' · ')}
-                    </span>
-                  </>
-                ) : (
-                  <span className="font-mono">{canonicalPo.poCode}</span>
-                )}
+                {isBundle ? <span>ชุด PO Active</span> : <span className="font-mono">{canonicalPo.poCode}</span>}
                 <span className="opacity-80">· งวด {formatThaiYearMonthLabel(monthYm, 'th-TH')}</span>
                 <span className="text-xs font-normal opacity-90">({monthYm})</span>
               </CardTitle>
-              <CardDescription className="text-primary-foreground/80 text-sm mt-1">
-                {isBundle ? (
-                  <>
-                    ตารางเดียวรวมทุก PO ในชุด — แถวเฉพาะคนที่ <strong>mobilization แล้ว</strong> (readiness + deployment ตาม Wave Board)
-                    {rosterFilterYm && /^\d{4}-\d{2}$/.test(rosterFilterYm) ? (
-                      <>
-                        {' '}
-                        และช่วงมอบหมาย<strong>ทับเดือน {rosterFilterYm}</strong> (สอดคล้องจำนวน MOB ผ่าน) — แก้/บันทึกเฉพาะวันที่อยู่ในช่วงมอบหมาย
-                      </>
-                    ) : (
-                      <> และวันที่อยู่ในช่วงมอบหมายตามวันที่เลือก</>
-                    )}{' '}
-                    · คนที่ยัง assign / ไม่พร้อมจะไม่ขึ้น · waves: {waves.map((w) => `${w.waveCode} [${w.status}]`).join(' · ') || '—'}
-                  </>
-                ) : (
-                  <>
-                    รวม {waves.length} wave: {waves.map((w) => `${w.waveCode} [${w.status}]`).join(' · ')} — แต่ละ row อ้าง assignment
-                    ของรายนั้น · แถวเฉพาะ mobilization ที่พร้อมแล้วเท่านั้น
-                  </>
-                )}
-              </CardDescription>
             </div>
             <div className="flex flex-col gap-1.5 sm:items-end shrink-0">
               <Button
@@ -1188,30 +1178,6 @@ export function PoDailyBoardCard({
           </div>
         </CardHeader>
         <CardContent className="p-0 space-y-4">
-          {billingProceedCopy ? (
-            <Alert className="rounded-none border-x-0 border-t-0 border-amber-300/80 bg-amber-50 text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-50">
-              <AlertCircle className="h-4 w-4 text-amber-700 dark:text-amber-300" />
-              <AlertTitle>{billingProceedCopy.title}</AlertTitle>
-              <AlertDescription className="text-sm space-y-1.5">
-                {billingModesByPo && billingModesByPo.length > 1 ? (
-                  <ul className="list-disc pl-5 space-y-0.5">
-                    {billingModesByPo.map((row) => (
-                      <li key={row.poId}>
-                        <span className="font-mono">{row.poCode}</span> — {billingModeLabel(row.mode)}
-                      </li>
-                    ))}
-                  </ul>
-                ) : billingModesByPo?.[0] ? (
-                  <p>
-                    โหมดวางบิลลูกค้า: <strong>{billingModeLabel(billingModesByPo[0].mode)}</strong>
-                  </p>
-                ) : null}
-                {billingProceedCopy.paragraphs.map((line) => (
-                  <p key={line}>{line}</p>
-                ))}
-              </AlertDescription>
-            </Alert>
-          ) : null}
           {anyMonthLocked ? (
             <Alert className="rounded-none border-x-0 border-t-0">
               <AlertTitle>
@@ -1222,122 +1188,137 @@ export function PoDailyBoardCard({
               </AlertDescription>
             </Alert>
           ) : null}
-          <div className="flex flex-wrap items-center gap-3 p-4 bg-muted/20 rounded-none border-b border-dashed">
-            <span className="text-xs font-black text-muted-foreground uppercase flex items-center gap-2 mr-2">
-              <Zap className="h-4 w-4 text-amber-500" /> Quick apply ({isBundle ? 'ทุกแถวในตารางชุดนี้' : 'ทุก row ใต้ PO นี้'})
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              className="bg-white border-primary/20"
-              disabled={anyMonthLocked}
-              onClick={() => applyBulk('eventType', 'work_day')}
-            >
-              1. Work day
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="bg-white border-primary/20"
-              disabled={anyMonthLocked}
-              onClick={() => applyBulk('eventType', 'standby_day')}
-            >
-              2. Standby
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="bg-white border-primary/20"
-              disabled={anyMonthLocked}
-              onClick={() => applyBulk('eventType', 'mobilization_day')}
-            >
-              3. Mob
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="bg-white border-primary/20"
-              disabled={anyMonthLocked}
-              onClick={() => applyBulk('eventType', 'demobilization_day')}
-            >
-              4. Dmob
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="bg-white border-muted-foreground/30 text-muted-foreground hover:text-foreground"
-              disabled={anyMonthLocked || !canEditTimesheets}
-              onClick={openClearDayDialog}
-              title="ล้างข้อมูลทุกแถวของวันที่เลือก — บันทึกลงระบบทันที"
-            >
-              Clear
-            </Button>
-            <div className="flex w-full min-w-0 flex-1 flex-col gap-3 border-t border-dashed border-muted-foreground/25 pt-3 sm:ml-auto sm:w-auto sm:flex-row sm:flex-wrap sm:items-end sm:justify-end sm:gap-3 sm:border-t-0 sm:pt-0 sm:pl-3 sm:border-l sm:border-muted-foreground/25">
-              <div className="space-y-1.5 w-full min-w-[11rem] sm:w-auto shrink-0">
-                <Label className="text-[10px] font-black uppercase text-muted-foreground">วันที่</Label>
-                <DatePickerThaiBE
-                  className="h-11"
-                  value={htmlDateValueToTimestampMs(targetDate)}
-                  onChange={onBoardDateChange}
-                />
-              </div>
-              <div className="flex flex-col items-stretch gap-1 sm:items-end sm:min-w-[10rem]">
-                <div className="flex flex-wrap gap-1.5 justify-end items-center">
-                  {showAutoMasterSwitch ? (
-                    <div className="flex items-center gap-2 rounded-md border border-muted bg-background/90 px-2.5 py-1.5 mr-1">
-                      <Switch
-                        id="po-active-auto-daily-master"
-                        checked={!bundleAutoDailyDisabled}
-                        disabled={autoMasterSaving || !canEditTimesheets || anyMonthLocked}
-                        onCheckedChange={(on) => void handleBundleAutoDailyToggle(on)}
-                        aria-label="เปิดหรือปิดการลงเวลารายวันอัตโนมัติ PO Active"
-                      />
-                      <Label
-                        htmlFor="po-active-auto-daily-master"
-                        className="text-[10px] font-bold leading-tight cursor-pointer select-none max-w-[9.5rem]"
-                      >
-                        ลงเวลาอัตโนมัติ
-                        <span className="block font-normal text-muted-foreground font-mono text-[9px]">
-                          PO Active · Scheduler
-                        </span>
-                      </Label>
-                    </div>
-                  ) : null}
+          <div className="p-4 bg-muted/20 rounded-none border-b border-dashed">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0 flex flex-col gap-2.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-black text-muted-foreground uppercase flex items-center gap-2 mr-1">
+                    <Zap className="h-4 w-4 text-amber-500 shrink-0" /> Quick apply (
+                    {isBundle ? 'ทุกแถวในตารางชุดนี้' : 'ทุก row ใต้ PO นี้'})
+                  </span>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="gap-1.5 border-dashed bg-white/90 border-primary/25"
-                    onClick={() => void handleAutoGenBackfill()}
-                    disabled={
-                      autoGenBusy ||
-                      !canEditTimesheets ||
-                      anyMonthLocked ||
-                      activeEligibleAssignmentIds.length === 0
-                    }
-                    title="เติมช่วงที่ขาดด้วยมือ — นอกจากนี้มี Cloud Function + Scheduler เติมวันนี้ (~00:10 ไทย) และซิงก์เมื่อมีผู้เปิดกระดาน"
+                    className="bg-white border-primary/20"
+                    disabled={anyMonthLocked}
+                    onClick={() => applyBulk('eventType', 'work_day')}
                   >
-                    {autoGenBusy ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" aria-hidden />
-                    ) : (
-                      <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                    )}
-                    Auto gen
+                    1. Work day
                   </Button>
                   <Button
                     size="sm"
-                    className="gap-1.5 bg-primary font-bold shadow-sm"
-                    onClick={() => void handleSaveDraft()}
-                    disabled={isSaving || !canEditTimesheets || anyMonthLocked}
+                    variant="outline"
+                    className="bg-white border-primary/20"
+                    disabled={anyMonthLocked}
+                    onClick={() => applyBulk('eventType', 'standby_day')}
                   >
-                    {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                    บันทึก
+                    2. Standby
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="bg-white border-primary/20"
+                    disabled={anyMonthLocked}
+                    onClick={() => applyBulk('eventType', 'mobilization_day')}
+                  >
+                    3. Mob
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="bg-white border-primary/20"
+                    disabled={anyMonthLocked}
+                    onClick={() => applyBulk('eventType', 'demobilization_day')}
+                  >
+                    4. Dmob
                   </Button>
                 </div>
-                <span className="text-[10px] text-muted-foreground text-right max-w-[14rem] leading-snug">
-                  บันทึกเฉพาะแถวที่วันที่เลือกอยู่ในช่วงมอบหมาย
-                  {rosterFilterYm && /^\d{4}-\d{2}$/.test(rosterFilterYm) ? ' (รายชื่อตามเดือนนี้)' : ''}
-                  · ACTIVE = ลง W / SB ตาม PO Active (ไทย); ปุ่มหยุด = จบงานหรือพัก SB · Cloud Scheduler เติมวันนี้ทุกเช้า (~00:10)
-                </span>
+                <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-0.5">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="bg-white border-muted-foreground/30 text-muted-foreground hover:text-foreground h-9 shrink-0"
+                    disabled={anyMonthLocked || !canEditTimesheets}
+                    onClick={openClearDayDialog}
+                    title="ล้างข้อมูลทุกแถวของวันที่เลือก — บันทึกลงระบบทันที"
+                  >
+                    Clear
+                  </Button>
+                  <Select
+                    value={rowDisplayFilter}
+                    onValueChange={(v) => setRowDisplayFilter(v as PoDailyBoardRowFilter)}
+                  >
+                    <SelectTrigger className="h-9 w-[11.5rem] shrink-0 text-xs bg-background" aria-label="แถวในตาราง">
+                      <ListFilter className="h-3.5 w-3.5 shrink-0 text-muted-foreground mr-1" aria-hidden />
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">แสดงทั้งหมด</SelectItem>
+                      <SelectItem value="filled">เฉพาะแถวที่ไม่ว่าง</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {rowDisplayFilter === 'filled' ? (
+                    <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 whitespace-nowrap">
+                      {visibleAssignmentRows.length}/{assignmentRows.length}
+                    </span>
+                  ) : null}
+                  <DatePickerThaiBE
+                    className="h-9 w-[11rem] shrink-0 justify-start"
+                    value={htmlDateValueToTimestampMs(targetDate)}
+                    onChange={onBoardDateChange}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2 shrink-0 lg:pt-5">
+                {showAutoMasterSwitch ? (
+                  <div className="flex items-center gap-2 rounded-md border border-muted bg-background/90 px-2.5 py-1.5">
+                    <Switch
+                      id="po-active-auto-daily-master"
+                      checked={!bundleAutoDailyDisabled}
+                      disabled={autoMasterSaving || !canEditTimesheets || anyMonthLocked}
+                      onCheckedChange={(on) => void handleBundleAutoDailyToggle(on)}
+                      aria-label="เปิดหรือปิดการลงเวลารายวันอัตโนมัติ PO Active"
+                    />
+                    <Label
+                      htmlFor="po-active-auto-daily-master"
+                      className="text-[10px] font-bold leading-tight cursor-pointer select-none max-w-[9.5rem]"
+                    >
+                      ลงเวลาอัตโนมัติ
+                      <span className="block font-normal text-muted-foreground font-mono text-[9px]">
+                        PO Active · Scheduler
+                      </span>
+                    </Label>
+                  </div>
+                ) : null}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 border-dashed bg-white/90 border-primary/25"
+                  onClick={() => void handleAutoGenBackfill()}
+                  disabled={
+                    autoGenBusy ||
+                    !canEditTimesheets ||
+                    anyMonthLocked ||
+                    activeEligibleAssignmentIds.length === 0
+                  }
+                  title="เติมช่วงที่ขาดด้วยมือ — นอกจากนี้มี Cloud Function + Scheduler เติมวันนี้ (~00:10 ไทย) และซิงก์เมื่อมีผู้เปิดกระดาน"
+                >
+                  {autoGenBusy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" aria-hidden />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  )}
+                  Auto gen
+                </Button>
+                <Button
+                  size="sm"
+                  className="gap-1.5 bg-primary font-bold shadow-sm"
+                  onClick={() => void handleSaveDraft()}
+                  disabled={isSaving || !canEditTimesheets || anyMonthLocked}
+                >
+                  {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  บันทึก
+                </Button>
               </div>
             </div>
           </div>
@@ -1346,6 +1327,15 @@ export function PoDailyBoardCard({
             <div className="py-20 text-center animate-pulse">Loading Roster…</div>
           )}
           {!isAsgnLoading && assignmentRows.length > 0 ? (
+            <>
+            {rowDisplayFilter === 'filled' && visibleAssignmentRows.length === 0 ? (
+              <Alert className="mx-4 mb-2 border-dashed">
+                <AlertTitle>ไม่มีแถวที่มีข้อมูลสำหรับวันนี้</AlertTitle>
+                <AlertDescription className="text-sm">
+                  ยังไม่มีใครบันทึก timesheet สำหรับ {formatYmdLocalThaiBE(targetDate)} — กด «แสดงทั้งหมด» เพื่อลงเวลา
+                </AlertDescription>
+              </Alert>
+            ) : null}
             <Table className="w-full text-sm">
               <TableHeader className="bg-muted/50">
                 <TableRow>
@@ -1366,7 +1356,7 @@ export function PoDailyBoardCard({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {assignmentRows.map((asgn) => {
+                {visibleAssignmentRows.map((asgn) => {
                   const wv = waveById.get(asgn.waveId);
                   const poForRow = poById.get(asgn.poId) ?? canonicalPo;
                   const rowScopeId = poTimesheetScopeId(poForRow.id);
@@ -1430,8 +1420,6 @@ export function PoDailyBoardCard({
                   const canFinishJob =
                     editableMobWindow &&
                     WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(asgn.deploymentStatus as Assignment['deploymentStatus']);
-                  const finishDateHintForRow =
-                    finishJobModal?.assignment.id === asgn.id ? finishModalDateIssue : null;
 
                   return (
                     <TableRow
@@ -1452,34 +1440,6 @@ export function PoDailyBoardCard({
                           <span className="text-[9px] font-mono text-muted-foreground uppercase">
                             {worker?.workerCode || asgn.id.slice(0, 8)}
                           </span>
-                          {!editableMobWindow ? (
-                            <span className="text-[9px] text-amber-800 dark:text-amber-200 mt-0.5 leading-snug">
-                              วันที่เลือกอยู่นอกช่วงที่อนุญาตลงเวลา (ระบบเทียบวันมอบหมาย วันสแตนด์บาย/เริ่มงาน
-                              วันจบไซต์ และ endDate มอบหมาย)
-                              <span className="mt-0.5 block text-[8.5px] opacity-90">
-                                สาเหตุที่พบบ่อย: ช่องว่างระหว่าง &quot;จบรอบไซต์ก่อน&quot; กับวัน Standby/เริ่มงานของรอบใหม่
-                                ใน mobilization เดียวกัน (remob) · หรือเลือกวันหลังวันจบงาน/endDate ที่บันทึกแล้ว
-                              </span>
-                            </span>
-                          ) : awaitingRemob && priorCycleWorkWhileAwaitingRemob ? (
-                            <span className="text-[9px] text-sky-800 dark:text-sky-200 mt-0.5 leading-snug">
-                              Waiting MOB — แก้ไขลงเวลารอบก่อนจบงานได้ · กด «ยกเลิกจบงาน» เพื่อกลับ ACTIVE
-                            </span>
-                          ) : afterMobEnd ? (
-                            <span className="text-[9px] text-muted-foreground mt-0.5">
-                              หลังวันจบงาน — ไม่สร้างลงเวลาอัตโนมัติ (ดูประวัติวันก่อนหน้าในตารางเดือน)
-                            </span>
-                          ) : asgn.deploymentStatus === 'ACTIVE' &&
-                            isAssignmentEligibleForPoActiveAutoDaily(asgn) &&
-                            poForRow &&
-                            !computePoActiveAutoDailyRange(asgn, poForRow) ? (
-                            <span className="text-[9px] text-rose-700 dark:text-rose-300 mt-0.5 leading-snug">
-                              ลงเวลาอัตโนมัติยังไม่รัน: ตรวจวันเริ่มงาน / วันมอบหมาย และเพดาน PO ใน Mobilization — หรือกด Auto gen
-                              หลังแก้ข้อมูล
-                            </span>
-                          ) : finishDateHintForRow ? (
-                            <span className="text-[9px] text-destructive mt-0.5">{finishDateHintForRow}</span>
-                          ) : null}
                         </div>
                       </TableCell>
                       {isBundle ? (
@@ -1717,6 +1677,7 @@ export function PoDailyBoardCard({
                 })}
               </TableBody>
             </Table>
+            </>
           ) : !isAsgnLoading ? (
             <div className="px-4 py-6">
               <Alert>
