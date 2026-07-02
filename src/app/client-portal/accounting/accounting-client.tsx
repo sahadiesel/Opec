@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ChevronRight, FileBarChart, Receipt } from 'lucide-react';
 import type { TaxInvoice, CommercialInvoice, MoneyReceipt } from '@/lib/types';
+import { isPartialPoMonthCommercialInvoice } from '@/lib/commercial/partial-po-month-billing';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, orderBy } from 'firebase/firestore';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
@@ -219,7 +220,16 @@ export function AccountingContent() {
                         className="cursor-pointer"
                         onClick={() => openCommercial(inv)}
                       >
-                        <TableCell className="font-mono font-semibold">{inv.invoiceNo}</TableCell>
+                        <TableCell className="font-mono font-semibold">
+                          <span className="inline-flex flex-wrap items-center gap-1.5">
+                            {inv.invoiceNo}
+                            {isPartialPoMonthCommercialInvoice(inv) ? (
+                              <Badge variant="secondary" className="text-[10px] font-normal">
+                                Partial
+                              </Badge>
+                            ) : null}
+                          </span>
+                        </TableCell>
                         <TableCell className="text-sm">{formatStoredDateThaiBE(inv.issueDate)}</TableCell>
                         <TableCell className="text-right text-sm tabular-nums">
                           {inv.currency}{' '}

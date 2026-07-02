@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useState, useMemo, useCallback } from 'react';
+import { Fragment, useState, useMemo, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -64,9 +64,18 @@ import {
   filterPoMonthReviewsMissingCommercialDraft,
   voidCommercialInvoice,
   deleteCommercialInvoice,
+  ensureCommercialDraftInvoiceForWorkerSet,
   QUOTATION_PO_WAVE_PLACEHOLDER,
   PO_MONTH_WAVE_PLACEHOLDER,
 } from '@/lib/services/commercial-invoice-service';
+import {
+  isPartialPoMonthCommercialInvoice,
+  listPartialBillingCandidates,
+  type PartialBillingCandidate,
+} from '@/lib/commercial/partial-po-month-billing';
+import { fetchWorkerClosuresForPoMonth } from '@/lib/timesheet/worker-month-closure';
+import type { WorkerMonthTimesheetClosure } from '@/lib/types';
+import { resolvePoMonthPeriodBounds } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import Link from 'next/link';
 import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
@@ -160,6 +169,7 @@ export default function DraftInvoicesPage() {
   const [periodEndMs, setPeriodEndMs] = useState(() => Date.now());
   const [issueDateMs, setIssueDateMs] = useState(() => Date.now());
   const [syncRowId, setSyncRowId] = useState<string | null>(null);
+  const [partialSyncId, setPartialSyncId] = useState<string | null>(null);
   const [syncingBulk, setSyncingBulk] = useState(false);
   const [voidTarget, setVoidTarget] = useState<CommercialInvoice | null>(null);
   const [voidBusy, setVoidBusy] = useState(false);
@@ -181,11 +191,37 @@ export default function DraftInvoicesPage() {
   const approvedPoMonthQuery = useMemoFirebase(
     () =>
       firestore && isAuthorized
-        ? query(collection(firestore, 'po_month_timesheet_reviews'), where('status', '==', 'approved'))
+        ? query(
+            collection(firestore, 'po_month_timesheet_reviews'),
+            where('status', 'in', ['approved', 'partially_approved']),
+          )
         : null,
-    [firestore, isAuthorized]
+    [firestore, isAuthorized],
   );
   const { data: approvedPoMonthReviews } = useCollection<PoMonthTimesheetReview>(approvedPoMonthQuery as any);
+
+  const [workerClosuresByReviewId, setWorkerClosuresByReviewId] = useState<
+    Map<string, WorkerMonthTimesheetClosure[]>
+  >(() => new Map());
+
+  useEffect(() => {
+    if (!firestore || !approvedPoMonthReviews?.length) {
+      setWorkerClosuresByReviewId(new Map());
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const map = new Map<string, WorkerMonthTimesheetClosure[]>();
+      for (const r of approvedPoMonthReviews) {
+        const closures = await fetchWorkerClosuresForPoMonth(firestore, r.poId, r.yearMonth);
+        if (closures.length > 0) map.set(r.id, closures);
+      }
+      if (!cancelled) setWorkerClosuresByReviewId(map);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, approvedPoMonthReviews]);
 
   const wavesLookupQuery = useMemoFirebase(
     () => (firestore && isAuthorized ? collection(firestore, 'waves') : null),
@@ -205,9 +241,36 @@ export default function DraftInvoicesPage() {
   );
 
   const missingPoMonthReviews = useMemo(
-    () => filterPoMonthReviewsMissingCommercialDraft(approvedPoMonthReviews ?? [], invoices ?? []),
-    [approvedPoMonthReviews, invoices]
+    () =>
+      filterPoMonthReviewsMissingCommercialDraft(
+        approvedPoMonthReviews ?? [],
+        invoices ?? [],
+        workerClosuresByReviewId,
+      ),
+    [approvedPoMonthReviews, invoices, workerClosuresByReviewId],
   );
+
+  const partialBillingCandidates = useMemo(() => {
+    const inv = invoices ?? [];
+    const out: PartialBillingCandidate[] = [];
+    for (const r of approvedPoMonthReviews ?? []) {
+      const closures = workerClosuresByReviewId.get(r.id) ?? [];
+      if (closures.length === 0) continue;
+      const { start, end } = resolvePoMonthPeriodBounds(r);
+      out.push(
+        ...listPartialBillingCandidates(r.poId, r.yearMonth, r.id, closures, inv, {
+          start,
+          end,
+        }),
+      );
+    }
+    out.sort((a, b) => {
+      const ym = b.yearMonth.localeCompare(a.yearMonth);
+      if (ym !== 0) return ym;
+      return a.id.localeCompare(b.id);
+    });
+    return out;
+  }, [approvedPoMonthReviews, workerClosuresByReviewId, invoices]);
 
   const poById = useMemo(() => {
     const m = new Map<string, PurchaseOrder>();
@@ -480,6 +543,35 @@ export default function DraftInvoicesPage() {
       });
     } finally {
       setSyncingBulk(false);
+    }
+  };
+
+  const handleCreatePartialInvoice = async (candidate: PartialBillingCandidate) => {
+    if (!firestore || !currentUser || !canCreateDoc) return;
+    setPartialSyncId(candidate.id);
+    try {
+      const res = await ensureCommercialDraftInvoiceForWorkerSet(firestore, {
+        poId: candidate.poId,
+        yearMonth: candidate.yearMonth,
+        workerIds: candidate.workerIds,
+        actor: currentUser,
+        partialPoMonthBatchNo: candidate.batchNo,
+      });
+      if (res.ok) {
+        toast({
+          title: 'สร้างใบแจ้งหนี้ partial แล้ว',
+          description: `เลขที่ ${res.invoiceNo} — ${candidate.workerNames.join(', ')}`,
+        });
+        router.push(`/draft-invoices/${res.id}`);
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'ยังสร้าง partial ไม่ได้',
+          description: res.reason,
+        });
+      }
+    } finally {
+      setPartialSyncId(null);
     }
   };
 
@@ -965,6 +1057,72 @@ export default function DraftInvoicesPage() {
           </Card>
         )}
 
+        {partialBillingCandidates.length > 0 && (
+          <Card className="border-amber-500/30 bg-amber-500/5">
+            <CardHeader>
+              <CardTitle className="text-base text-amber-950 dark:text-amber-100">
+                วางบิล partial — คนงานอนุมัติแล้วยังไม่มีใบ
+              </CardTitle>
+              <CardDescription>
+                สร้างใบแจ้งหนี้เฉพาะชุดคนงานที่ manager อนุมัติแล้ว (แยกจากใบเต็ม PO+เดือน) — ใช้เมื่อระบบไม่สร้างอัตโนมัติ
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="pl-6">เดือน</TableHead>
+                    <TableHead>PO</TableHead>
+                    <TableHead>คนงาน</TableHead>
+                    <TableHead>รอบ</TableHead>
+                    <TableHead className="text-right pr-6">การทำงาน</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {partialBillingCandidates.map((c) => {
+                    const po = poById.get(c.poId);
+                    return (
+                      <TableRow key={c.id}>
+                        <TableCell className="pl-6 font-mono text-sm">{c.yearMonth}</TableCell>
+                        <TableCell className="text-sm">{po?.poCode ?? c.poId}</TableCell>
+                        <TableCell className="text-sm max-w-[280px]">
+                          <span className="line-clamp-2" title={c.workerNames.join(', ')}>
+                            {c.workerNames.join(', ')}
+                          </span>
+                          <Badge variant="outline" className="mt-1 text-[10px]">
+                            {c.workerIds.length} คน
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {c.batchNo != null && c.batchNo > 0 ? `รอบ ${c.batchNo}` : '—'}
+                        </TableCell>
+                        <TableCell className="text-right pr-6">
+                          {canCreateDoc ? (
+                            <Button
+                              size="sm"
+                              className="h-8 gap-1"
+                              variant="secondary"
+                              disabled={partialSyncId === c.id || syncingBulk}
+                              onClick={() => void handleCreatePartialInvoice(c)}
+                            >
+                              {partialSyncId === c.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Plus className="h-3.5 w-3.5" />
+                              )}
+                              สร้าง invoice partial
+                            </Button>
+                          ) : null}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardHeader>
             <CardTitle>รายการใบแจ้งหนี้</CardTitle>
@@ -993,7 +1151,16 @@ export default function DraftInvoicesPage() {
                           {cust?.name ?? inv.customerId}
                         </div>
                       </TableCell>
-                      <TableCell className="text-xs font-mono">{commercialWavePeriodLabel(inv)}</TableCell>
+                      <TableCell className="text-xs font-mono">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {commercialWavePeriodLabel(inv)}
+                          {isPartialPoMonthCommercialInvoice(inv) ? (
+                            <Badge variant="outline" className="text-[10px] font-normal">
+                              Partial
+                            </Badge>
+                          ) : null}
+                        </div>
+                      </TableCell>
                       <TableCell className="text-right">
                         ฿{(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
                       </TableCell>

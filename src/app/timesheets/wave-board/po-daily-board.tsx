@@ -54,7 +54,6 @@ import {
   resolveContractDailyHoursForAssignmentLine,
   assignmentIncludedInWaveTimesheetRoster,
   assignmentExcludedFromPoDailyBoardOnDate,
-  assignmentHasAnyMobTimesheetDayInCalendarMonth,
   isHtmlDateAfterMobLocationEnd,
   isAssignmentDraftAwaitingFirstMobOnly,
   isYmdEditableForAssignmentTimesheet,
@@ -75,7 +74,6 @@ import { Switch } from '@/components/ui/switch';
 import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
 import {
-  assignmentOverlapsYearMonthForPoDailyBoard,
   formatThaiYearMonthLabel,
 } from '@/lib/ops/timesheet-hub-po-month';
 import { buildMobCycleDocId } from '@/lib/ops/mob-cycle-ids';
@@ -106,10 +104,13 @@ const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
   { label: 'วันเดินทาง (Travel)', value: 'travel_day' },
   { label: 'สแตนด์บาย (Standby)', value: 'standby_day' },
-  { label: 'วันเดินทาง', value: 'mobilization_day' },
+  { label: 'Mob (MO)', value: 'mobilization_day' },
   { label: 'วันเดินทางกลับ (Demob)', value: 'demobilization_day' },
   { label: 'ไม่จ่ายค่าแรง (Unpaid)', value: 'unpaid_leave' },
 ];
+
+/** ค่าใน dropdown — ล้างช่องวันนั้น (ไม่บันทึก timesheet / ไม่แสดงสถานะ) */
+const PO_DAILY_BOARD_EVENT_CLEAR = '__po_daily_empty__';
 
 /** ช่องตัวเลขแคบ — ซ่อน spinner ไม่ให้บังตัวเลข */
 const PO_BOARD_HOURS_INPUT_CLASS =
@@ -207,6 +208,19 @@ function assignmentYmdEditableOnPoDailyBoard(
   hasPersistedTimesheetOnDate = false,
 ): boolean {
   return isYmdEditableForAssignmentTimesheet(asgn, dateYmd, { hasPersistedTimesheetOnDate });
+}
+
+/** แถวอยู่ในกระดานรายวันสำหรับวันที่เลือก — ไม่รวม unassign / จบงานแล้วนอกช่วง */
+function poDailyBoardAssignmentVisibleOnDate(
+  asgn: Assignment,
+  dateYmd: string,
+  hasPersistedTimesheetOnDate = false,
+): boolean {
+  if (assignmentExcludedFromPoDailyBoardOnDate(asgn, dateYmd)) return false;
+  return (
+    assignmentYmdEditableOnPoDailyBoard(asgn, dateYmd, hasPersistedTimesheetOnDate) ||
+    isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(asgn, dateYmd)
+  );
 }
 
 export type PoDailyBoardScope =
@@ -364,6 +378,7 @@ export function PoDailyBoardCard({
 
   useEffect(() => {
     setClearedRowIds(new Set());
+    setPersistedAssignmentIds(new Set());
   }, [targetDate, poIdsKey]);
 
   useEffect(() => {
@@ -506,20 +521,14 @@ export function PoDailyBoardCard({
     }
     const inScope = mobsForPo.filter((a) => {
       if (!assignmentIncludedInWaveTimesheetRoster(a)) return false;
-      if (rosterFilterYm && /^\d{4}-\d{2}$/.test(rosterFilterYm)) {
-        return (
-          assignmentAwaitingRemobAfterFinish(a) ||
-          assignmentOverlapsYearMonthForPoDailyBoard(a, rosterFilterYm) ||
-          assignmentHasAnyMobTimesheetDayInCalendarMonth(a, rosterFilterYm)
-        );
-      }
-      if (assignmentExcludedFromPoDailyBoardOnDate(a, targetDate)) return false;
-      if (assignmentAwaitingRemobAfterFinish(a)) return true;
-      return assignmentYmdEditableOnPoDailyBoard(a, targetDate.slice(0, 10));
+      const dateYmd = targetDate.slice(0, 10);
+      const hasPersisted =
+        persistedAssignmentIds.has(a.id) && !clearedRowIds.has(a.id);
+      return poDailyBoardAssignmentVisibleOnDate(a, dateYmd, hasPersisted);
     });
     const roster = pickRosterLinePerWorker(inScope);
     return [...roster].sort((a, b) => compareAssignmentWorkerNamesTh(a, b, workers));
-  }, [mobsForPo, targetDate, workers, rosterFilterYm]);
+  }, [mobsForPo, targetDate, workers, rosterFilterYm, persistedAssignmentIds, clearedRowIds]);
 
   const visibleAssignmentRows = useMemo(() => {
     if (rowDisplayFilter === 'all') return assignmentRows;
@@ -884,8 +893,30 @@ export function PoDailyBoardCard({
     try {
       const service = new TimesheetService(firestore);
       const payloads: Partial<DailyTimesheet>[] = [];
+      const batch = writeBatch(firestore);
+      let deleted = 0;
+      let deleteSkipped = 0;
 
       for (const asgn of assignmentRows) {
+        if (!clearedRowIds.has(asgn.id)) continue;
+        if (!assignmentYmdEditableOnPoDailyBoard(asgn, targetDate.slice(0, 10))) continue;
+        if (isHtmlDateAfterMobLocationEnd(asgn, targetDate)) continue;
+
+        const docId = service.getTimesheetId(asgn.workerId, asgn.id, targetDate);
+        const docRef = doc(firestore, 'daily_timesheets', docId);
+        const snap = await getDoc(docRef);
+        if (!snap.exists()) continue;
+        const cur = snap.data() as DailyTimesheet;
+        if (service.isFinalized(cur.status)) {
+          deleteSkipped += 1;
+          continue;
+        }
+        batch.delete(docRef);
+        deleted += 1;
+      }
+
+      for (const asgn of assignmentRows) {
+        if (clearedRowIds.has(asgn.id)) continue;
         if (!assignmentYmdEditableOnPoDailyBoard(asgn, targetDate.slice(0, 10))) continue;
         const ts = rosterData[asgn.id];
         if (!ts?.workerId) continue;
@@ -935,13 +966,33 @@ export function PoDailyBoardCard({
         });
       }
 
-      if (payloads.length === 0) {
+      if (payloads.length === 0 && deleted === 0) {
         toast({ title: 'ไม่มีการเปลี่ยน', description: 'รายการถูกล็อกหรือว่าง' });
         return;
       }
 
-      const results = await service.bulkUpsertTimesheets(payloads, currentUser);
-      toast({ title: 'บันทึกร่างสำเร็จ', description: `สร้าง ${results.created} · อัปเดต ${results.updated}` });
+      if (deleted > 0) {
+        await batch.commit();
+      }
+
+      if (payloads.length > 0) {
+        const results = await service.bulkUpsertTimesheets(payloads, currentUser);
+        toast({
+          title: 'บันทึกร่างสำเร็จ',
+          description:
+            deleted > 0
+              ? `ลบ ${deleted} · สร้าง ${results.created} · อัปเดต ${results.updated}${deleteSkipped > 0 ? ` · ข้ามลบ ${deleteSkipped}` : ''}`
+              : `สร้าง ${results.created} · อัปเดต ${results.updated}`,
+        });
+      } else {
+        toast({
+          title: 'ล้างช่องแล้ว',
+          description:
+            deleteSkipped > 0
+              ? `ลบ ${deleted} รายการ${deleteSkipped > 0 ? ` · ข้าม ${deleteSkipped} แถวที่ล็อก` : ''}`
+              : `ลบ ${deleted} รายการจากระบบ`,
+        });
+      }
       await loadRoster();
     } catch (e: unknown) {
       toast({ variant: 'destructive', title: 'Error', description: e instanceof Error ? e.message : String(e) });
@@ -1420,6 +1471,11 @@ export function PoDailyBoardCard({
                   const canFinishJob =
                     editableMobWindow &&
                     WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(asgn.deploymentStatus as Assignment['deploymentStatus']);
+                  const showEventTypeEditor =
+                    !afterMobEnd || persisted || priorCycleWorkWhileAwaitingRemob;
+                  const eventSelectValue = isRowCleared
+                    ? PO_DAILY_BOARD_EVENT_CLEAR
+                    : row.eventType;
 
                   return (
                     <TableRow
@@ -1458,13 +1514,26 @@ export function PoDailyBoardCard({
                         </span>
                       </TableCell>
                       <TableCell className="w-[148px] max-w-[160px] align-top py-4 shrink-0">
-                        {afterMobEnd || isRowCleared ? (
+                        {!showEventTypeEditor ? (
                           <span className="text-xs text-muted-foreground">—</span>
                         ) : (
                           <Select
                             disabled={rowEditLocked}
-                            value={row.eventType}
-                            onValueChange={(v: RateConditionEventType) => {
+                            value={eventSelectValue}
+                            onValueChange={(v) => {
+                              if (v === PO_DAILY_BOARD_EVENT_CLEAR) {
+                                setClearedRowIds((prev) => {
+                                  const next = new Set(prev);
+                                  next.add(asgn.id);
+                                  return next;
+                                });
+                                setRosterData((prev) => {
+                                  const next = { ...prev };
+                                  delete next[asgn.id];
+                                  return next;
+                                });
+                                return;
+                              }
                               setClearedRowIds((prev) => {
                                 if (!prev.has(asgn.id)) return prev;
                                 const next = new Set(prev);
@@ -1481,18 +1550,19 @@ export function PoDailyBoardCard({
                                   ot15Hours: 0,
                                   status: 'DRAFT' as DailyTimesheetStatus,
                                 };
+                                const eventType = v as RateConditionEventType;
                                 let nextHours = cur.normalHours ?? dft;
                                 let nextOt = cur.ot15Hours ?? 0;
-                                if (v === 'unpaid_leave') {
+                                if (eventType === 'unpaid_leave') {
                                   nextHours = 0;
                                   nextOt = 0;
                                 } else if (cur.eventType === 'unpaid_leave') {
                                   nextHours = dft;
                                 }
-                                if (v !== 'work_day') nextOt = 0;
+                                if (eventType !== 'work_day') nextOt = 0;
                                 return {
                                   ...prev,
-                                  [asgn.id]: { ...cur, eventType: v, normalHours: nextHours, ot15Hours: nextOt },
+                                  [asgn.id]: { ...cur, eventType, normalHours: nextHours, ot15Hours: nextOt },
                                 };
                               });
                             }}
@@ -1501,6 +1571,7 @@ export function PoDailyBoardCard({
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
+                              <SelectItem value={PO_DAILY_BOARD_EVENT_CLEAR}>ว่าง (ล้างช่อง)</SelectItem>
                               {EVENT_TYPE_OPTIONS.map((opt) => (
                                 <SelectItem key={opt.value} value={opt.value}>
                                   {opt.label}
@@ -1511,7 +1582,7 @@ export function PoDailyBoardCard({
                         )}
                       </TableCell>
                       <TableCell className={PO_BOARD_HOURS_CELL_CLASS}>
-                        {afterMobEnd || isRowCleared ? (
+                        {!showEventTypeEditor || isRowCleared ? (
                           <span className="flex h-9 items-center justify-center text-xs text-muted-foreground">—</span>
                         ) : (
                           <Input
@@ -1536,7 +1607,7 @@ export function PoDailyBoardCard({
                         )}
                       </TableCell>
                       <TableCell className={PO_BOARD_HOURS_CELL_CLASS}>
-                        {afterMobEnd || isRowCleared || row.eventType !== 'work_day' ? (
+                        {(!showEventTypeEditor || isRowCleared || row.eventType !== 'work_day') ? (
                           <span className="flex h-9 items-center justify-center text-xs text-muted-foreground">—</span>
                         ) : (
                           <Input

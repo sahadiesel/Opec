@@ -20,7 +20,6 @@ import type { Assignment, DailyTimesheet, LaborCostContractTerm, POLine, Purchas
 import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
 import { assertPayrollPermission } from '@/lib/permissions';
 import { isPoActiveBundleAutoDailyDisabled, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
-import { eachYmdInRemobGapBetweenCycles } from '@/lib/constants/timesheet-ui';
 import {
   buildPoActiveAutoDailyRowPayload,
   buildPoActiveAutoStandbyRowPayload,
@@ -30,6 +29,7 @@ import {
   PO_ACTIVE_STANDBY_STOP_AUTO_DAYS,
   poActiveDailyTimesheetDocId,
   resolvePoActiveAutoDailySyncKind,
+  shouldDeleteStalePoActiveAutoDailyRow,
 } from '@/lib/timesheet/po-active-auto-daily-build';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
@@ -244,9 +244,10 @@ export async function syncPoActiveAutoDailyForAssignment(
 
   await flush();
 
-  /** ลบแถว auto ที่สร้างผิดในช่วง remob (หยุดงาน → กลับมาใหม่) */
+  /** ลบแถว auto ที่สร้างผิดก่อนวัน remob / ในช่วง gap ระหว่างรอบ */
   let deleted = 0;
-  for (const gapDate of eachYmdInRemobGapBetweenCycles(assignment)) {
+  for (const gapDate of rangeDates) {
+    if (!shouldDeleteStalePoActiveAutoDailyRow(assignment, gapDate)) continue;
     const id = poActiveDailyTimesheetDocId(assignment.workerId, assignment.id, gapDate);
     const dRef = doc(tsCol, id);
     const existing = await getDoc(dRef);

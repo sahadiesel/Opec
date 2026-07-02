@@ -4,6 +4,7 @@ import { plannedOnWaveForPoLine } from '@/lib/ops/wave-allocation';
 import { isPoRosterWaveId } from '@/lib/ops/po-roster-wave';
 import { assignmentHasMobWorkStartedForQuotaDisplay } from '@/lib/ops/mobilization-final-clearance';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
+import { timestampToHtmlDateValue } from '@/lib/date-thai';
 
 /**
  * ปล่อยโควต้าเมื่อปิดรายการ / ถอนมอบหมาย / จบงาน (Assignment)
@@ -51,6 +52,32 @@ export function assignmentHasUnassignedAtSet(a: Pick<Assignment, 'unassignedAt'>
     return sec != null && sec > 0;
   }
   return false;
+}
+
+/** yyyy-MM-dd (ปฏิทิน Bangkok) เมื่อถอนมอบหมาย — ว่างถ้าไม่มี unassignedAt */
+export function resolveAssignmentUnassignYmd(
+  a: Pick<Assignment, 'unassignedAt'> | undefined,
+): string {
+  if (!assignmentHasUnassignedAtSet(a)) return '';
+  const u = a!.unassignedAt as unknown;
+  let ms: number | null = null;
+  if (typeof u === 'number' && Number.isFinite(u) && u > 0) ms = u;
+  else if (typeof u === 'object' && u != null) {
+    const t = u as { toMillis?: () => number; seconds?: number; _seconds?: number };
+    if (typeof t.toMillis === 'function') {
+      try {
+        ms = t.toMillis();
+      } catch {
+        ms = null;
+      }
+    } else {
+      const sec =
+        typeof t.seconds === 'number' ? t.seconds : typeof t._seconds === 'number' ? t._seconds : null;
+      if (sec != null) ms = sec * 1000;
+    }
+  }
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return '';
+  return timestampToHtmlDateValue(ms).slice(0, 10);
 }
 
 /** ไม่จองโควต้าบรรทัด PO — Unassign / ปิดรายการ / จบภารกิจ (DEMOBILIZED) */

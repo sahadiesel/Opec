@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { collection, doc, getDoc, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { ChevronLeft, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { isPartialPoMonthCommercialInvoice } from '@/lib/commercial/partial-po-month-billing';
 import { PortalPoMonthDocHeaderCard } from '@/components/client-portal/portal-po-month-readonly-fragments';
 import { PortalPoMonthUnifiedReadonlyCard } from '@/components/client-portal/portal-wave-month-readonly-card';
 import { useCollection, useFirestore, useMemoFirebase } from '@/firebase';
@@ -255,11 +257,11 @@ function ClientPortalPoMonthContent() {
     [poId, monthYm],
   );
 
-  const commercialForRow = useMemo(
+  const commercialForRows = useMemo(
     () =>
-      (commercialInvoices ?? []).find(
-        (c) => c.status !== 'VOID' && c.sourcePoMonthReviewId === reviewDocId,
-      ) ?? null,
+      (commercialInvoices ?? [])
+        .filter((c) => c.status !== 'VOID' && c.sourcePoMonthReviewId === reviewDocId)
+        .sort((a, b) => (a.invoiceNo || a.id).localeCompare(b.invoiceNo || b.id, 'th')),
     [commercialInvoices, reviewDocId],
   );
 
@@ -469,15 +471,24 @@ function ClientPortalPoMonthContent() {
             locale={locale}
             t={t}
           />
-          {commercialForRow ? (
-            <p className="text-sm">
-              <Link
-                href={`/client-portal/commercial-invoices/${encodeURIComponent(commercialForRow.id)}`}
-                className="text-primary font-mono underline-offset-4 hover:underline"
-              >
-                {t('tsHubColBillingRef')}: {commercialForRow.invoiceNo}
-              </Link>
-            </p>
+          {commercialForRows.length > 0 ? (
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+              {commercialForRows.map((inv) => (
+                <span key={inv.id} className="inline-flex items-center gap-1.5">
+                  <Link
+                    href={`/client-portal/commercial-invoices/${encodeURIComponent(inv.id)}`}
+                    className="text-primary font-mono underline-offset-4 hover:underline"
+                  >
+                    {t('tsHubColBillingRef')}: {inv.invoiceNo}
+                  </Link>
+                  {isPartialPoMonthCommercialInvoice(inv) ? (
+                    <Badge variant="secondary" className="text-[10px]">
+                      Partial
+                    </Badge>
+                  ) : null}
+                </span>
+              ))}
+            </div>
           ) : null}
           <div className="space-y-4 pt-2">
             <PortalPoMonthUnifiedReadonlyCard

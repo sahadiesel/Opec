@@ -1,4 +1,4 @@
-'use client';
+import { normalizeWorkerIdSet } from '@/lib/commercial/partial-po-month-billing';
 
 import {
   Firestore,
@@ -70,6 +70,10 @@ export interface GenerateBillingLinesOptions {
   mobCycleIds?: readonly string[] | null;
   /** Trip billing + สัญญา tripBillMobDemobFee: จุด mob/demob ที่เลือกตอนสร้าง invoice */
   tripMobDemobLocationKey?: string;
+  /** PO+เดือน partial: จำกัดเฉพาะคนงานในงวดนี้ */
+  workerIds?: readonly string[] | null;
+  /** PO+เดือน: ไม่รวมคนที่ออก invoice partial แล้ว (สร้างใบเต็มที่เหลือ) */
+  excludeWorkerIds?: readonly string[] | null;
 }
 
 interface LineAcc {
@@ -830,6 +834,25 @@ export async function generateBillingLines(
     const tripFiltered = filterTimesheetsForTripMobCycleBilling(timesheets);
     timesheets = tripFiltered.timesheets;
     warnings.push(...tripFiltered.warnings);
+  }
+
+  const allowWorkers = normalizeWorkerIdSet(options?.workerIds ?? []);
+  const excludeWorkers = new Set(normalizeWorkerIdSet(options?.excludeWorkerIds ?? []));
+  if (allowWorkers.length > 0) {
+    const allowSet = new Set(allowWorkers);
+    const before = timesheets.length;
+    timesheets = timesheets.filter((ts) => allowSet.has(String(ts.workerId || '').trim()));
+    const dropped = before - timesheets.length;
+    if (dropped > 0) {
+      warnings.push(`จำกัดวางบิลเฉพาะ ${allowWorkers.length} คน — ตัด ${dropped} แถว timesheet นอกชุด`);
+    }
+  } else if (excludeWorkers.size > 0) {
+    const before = timesheets.length;
+    timesheets = timesheets.filter((ts) => !excludeWorkers.has(String(ts.workerId || '').trim()));
+    const dropped = before - timesheets.length;
+    if (dropped > 0) {
+      warnings.push(`ไม่รวม ${excludeWorkers.size} คนที่ออก invoice partial แล้ว — ตัด ${dropped} แถว timesheet`);
+    }
   }
 
   const payrollMobDropped = timesheetsRaw.length - inMobWindow.length;

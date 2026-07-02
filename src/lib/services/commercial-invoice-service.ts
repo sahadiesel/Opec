@@ -26,11 +26,23 @@ import type {
   TripBillingBatch,
   User,
   WaveMonthTimesheetReview,
+  WorkerMonthTimesheetClosure,
 } from '@/lib/types';
+import {
+  commercialInvoiceCoversAnyWorker,
+  commercialInvoiceCoversWorkerSet,
+  isPartialPoMonthCommercialInvoice,
+  normalizeWorkerIdSet,
+  partialPoMonthInvoiceLabel,
+} from '@/lib/commercial/partial-po-month-billing';
 import { resolveBillingMode } from '@/lib/commercial/resolve-billing-mode';
 import { sellSnapshotForWorkMode } from '@/lib/commercial/position-rate-sell';
 import { resolveWaveMonthPeriodBounds } from '@/lib/timesheet/wave-month-payroll-bridge';
-import { resolvePoMonthPeriodBounds } from '@/lib/timesheet/po-month-timesheet-bridge';
+import {
+  poMonthTimesheetReviewDocId,
+  resolvePoMonthPeriodBounds,
+} from '@/lib/timesheet/po-month-timesheet-bridge';
+import { fetchWorkerClosuresForPoMonth } from '@/lib/timesheet/worker-month-closure';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { generateBillingLines, generateBillingLinesForMobCycles } from '@/lib/services/billing-line-generator';
 import {
@@ -194,6 +206,7 @@ export function commercialInvoiceCoversPoMonthReview(
   review: PoMonthTimesheetReview,
 ): boolean {
   if (inv.status === 'VOID') return false;
+  if (isPartialPoMonthCommercialInvoice(inv)) return false;
   if (inv.sourcePoMonthReviewId === review.id) return true;
   const { start, end } = resolvePoMonthPeriodBounds(review);
   return (
@@ -204,11 +217,39 @@ export function commercialInvoiceCoversPoMonthReview(
   );
 }
 
+/** มีใบครอบคลุมทุกคนที่อนุมัติแล้วหรือใบเต็ม PO+งวด */
+export function poMonthReviewMissingCommercialInvoice(
+  review: PoMonthTimesheetReview,
+  invoices: CommercialInvoice[],
+  closures: WorkerMonthTimesheetClosure[] = [],
+): boolean {
+  const related = invoices.filter(
+    (inv) =>
+      inv.status !== 'VOID' &&
+      inv.poId === review.poId &&
+      inv.waveId === PO_MONTH_WAVE_PLACEHOLDER &&
+      (inv.sourcePoMonthReviewId === review.id ||
+        (inv.periodStart === resolvePoMonthPeriodBounds(review).start &&
+          inv.periodEnd === resolvePoMonthPeriodBounds(review).end)),
+  );
+  const approved = closures.filter((c) => c.status === 'approved');
+  if (approved.length === 0) {
+    return !related.some((inv) => commercialInvoiceCoversPoMonthReview(inv, review));
+  }
+  return approved.some(
+    (w) => !related.some((inv) => commercialInvoiceCoversAnyWorker(inv, w.workerId)),
+  );
+}
+
 export function filterPoMonthReviewsMissingCommercialDraft(
   reviews: PoMonthTimesheetReview[],
   invoices: CommercialInvoice[],
+  closuresByReviewId?: Map<string, WorkerMonthTimesheetClosure[]>,
 ): PoMonthTimesheetReview[] {
-  return reviews.filter((r) => !invoices.some((inv) => commercialInvoiceCoversPoMonthReview(inv, r)));
+  return reviews.filter((r) => {
+    const closures = closuresByReviewId?.get(r.id) ?? [];
+    return poMonthReviewMissingCommercialInvoice(r, invoices, closures);
+  });
 }
 
 async function findCommercialInvoiceByPoWaveAndPeriod(
@@ -486,9 +527,77 @@ async function findCommercialInvoiceByPoMonthPeriodDup(
   for (const d of snap.docs) {
     const x = d.data() as CommercialInvoice;
     if (x.status === 'VOID') continue;
+    if (isPartialPoMonthCommercialInvoice(x)) continue;
     if (x.periodStart === periodStart && x.periodEnd === periodEnd) {
       return { id: d.id, invoiceNo: String(x.invoiceNo || '') };
     }
+  }
+  return null;
+}
+
+async function listPoMonthCommercialInvoicesForPeriod(
+  db: Firestore,
+  poId: string,
+  periodStart: string,
+  periodEnd: string,
+): Promise<CommercialInvoice[]> {
+  const q = query(
+    collection(db, 'commercial_invoices'),
+    where('poId', '==', poId),
+    where('waveId', '==', PO_MONTH_WAVE_PLACEHOLDER),
+  );
+  const snap = await getDocs(q);
+  const out: CommercialInvoice[] = [];
+  for (const d of snap.docs) {
+    const x = { id: d.id, ...(d.data() as object) } as CommercialInvoice;
+    if (x.status === 'VOID') continue;
+    if (x.periodStart === periodStart && x.periodEnd === periodEnd) out.push(x);
+  }
+  return out;
+}
+
+function collectInvoicedWorkerIdsFromInvoices(invoices: CommercialInvoice[]): Set<string> {
+  const out = new Set<string>();
+  for (const inv of invoices) {
+    if (isPartialPoMonthCommercialInvoice(inv)) {
+      for (const wid of normalizeWorkerIdSet(inv.coveredWorkerIds ?? [])) out.add(wid);
+    } else {
+      for (const line of inv.lines ?? []) {
+        const wid = String(line.workerId || '').trim();
+        if (wid) out.add(wid);
+      }
+    }
+  }
+  return out;
+}
+
+async function findCommercialInvoiceForWorkerSet(
+  db: Firestore,
+  poId: string,
+  periodStart: string,
+  periodEnd: string,
+  workerIds: readonly string[],
+): Promise<{ id: string; invoiceNo: string } | null> {
+  const list = await listPoMonthCommercialInvoicesForPeriod(db, poId, periodStart, periodEnd);
+  for (const inv of list) {
+    if (commercialInvoiceCoversWorkerSet(inv, workerIds)) {
+      return { id: inv.id, invoiceNo: String(inv.invoiceNo || '') };
+    }
+  }
+  return null;
+}
+
+async function findFullCommercialInvoiceByPoMonthReview(
+  db: Firestore,
+  reviewId: string,
+): Promise<{ id: string; invoiceNo: string } | null> {
+  const q = query(collection(db, 'commercial_invoices'), where('sourcePoMonthReviewId', '==', reviewId));
+  const snap = await getDocs(q);
+  for (const d of snap.docs) {
+    const data = d.data() as CommercialInvoice;
+    if (data.status === 'VOID') continue;
+    if (isPartialPoMonthCommercialInvoice(data)) continue;
+    return { id: d.id, invoiceNo: String(data.invoiceNo || '') };
   }
   return null;
 }
@@ -514,18 +623,20 @@ export async function ensureCommercialDraftInvoiceAfterPoMonthApproval(
     }
   }
 
-  const existing = await findCommercialInvoiceByPoMonthReview(db, review.id);
+  const existing = await findFullCommercialInvoiceByPoMonthReview(db, review.id);
   if (existing?.id) {
-    return { ok: false, reason: `มีใบแจ้งหนี้แล้ว (${existing.invoiceNo || existing.id})` };
+    return { ok: false, reason: `มีใบแจ้งหนี้เต็ม PO+งวดแล้ว (${existing.invoiceNo || existing.id})` };
   }
   const { start, end } = resolvePoMonthPeriodBounds(review);
   const periodDup = await findCommercialInvoiceByPoMonthPeriodDup(db, review.poId, start, end);
   if (periodDup?.id) {
     return {
       ok: false,
-      reason: `มีใบในงวด PO+เดียวกันแล้ว (${periodDup.invoiceNo || periodDup.id}) — เปิดจากรายการด้านล่าง`,
+      reason: `มีใบเต็ม PO+งวดในงวดนี้แล้ว (${periodDup.invoiceNo || periodDup.id}) — เปิดจากรายการด้านล่าง`,
     };
   }
+  const existingInvoices = await listPoMonthCommercialInvoicesForPeriod(db, review.poId, start, end);
+  const excludeWorkerIds = [...collectInvoicedWorkerIdsFromInvoices(existingInvoices)];
   const issueDate = timestampToHtmlDateValue(Date.now());
   try {
     const { id, invoiceNo } = await createCommercialDraftInvoiceForPoMonth(
@@ -537,6 +648,7 @@ export async function ensureCommercialDraftInvoiceAfterPoMonthApproval(
         issueDate,
         actor,
         sourcePoMonthReviewId: review.id,
+        excludeWorkerIds: excludeWorkerIds.length > 0 ? excludeWorkerIds : undefined,
       },
     );
     return { ok: true, id, invoiceNo };
@@ -562,12 +674,22 @@ export async function createCommercialDraftInvoiceForPoMonth(
     actor: User;
     notes?: string;
     sourcePoMonthReviewId: string;
+    /** Partial billing — จำกัดเฉพาะคนงาน */
+    workerIds?: string[];
+    partialPoMonthBatchNo?: number;
+    /** ไม่รวมคนที่ออก partial แล้ว (ใบเต็มที่เหลือ) */
+    excludeWorkerIds?: string[];
   },
 ): Promise<{ id: string; invoiceNo: string }> {
   const { poId, periodStart, periodEnd, issueDate, actor, sourcePoMonthReviewId } = params;
   const currency = params.currency || 'THB';
+  const workerIds = normalizeWorkerIdSet(params.workerIds ?? []);
+  const isPartial = workerIds.length > 0;
 
-  const gen = await generateBillingLines(db, poId, periodStart, periodEnd, undefined);
+  const gen = await generateBillingLines(db, poId, periodStart, periodEnd, undefined, {
+    workerIds: isPartial ? workerIds : undefined,
+    excludeWorkerIds: !isPartial ? params.excludeWorkerIds : undefined,
+  });
   if (gen.lines.length === 0) {
     throw new Error(
       'ไม่มีรายการจาก timesheet — ตรวจช่วงงวด / สถานะ readyForBilling ของ timesheet ใต้ PO นี้ (ทุก wave)',
@@ -577,7 +699,9 @@ export async function createCommercialDraftInvoiceForPoMonth(
   const [poSnap] = await Promise.all([getDoc(doc(db, 'purchase_orders', poId))]);
   if (!poSnap.exists()) throw new Error('ไม่พบ PO');
   const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
-  const waveCodeLabel = 'PO+งวด (รวม wave)';
+  const waveCodeLabel = isPartial
+    ? partialPoMonthInvoiceLabel(params.partialPoMonthBatchNo, workerIds.length)
+    : 'PO+งวด (รวม wave)';
 
   const vatPercent = await resolveVatPercent(db, po.customerId, po.contractId);
   const amountBeforeTax = roundMoney(gen.totalAmount);
@@ -627,6 +751,12 @@ export async function createCommercialDraftInvoiceForPoMonth(
     timesheetCount: gen.timesheetCount,
     notes: params.notes,
     sourcePoMonthReviewId,
+    ...(isPartial
+      ? {
+          coveredWorkerIds: workerIds,
+          partialPoMonthBatchNo: params.partialPoMonthBatchNo,
+        }
+      : {}),
     createdAt: now,
     createdByUid: actor.id,
     createdByName: actor.displayName,
@@ -645,10 +775,203 @@ export async function createCommercialDraftInvoiceForPoMonth(
     entityLabel: `${invoiceNo} (PO+งวด)`,
     sourceModule: 'commercial_invoices',
     linkedIds: [po.customerId, poId],
-    afterSummary: `สร้างใบแจ้งหนี้ (เรียกเก็บ) ${invoiceNo} จาก timesheet รวมราย PO+งวด`,
+    afterSummary: `สร้างใบแจ้งหนี้ (เรียกเก็บ) ${invoiceNo} จาก timesheet รวมราย PO+งวด${isPartial ? ' (บางส่วน)' : ''}`,
   });
 
   return { id: ref.id, invoiceNo };
+}
+
+/**
+ * หลัง manager อนุมัติรายคน — สร้าง draft invoice อัตโนมัติเมื่อครบทุกคนใน batch (closureBatchNo เดียวกัน)
+ */
+export async function tryEnsurePartialCommercialDraftForCompletedBatch(
+  db: Firestore,
+  poId: string,
+  yearMonth: string,
+  actor: User,
+): Promise<
+  | { kind: 'created'; id: string; invoiceNo: string; workerCount: number }
+  | { kind: 'skipped'; reason: string }
+  | { kind: 'waiting_batch'; reason: string }
+> {
+  const pid = poId.trim();
+  const ym = yearMonth.trim();
+  if (!pid || !/^\d{4}-\d{2}$/.test(ym)) {
+    return { kind: 'skipped', reason: 'PO หรือเดือนไม่ถูกต้อง' };
+  }
+
+  const poSnap = await getDoc(doc(db, 'purchase_orders', pid));
+  if (!poSnap.exists()) return { kind: 'skipped', reason: 'ไม่พบ PO' };
+  const po = { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder;
+  const mode = await resolveBillingMode(db, po);
+  if (mode === 'TRIP') {
+    return {
+      kind: 'skipped',
+      reason: 'PO ใช้โหมด TRIP — ออก invoice จากเมนู Trip Billing',
+    };
+  }
+
+  const closures = await fetchWorkerClosuresForPoMonth(db, pid, ym);
+  if (closures.length === 0) {
+    return { kind: 'skipped', reason: 'ไม่มี worker closure — ใช้โหมดใบเต็ม PO+งวด' };
+  }
+
+  const reviewId = poMonthTimesheetReviewDocId(pid, ym);
+  const reviewSnap = await getDoc(doc(db, 'po_month_timesheet_reviews', reviewId));
+  const review: PoMonthTimesheetReview = reviewSnap.exists()
+    ? ({ id: reviewId, ...(reviewSnap.data() as object) } as PoMonthTimesheetReview)
+    : ({ id: reviewId, poId: pid, yearMonth: ym } as PoMonthTimesheetReview);
+  const { start, end } = resolvePoMonthPeriodBounds(review);
+
+  const batchNos: number[] = [
+    ...new Set(
+      closures
+        .map((c) => c.closureBatchNo)
+        .filter((n): n is number => typeof n === 'number' && n > 0),
+    ),
+  ].sort((a, b) => a - b);
+
+  let waitingReason: string | null = null;
+  for (const batchNo of batchNos) {
+    const inBatch = closures.filter((c) => c.closureBatchNo === batchNo);
+    if (inBatch.length === 0) continue;
+    const allApproved = inBatch.every((c) => c.status === 'approved');
+    if (!allApproved) {
+      const pending = inBatch.filter((c) => c.status !== 'approved').length;
+      waitingReason = `รอบ ${batchNo}: อนุมัติแล้ว ${inBatch.length - pending}/${inBatch.length} คน — ครบทุกคนในรอบจึงสร้าง invoice`;
+      continue;
+    }
+    const workerIds = normalizeWorkerIdSet(inBatch.map((c) => c.workerId));
+    const dup = await findCommercialInvoiceForWorkerSet(db, pid, start, end, workerIds);
+    if (dup?.id) continue;
+
+    const issueDate = timestampToHtmlDateValue(Date.now());
+    const workerNames = inBatch
+      .map((c) => c.workerName || c.workerId)
+      .filter(Boolean)
+      .join(', ');
+    try {
+      const { id, invoiceNo } = await createCommercialDraftInvoiceForPoMonth(db, {
+        poId: pid,
+        periodStart: start,
+        periodEnd: end,
+        issueDate,
+        actor,
+        sourcePoMonthReviewId: reviewId,
+        workerIds,
+        partialPoMonthBatchNo: batchNo,
+        notes: workerNames ? `Partial billing รอบ ${batchNo}: ${workerNames}` : undefined,
+      });
+      return { kind: 'created', id, invoiceNo, workerCount: workerIds.length };
+    } catch (e: unknown) {
+      return { kind: 'skipped', reason: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  if (waitingReason) {
+    return { kind: 'waiting_batch', reason: waitingReason };
+  }
+
+  const approvedSingles = closures.filter(
+    (c) => c.status === 'approved' && (c.closureBatchNo == null || c.closureBatchNo <= 0),
+  );
+  if (approvedSingles.length > 0) {
+    for (const c of approvedSingles) {
+      const workerIds = [c.workerId];
+      const dup = await findCommercialInvoiceForWorkerSet(db, pid, start, end, workerIds);
+      if (dup?.id) continue;
+      try {
+        const { id, invoiceNo } = await createCommercialDraftInvoiceForPoMonth(db, {
+          poId: pid,
+          periodStart: start,
+          periodEnd: end,
+          issueDate: timestampToHtmlDateValue(Date.now()),
+          actor,
+          sourcePoMonthReviewId: reviewId,
+          workerIds,
+          notes: c.workerName ? `Partial: ${c.workerName}` : undefined,
+        });
+        return { kind: 'created', id, invoiceNo, workerCount: 1 };
+      } catch (e: unknown) {
+        return { kind: 'skipped', reason: e instanceof Error ? e.message : String(e) };
+      }
+    }
+  }
+
+  return { kind: 'skipped', reason: 'ไม่มี batch ที่พร้อมสร้าง invoice (หรือออกใบแล้ว)' };
+}
+
+/**
+ * สร้าง draft invoice partial ด้วยมือ — สำหรับคนงานที่อนุมัติแล้วแต่ auto-create ไม่ทำงาน
+ */
+export async function ensureCommercialDraftInvoiceForWorkerSet(
+  db: Firestore,
+  params: {
+    poId: string;
+    yearMonth: string;
+    workerIds: string[];
+    actor: User;
+    partialPoMonthBatchNo?: number;
+  },
+): Promise<{ ok: true; id: string; invoiceNo: string } | { ok: false; reason: string }> {
+  const pid = params.poId.trim();
+  const ym = params.yearMonth.trim();
+  const workerIds = normalizeWorkerIdSet(params.workerIds);
+  if (!pid || !/^\d{4}-\d{2}$/.test(ym) || workerIds.length === 0) {
+    return { ok: false, reason: 'PO / เดือน / รายชื่อคนงานไม่ครบ' };
+  }
+
+  const poSnap = await getDoc(doc(db, 'purchase_orders', pid));
+  if (!poSnap.exists()) return { ok: false, reason: 'ไม่พบ PO' };
+  const po = { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder;
+  const mode = await resolveBillingMode(db, po);
+  if (mode === 'TRIP') {
+    return { ok: false, reason: 'PO ใช้โหมด TRIP — ออก invoice จาก Trip Billing' };
+  }
+
+  const reviewId = poMonthTimesheetReviewDocId(pid, ym);
+  const reviewSnap = await getDoc(doc(db, 'po_month_timesheet_reviews', reviewId));
+  const review: PoMonthTimesheetReview = reviewSnap.exists()
+    ? ({ id: reviewId, ...(reviewSnap.data() as object) } as PoMonthTimesheetReview)
+    : ({ id: reviewId, poId: pid, yearMonth: ym } as PoMonthTimesheetReview);
+  const { start, end } = resolvePoMonthPeriodBounds(review);
+
+  const closures = await fetchWorkerClosuresForPoMonth(db, pid, ym);
+  const notApproved = workerIds.filter((wid) => {
+    const c = closures.find((x) => x.workerId === wid);
+    return !c || c.status !== 'approved';
+  });
+  if (notApproved.length > 0) {
+    return {
+      ok: false,
+      reason: `มี ${notApproved.length} คนที่ยังไม่ได้รับการอนุมัติจาก manager — ต้องอนุมัติก่อนวางบิล`,
+    };
+  }
+
+  const dup = await findCommercialInvoiceForWorkerSet(db, pid, start, end, workerIds);
+  if (dup?.id) {
+    return { ok: false, reason: `มีใบแจ้งหนี้ชุดนี้แล้ว (${dup.invoiceNo || dup.id})` };
+  }
+
+  const issueDate = timestampToHtmlDateValue(Date.now());
+  const names = workerIds
+    .map((wid) => closures.find((c) => c.workerId === wid)?.workerName || wid)
+    .join(', ');
+  try {
+    const { id, invoiceNo } = await createCommercialDraftInvoiceForPoMonth(db, {
+      poId: pid,
+      periodStart: start,
+      periodEnd: end,
+      issueDate,
+      actor: params.actor,
+      sourcePoMonthReviewId: reviewId,
+      workerIds,
+      partialPoMonthBatchNo: params.partialPoMonthBatchNo,
+      notes: names ? `Partial (manual): ${names}` : undefined,
+    });
+    return { ok: true, id, invoiceNo };
+  } catch (e: unknown) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /**
@@ -1279,12 +1602,14 @@ export async function regenerateCommercialDraftInvoiceFromTimesheets(
       tripMobDemobLocationKey ? { tripMobDemobLocationKey } : undefined,
     );
   } else {
+    const partialWorkers = normalizeWorkerIdSet(cur.coveredWorkerIds ?? []);
     gen = await generateBillingLines(
       db,
       cur.poId,
       cur.periodStart,
       cur.periodEnd,
       isPoMonth ? undefined : cur.waveId,
+      partialWorkers.length > 0 ? { workerIds: partialWorkers } : undefined,
     );
   }
 

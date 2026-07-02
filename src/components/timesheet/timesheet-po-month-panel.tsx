@@ -64,6 +64,7 @@ import {
   syncReadyPayrollFlagsForPoMonth,
   syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews,
 } from '@/lib/timesheet/po-month-timesheet-bridge';
+import { poMonthReviewStatusLabelTh } from '@/lib/timesheet/po-month-review-status';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 import { runPortalParityBackfillForPoMonth } from '@/lib/timesheet/portal-parity-backfill';
@@ -172,18 +173,7 @@ function isAttachmentReadonly(r: PoMonthTimesheetReview | undefined): boolean {
 }
 
 function poReviewStatusLabel(s: PoMonthTimesheetReview['status'] | null | undefined): string {
-  switch (s) {
-    case 'entry_locked':
-      return 'ปิดงวด Payroll แล้ว';
-    case 'pending_manager_review':
-      return 'รอผู้จัดการ';
-    case 'approved':
-      return 'อนุมัติแล้ว';
-    case 'rejected':
-      return 'ปฏิเสธ';
-    default:
-      return 'ยังไม่ปิดงวด';
-  }
+  return poMonthReviewStatusLabelTh(s);
 }
 
 function buildPoToolbarSnapshot(

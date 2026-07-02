@@ -832,6 +832,19 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 )}
               </div>
             </div>
+            {invoice.coveredWorkerIds && invoice.coveredWorkerIds.length > 0 ? (
+              <div className="sm:col-span-2">
+                <div className="text-muted-foreground text-xs">
+                  {docEn ? 'Workers in this partial invoice' : 'คนงานในใบ partial'}
+                </div>
+                <div className="text-sm">
+                  {invoice.coveredWorkerIds.length} {docEn ? 'worker(s)' : 'คน'}
+                  {invoice.partialPoMonthBatchNo
+                    ? ` · ${docEn ? 'Batch' : 'รอบ'} ${invoice.partialPoMonthBatchNo}`
+                    : ''}
+                </div>
+              </div>
+            ) : null}
             <div>
               <div className="text-muted-foreground text-xs">PO</div>
               <Link className="text-primary underline font-mono" href={`/purchase-orders/${invoice.poId}`}>

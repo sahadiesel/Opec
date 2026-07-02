@@ -37,7 +37,11 @@ export async function hasApprovedMonthlyTimesheetForYearMonth(
   const [poSnap, waveSnap] = await Promise.all([getDocs(q1), getDocs(q2)]);
 
   const monthlyGateOk = (status: unknown) =>
-    status === 'approved' || status === 'entry_locked' || status === 'pending_manager_review';
+    status === 'approved' ||
+    status === 'entry_locked' ||
+    status === 'partially_closed' ||
+    status === 'pending_manager_review' ||
+    status === 'partially_approved';
 
   if (poSnap.docs.some((d) => monthlyGateOk(d.data()?.status))) return true;
   if (waveSnap.docs.some((d) => monthlyGateOk(d.data()?.status))) return true;

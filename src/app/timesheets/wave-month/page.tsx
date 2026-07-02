@@ -111,6 +111,24 @@ import {
   type TimesheetPoMonthPanelHandle,
   type TimesheetPoMonthToolbarSnapshot,
 } from '@/components/timesheet/timesheet-po-month-panel';
+import { WorkerMonthClosureCell, workerMonthClosureSummaryText } from '@/components/timesheet/worker-month-closure-cell';
+import type { WorkerMonthTimesheetClosure } from '@/lib/types';
+import {
+  clearWorkerMonthDeferred,
+  fetchWorkerClosuresForPoIdsAndMonth,
+  partialCloseWorkersForPoMonth,
+  sendEntryLockedWorkersForManagerReview,
+  setWorkerMonthDeferred,
+  workerClosureByPoWorkerKey,
+} from '@/lib/timesheet/worker-month-closure';
+import {
+  DEFERRED_SHIP_TIMESHEET_ALERT_DAYS,
+  deferredClosureAgeDays,
+  isDeferredClosureOverdue,
+} from '@/lib/commercial/partial-po-month-billing';
+import { isPoMonthFullGridLock } from '@/lib/timesheet/po-month-review-status';
+import { isWorkerMonthClosureGridLocked } from '@/lib/timesheet/worker-month-closure';
+import { ensureWorkerMonthlyPayrollPeriodForYearMonth } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import {
@@ -164,18 +182,22 @@ function isWaveMonthReviewLocked(r: WaveMonthTimesheetReview | undefined): boole
   );
 }
 
-function isPoMonthDocumentLockedForGrid(r: PoMonthTimesheetReview | undefined): boolean {
-  if (!r) return false;
-  return (
-    r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved'
-  );
-}
-
 function isMonthTimesheetRowLocked(
   poReview: PoMonthTimesheetReview | undefined,
   waveReview: WaveMonthTimesheetReview | undefined,
+  workerClosure: WorkerMonthTimesheetClosure | undefined,
 ): boolean {
-  if (isPoMonthDocumentLockedForGrid(poReview)) return true;
+  if (workerClosure) {
+    if (
+      workerClosure.status === 'deferred' ||
+      workerClosure.status === 'open' ||
+      workerClosure.status === 'rejected'
+    ) {
+      return false;
+    }
+    return isWorkerMonthClosureGridLocked(workerClosure.status);
+  }
+  if (isPoMonthFullGridLock(poReview)) return true;
   return isWaveMonthReviewLocked(waveReview);
 }
 
@@ -634,6 +656,48 @@ export default function WaveMonthTimesheetSummaryPage() {
     return m;
   }, [poMonthRows]);
 
+  const [workerClosureRows, setWorkerClosureRows] = useState<WorkerMonthTimesheetClosure[]>([]);
+  const [workerClosureLoading, setWorkerClosureLoading] = useState(false);
+  const [selectedPartialKeys, setSelectedPartialKeys] = useState<Set<string>>(() => new Set());
+  const [partialWorkflowBusy, setPartialWorkflowBusy] = useState(false);
+
+  const refreshWorkerClosures = useCallback(async () => {
+    if (!firestore || !monthYm || scopedPoIdsList.length === 0) {
+      setWorkerClosureRows([]);
+      return;
+    }
+    const rows = await fetchWorkerClosuresForPoIdsAndMonth(firestore, scopedPoIdsList, monthYm);
+    setWorkerClosureRows(rows);
+  }, [firestore, monthYm, scopedPoIdsList]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!firestore || !monthYm || scopedPoIdsList.length === 0) {
+      setWorkerClosureRows([]);
+      return;
+    }
+    setWorkerClosureLoading(true);
+    void fetchWorkerClosuresForPoIdsAndMonth(firestore, scopedPoIdsList, monthYm)
+      .then((rows) => {
+        if (!cancelled) setWorkerClosureRows(rows);
+      })
+      .catch((err: unknown) => {
+        console.warn('[wave-month] worker_month_timesheet_closures:', err);
+        if (!cancelled) setWorkerClosureRows([]);
+      })
+      .finally(() => {
+        if (!cancelled) setWorkerClosureLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, monthYm, scopedPoIdsList]);
+
+  const workerClosureByKey = useMemo(
+    () => workerClosureByPoWorkerKey(workerClosureRows),
+    [workerClosureRows],
+  );
+
   const retroAdjustmentsQuery = useMemoFirebase(
     () =>
       firestore && canViewTs && monthYm && /^\d{4}-\d{2}$/.test(monthYm)
@@ -680,11 +744,13 @@ export default function WaveMonthTimesheetSummaryPage() {
       if (!isAssignmentEligibleForPoActiveAutoDaily(a)) continue;
       if (!assignmentOverlapsYearMonthForPoDailyBoard(a, monthYm)) continue;
       if (isWaveMonthReviewLocked(reviewByWaveId.get(a.waveId))) continue;
-      if (isPoMonthDocumentLockedForGrid(poMonthByPoId.get(a.poId))) continue;
+      if (isPoMonthFullGridLock(poMonthByPoId.get(a.poId))) continue;
+      const workerClosure = workerClosureByKey.get(`${a.poId}|${a.workerId}`);
+      if (workerClosure && isWorkerMonthClosureGridLocked(workerClosure.status)) continue;
       ids.push(a.id);
     }
     return ids;
-  }, [mobAssignments, monthYm, reviewByWaveId, poMonthByPoId]);
+  }, [mobAssignments, monthYm, reviewByWaveId, poMonthByPoId, workerClosureByKey]);
 
   const poActiveAutoDailySyncLockRef = useRef(false);
   /** กันยิงซ้ำทั้งเดือน — คีย์ต่อเดือนปฏิทิน + วันนี้เขตไทย (วันใหม่จะรันเติมย้อนหลังในเดือนอีกครั้ง) */
@@ -1135,6 +1201,189 @@ export default function WaveMonthTimesheetSummaryPage() {
     return out;
   }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments]);
 
+  const isRowLockedForWorker = useCallback(
+    (
+      po: PurchaseOrder | undefined,
+      monthReview: WaveMonthTimesheetReview | undefined,
+      workerId: string,
+    ) => {
+      const closure = po?.id ? workerClosureByKey.get(`${po.id}|${workerId}`) : undefined;
+      return isMonthTimesheetRowLocked(
+        po?.id ? poMonthByPoId.get(po.id) : undefined,
+        monthReview,
+        closure,
+      );
+    },
+    [workerClosureByKey, poMonthByPoId],
+  );
+
+  const partialCloseStats = useMemo(() => {
+    const entryLocked = workerClosureRows.filter((c) => c.status === 'entry_locked').length;
+    const selectable = dedupedTableRows.filter((tr) => {
+      const po = tr.po;
+      if (!po?.id) return false;
+      const closure = workerClosureByKey.get(`${po.id}|${tr.rw.workerId}`);
+      if (closure?.status === 'deferred') return false;
+      if (closure && isWorkerMonthClosureGridLocked(closure.status)) return false;
+      return true;
+    }).length;
+    return { entryLocked, selectable, selected: selectedPartialKeys.size };
+  }, [workerClosureRows, dedupedTableRows, workerClosureByKey, selectedPartialKeys.size]);
+
+  const overdueDeferredClosures = useMemo(() => {
+    return workerClosureRows
+      .filter((c) => c.yearMonth === monthYm && isDeferredClosureOverdue(c))
+      .sort((a, b) => deferredClosureAgeDays(b) - deferredClosureAgeDays(a));
+  }, [workerClosureRows, monthYm]);
+
+  const handlePartialCloseSelected = useCallback(async () => {
+    if (!firestore || !currentUser || !canEditTs) return;
+    const byPo = new Map<string, Array<{ workerId: string; workerName?: string }>>();
+    for (const tr of dedupedTableRows) {
+      const po = tr.po;
+      if (!po?.id) continue;
+      const key = `${po.id}|${tr.rw.workerId}`;
+      if (!selectedPartialKeys.has(key)) continue;
+      const list = byPo.get(po.id) ?? [];
+      list.push({ workerId: tr.rw.workerId, workerName: tr.rw.name });
+      byPo.set(po.id, list);
+    }
+    if (byPo.size === 0) {
+      toast({ variant: 'destructive', title: 'ไม่ได้เลือกคนงาน', description: 'ติ๊กเลือกคนที่พร้อมปิดงวดในตาราง' });
+      return;
+    }
+    setPartialWorkflowBusy(true);
+    try {
+      let total = 0;
+      for (const [poId, workers] of byPo) {
+        const res = await partialCloseWorkersForPoMonth(firestore, {
+          poId,
+          yearMonth: monthYm,
+          workers,
+          actor: currentUser as User,
+        });
+        total += res.closed;
+      }
+      await refreshWorkerClosures();
+      setSelectedPartialKeys(new Set());
+      const actorName = currentUser.displayName || currentUser.email || currentUser.id;
+      await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, monthYm, actorName);
+      toast({
+        title: `ปิดงวดบางส่วน ${total} คน`,
+        description: 'แก้ไขไม่ได้สำหรับคนที่ปิดแล้ว — กด «ส่งอนุมัติคนที่ปิดแล้ว» เมื่อพร้อมส่งผู้จัดการ',
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ปิดงวดบางส่วนไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPartialWorkflowBusy(false);
+    }
+  }, [
+    firestore,
+    currentUser,
+    canEditTs,
+    dedupedTableRows,
+    selectedPartialKeys,
+    monthYm,
+    refreshWorkerClosures,
+    toast,
+  ]);
+
+  const handleSendPartialForReview = useCallback(async () => {
+    if (!firestore || !currentUser || !canEditTs) return;
+    const poIds = [...new Set(workerClosureRows.filter((c) => c.status === 'entry_locked').map((c) => c.poId))];
+    if (poIds.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ดำเนินการไม่ได้',
+        description: 'ไม่มีคนงานที่ปิดงวดแล้วรอส่งอนุมัติ',
+      });
+      return;
+    }
+    setPartialWorkflowBusy(true);
+    try {
+      let sent = 0;
+      for (const poId of poIds) {
+        const res = await sendEntryLockedWorkersForManagerReview(firestore, {
+          poId,
+          yearMonth: monthYm,
+          actor: currentUser as User,
+        });
+        sent += res.sent;
+      }
+      await refreshWorkerClosures();
+      toast({
+        title: `ส่งอนุมัติ ${sent} คน`,
+        description: 'ผู้จัดการอนุมัติรายคนที่เมนู อนุมัติ → Timesheet รอบเดือน',
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ส่งอนุมัติไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPartialWorkflowBusy(false);
+    }
+  }, [firestore, currentUser, canEditTs, workerClosureRows, monthYm, refreshWorkerClosures, toast]);
+
+  const handleMarkWorkerDeferred = useCallback(
+    async (poId: string, workerId: string, workerName: string) => {
+      if (!firestore || !currentUser || !canEditTs) return;
+      setPartialWorkflowBusy(true);
+      try {
+        await setWorkerMonthDeferred(firestore, {
+          poId,
+          yearMonth: monthYm,
+          workerId,
+          workerName,
+          actor: currentUser as User,
+        });
+        await refreshWorkerClosures();
+        toast({ title: 'ตั้งรอ timesheet แล้ว', description: workerName });
+      } catch (e: unknown) {
+        toast({
+          variant: 'destructive',
+          title: 'บันทึกไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setPartialWorkflowBusy(false);
+      }
+    },
+    [firestore, currentUser, canEditTs, monthYm, refreshWorkerClosures, toast],
+  );
+
+  const handleClearWorkerDeferred = useCallback(
+    async (poId: string, workerId: string, workerName: string) => {
+      if (!firestore || !currentUser || !canEditTs) return;
+      setPartialWorkflowBusy(true);
+      try {
+        await clearWorkerMonthDeferred(firestore, {
+          poId,
+          yearMonth: monthYm,
+          workerId,
+          workerName,
+          actor: currentUser as User,
+        });
+        await refreshWorkerClosures();
+        toast({ title: 'กลับเป็นพร้อมปิดงวด', description: workerName });
+      } catch (e: unknown) {
+        toast({
+          variant: 'destructive',
+          title: 'บันทึกไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setPartialWorkflowBusy(false);
+      }
+    },
+    [firestore, currentUser, canEditTs, monthYm, refreshWorkerClosures, toast],
+  );
+
   const handlePrintGridTable = useCallback(async () => {
     if (dedupedTableRows.length === 0) {
       toast({
@@ -1290,7 +1539,7 @@ export default function WaveMonthTimesheetSummaryPage() {
         setRetroEdit({ timesheet: retroTs, workerName: rw.name, po });
         return;
       }
-      if (isMonthTimesheetRowLocked(po?.id ? poMonthByPoId.get(po.id) : undefined, monthReview)) {
+      if (isRowLockedForWorker(po, monthReview, rw.workerId)) {
         toast({
           variant: 'destructive',
           title: 'งวดนี้แก้ไขไม่ได้',
@@ -1332,7 +1581,7 @@ export default function WaveMonthTimesheetSummaryPage() {
         timesheet: ts,
       });
     },
-    [canEditTs, toast, poMonthByPoId, retroOnlyPayrollMonth],
+    [canEditTs, toast, isRowLockedForWorker, retroOnlyPayrollMonth],
   );
 
   const performSaveCellEdit = useCallback(async () => {
@@ -1346,7 +1595,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       });
       return;
     }
-    if (!canEditTs || isMonthTimesheetRowLocked(po?.id ? poMonthByPoId.get(po.id) : undefined, monthReview)) {
+    if (!canEditTs || isRowLockedForWorker(po, monthReview, workerId)) {
       toast({
         variant: 'destructive',
         title: 'บันทึกไม่ได้',
@@ -1882,6 +2131,64 @@ export default function WaveMonthTimesheetSummaryPage() {
                         แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ ·{' '}
                         <strong>รวมชม.</strong> = ชม.ทำงาน (W) · Standby (SB/M1/D1 ตามชม.ที่ลง) · OT แยกคอลัมน์ — เซลล์รายวันแสดง W+5 เมื่อมี OT 5 ชม.
                       </p>
+                      {canEditTs && dedupedTableRows.length > 0 ? (
+                        <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 space-y-2">
+                          <p className="text-xs font-medium text-foreground">
+                            ปิดงวดบางส่วน (Phase 1):{' '}
+                            {workerClosureLoading
+                              ? 'กำลังโหลดสถานะรายคน…'
+                              : workerMonthClosureSummaryText(workerClosureRows, dedupedTableRows.length)}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="h-8 gap-1"
+                              disabled={partialWorkflowBusy || selectedPartialKeys.size === 0}
+                              onClick={() => void handlePartialCloseSelected()}
+                            >
+                              <Lock className="h-3.5 w-3.5" />
+                              ปิดงวดคนที่เลือก ({selectedPartialKeys.size})
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-8 gap-1"
+                              disabled={partialWorkflowBusy || partialCloseStats.entryLocked === 0}
+                              onClick={() => void handleSendPartialForReview()}
+                            >
+                              <Send className="h-3.5 w-3.5" />
+                              ส่งอนุมัติคนที่ปิดแล้ว ({partialCloseStats.entryLocked})
+                            </Button>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground">
+                            ติ๊กเลือกคนที่ timesheet ครบ → ปิดงวด → ส่งผู้จัดการอนุมัติรายคน · คนที่ «รอ timesheet» ยังแก้ไขได้
+                          </p>
+                          {overdueDeferredClosures.length > 0 ? (
+                            <Alert variant="destructive" className="py-2">
+                              <AlertTitle className="text-sm">
+                                รอ timesheet เกิน {DEFERRED_SHIP_TIMESHEET_ALERT_DAYS} วัน ({overdueDeferredClosures.length} คน)
+                              </AlertTitle>
+                              <AlertDescription className="text-xs space-y-1">
+                                {overdueDeferredClosures.slice(0, 8).map((c) => {
+                                  const po = pos?.find((p) => p.id === c.poId);
+                                  const days = deferredClosureAgeDays(c);
+                                  return (
+                                    <p key={c.id}>
+                                      {c.workerName || c.workerId}
+                                      {po?.poCode ? ` · ${po.poCode}` : ''} — รอ {days} วัน
+                                    </p>
+                                  );
+                                })}
+                                {overdueDeferredClosures.length > 8 ? (
+                                  <p className="text-muted-foreground">… และอีก {overdueDeferredClosures.length - 8} คน</p>
+                                ) : null}
+                              </AlertDescription>
+                            </Alert>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </CardDescription>
                   </div>
                   {dedupedTableRows.length > 0 ? (
@@ -1966,12 +2273,15 @@ export default function WaveMonthTimesheetSummaryPage() {
                             rowStandbyHoursMonthTotalByKey.get(`${wave.id}|${rw.workerId}|${rosterAssignment.id}`) ?? 0;
                           const rowWorkerMonthOtTotal =
                             rowOtHoursMonthTotalByKey.get(`${wave.id}|${rw.workerId}|${rosterAssignment.id}`) ?? 0;
+                          const rowClosure =
+                            po?.id != null ? workerClosureByKey.get(`${po.id}|${rw.workerId}`) : undefined;
+                          const rowPartialKey = po?.id != null ? `${po.id}|${rw.workerId}` : '';
+                          const rowSelectable =
+                            !!po?.id &&
+                            rowClosure?.status !== 'deferred' &&
+                            !(rowClosure && isWorkerMonthClosureGridLocked(rowClosure.status));
                           const editableGrid =
-                            canEditTs &&
-                            !isMonthTimesheetRowLocked(
-                              po ? poMonthByPoId.get(po.id) : undefined,
-                              monthReview,
-                            );
+                            canEditTs && !isRowLockedForWorker(po, monthReview, rw.workerId);
                           return (
                             <TableRow
                               key={`${wave.id}-${rw.workerId}-${rosterAssignment.id}`}
@@ -1994,6 +2304,29 @@ export default function WaveMonthTimesheetSummaryPage() {
                                     {positionLabelById.get((rosterAssignment.positionId || '').trim()) ||
                                       (rosterAssignment.positionId ? rosterAssignment.positionId : '—')}
                                   </span>
+                                  {po?.id ? (
+                                    <WorkerMonthClosureCell
+                                      closure={rowClosure}
+                                      canEdit={canEditTs}
+                                      selected={selectedPartialKeys.has(rowPartialKey)}
+                                      selectable={rowSelectable}
+                                      busy={partialWorkflowBusy}
+                                      onSelectedChange={(checked) => {
+                                        setSelectedPartialKeys((prev) => {
+                                          const next = new Set(prev);
+                                          if (checked) next.add(rowPartialKey);
+                                          else next.delete(rowPartialKey);
+                                          return next;
+                                        });
+                                      }}
+                                      onMarkDeferred={() =>
+                                        void handleMarkWorkerDeferred(po.id, rw.workerId, rw.name)
+                                      }
+                                      onClearDeferred={() =>
+                                        void handleClearWorkerDeferred(po.id, rw.workerId, rw.name)
+                                      }
+                                    />
+                                  ) : null}
                                 </div>
                               </TableCell>
                               {days.map((d) => {

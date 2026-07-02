@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -28,6 +28,7 @@ import type {
   PurchaseOrder,
   Wave,
   Customer,
+  WorkerMonthTimesheetClosure,
 } from '@/lib/types';
 import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import {
@@ -43,8 +44,15 @@ import {
   syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews,
 } from '@/lib/timesheet/po-month-timesheet-bridge';
 import {
+  approveWorkerMonthClosure,
+  fetchWorkerClosuresForPoMonth,
+  rejectWorkerMonthClosure,
+  workerMonthClosureStatusLabelTh,
+} from '@/lib/timesheet/worker-month-closure';
+import {
   ensureCommercialDraftInvoiceAfterMonthApproval,
   ensureCommercialDraftInvoiceAfterPoMonthApproval,
+  tryEnsurePartialCommercialDraftForCompletedBatch,
 } from '@/lib/services/commercial-invoice-service';
 import { CheckCircle2, XCircle, ChevronLeft, ExternalLink, FileText, Images } from 'lucide-react';
 import { waveRoundMonthLabel } from '@/lib/constants/timesheet-ui';
@@ -61,6 +69,9 @@ export default function TimesheetMonthApprovalQueuePage() {
   const firestore = useFirestore();
   const { toast } = useToast();
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [workerClosuresByReviewId, setWorkerClosuresByReviewId] = useState<
+    Map<string, WorkerMonthTimesheetClosure[]>
+  >(() => new Map());
   const [photoDialogRow, setPhotoDialogRow] = useState<WaveMonthTimesheetReview | null>(null);
   const [photoDialogPo, setPhotoDialogPo] = useState<PoMonthTimesheetReview | null>(null);
 
@@ -129,6 +140,25 @@ export default function TimesheetMonthApprovalQueuePage() {
     list.sort((a, b) => b.submittedAt - a.submittedAt);
     return list;
   }, [pendingPoRows]);
+
+  useEffect(() => {
+    if (!firestore || sortedPo.length === 0) {
+      setWorkerClosuresByReviewId(new Map());
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const map = new Map<string, WorkerMonthTimesheetClosure[]>();
+      for (const row of sortedPo) {
+        const closures = await fetchWorkerClosuresForPoMonth(firestore, row.poId, row.yearMonth);
+        if (closures.length > 0) map.set(row.id, closures);
+      }
+      if (!cancelled) setWorkerClosuresByReviewId(map);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, sortedPo]);
 
   const customerLabel = useMemo(() => {
     const nameById = new Map<string, string>();
@@ -281,6 +311,64 @@ export default function TimesheetMonthApprovalQueuePage() {
     }
   };
 
+  const setWorkerStatusPo = async (
+    row: PoMonthTimesheetReview,
+    closure: WorkerMonthTimesheetClosure,
+    next: 'approved' | 'rejected',
+  ) => {
+    if (!firestore || !currentUser || !canAct) return;
+    const busyKey = `${row.id}:${closure.workerId}`;
+    setBusyId(busyKey);
+    try {
+      if (next === 'approved') {
+        const { payrollUpdated } = await approveWorkerMonthClosure(firestore, closure, currentUser);
+        const actorName = currentUser.displayName || currentUser.email || currentUser.id;
+        await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, row.yearMonth, actorName);
+        const billing = await tryEnsurePartialCommercialDraftForCompletedBatch(
+          firestore,
+          row.poId,
+          row.yearMonth,
+          currentUser,
+        );
+        const billingLine =
+          billing.kind === 'created'
+            ? ` — สร้างใบแจ้งหนี้ ${billing.invoiceNo} (${billing.workerCount} คน)`
+            : billing.kind === 'waiting_batch'
+              ? ` — Invoice: ${billing.reason}`
+              : billing.kind === 'skipped'
+                ? ` — Invoice: ${billing.reason}`
+                : '';
+        const po = poById.get(row.poId);
+        toast({
+          title: 'อนุมัติรายคนแล้ว',
+          description: `${closure.workerName ?? closure.workerId} · ${row.yearMonth} · ${po?.poCode ?? row.poId} — ตั้งพร้อมจ่าย payroll ${payrollUpdated} ใบงาน${billingLine}`,
+        });
+      } else {
+        await rejectWorkerMonthClosure(firestore, closure, currentUser);
+        const po = poById.get(row.poId);
+        toast({
+          title: 'ปฏิเสธรายคนแล้ว',
+          description: `${closure.workerName ?? closure.workerId} · ${row.yearMonth} · ${po?.poCode ?? row.poId}`,
+        });
+      }
+      const refreshed = await fetchWorkerClosuresForPoMonth(firestore, row.poId, row.yearMonth);
+      setWorkerClosuresByReviewId((prev) => {
+        const nextMap = new Map(prev);
+        if (refreshed.length > 0) nextMap.set(row.id, refreshed);
+        else nextMap.delete(row.id);
+        return nextMap;
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   if (userLoading || !currentUser) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">กำลังโหลด…</div>
@@ -378,68 +466,123 @@ export default function TimesheetMonthApprovalQueuePage() {
                       {g.rows.map((row) => {
                         const po = poById.get(row.poId);
                         const bundleKey = po ? resolvePoActiveBundleKeyForPo(po) : `orphan:${row.poId}`;
+                        const rowClosures = workerClosuresByReviewId.get(row.id) ?? [];
+                        const pendingWorkers = rowClosures.filter((c) => c.status === 'pending_manager_review');
+                        const usePerWorker = pendingWorkers.length > 0;
                         return (
-                          <TableRow key={row.id}>
-                            <TableCell className="font-mono text-sm">{row.yearMonth}</TableCell>
-                            <TableCell className="text-sm">
-                              <span className="font-medium">{po?.poCode ?? row.poId}</span>
-                              <Badge variant="outline" className="ml-2 text-[10px] font-normal">
-                                Timesheet
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-sm">รวมทุก wave</TableCell>
-                            <TableCell className="text-xs text-muted-foreground">
-                              {row.submittedByName ?? row.submittedByUserId}
-                              <br />
-                              <span className="font-mono">{new Date(row.submittedAt).toLocaleString('th-TH')}</span>
-                            </TableCell>
-                            <TableCell className="text-center">
-                              <div className="flex flex-wrap items-center justify-center gap-2">
-                                <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
-                                  <Link
-                                    href={`/timesheets/wave-month?month=${encodeURIComponent(row.yearMonth)}&highlightPo=${encodeURIComponent(row.poId)}&poActiveBundleId=${encodeURIComponent(bundleKey)}`}
+                          <Fragment key={row.id}>
+                            <TableRow>
+                              <TableCell className="font-mono text-sm">{row.yearMonth}</TableCell>
+                              <TableCell className="text-sm">
+                                <span className="font-medium">{po?.poCode ?? row.poId}</span>
+                                <Badge variant="outline" className="ml-2 text-[10px] font-normal">
+                                  Timesheet
+                                </Badge>
+                                {usePerWorker ? (
+                                  <p className="mt-1 text-[10px] text-muted-foreground">
+                                    อนุมัติรายคน ({pendingWorkers.length} รอตรวจ)
+                                  </p>
+                                ) : null}
+                              </TableCell>
+                              <TableCell className="text-sm">รวมทุก wave</TableCell>
+                              <TableCell className="text-xs text-muted-foreground">
+                                {row.submittedByName ?? row.submittedByUserId}
+                                <br />
+                                <span className="font-mono">{new Date(row.submittedAt).toLocaleString('th-TH')}</span>
+                              </TableCell>
+                              <TableCell className="text-center">
+                                <div className="flex flex-wrap items-center justify-center gap-2">
+                                  <Button variant="outline" size="sm" className="h-8 gap-1" asChild>
+                                    <Link
+                                      href={`/timesheets/wave-month?month=${encodeURIComponent(row.yearMonth)}&highlightPo=${encodeURIComponent(row.poId)}&poActiveBundleId=${encodeURIComponent(bundleKey)}`}
+                                    >
+                                      <ExternalLink className="h-3.5 w-3.5" />
+                                      Timesheet
+                                    </Link>
+                                  </Button>
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    className="h-8 gap-1"
+                                    type="button"
+                                    onClick={() => setPhotoDialogPo(row)}
+                                    disabled={!(row.timesheetPhotoAttachments && row.timesheetPhotoAttachments.length > 0)}
                                   >
-                                    <ExternalLink className="h-3.5 w-3.5" />
-                                    Timesheet
-                                  </Link>
-                                </Button>
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  className="h-8 gap-1"
-                                  type="button"
-                                  onClick={() => setPhotoDialogPo(row)}
-                                  disabled={!(row.timesheetPhotoAttachments && row.timesheetPhotoAttachments.length > 0)}
-                                >
-                                  <Images className="h-3.5 w-3.5" />
-                                  รูปแนบ
-                                </Button>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <div className="flex justify-end gap-2">
-                                <Button
-                                  size="sm"
-                                  className="gap-1"
-                                  disabled={!canAct || busyId === row.id}
-                                  onClick={() => setStatusPo(row, 'approved')}
-                                >
-                                  <CheckCircle2 className="h-4 w-4" />
-                                  อนุมัติ
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="gap-1"
-                                  disabled={!canAct || busyId === row.id}
-                                  onClick={() => setStatusPo(row, 'rejected')}
-                                >
-                                  <XCircle className="h-4 w-4" />
-                                  ปฏิเสธ
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
+                                    <Images className="h-3.5 w-3.5" />
+                                    รูปแนบ
+                                  </Button>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {usePerWorker ? (
+                                  <span className="text-xs text-muted-foreground">ดูรายคนด้านล่าง</span>
+                                ) : (
+                                  <div className="flex justify-end gap-2">
+                                    <Button
+                                      size="sm"
+                                      className="gap-1"
+                                      disabled={!canAct || busyId === row.id}
+                                      onClick={() => setStatusPo(row, 'approved')}
+                                    >
+                                      <CheckCircle2 className="h-4 w-4" />
+                                      อนุมัติทั้ง PO
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="gap-1"
+                                      disabled={!canAct || busyId === row.id}
+                                      onClick={() => setStatusPo(row, 'rejected')}
+                                    >
+                                      <XCircle className="h-4 w-4" />
+                                      ปฏิเสธ
+                                    </Button>
+                                  </div>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                            {usePerWorker
+                              ? pendingWorkers.map((closure) => {
+                                  const busyKey = `${row.id}:${closure.workerId}`;
+                                  return (
+                                    <TableRow key={closure.id} className="bg-muted/20">
+                                      <TableCell />
+                                      <TableCell colSpan={2} className="text-sm">
+                                        <span className="font-medium">{closure.workerName ?? closure.workerId}</span>
+                                        <Badge variant="secondary" className="ml-2 text-[10px]">
+                                          {workerMonthClosureStatusLabelTh(closure.status)}
+                                        </Badge>
+                                      </TableCell>
+                                      <TableCell />
+                                      <TableCell />
+                                      <TableCell className="text-right">
+                                        <div className="flex justify-end gap-2">
+                                          <Button
+                                            size="sm"
+                                            className="gap-1 h-8"
+                                            disabled={!canAct || busyId === busyKey}
+                                            onClick={() => setWorkerStatusPo(row, closure, 'approved')}
+                                          >
+                                            <CheckCircle2 className="h-3.5 w-3.5" />
+                                            อนุมัติ
+                                          </Button>
+                                          <Button
+                                            size="sm"
+                                            variant="outline"
+                                            className="gap-1 h-8"
+                                            disabled={!canAct || busyId === busyKey}
+                                            onClick={() => setWorkerStatusPo(row, closure, 'rejected')}
+                                          >
+                                            <XCircle className="h-3.5 w-3.5" />
+                                            ปฏิเสธ
+                                          </Button>
+                                        </div>
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })
+                              : null}
+                          </Fragment>
                         );
                       })}
                     </Fragment>

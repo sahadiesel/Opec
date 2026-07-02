@@ -495,6 +495,12 @@ service cloud.firestore {
       allow update: if blockExecutiveWrite() && (rs13() || rs13());
       allow delete: if blockExecutiveWrite() && rs13();
     }
+    match /worker_month_timesheet_closures/{id} {
+      allow read:   if rs12();
+      allow create: if blockExecutiveWrite() && rs13();
+      allow update: if blockExecutiveWrite() && (rs13() || rs13());
+      allow delete: if blockExecutiveWrite() && rs13();
+    }
     match /wave_month_timesheet_photo_bundles/{id} {
       allow read:   if rs12();
       allow create: if blockExecutiveWrite() && rs13();

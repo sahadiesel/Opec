@@ -1,8 +1,11 @@
 import type { Assignment, DailyTimesheet, POLine, PurchaseOrder } from '@/lib/types';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
+import { assignmentHasUnassignedAtSet } from '@/lib/ops/po-fulfillment-read-model';
 import {
   assignmentHasSplitPriorAndNewCycleOnDoc,
+  assignmentIsRemobMobilizationOnDoc,
   isYmdInRemobGapBetweenCycles,
+  mobLocationEndDateCapsAssignmentTimesheetWindow,
   resolveMobSegmentStartYmd,
 } from '@/lib/constants/timesheet-ui';
 import { resolveWorkModeForPoContext } from '@/lib/ops/po-active-bundle';
@@ -34,7 +37,7 @@ export function effectiveWaveIdForPoActiveAuto(a: Pick<Assignment, 'waveId' | 'p
 /** ACTIVE + ยังไม่ Unassign + มีข้อมูลผูก PO (+ waveId จริงหรือ fallback PO scope) */
 export function isAssignmentEligibleForPoActiveAutoDaily(a: Assignment): boolean {
   if (a.deploymentStatus !== 'ACTIVE') return false;
-  if (typeof a.unassignedAt === 'number' && a.unassignedAt > 0) return false;
+  if (assignmentHasUnassignedAtSet(a)) return false;
   const siteId = effectiveWaveIdForPoActiveAuto(a);
   return !!(a.poId?.trim() && a.poLineId?.trim() && a.workerId?.trim() && siteId);
 }
@@ -67,6 +70,16 @@ export function resolvePoActiveAutoDailySyncKind(a: Assignment, dateYmd: string)
   const hasMobStart = /^\d{4}-\d{2}-\d{2}$/.test(mobStart);
   if (hasNaturalSb && hasMobStart && mobStandby < mobStart && dateYmd >= mobStandby && dateYmd < mobStart) {
     return 'standby_day';
+  }
+
+  const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
+  const segmentStart = resolveMobSegmentStartYmd(a) ?? (hasMobStart ? mobStart : undefined);
+  if (segmentStart && dateYmd < segmentStart) {
+    return null;
+  }
+  if (assignmentHasSplitPriorAndNewCycleOnDoc(a) && /^\d{4}-\d{2}-\d{2}$/.test(mobEnd) && dateYmd <= mobEnd) {
+    /** รอบเก่าที่จบแล้ว — ไม่ auto ทับ / สร้าง work_day ใหม่ */
+    return null;
   }
 
   return 'work_day';
@@ -104,8 +117,14 @@ export function computePoActiveAutoDailyRange(
     startRaw = mobStandby;
   } else if (hasMobStart) {
     startRaw = mobStart;
-    /** ช่วงก่อนเริ่มงานไม่มี mobStandbyDate — ตารางรายเดือนใช้ startDate เป็นพื้น (ไม่ใช่ remob หลังจบรอบเก่า) */
-    if (!hasStandby && hasAssignStart && assignStart < mobStart && !splitPriorAndNewCycleOnDoc) {
+    /** ช่วงก่อนเริ่มงานไม่มี mobStandbyDate — ใช้ startDate เฉพาะ mobilization ครั้งแรก (ไม่ใช่ remob) */
+    if (
+      !hasStandby &&
+      hasAssignStart &&
+      assignStart < mobStart &&
+      !splitPriorAndNewCycleOnDoc &&
+      !assignmentIsRemobMobilizationOnDoc(a)
+    ) {
       startRaw = assignStart;
     }
   } else if (hasAssignStart) {
@@ -132,7 +151,11 @@ export function computePoActiveAutoDailyRange(
   if (/^\d{4}-\d{2}-\d{2}$/.test(assignEnd)) {
     cap = minYmd(cap, assignEnd);
   }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(mobLocEnd) && mobLocEnd >= startRaw) {
+  if (
+    /^\d{4}-\d{2}-\d{2}$/.test(mobLocEnd) &&
+    mobLocEnd >= startRaw &&
+    mobLocationEndDateCapsAssignmentTimesheetWindow(a)
+  ) {
     cap = minYmd(cap, mobLocEnd);
   }
   /** remob: mobLocationEndDate เป็นของรอบเก่า — อย่าใช้เป็นฝาหลังวันเริ่มรอบใหม่ */
@@ -146,6 +169,21 @@ export function computePoActiveAutoDailyRange(
 
   if (startRaw > cap) return null;
   return { start: startRaw, end: cap };
+}
+
+/** ลบแถว auto ที่สร้างผิดก่อนวัน remob / ในช่วง gap ระหว่างรอบ */
+export function shouldDeleteStalePoActiveAutoDailyRow(
+  a: Assignment,
+  dateYmd: string,
+): boolean {
+  if (isYmdInRemobGapBetweenCycles(a, dateYmd)) return true;
+  const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
+  const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
+  if (assignmentHasSplitPriorAndNewCycleOnDoc(a) && /^\d{4}-\d{2}-\d{2}$/.test(mobEnd) && dateYmd <= mobEnd) {
+    return false;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(mobStart) && dateYmd < mobStart) return true;
+  return false;
 }
 
 export function* eachYmdInRange(start: string, end: string): Generator<string> {

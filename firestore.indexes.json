@@ -376,6 +376,22 @@
         { "fieldPath": "subjectKey", "order": "ASCENDING" },
         { "fieldPath": "payrollMonth", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "worker_month_timesheet_closures",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "poId", "order": "ASCENDING" },
+        { "fieldPath": "yearMonth", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "worker_month_timesheet_closures",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "yearMonth", "order": "ASCENDING" },
+        { "fieldPath": "poId", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

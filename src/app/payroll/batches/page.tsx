@@ -80,7 +80,9 @@ import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 const PO_MONTH_GATE_STATUSES = new Set<PoMonthTimesheetReview['status']>([
   'approved',
   'entry_locked',
+  'partially_closed',
   'pending_manager_review',
+  'partially_approved',
 ]);
 
 const PO_MONTH_REVIEWS_LIMIT = 120;

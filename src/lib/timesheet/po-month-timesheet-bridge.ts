@@ -15,7 +15,7 @@ import type { Assignment, PayrollPeriod, PayrollPeriodStatus, PoMonthTimesheetRe
 import { resolveBillingMode } from '@/lib/commercial/resolve-billing-mode';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { purchaseOrderOverlapsYearMonth } from '@/lib/timesheet/po-location-month-shell';
-import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
+import { fetchWorkerClosuresForPoMonth } from '@/lib/timesheet/worker-month-closure';
 
 const FIRESTORE_BATCH_LIMIT = 400;
 /** Firestore `in` จำกัด 30 ค่า — ใช้แบ่ง waveId เวลาดึงใบงานตาม Wave จริงใต้ PO */
@@ -58,7 +58,7 @@ export function resolvePoMonthPeriodBounds(
  * ใช้ขอบเขต **ทั้งเดือนปฏิทิน** (`yearMonth`) ไม่ใช่แค่ periodStart–periodEnd บนเอกสาร —
  * สอดคล้องกับ markTimesheetsReadyForPayrollAfterPoMonthApproval เดิม
  */
-async function gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(
+export async function gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(
   db: Firestore,
   poId: string,
   yearMonth: string,
@@ -253,6 +253,70 @@ export async function markTimesheetsReadyForPayrollAfterPoMonthApproval(
   return { updated };
 }
 
+async function filterTimesheetRefsByWorkerIds(
+  db: Firestore,
+  refs: DocumentReference[],
+  workerIds: Set<string>,
+): Promise<DocumentReference[]> {
+  if (workerIds.size === 0) return [];
+  const out: DocumentReference[] = [];
+  for (let i = 0; i < refs.length; i += 100) {
+    const chunk = refs.slice(i, i + 100);
+    const snaps = await Promise.all(chunk.map((r) => getDoc(r)));
+    for (const s of snaps) {
+      if (!s.exists()) continue;
+      const wid = String(s.data()?.workerId || '').trim();
+      if (wid && workerIds.has(wid)) out.push(s.ref);
+    }
+  }
+  return out;
+}
+
+/** ตั้ง readyForPayroll / readyForBilling เฉพาะคนงานที่ระบุ (ปิดงวดบางส่วน) */
+export async function markTimesheetsReadyForPoMonthWorkerIds(
+  db: Firestore,
+  poId: string,
+  yearMonth: string,
+  workerIds: string[],
+): Promise<{ updated: number }> {
+  const ym = yearMonth.trim();
+  const pid = poId.trim();
+  const allow = new Set(workerIds.map((id) => id.trim()).filter(Boolean));
+  if (!pid || !/^\d{4}-\d{2}$/.test(ym) || allow.size === 0) return { updated: 0 };
+
+  const allRefs = await gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(db, pid, ym);
+  const refs = await filterTimesheetRefsByWorkerIds(db, allRefs, allow);
+  if (refs.length === 0) return { updated: 0 };
+
+  let billingMode: 'MONTHLY' | 'TRIP' = 'MONTHLY';
+  const poSnap = await getDoc(doc(db, 'purchase_orders', pid));
+  if (poSnap.exists()) {
+    billingMode = await resolveBillingMode(db, { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder);
+  }
+
+  let batch = writeBatch(db);
+  let n = 0;
+  let updated = 0;
+  const ts = Date.now();
+
+  for (const ref of refs) {
+    if (billingMode === 'MONTHLY') {
+      batch.update(ref, { readyForPayroll: true, readyForBilling: true, updatedAt: ts });
+    } else {
+      batch.update(ref, { readyForPayroll: true, updatedAt: ts });
+    }
+    updated++;
+    n++;
+    if (n >= FIRESTORE_BATCH_LIMIT) {
+      await batch.commit();
+      batch = writeBatch(db);
+      n = 0;
+    }
+  }
+  if (n > 0) await batch.commit();
+  return { updated };
+}
+
 /**
  * Admin ปลดล็อก PO+เดือน — ล้าง ready บนใบงานในเดือนปฏิทินนี้ของ PO (ไม่แตะ daily ที่สถานะ LOCKED)
  */
@@ -303,7 +367,9 @@ export async function clearReadyPayrollFlagsForPoCalendarMonth(
 const PO_MONTH_GATE_STATUSES: PoMonthTimesheetReview['status'][] = [
   'approved',
   'entry_locked',
+  'partially_closed',
   'pending_manager_review',
+  'partially_approved',
 ];
 
 /**
@@ -317,6 +383,14 @@ export async function syncReadyPayrollFlagsForPoMonth(
   const ym = yearMonth.trim();
   const pid = poId.trim();
   if (!/^\d{4}-\d{2}$/.test(ym) || !pid) return { updated: 0 };
+
+  const closures = await fetchWorkerClosuresForPoMonth(db, pid, ym);
+  if (closures.length > 0) {
+    const approvedIds = closures.filter((c) => c.status === 'approved').map((c) => c.workerId);
+    if (approvedIds.length === 0) return { updated: 0 };
+    return markTimesheetsReadyForPoMonthWorkerIds(db, pid, ym, approvedIds);
+  }
+
   return markTimesheetsReadyForPayrollAfterPoMonthApproval(db, {
     id: poMonthTimesheetReviewDocId(pid, ym),
     poId: pid,

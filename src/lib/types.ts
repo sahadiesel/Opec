@@ -1482,9 +1482,46 @@ export interface WaveMonthTimesheetPhotoBundle {
 
 export type WaveMonthTimesheetReviewStatus =
   | 'entry_locked'
+  | 'partially_closed'
+  | 'pending_manager_review'
+  | 'partially_approved'
+  | 'approved'
+  | 'rejected';
+
+/** สถานะปิดงวดรายคนต่อ PO+เดือน — collection `worker_month_timesheet_closures` */
+export type WorkerMonthClosureStatus =
+  | 'open'
+  | 'deferred'
+  | 'entry_locked'
   | 'pending_manager_review'
   | 'approved'
   | 'rejected';
+
+export interface WorkerMonthTimesheetClosure {
+  id: string;
+  poId: string;
+  /** yyyy-MM */
+  yearMonth: string;
+  workerId: string;
+  workerName?: string;
+  status: WorkerMonthClosureStatus;
+  deferredReason?: 'awaiting_ship_timesheet' | 'other';
+  deferredNote?: string;
+  deferredAt?: number;
+  closureBatchNo?: number;
+  entryLockedAt?: number;
+  entryLockedByUserId?: string;
+  entryLockedByName?: string;
+  submittedAt?: number;
+  submittedByUserId?: string;
+  submittedByName?: string;
+  reviewedAt?: number;
+  reviewedByUserId?: string;
+  reviewedByName?: string;
+  reviewNote?: string;
+  createdAt: number;
+  updatedAt: number;
+}
 
 /**
  * เอกสาร timesheet รวมรายเดือน (หนึ่งฉบับต่อเดือน) — เลขที่ `timesheetNo` จาก `number_sequences` key `monthly_timesheet` (Prefix TS-)
@@ -1896,6 +1933,10 @@ export interface CommercialInvoice {
   sourceWaveMonthReviewId?: string;
   /** อ้าง po_month_timesheet_reviews — งวดอนุมัติราย PO+เดือน (รวมทุก wave) */
   sourcePoMonthReviewId?: string;
+  /** Partial billing: คนงานที่รวมในใบนี้ (ว่าง = ทั้ง PO+งวด) */
+  coveredWorkerIds?: string[];
+  /** Partial billing: รอบปิดงวด (batch) จาก worker_month_timesheet_closures */
+  partialPoMonthBatchNo?: number;
   /** อ้าง trip_billing_batches — วางบิลรอบ M1→D1 (หลายคนต่อ invoice) */
   sourceTripBillingBatchId?: string;
   billingMode?: ContractBillingMode;

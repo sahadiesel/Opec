@@ -185,8 +185,10 @@ export function anyPoMonthTimesheetDocStarted(
   reviewByDocId: Map<string, PoMonthTimesheetReview>,
 ): boolean {
   const started: PoMonthTimesheetReview['status'][] = [
-    'entry_locked',
-    'pending_manager_review',
+  'entry_locked',
+  'partially_closed',
+  'pending_manager_review',
+  'partially_approved',
     'approved',
     'rejected',
   ];

@@ -24,6 +24,7 @@ import {
   yearMonthFromCommercialInvoice,
 } from '@/lib/client-portal/timesheet-portal-utils';
 import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
+import { isPartialPoMonthCommercialInvoice } from '@/lib/commercial/partial-po-month-billing';
 import { poActiveBundleWorkModeShortLabel } from '@/lib/ops/po-active-bundle-grouping';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import type {
@@ -246,10 +247,16 @@ export default function ClientPortalTimesheetHubPage() {
   }, [commercialInvoices]);
 
   const commercialByPoMonthReviewId = useMemo(() => {
-    const m = new Map<string, CommercialInvoice>();
+    const m = new Map<string, CommercialInvoice[]>();
     for (const c of commercialInvoices ?? []) {
       if (c.status === 'VOID' || !c.sourcePoMonthReviewId?.trim()) continue;
-      m.set(c.sourcePoMonthReviewId.trim(), c);
+      const key = c.sourcePoMonthReviewId.trim();
+      const list = m.get(key) ?? [];
+      list.push(c);
+      m.set(key, list);
+    }
+    for (const list of m.values()) {
+      list.sort((a, b) => (a.invoiceNo || a.id).localeCompare(b.invoiceNo || b.id, 'th'));
     }
     return m;
   }, [commercialInvoices]);
@@ -440,10 +447,7 @@ export default function ClientPortalTimesheetHubPage() {
                         </TableHeader>
                         <TableBody>
                           {monthRows.map((r) => {
-                            const commRow = commercialByPoMonthReviewId.get(r.review.id);
-                            const billingHref = commRow
-                              ? `/client-portal/commercial-invoices/${encodeURIComponent(commRow.id)}`
-                              : null;
+                            const commRows = commercialByPoMonthReviewId.get(r.review.id) ?? [];
                             const detailHref = `/client-portal/timesheets/po-month?poId=${encodeURIComponent(poId)}&month=${encodeURIComponent(r.yearMonth)}`;
                             return (
                               <TableRow key={r.review.id}>
@@ -457,13 +461,24 @@ export default function ClientPortalTimesheetHubPage() {
                                   </Badge>
                                 </TableCell>
                                 <TableCell className="text-sm">
-                                  {billingHref && commRow ? (
-                                    <Link
-                                      href={billingHref}
-                                      className="font-mono text-primary underline-offset-4 hover:underline"
-                                    >
-                                      {commRow.invoiceNo}
-                                    </Link>
+                                  {commRows.length > 0 ? (
+                                    <div className="flex flex-col gap-1">
+                                      {commRows.map((commRow) => (
+                                        <div key={commRow.id} className="flex flex-wrap items-center gap-1.5">
+                                          <Link
+                                            href={`/client-portal/commercial-invoices/${encodeURIComponent(commRow.id)}`}
+                                            className="font-mono text-primary underline-offset-4 hover:underline"
+                                          >
+                                            {commRow.invoiceNo}
+                                          </Link>
+                                          {isPartialPoMonthCommercialInvoice(commRow) ? (
+                                            <Badge variant="secondary" className="text-[10px]">
+                                              Partial
+                                            </Badge>
+                                          ) : null}
+                                        </div>
+                                      ))}
+                                    </div>
                                   ) : (
                                     <span className="text-muted-foreground">—</span>
                                   )}

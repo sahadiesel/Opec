@@ -39,6 +39,7 @@ import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import {
   formatDateThaiBE,
   formatDateTimeThaiBE,
+  formatYmdLocalThaiBE,
   htmlDateValueToTimestampMs,
   timestampToHtmlDateValue,
 } from '@/lib/date-thai';
@@ -1200,7 +1201,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           />
                           {isFinalClearanceStep2Done(assignment) ? (
                             <p className="text-sm">
-                              บันทึกแล้ว — วันที่ {assignment.mobStandbyDate} ·{' '}
+                              บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobStandbyDate)} ·{' '}
                               {mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ?? 'SB'} (
                               {mobStandbyMobDayChoiceLabel(assignment.mobStandbyDayEventType ?? 'standby_day')}) ·{' '}
                               {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
@@ -1297,7 +1298,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           />
                           {isFinalClearanceStep3Done(assignment) ? (
                             <p className="text-sm">
-                              เริ่มแล้ว — วันที่ {assignment.mobWorkingStartDate} ·{' '}
+                              เริ่มแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobWorkingStartDate)} ·{' '}
                               {formatDateTimeThaiBE(assignment.mobWorkingStartedAt)}
                             </p>
                           ) : null}
@@ -1626,7 +1627,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                 <p>
                   จะใช้วันที่{' '}
                   <strong className="text-foreground">
-                    {standbyDateDraft ? formatDateThaiBE(standbyDateDraft) : '—'}
+                    {standbyDateDraft ? formatYmdLocalThaiBE(standbyDateDraft) : '—'}
                   </strong>{' '}
                   เป็นวัน Standby หรือ วันเดินทาง?
                 </p>
