@@ -2355,9 +2355,25 @@ export type WorkerPitCalculationMode = 'manual_baht' | 'auto_timesheet' | 'auto_
 /** แยกค่าแรง work_day แพ็กสำหรับสลิป — snapshot ตอน generate/recalc (ผลรวมเท่า earningsBreakdown.work_day_package) */
 export interface PayslipWorkDaySplit {
   normalDays: number;
+  /** ค่าแรงฐานวันปกติ (ชม.ปกติในกรอบ 8 ชม. — ไม่รวม OT) */
   normalAmount: number;
   holidayDays: number;
+  /** ค่าแรงฐานวันหยุด (ชม.ปกติในกรอบ 8 ชม. — ไม่รวม OT) */
   holidayAmount: number;
+  /** รวม OT จาก work_day แพ็ก — ถ้าไม่มีฟิลด์นี้ (batch เก่า) ถือว่า normal/holiday รวม OT แล้ว */
+  otAmount?: number;
+  ot15Hours?: number;
+  ot20Hours?: number;
+  ot30Hours?: number;
+  /** ชม.เกิน 8 ใน normalHours ที่คิดเป็น OT (แพ็ก 8 ชม.) */
+  overflowNormalHours?: number;
+  ot15Amount?: number;
+  ot20Amount?: number;
+  ot30Amount?: number;
+  overflowOtAmount?: number;
+  /** ชม.เกิน 12 ใน normalHours (แพ็ก 12 ชม. offshore) */
+  overflowBeyond12Hours?: number;
+  overflowBeyond12Amount?: number;
 }
 
 /** ปรับยอดรายคนใน batch (เงินพิเศษ / หักเพิ่ม / ภาษี ณ ที่จ่าย) — คำนวณ net ใหม่ตาม HR settings */

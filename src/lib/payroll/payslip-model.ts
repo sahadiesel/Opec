@@ -15,6 +15,11 @@ import { leaveSummaryLabelTh } from '@/lib/payroll/office-payroll-period-deducti
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
 import { resolvePoLineForPayrollTimesheet } from '@/lib/payroll/timesheet-labor-base-cost';
 import { isPayrollCostStandbyPackageEvent } from '@/lib/payroll/package-labor-cost';
+import {
+  computeWorkDayPackagePayslipSplit,
+  payslipWorkDaySplitTotal,
+  pushWorkDayPayslipIncomeLines,
+} from '@/lib/payroll/work-day-payslip-split';
 import type { SingleTimesheetGrossContext } from '@/lib/payroll/single-timesheet-gross';
 
 export const PAYSLIP_DEFAULT_COMPANY_TH = 'โอพีอีซี ออปส์โฟลว์';
@@ -137,18 +142,6 @@ function formatThaiMoneyAmount(n: number): string {
   }).format(n);
 }
 
-function workDaySplitIncomeLine(titleWithOptionalPrefix: string, days: number, amount: number): PayslipLineItem | null {
-  if (days <= 0 || amount <= 0.005) return null;
-  const rate = round2(amount / days);
-  const product = round2(days * rate);
-  const consistent = Math.abs(product - amount) <= 0.02;
-  /** ยอดรวมแสดงเฉพาะคอลัมน์จำนวนเงิน — ไม่ซ้ำในข้อความรายการ */
-  const label = consistent
-    ? `${titleWithOptionalPrefix} ${days} วัน × ${formatThaiMoneyAmount(rate)}`
-    : `${titleWithOptionalPrefix} ${days} วัน (เฉลี่ยวันละ ${formatThaiMoneyAmount(rate)} บาท)`;
-  return { label, amount: round2(amount) };
-}
-
 function standbyDaysFromEventBreakdown(ev: Record<string, number> | undefined): number {
   const n = Number(ev?.standby_day ?? 0);
   return Number.isFinite(n) && n > 0 ? n : 0;
@@ -184,17 +177,7 @@ function tryPushWorkDayPackageSplitLines(
   split: PayslipWorkDaySplit | null | undefined,
   labelPrefix: string,
 ): boolean {
-  if (!split) return false;
-  const sum = round2(split.normalAmount + split.holidayAmount);
-  if (Math.abs(sum - pkgAmount) > 0.05) return false;
-  const pfx = labelPrefix.trim();
-  const baseNormal = pfx ? `${pfx} ค่าแรงวันปกติ` : 'ค่าแรงวันปกติ';
-  const baseHoliday = pfx ? `${pfx} ค่าแรงวันหยุด` : 'ค่าแรงวันหยุด';
-  const n = workDaySplitIncomeLine(baseNormal, split.normalDays, split.normalAmount);
-  const h = workDaySplitIncomeLine(baseHoliday, split.holidayDays, split.holidayAmount);
-  if (n) lines.push(n);
-  if (h) lines.push(h);
-  return !!(n || h);
+  return pushWorkDayPayslipIncomeLines(lines, pkgAmount, split, labelPrefix);
 }
 
 function payslipIncomeSegmentPrefix(seg: PayrollBatchIncomeSegment): string {
@@ -309,10 +292,6 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
     })),
   ];
 
-  let normalDays = 0;
-  let normalAmount = 0;
-  let holidayDays = 0;
-  let holidayAmount = 0;
   let standbyDays = 0;
   let standbyAmount = 0;
   const policyAmounts: Record<string, number> = {};
@@ -338,23 +317,34 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
       continue;
     }
     if (ts.eventType === 'work_day' && r.usedPackageLaborCost) {
-      if (r.workDayRestDay) {
-        holidayDays += 1;
-        holidayAmount += r.gross;
-      } else {
-        normalDays += 1;
-        normalAmount += r.gross;
-      }
       continue;
     }
     const policyKey = `${ts.eventType}_policy`;
     policyAmounts[policyKey] = (policyAmounts[policyKey] || 0) + r.gross;
   }
 
-  const n = workDaySplitIncomeLine('ค่าแรงวันปกติ', normalDays, round2(normalAmount));
-  const h = workDaySplitIncomeLine('ค่าแรงวันหยุด', holidayDays, round2(holidayAmount));
-  if (n) lines.push(n);
-  if (h) lines.push(h);
+  const workDayPkg = round2(
+    Number(line.earningsBreakdown?.work_day_package) ||
+      Number(line.d8Snapshot?.earningsComponents?.work_day_package) ||
+      0,
+  );
+  const split = computeWorkDayPackagePayslipSplit(timesheets, {
+    poLineMaps: ctx.poLineMaps,
+    poContractById: ctx.poContractById,
+    poWorkModeByPoId: ctx.poWorkModeByPoId,
+    workerById: ctx.workerById,
+    posById: ctx.posById,
+    contractMap: ctx.contractMap,
+    workerGlobalLabor: ctx.workerGlobalLabor,
+  });
+  if (
+    !pushWorkDayPayslipIncomeLines(lines, workDayPkg > 0 ? workDayPkg : payslipWorkDaySplitTotal(split), split, '')
+  ) {
+    const fallbackPkg = round2(split.normalAmount + split.holidayAmount + (split.otAmount ?? 0));
+    if (fallbackPkg > 0.005) {
+      pushWorkDayPayslipIncomeLines(lines, fallbackPkg, split, '');
+    }
+  }
   if (standbyDays > 0 && standbyAmount > 0.005) {
     lines.push(
       standbyPayslipLine('', 'standby_day', round2(standbyAmount), { standby_day: standbyDays }),

@@ -67,6 +67,17 @@ const PayslipWorkDaySplitSchema = z.object({
   normalAmount: z.number(),
   holidayDays: z.number(),
   holidayAmount: z.number(),
+  otAmount: z.number().optional(),
+  ot15Hours: z.number().optional(),
+  ot20Hours: z.number().optional(),
+  ot30Hours: z.number().optional(),
+  overflowNormalHours: z.number().optional(),
+  ot15Amount: z.number().optional(),
+  ot20Amount: z.number().optional(),
+  ot30Amount: z.number().optional(),
+  overflowOtAmount: z.number().optional(),
+  overflowBeyond12Hours: z.number().optional(),
+  overflowBeyond12Amount: z.number().optional(),
 });
 
 const PayrollBatchIncomeSegmentSchema = z.object({
