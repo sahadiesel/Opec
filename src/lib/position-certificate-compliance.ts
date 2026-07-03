@@ -2,6 +2,7 @@ import type {
   PositionCertificateRequirement,
   WorkerCertificate,
   WorkerDocument,
+  WorkerRequirementSkip,
 } from '@/lib/types';
 import { isStoredExpiryPast } from '@/lib/date-thai';
 
@@ -160,18 +161,22 @@ export function getUnsatisfiedMandatoryCertificateRequirements(
   documents: WorkerDocument[],
   now = Date.now(),
   catalogLookup?: CredentialCatalogLookup,
+  skipReq?: (req: PositionCertificateRequirement) => boolean,
 ): PositionCertificateRequirement[] {
   const missing: PositionCertificateRequirement[] = [];
   const { standalone, orGroups } = partitionMandatoryCertificateRequirements(mandatoryReqs);
 
   for (const req of standalone) {
+    if (skipReq?.(req)) continue;
     if (!workerHasValidCertificateRequirement(req, certificates, documents, now, catalogLookup)) {
       missing.push(req);
     }
   }
 
   for (const [, groupReqs] of orGroups) {
-    const anyValid = groupReqs.some((req) =>
+    const applicable = groupReqs.filter((r) => !skipReq?.(r));
+    if (applicable.length === 0) continue;
+    const anyValid = applicable.some((req) =>
       workerHasValidCertificateRequirement(req, certificates, documents, now, catalogLookup),
     );
     if (!anyValid) {
@@ -192,6 +197,7 @@ export function getMandatoryRequirementsWithNoWorkerRecord(
   documents: WorkerDocument[],
   now = Date.now(),
   catalogLookup?: CredentialCatalogLookup,
+  skipReq?: (req: PositionCertificateRequirement) => boolean,
 ): PositionCertificateRequirement[] {
   const unsatisfied = getUnsatisfiedMandatoryCertificateRequirements(
     mandatoryReqs,
@@ -199,6 +205,7 @@ export function getMandatoryRequirementsWithNoWorkerRecord(
     documents,
     now,
     catalogLookup,
+    skipReq,
   );
   return unsatisfied.filter((req) => {
     if (reqType(req) === 'document') {
@@ -235,6 +242,41 @@ export function groupPositionCertificateRequirementsForDisplay(
 
 export function orGroupMemberSummary(reqs: PositionCertificateRequirement[]): string {
   return reqs.map((r) => r.certificateName || r.certificateCode).filter(Boolean).join(' · ');
+}
+
+/** doc id คงที่สำหรับ workers/{id}/requirement_skips */
+export function requirementSkipDocId(
+  req: Pick<PositionCertificateRequirement, 'id' | 'alternativeGroupKey'>,
+): string {
+  const gk = (req.alternativeGroupKey || '').trim();
+  if (gk) return `or_${gk.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120)}`;
+  return `req_${(req.id || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+}
+
+export function buildManualRequirementSkipPredicate(
+  skips: readonly WorkerRequirementSkip[] | null | undefined,
+): (req: PositionCertificateRequirement) => boolean {
+  const list = skips || [];
+  const byReqId = new Set(list.map((s) => (s.requirementId || '').trim()).filter(Boolean));
+  const byCode = new Set(
+    list.map((s) => (s.certificateCode || '').trim().toLowerCase()).filter(Boolean),
+  );
+  const byOrGroup = new Set(
+    list.map((s) => (s.alternativeGroupKey || '').trim()).filter(Boolean),
+  );
+  return (req) => {
+    if (byReqId.has(req.id)) return true;
+    if (byCode.has((req.certificateCode || '').trim().toLowerCase())) return true;
+    const gk = (req.alternativeGroupKey || '').trim();
+    if (gk && byOrGroup.has(gk)) return true;
+    return false;
+  };
+}
+
+export function mergeRequirementSkipPredicates(
+  ...preds: Array<((req: PositionCertificateRequirement) => boolean) | undefined>
+): (req: PositionCertificateRequirement) => boolean {
+  return (req) => preds.some((p) => p?.(req));
 }
 
 export function slugAlternativeGroupKey(label: string): string {

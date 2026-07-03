@@ -48,12 +48,14 @@ import {
   DrugTestPanelConfig,
   Assignment,
   WorkerStoreEquipmentReadiness,
+  WorkerRequirementSkip,
 } from '@/lib/types';
 import {
   mandatoryCertificateComplianceMet,
   partitionMandatoryCertificateRequirements,
   resolveCredentialHasExpiry,
   workerHasValidCertificateRequirement,
+  buildManualRequirementSkipPredicate,
 } from '@/lib/position-certificate-compliance';
 import {
   computeDrugPanelWorkerFields,
@@ -169,6 +171,12 @@ function WorkerDetailContent({ id }: { id: string }) {
     [firestore, id, dataLayerReady],
   );
   const { data: workerDocs } = useCollection<WorkerDocument>(docsQuery as any);
+
+  const requirementSkipsQuery = useMemoFirebase(
+    () => (dataLayerReady ? collection(firestore!, 'workers', id, 'requirement_skips') : null),
+    [firestore, id, dataLayerReady],
+  );
+  const { data: requirementSkips } = useCollection<WorkerRequirementSkip>(requirementSkipsQuery as any);
 
   const positionsQuery = useMemoFirebase(
     () => (dataLayerReady ? collection(firestore!, 'positions') : null),
@@ -437,6 +445,7 @@ function WorkerDetailContent({ id }: { id: string }) {
       const reqsRef = collection(firestore, 'positions', worker.currentPositionId, 'certificate_requirements');
       const reqsSnap = await getDocs(query(reqsRef, where('required', '==', true)));
       const mandatoryReqs = reqsSnap.docs.map(d => d.data() as PositionCertificateRequirement);
+      const manualSkipReq = buildManualRequirementSkipPredicate(requirementSkips);
 
       if (
         !mandatoryCertificateComplianceMet(
@@ -444,7 +453,7 @@ function WorkerDetailContent({ id }: { id: string }) {
           certs || [],
           workerDocs || [],
           now,
-          undefined,
+          manualSkipReq,
           catalogLookup,
         )
       ) {
@@ -474,12 +483,14 @@ function WorkerDetailContent({ id }: { id: string }) {
       };
 
       for (const req of standalone) {
+        if (manualSkipReq(req)) continue;
         if (workerHasValidCertificateRequirement(req, certs || [], workerDocs || [], now, catalogLookup)) {
           markReqExpiry(req);
         }
       }
       for (const [, groupReqs] of orGroups) {
-        const satisfied = groupReqs.find((req) =>
+        const applicable = groupReqs.filter((r) => !manualSkipReq(r));
+        const satisfied = applicable.find((req) =>
           workerHasValidCertificateRequirement(req, certs || [], workerDocs || [], now, catalogLookup),
         );
         if (satisfied) markReqExpiry(satisfied);
@@ -587,6 +598,7 @@ function WorkerDetailContent({ id }: { id: string }) {
     medicals?.length,
     drugTests?.length,
     workerDocs?.length,
+    requirementSkips?.length,
     workerDocCatalog?.length,
     panelSubstances.length,
     workerMobilizations?.length,
@@ -757,6 +769,9 @@ function WorkerDetailContent({ id }: { id: string }) {
               docsQuery={docsQuery as any}
               workerDocCatalog={workerDocCatalog}
               positionCertRequirements={positionCertRequirements}
+              requirementSkips={requirementSkips}
+              currentPositionId={worker?.currentPositionId}
+              currentUserId={currentUser?.id}
               canEdit={canEditWorker}
             />
           </TabsContent>

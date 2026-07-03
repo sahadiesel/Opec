@@ -11,8 +11,9 @@ import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatOptionalDateThaiBE, coerceStoredDateToMs, effectiveCredentialRowStatus, isStoredExpiryPast } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Plus, Trash2, FileText, Pencil, Camera, Loader2, X } from 'lucide-react';
-import { deleteField, doc, type Firestore, type CollectionReference } from 'firebase/firestore';
+import { Textarea } from '@/components/ui/textarea';
+import { Plus, Trash2, FileText, Pencil, Camera, Loader2, X, SkipForward, Undo2 } from 'lucide-react';
+import { deleteField, doc, setDoc, type Firestore, type CollectionReference } from 'firebase/firestore';
 import { updateDocumentNonBlocking, addDocumentNonBlocking, deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { useFirebaseApp } from '@/firebase';
@@ -25,11 +26,16 @@ import type {
   WorkerDocument,
   WorkerDocumentCatalogItem,
   PositionCertificateRequirement,
+  WorkerRequirementSkip,
 } from '@/lib/types';
+import { sanitizeFirestorePayload } from '@/lib/utils';
 import {
   getMandatoryRequirementsWithNoWorkerRecord,
   orGroupMemberSummary,
   partitionMandatoryCertificateRequirements,
+  requirementSkipDocId,
+  buildManualRequirementSkipPredicate,
+  findWorkerCertificateForRequirement,
 } from '@/lib/position-certificate-compliance';
 
 type CredentialKind = 'certificate' | 'document';
@@ -56,6 +62,9 @@ interface WorkerCredentialsTabProps {
   docsQuery: CollectionReference | null;
   workerDocCatalog: WorkerDocumentCatalogItem[] | null;
   positionCertRequirements?: PositionCertificateRequirement[] | null;
+  requirementSkips?: WorkerRequirementSkip[] | null;
+  currentPositionId?: string;
+  currentUserId?: string;
   canEdit?: boolean;
 }
 
@@ -112,6 +121,9 @@ export function WorkerCredentialsTab({
   docsQuery,
   workerDocCatalog,
   positionCertRequirements,
+  requirementSkips,
+  currentPositionId,
+  currentUserId,
   canEdit = false,
 }: WorkerCredentialsTabProps) {
   const { toast } = useToast();
@@ -131,6 +143,14 @@ export function WorkerCredentialsTab({
   const [formPreviewUrl, setFormPreviewUrl] = useState<string | null>(null);
   const [formRemoveAttachment, setFormRemoveAttachment] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [skipTarget, setSkipTarget] = useState<PositionCertificateRequirement | null>(null);
+  const [skipReason, setSkipReason] = useState('');
+  const [skipSaving, setSkipSaving] = useState(false);
+
+  const manualSkipPredicate = useMemo(
+    () => buildManualRequirementSkipPredicate(requirementSkips),
+    [requirementSkips],
+  );
 
   const documentCatalogOptions = useMemo(
     () =>
@@ -153,8 +173,52 @@ export function WorkerCredentialsTab({
       (r) => (r.requirementType || 'certificate') === 'certificate' && r.required,
     );
     const catalogLookup = (code: string | undefined) => catalogHit(workerDocCatalog, code || '');
-    return getMandatoryRequirementsWithNoWorkerRecord(certReqs, certs || [], [], Date.now(), catalogLookup);
-  }, [positionCertRequirements, certs, workerDocCatalog]);
+    return getMandatoryRequirementsWithNoWorkerRecord(
+      certReqs,
+      certs || [],
+      [],
+      Date.now(),
+      catalogLookup,
+      manualSkipPredicate,
+    );
+  }, [positionCertRequirements, certs, workerDocCatalog, manualSkipPredicate]);
+
+  const skippedPositionCerts = useMemo(() => {
+    const skips = requirementSkips || [];
+    if (!skips.length) return [] as { req: PositionCertificateRequirement; skip: WorkerRequirementSkip }[];
+    const certReqs = (positionCertRequirements || []).filter((r) => r.required);
+    const seenOr = new Set<string>();
+    const out: { req: PositionCertificateRequirement; skip: WorkerRequirementSkip }[] = [];
+    for (const skip of skips) {
+      const gk = (skip.alternativeGroupKey || '').trim();
+      if (gk) {
+        if (seenOr.has(gk)) continue;
+        seenOr.add(gk);
+        const req =
+          certReqs.find((r) => (r.alternativeGroupKey || '').trim() === gk) ||
+          certReqs.find((r) => r.id === skip.requirementId);
+        if (req) {
+          if (findWorkerCertificateForRequirement(req, certs || [])) continue;
+          out.push({ req, skip });
+        }
+        continue;
+      }
+      const req =
+        certReqs.find((r) => r.id === skip.requirementId) ||
+        certReqs.find(
+          (r) =>
+            (r.certificateCode || '').trim().toLowerCase() ===
+            (skip.certificateCode || '').trim().toLowerCase(),
+        );
+      if (req) {
+        if (findWorkerCertificateForRequirement(req, certs || [])) continue;
+        out.push({ req, skip });
+      }
+    }
+    return out.sort((a, b) =>
+      (a.req.certificateName || '').localeCompare(b.req.certificateName || '', 'th'),
+    );
+  }, [requirementSkips, positionCertRequirements, certs]);
 
   const missingOrGroupMeta = useMemo(() => {
     const certReqs = (positionCertRequirements || []).filter(
@@ -495,6 +559,54 @@ export function WorkerCredentialsTab({
     deleteDocumentNonBlocking(doc(firestore, 'workers', workerId, sub, row.id));
   };
 
+  const openSkipDialog = (req: PositionCertificateRequirement) => {
+    setSkipTarget(req);
+    setSkipReason('');
+  };
+
+  const handleConfirmSkip = async () => {
+    if (!firestore || !skipTarget) return;
+    const reason = skipReason.trim();
+    if (!reason) {
+      toast({ variant: 'destructive', title: 'กรุณาระบุเหตุผล', description: 'ต้องบันทึกเหตุผลเมื่อข้ามเกณฑ์' });
+      return;
+    }
+    setSkipSaving(true);
+    try {
+      const now = Date.now();
+      const skipId = requirementSkipDocId(skipTarget);
+      await setDoc(
+        doc(firestore, 'workers', workerId, 'requirement_skips', skipId),
+        sanitizeFirestorePayload({
+          requirementId: skipTarget.id,
+          certificateCode: skipTarget.certificateCode,
+          certificateName: skipTarget.certificateName,
+          requirementType: skipTarget.requirementType || 'certificate',
+          alternativeGroupKey: (skipTarget.alternativeGroupKey || '').trim() || undefined,
+          reason,
+          skippedAt: now,
+          skippedByUserId: currentUserId || undefined,
+          positionId: currentPositionId || undefined,
+        }),
+        { merge: true },
+      );
+      setSkipTarget(null);
+      setSkipReason('');
+      toast({ title: 'ข้ามเกณฑ์แล้ว', description: 'บันทึกเหตุผลและอัปเดตความพร้อม' });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: message });
+    } finally {
+      setSkipSaving(false);
+    }
+  };
+
+  const handleUndoSkip = (skip: WorkerRequirementSkip) => {
+    if (!firestore || !confirm('ยกเลิกการข้ามเกณฑ์นี้?')) return;
+    deleteDocumentNonBlocking(doc(firestore, 'workers', workerId, 'requirement_skips', skip.id));
+    toast({ title: 'ยกเลิกการข้ามแล้ว' });
+  };
+
   const colCount = canEdit ? 7 : 6;
 
   return (
@@ -635,15 +747,77 @@ export function WorkerCredentialsTab({
                 <TableCell className="text-center align-top text-muted-foreground">—</TableCell>
                 {canEdit ? (
                   <TableCell className="text-center pr-6 align-top">
-                    <Button size="sm" className="h-8" onClick={() => openFillPositionCert(req)}>
-                      บันทึกใบเซอร์
-                    </Button>
+                    <div className="flex items-center justify-center gap-1 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-muted-foreground"
+                        title="ข้ามเกณฑ์ (ไม่บล็อกความพร้อม)"
+                        onClick={() => openSkipDialog(req)}
+                      >
+                        <SkipForward className="h-3.5 w-3.5 mr-1" />
+                        ข้าม
+                      </Button>
+                      <Button size="sm" className="h-8" onClick={() => openFillPositionCert(req)}>
+                        บันทึกใบเซอร์
+                      </Button>
+                    </div>
                   </TableCell>
                 ) : null}
               </TableRow>
             );
             })}
-            {rows.length === 0 && missingPositionCerts.length === 0 && (
+            {skippedPositionCerts.map(({ req, skip }) => {
+              const orMeta = missingOrGroupMeta.get(req.id);
+              const isOrGroup = !!orMeta && (req.alternativeGroupKey || '').trim();
+              return (
+                <TableRow key={`skipped-${skip.id}`} className="bg-slate-50/80">
+                  <TableCell className="pl-6 font-medium text-primary align-top break-words">
+                    {isOrGroup ? orMeta!.label : req.certificateName}
+                    {isOrGroup ? (
+                      <p className="text-[10px] font-normal text-muted-foreground mt-1">
+                        อย่างใดอย่างหนึ่ง: {orMeta!.summary}
+                      </p>
+                    ) : null}
+                    <Badge variant="outline" className="ml-2 text-[10px] font-normal text-slate-700 border-slate-300">
+                      ข้ามแล้ว
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="align-top">
+                    <Badge variant="outline" className="uppercase text-[10px] font-semibold tracking-wide">
+                      CERTIFICATE
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs align-top text-muted-foreground">—</TableCell>
+                  <TableCell className="align-top text-muted-foreground">—</TableCell>
+                  <TableCell className="align-top">
+                    <Badge variant="secondary" className="text-[10px] uppercase bg-slate-200 text-slate-800">
+                      SKIPPED
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-center align-top text-muted-foreground text-xs max-w-[10rem]">
+                    <span className="line-clamp-3" title={skip.reason}>
+                      {skip.reason}
+                    </span>
+                  </TableCell>
+                  {canEdit ? (
+                    <TableCell className="text-center pr-6 align-top">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 text-muted-foreground"
+                        title="ยกเลิกการข้าม"
+                        onClick={() => handleUndoSkip(skip)}
+                      >
+                        <Undo2 className="h-3.5 w-3.5 mr-1" />
+                        ยกเลิกข้าม
+                      </Button>
+                    </TableCell>
+                  ) : null}
+                </TableRow>
+              );
+            })}
+            {rows.length === 0 && missingPositionCerts.length === 0 && skippedPositionCerts.length === 0 && (
               <TableRow>
                 <TableCell colSpan={colCount} className="py-20 text-center text-muted-foreground italic">
                   ไม่พบเอกสารหรือใบเซอร์ในระบบ
@@ -809,6 +983,51 @@ export function WorkerCredentialsTab({
               <Button onClick={() => void handleSave()} disabled={saving}>
                 {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                 {editing ? 'บันทึกการแก้ไข' : 'บันทึก'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={skipTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSkipTarget(null);
+              setSkipReason('');
+            }
+          }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>ข้ามเกณฑ์ใบเซอร์</DialogTitle>
+              <DialogDescription>
+                {skipTarget?.certificateName || '—'} — จะไม่บล็อกความพร้อม (Not Ready) แต่ต้องระบุเหตุผล
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 py-2">
+              <Label htmlFor="skip-reason">เหตุผลที่ข้าม</Label>
+              <Textarea
+                id="skip-reason"
+                value={skipReason}
+                onChange={(e) => setSkipReason(e.target.value)}
+                placeholder="เช่น มีใบเซอร์จากบริษัทเดิม / ลูกค้ายอมรับ / รออบรมรอบถัดไป"
+                rows={4}
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setSkipTarget(null);
+                  setSkipReason('');
+                }}
+                disabled={skipSaving}
+              >
+                ยกเลิก
+              </Button>
+              <Button onClick={() => void handleConfirmSkip()} disabled={skipSaving}>
+                {skipSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                ยืนยันข้าม
               </Button>
             </DialogFooter>
           </DialogContent>

@@ -54,8 +54,8 @@ import {
   resolveContractDailyHoursForAssignmentLine,
   assignmentIncludedInWaveTimesheetRoster,
   assignmentExcludedFromPoDailyBoardOnDate,
+  assignmentAwaitingRemobAfterSiteFinish,
   isHtmlDateAfterMobLocationEnd,
-  isAssignmentDraftAwaitingFirstMobOnly,
   isYmdEditableForAssignmentTimesheet,
   isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob,
 } from '@/lib/constants/timesheet-ui';
@@ -75,7 +75,14 @@ import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
 import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
 import {
   formatThaiYearMonthLabel,
+  assignmentOverlapsYearMonthForPoDailyBoard,
 } from '@/lib/ops/timesheet-hub-po-month';
+import { assignmentCountsTowardQuota } from '@/lib/ops/po-fulfillment-read-model';
+import {
+  countTimesheetsAfterMobFinishDate,
+  deleteTimesheetsAfterMobFinishDate,
+} from '@/lib/timesheet/mob-finish-timesheet-cleanup';
+import { purgeStalePoActiveAutoDailyForCalendarMonth } from '@/lib/timesheet/po-active-auto-daily-sync';
 import { buildMobCycleDocId } from '@/lib/ops/mob-cycle-ids';
 import {
   buildMobFinishUndoRestoreFields,
@@ -184,10 +191,16 @@ function finishJobDateIssue(
   return null;
 }
 
-function assignmentAwaitingRemobAfterFinish(asgn: Assignment): boolean {
-  if (asgn.deploymentStatus !== 'DRAFT') return false;
-  if (!(asgn.mobLocationEndDate || '').trim()) return false;
-  return !isAssignmentDraftAwaitingFirstMobOnly(asgn);
+/**
+ * โหมดกรองเดือน (?month=): แสดงเฉพาะคนที่ยังถูก assign (สอดคล้องหน้า Assignments)
+ * — รวม DRAFT หลังจบงานรอ remob · ซ่อน Unassign / CLOSED / DEMOBILIZED
+ */
+function poDailyBoardAssignmentInMonthRoster(asgn: Assignment, yearMonth: string): boolean {
+  if (!assignmentCountsTowardQuota(asgn)) return false;
+  if (!assignmentIncludedInWaveTimesheetRoster(asgn)) return false;
+  /** ยังอยู่ใน mobilization รอ remob — แสดงในกระดานแม้เลือกเดือนหลังวันจบ */
+  if (assignmentAwaitingRemobAfterSiteFinish(asgn)) return true;
+  return assignmentOverlapsYearMonthForPoDailyBoard(asgn, yearMonth);
 }
 
 type PoDailyBoardRowFilter = 'all' | 'filled';
@@ -290,6 +303,19 @@ export function PoDailyBoardCard({
   >(null);
   const [cancelFinishTarget, setCancelFinishTarget] = useState<Assignment | null>(null);
   const [finishJobDateYmd, setFinishJobDateYmd] = useState('');
+  const [finishAfterCounts, setFinishAfterCounts] = useState<{
+    total: number;
+    deletable: number;
+    locked: number;
+  } | null>(null);
+  const [finishPurgeConfirm, setFinishPurgeConfirm] = useState<{
+    assignment: Assignment;
+    finishYmd: string;
+    mode: 'finish' | 'revise';
+    finishTiming?: 'today' | 'tomorrow';
+    deletable: number;
+    locked: number;
+  } | null>(null);
   const [demobSubmitting, setDemobSubmitting] = useState(false);
   const [standbySubmitting, setStandbySubmitting] = useState(false);
   const [autoGenBusy, setAutoGenBusy] = useState(false);
@@ -403,6 +429,29 @@ export function PoDailyBoardCard({
     const base = (targetDate || '').slice(0, 10);
     setFinishJobDateYmd(/^\d{4}-\d{2}-\d{2}$/.test(base) ? base : bangkokToday);
   }, [finishJobModal, targetDate]);
+
+  useEffect(() => {
+    if (!firestore || !finishJobModal || !finishJobDateYmd) {
+      setFinishAfterCounts(null);
+      return;
+    }
+    const ymd = finishJobDateYmd.trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+      setFinishAfterCounts(null);
+      return;
+    }
+    let cancelled = false;
+    void countTimesheetsAfterMobFinishDate(firestore, finishJobModal.assignment.id, ymd)
+      .then((c) => {
+        if (!cancelled) setFinishAfterCounts(c);
+      })
+      .catch(() => {
+        if (!cancelled) setFinishAfterCounts(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, finishJobModal, finishJobDateYmd]);
 
   const poMonthHref = useMemo(() => {
     if (isBundle && bundleKey) {
@@ -520,7 +569,11 @@ export function PoDailyBoardCard({
       }
     }
     const inScope = mobsForPo.filter((a) => {
+      if (!assignmentCountsTowardQuota(a)) return false;
       if (!assignmentIncludedInWaveTimesheetRoster(a)) return false;
+      if (rosterFilterYm && /^\d{4}-\d{2}$/.test(rosterFilterYm)) {
+        return poDailyBoardAssignmentInMonthRoster(a, rosterFilterYm);
+      }
       const dateYmd = targetDate.slice(0, 10);
       const hasPersisted =
         persistedAssignmentIds.has(a.id) && !clearedRowIds.has(a.id);
@@ -1013,13 +1066,42 @@ export function PoDailyBoardCard({
       toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: issue });
       return;
     }
-    const asgn = finishJobModal.assignment;
+    const counts =
+      finishAfterCounts ??
+      (await countTimesheetsAfterMobFinishDate(firestore, finishJobModal.assignment.id, finishYmd));
+    if (counts.deletable > 0) {
+      setFinishPurgeConfirm({
+        assignment: finishJobModal.assignment,
+        finishYmd,
+        mode: finishJobModal.mode,
+        finishTiming: finishJobModal.finishTiming,
+        deletable: counts.deletable,
+        locked: counts.locked,
+      });
+      return;
+    }
+    await executeMobFinishJob({
+      asgn: finishJobModal.assignment,
+      finishYmd,
+      mode: finishJobModal.mode,
+      finishTiming: finishJobModal.finishTiming,
+    });
+  };
+
+  const executeMobFinishJob = async (params: {
+    asgn: Assignment;
+    finishYmd: string;
+    mode: 'finish' | 'revise';
+    finishTiming?: 'today' | 'tomorrow';
+  }) => {
+    if (!firestore || !currentUser?.id) return;
+    const { asgn, finishYmd, mode, finishTiming } = params;
     const now = Date.now();
     setDemobSubmitting(true);
     try {
       const mobRef = doc(firestore, 'mobilizations', asgn.id);
       const batch = writeBatch(firestore);
-      if (finishJobModal.mode === 'revise') {
+      if (mode === 'revise') {
         batch.update(mobRef, {
           mobLocationEndDate: finishYmd,
           mobLocationEndedAt: now,
@@ -1028,71 +1110,102 @@ export function PoDailyBoardCard({
           updatedBy: currentUser.id,
         });
         await batch.commit();
-        setFinishJobModal(null);
-        await loadRoster();
-        toast({
-          title: 'แก้ไขวันสิ้นสุดงานแล้ว',
-          description: `บันทึกวันสิ้นสุด ณ ${formatYmdLocalThaiBE(finishYmd)}`,
+      } else {
+        const tsService = new TimesheetService(firestore);
+        const nextCycle = Math.max(1, (asgn.mobCycleNumber || 1) + 1);
+        batch.update(mobRef, {
+          mobFinishUndoSnapshot: buildMobFinishUndoSnapshot(asgn),
+          deploymentStatus: 'DRAFT',
+          mobilizationStatus: 'PENDING',
+          mobCycleNumber: nextCycle,
+          mobCycleId: buildMobCycleDocId(asgn.id, nextCycle),
+          mobLocationEndDate: finishYmd,
+          mobLocationEndedAt: now,
+          mobLocationEndedByUserId: currentUser.id,
+          mobReadyToTravelAt: deleteField(),
+          mobReadyToTravelByUserId: deleteField(),
+          poActiveAutoWorkSuspended: deleteField(),
+          poActiveStandbyAutoStartYmd: deleteField(),
+          poActiveStandbyAutoEndYmd: deleteField(),
+          updatedAt: now,
+          updatedBy: currentUser.id,
         });
-        return;
-      }
 
-      const tsService = new TimesheetService(firestore);
-      const nextCycle = Math.max(1, (asgn.mobCycleNumber || 1) + 1);
-      batch.update(mobRef, {
-        mobFinishUndoSnapshot: buildMobFinishUndoSnapshot(asgn),
-        deploymentStatus: 'DRAFT',
-        mobilizationStatus: 'PENDING',
-        mobCycleNumber: nextCycle,
-        mobCycleId: buildMobCycleDocId(asgn.id, nextCycle),
-        mobLocationEndDate: finishYmd,
-        mobLocationEndedAt: now,
-        mobLocationEndedByUserId: currentUser.id,
-        mobReadyToTravelAt: deleteField(),
-        mobReadyToTravelByUserId: deleteField(),
-        /** เก็บวัน SB/เริ่มงานรอบที่จบไว้ — สรุปรายเดือน/วางบิลยังอ้างช่วงเดิมได้จน remob ตั้งวันใหม่ */
-        poActiveAutoWorkSuspended: deleteField(),
-        poActiveStandbyAutoStartYmd: deleteField(),
-        poActiveStandbyAutoEndYmd: deleteField(),
-        updatedAt: now,
-        updatedBy: currentUser.id,
-      });
-
-      if (finishJobModal.finishTiming === 'today') {
-        const ty = thailandTodayYmd();
-        const tid = poActiveDailyTimesheetDocId(asgn.workerId, asgn.id, ty);
-        const tsRef = doc(firestore, 'daily_timesheets', tid);
-        const tsSnap = await getDoc(tsRef);
-        if (tsSnap.exists()) {
-          const cur = tsSnap.data() as DailyTimesheet;
-          if (
-            !tsService.isFinalized(cur.status as DailyTimesheetStatus) &&
-            cur.poActiveAutoDaily === true &&
-            cur.eventType === 'work_day'
-          ) {
-            batch.update(tsRef, {
-              eventType: 'unpaid_leave',
-              normalHours: 0,
-              shiftType: 'DAY',
-              remark: '',
-              updatedAt: now,
-            });
+        if (finishTiming === 'today') {
+          const ty = thailandTodayYmd();
+          const tid = poActiveDailyTimesheetDocId(asgn.workerId, asgn.id, ty);
+          const tsRef = doc(firestore, 'daily_timesheets', tid);
+          const tsSnap = await getDoc(tsRef);
+          if (tsSnap.exists()) {
+            const cur = tsSnap.data() as DailyTimesheet;
+            if (
+              !tsService.isFinalized(cur.status as DailyTimesheetStatus) &&
+              cur.poActiveAutoDaily === true &&
+              cur.eventType === 'work_day'
+            ) {
+              batch.update(tsRef, {
+                eventType: 'unpaid_leave',
+                normalHours: 0,
+                shiftType: 'DAY',
+                remark: '',
+                updatedAt: now,
+              });
+            }
           }
         }
+
+        await batch.commit();
       }
 
-      await batch.commit();
+      const purge = await deleteTimesheetsAfterMobFinishDate(firestore, asgn, finishYmd);
+      const finishYm = finishYmd.slice(0, 7);
+      await purgeStalePoActiveAutoDailyForCalendarMonth(firestore, asgn.id, finishYm);
+      const targetYm = targetDate.slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(targetYm) && targetYm !== finishYm) {
+        await purgeStalePoActiveAutoDailyForCalendarMonth(firestore, asgn.id, targetYm);
+      }
+
       setFinishJobModal(null);
+      setFinishPurgeConfirm(null);
       await loadRoster();
-      toast({
-        title: 'จบงานแล้ว — Waiting MOB',
-        description: `บันทึกจบงาน ณ ${formatYmdLocalThaiBE(finishYmd)} · ลงเวลาอัตโนมัติหยุดหลังวันนี้ · ไปเมนู Mobilization เพื่อเริ่มรอบส่งตัวใหม่`,
-      });
+
+      const purgeNote =
+        purge.deleted > 0
+          ? ` · ลบลงเวลาหลังวันจบ ${purge.deleted} รายการ`
+          : purge.skipped > 0
+            ? ` · ข้ามลบ ${purge.skipped} แถวที่ล็อก`
+            : '';
+
+      if (mode === 'revise') {
+        toast({
+          title: 'แก้ไขวันสิ้นสุดงานแล้ว',
+          description: `บันทึกวันสิ้นสุด ณ ${formatYmdLocalThaiBE(finishYmd)}${purgeNote}`,
+        });
+      } else {
+        toast({
+          title: 'จบงานแล้ว — Waiting MOB',
+          description: `บันทึกจบงาน ณ ${formatYmdLocalThaiBE(finishYmd)} · ลงเวลาอัตโนมัติหยุดหลังวันนี้จน remob${purgeNote}`,
+        });
+      }
     } catch (e: unknown) {
-      toast({ variant: 'destructive', title: 'อัปเดตไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
+      toast({
+        variant: 'destructive',
+        title: 'อัปเดตไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setDemobSubmitting(false);
     }
+  };
+
+  const confirmFinishPurgeDialog = async () => {
+    if (!finishPurgeConfirm) return;
+    await executeMobFinishJob({
+      asgn: finishPurgeConfirm.assignment,
+      finishYmd: finishPurgeConfirm.finishYmd,
+      mode: finishPurgeConfirm.mode,
+      finishTiming: finishPurgeConfirm.finishTiming,
+    });
   };
 
   const confirmCancelFinishJob = async () => {
@@ -1422,7 +1535,7 @@ export function PoDailyBoardCard({
                   const isRowCleared = clearedRowIds.has(asgn.id);
                   const persisted = persistedAssignmentIds.has(asgn.id) && !isRowCleared;
                   const afterMobEnd = isHtmlDateAfterMobLocationEnd(asgn, targetDate);
-                  const awaitingRemob = assignmentAwaitingRemobAfterFinish(asgn);
+                  const awaitingRemob = assignmentAwaitingRemobAfterSiteFinish(asgn);
                   const priorCycleWorkWhileAwaitingRemob = isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(
                     asgn,
                     targetDate.slice(0, 10),
@@ -2033,6 +2146,14 @@ export function PoDailyBoardCard({
                   {finishModalDateIssue ? (
                     <p className="text-xs text-destructive font-medium">{finishModalDateIssue}</p>
                   ) : null}
+                  {finishAfterCounts && finishAfterCounts.deletable > 0 ? (
+                    <p className="text-xs font-medium text-amber-800 dark:text-amber-200 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1.5">
+                      มีลงเวลา <strong>{finishAfterCounts.deletable}</strong> รายการหลังวันที่เลือก — ระบบจะถามยืนยันก่อนลบ
+                      {finishAfterCounts.locked > 0
+                        ? ` (ข้าม ${finishAfterCounts.locked} แถวที่ล็อกบัญชีแล้ว)`
+                        : ''}
+                    </p>
+                  ) : null}
                   <p className="text-xs leading-relaxed">
                     {finishJobModal?.mode === 'revise' ? (
                       <>
@@ -2060,6 +2181,47 @@ export function PoDailyBoardCard({
               onClick={() => void confirmFinishJobModal()}
             >
               {demobSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'บันทึก'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={finishPurgeConfirm !== null}
+        onOpenChange={(open) => {
+          if (!open) setFinishPurgeConfirm(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>ลบลงเวลาหลังวันจบงาน?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="text-sm text-muted-foreground space-y-2">
+                <p>
+                  มีลงเวลา <strong className="text-foreground">{finishPurgeConfirm?.deletable ?? 0}</strong> รายการ
+                  หลังวันที่{' '}
+                  <strong className="text-foreground">
+                    {formatYmdLocalThaiBE(finishPurgeConfirm?.finishYmd || '—')}
+                  </strong>{' '}
+                  — จะถูกลบทั้งหมดจนกว่าจะ remob และเริ่มรอบใหม่
+                </p>
+                {(finishPurgeConfirm?.locked ?? 0) > 0 ? (
+                  <p className="text-xs">
+                    แถวที่ล็อกบัญชีแล้ว {finishPurgeConfirm?.locked} รายการจะไม่ถูกลบ
+                  </p>
+                ) : null}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={demobSubmitting}>ยกเลิก</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={demobSubmitting}
+              onClick={() => void confirmFinishPurgeDialog()}
+            >
+              {demobSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'ยืนยันลบและบันทึกจบงาน'}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

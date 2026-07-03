@@ -1,6 +1,9 @@
 import { doc, getDoc, getDocs, query, collection, where, type Firestore } from 'firebase/firestore';
 import type { Assignment, DailyTimesheet } from '@/lib/types';
-import { isYmdWithinAssignmentMobTimesheetWindow } from '@/lib/constants/timesheet-ui';
+import {
+  isYmdWithinAssignmentMobTimesheetWindow,
+  waveMonthCellTimesheetVisible,
+} from '@/lib/constants/timesheet-ui';
 
 /** โหลด mobilization ที่ timesheet อ้างอิง */
 export async function loadAssignmentsForTimesheets(
@@ -41,18 +44,39 @@ export function isDailyTimesheetInPayrollMobWindow(
 }
 
 /**
- * ใบงานที่ควรเข้า worker payroll — สอดคล้องกริดสรุปรายเดือน:
- * - อยู่ในช่วง mobilization ของ assignment
- * - ไม่รวม unpaid_leave (กริดแสดง «-» และไม่นับชม.)
+ * ใบงานที่ควรเข้า worker payroll — สอดคล้องกริดสรุปรายเดือน (wave-month):
+ * - ไม่รวม unpaid_leave
+ * - ไม่รวม SB/W หลังวันจบไซต์รอ remob แม้มี readyForPayroll ค้างจาก sync เก่า
  */
 export function isDailyTimesheetPayableForWorkerPayroll(
   ts: Pick<DailyTimesheet, 'date' | 'assignmentId' | 'eventType' | 'readyForPayroll'>,
   assignmentById: Map<string, Assignment>,
 ): boolean {
   if (ts.eventType === 'unpaid_leave') return false;
-  /** ปิดงวด PO+เดือนแล้วตั้ง readyForPayroll แล้ว — ใช้เป็นฐานจ่าย ไม่ตัดซ้ำด้วย mob window */
-  if (ts.readyForPayroll === true) return true;
-  return isDailyTimesheetInPayrollMobWindow(ts, assignmentById);
+  const aid = String(ts.assignmentId || '').trim();
+  if (!aid) return ts.readyForPayroll === true;
+  const asgn = assignmentById.get(aid);
+  if (!asgn) return ts.readyForPayroll === true;
+  return waveMonthCellTimesheetVisible(asgn, ts.date, ts as DailyTimesheet);
+}
+
+/** แยกใบงานที่ควรจ่าย vs ใบที่มี readyForPayroll ค้างแต่ไม่ควรจ่าย (เคลียร์ตอนซิงก์) */
+export async function partitionTimesheetsForPayrollReadiness(
+  db: Firestore,
+  tsList: readonly DailyTimesheet[],
+): Promise<{ payable: DailyTimesheet[]; staleReady: DailyTimesheet[] }> {
+  if (tsList.length === 0) return { payable: [], staleReady: [] };
+  const assignmentById = await loadAssignmentsForTimesheets(db, tsList);
+  const payable: DailyTimesheet[] = [];
+  const staleReady: DailyTimesheet[] = [];
+  for (const ts of tsList) {
+    if (isDailyTimesheetPayableForWorkerPayroll(ts, assignmentById)) {
+      payable.push(ts);
+    } else if (ts.readyForPayroll === true) {
+      staleReady.push(ts);
+    }
+  }
+  return { payable, staleReady };
 }
 
 export function filterTimesheetsForWorkerPayroll(

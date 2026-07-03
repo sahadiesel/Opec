@@ -1,4 +1,4 @@
-import type { Assignment, DeploymentStatus, POLine, PositionRate, Wave } from '@/lib/types';
+import type { Assignment, DailyTimesheet, DeploymentStatus, POLine, PositionRate, Wave } from '@/lib/types';
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import { addDaysToYmd } from '@/lib/ops/mobilization-final-clearance';
@@ -428,6 +428,53 @@ export function isYmdInRemobGapBetweenCycles(
   return d > mobEnd && d < mobSegmentStart;
 }
 
+/**
+ * หลังวันจบไซต์ที่บันทึกแล้ว และยังไม่ถึงช่วง mobilization รอบใหม่ — ไม่อยู่ไซต์ (รอ remob)
+ * กรอง auto W ผิดช่วง / ไม่แสดงเซลล์ในงวดเดือนใหม่
+ */
+export function isYmdAfterSiteEndAwaitingRemob(
+  a: Pick<Assignment, 'mobLocationEndDate' | 'mobWorkingStartDate' | 'mobStandbyDate'>,
+  ymd: string,
+): boolean {
+  const d = ymd.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(mobEnd) || d <= mobEnd) return false;
+  if (assignmentHasSplitPriorAndNewCycleOnDoc(a)) {
+    const segStart = resolveMobSegmentStartYmd(a);
+    if (segStart && d >= segStart) return false;
+    return true;
+  }
+  return true;
+}
+
+/** แสดงเซลล์รายวันในสรุปรายเดือน — ไม่รวมแถว auto ค้างหลังจบไซต์ */
+export function waveMonthCellTimesheetVisible(
+  asgn: Pick<
+    Assignment,
+    | 'deploymentStatus'
+    | 'mobLocationEndDate'
+    | 'mobCycleNumber'
+    | 'unassignedAt'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'startDate'
+    | 'assignedDate'
+    | 'endDate'
+    | 'poActiveStandbyAutoStartYmd'
+    | 'poActiveStandbyAutoEndYmd'
+  >,
+  ymd: string,
+  ts: DailyTimesheet | undefined,
+): boolean {
+  if (!ts) return false;
+  if (isYmdAfterSiteEndAwaitingRemob(asgn, ymd)) return false;
+  if (isYmdInRemobGapBetweenCycles(asgn, ymd)) return false;
+  if (isYmdWithinAssignmentMobTimesheetWindow(asgn, ymd)) return true;
+  if (isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(asgn, ymd)) return true;
+  return false;
+}
+
 /** ทุกวัน yyyy-MM-dd ในช่องว่าง remob (exclusive ขอบ) */
 export function* eachYmdInRemobGapBetweenCycles(
   a: Pick<Assignment, 'mobLocationEndDate' | 'mobStandbyDate' | 'mobWorkingStartDate'>,
@@ -490,6 +537,7 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
   const mobEndCapsWindow = hasMobEnd && mobLocationEndDateCapsAssignmentTimesheetWindow(a);
 
   if (isYmdInRemobGapBetweenCycles(a, d)) return false;
+  if (isYmdAfterSiteEndAwaitingRemob(a, d)) return false;
 
   const mobSegmentStart = resolveMobSegmentStartYmd(a);
 

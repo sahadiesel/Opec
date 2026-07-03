@@ -5,6 +5,7 @@ import {
   getDocs,
   query,
   setDoc,
+  deleteField,
   where,
   type Firestore,
 } from 'firebase/firestore';
@@ -19,6 +20,8 @@ import {
   poMonthTimesheetReviewDocId,
 } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { aggregatePoMonthReviewStatusFromWorkerClosures } from '@/lib/timesheet/po-month-review-status';
+import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
+import { sanitizeFirestorePayload } from '@/lib/utils';
 
 const FIRESTORE_IN_MAX = 30;
 
@@ -53,6 +56,13 @@ export function workerMonthClosureDocId(poId: string, yearMonth: string, workerI
 }
 
 export const WORKER_MONTH_CLOSURE_GRID_LOCK_STATUSES: WorkerMonthClosureStatus[] = [
+  'entry_locked',
+  'pending_manager_review',
+  'approved',
+];
+
+/** สถานะรายคนที่พร้อมตั้ง readyForPayroll (สอดคล้องปิดงวดเต็ม PO ที่ซิงก์ทันทีหลัง entry_locked) */
+export const WORKER_MONTH_CLOSURE_PAYROLL_READY_STATUSES: WorkerMonthClosureStatus[] = [
   'entry_locked',
   'pending_manager_review',
   'approved',
@@ -177,7 +187,7 @@ async function upsertWorkerClosure(
     createdAt,
     updatedAt: now,
   };
-  await setDoc(ref, row, { merge: true });
+  await setDoc(ref, sanitizeFirestorePayload(row), { merge: true });
   return row;
 }
 
@@ -197,8 +207,9 @@ async function syncPoMonthReviewFromClosures(
   const existing = await getDoc(reviewRef);
   const now = Date.now();
   const monthFirst = `${yearMonth}-01`;
+  const monthLast = lastDayOfCalendarMonth(yearMonth);
 
-  const base: Record<string, unknown> = {
+  const base = sanitizeFirestorePayload({
     id: reviewId,
     poId,
     yearMonth,
@@ -212,8 +223,8 @@ async function syncPoMonthReviewFromClosures(
         ? (existing.data() as PoMonthTimesheetReview).createdAt
         : now,
     periodStartDate: periodBounds?.periodStartDate ?? monthFirst,
-    periodEndDate: periodBounds?.periodEndDate,
-  };
+    periodEndDate: periodBounds?.periodEndDate ?? monthLast,
+  });
   await setDoc(reviewRef, base, { merge: true });
 }
 
@@ -279,8 +290,8 @@ export async function clearWorkerMonthDeferred(
     status: 'open',
     actor: params.actor,
     patch: {
-      deferredReason: undefined,
-      deferredNote: undefined,
+      deferredReason: deleteField(),
+      deferredNote: deleteField(),
     },
   });
 }
@@ -300,6 +311,7 @@ export async function partialCloseWorkersForPoMonth(
 
   const now = Date.now();
   let closed = 0;
+  const closedWorkerIds: string[] = [];
   const existingClosures = await fetchWorkerClosuresForPoMonth(db, poId, yearMonth);
   const maxBatch = existingClosures.reduce((m, c) => Math.max(m, c.closureBatchNo ?? 0), 0);
   const batchNo = maxBatch + 1;
@@ -329,10 +341,12 @@ export async function partialCloseWorkersForPoMonth(
       },
     });
     closed++;
+    closedWorkerIds.push(w.workerId);
   }
 
   if (closed === 0) throw new Error('ไม่มีคนงานที่ปิดงวดได้ (อาจปิดแล้วทั้งหมด)');
 
+  await markTimesheetsReadyForPoMonthWorkerIds(db, poId, yearMonth, closedWorkerIds);
   await syncPoMonthReviewFromClosures(db, poId, yearMonth, actor, params.periodBounds);
   return { closed };
 }

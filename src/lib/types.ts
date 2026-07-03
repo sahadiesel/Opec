@@ -2648,6 +2648,22 @@ export interface WorkerDocument {
   _path?: string;
 }
 
+/** ข้ามเกณฑ์ใบเซอร์/เอกสารตามตำแหน่ง — ไม่บล็อก readiness (มีเหตุผลบันทึกไว้) */
+export interface WorkerRequirementSkip {
+  id: string;
+  requirementId: string;
+  certificateCode: string;
+  certificateName?: string;
+  requirementType?: 'certificate' | 'document';
+  /** เมื่อข้ามทั้งกลุ่ม OR */
+  alternativeGroupKey?: string;
+  reason: string;
+  skippedAt: number;
+  skippedByUserId?: string;
+  positionId?: string;
+  _path?: string;
+}
+
 export interface Role {
   id: string;
   name: string;

@@ -5,8 +5,11 @@ import {
   assignmentHasAnyMobTimesheetDayInCalendarMonth,
   assignmentEndedWithoutEverMobilizingOnSite,
   isHtmlDateAfterMobLocationEnd,
+  isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob,
+  isYmdAfterSiteEndAwaitingRemob,
   isYmdInRemobGapBetweenCycles,
   isYmdWithinAssignmentMobTimesheetWindow,
+  waveMonthCellTimesheetVisible,
 } from '@/lib/constants/timesheet-ui';
 import { assignmentOverlapsYearMonthForPoDailyBoard } from '@/lib/ops/timesheet-hub-po-month';
 import { assignmentReleasedFromPoLineQuota } from '@/lib/ops/po-fulfillment-read-model';
@@ -477,6 +480,9 @@ export function resolveTimesheetForWaveMonthCell(
   if (outsideMobWindow && assignmentWindow && isYmdInRemobGapBetweenCycles(assignmentWindow, date)) {
     return undefined;
   }
+  if (assignmentWindow && isYmdAfterSiteEndAwaitingRemob(assignmentWindow, date)) {
+    return undefined;
+  }
   const mobEndStr = (assignmentWindow?.mobLocationEndDate || '').trim().slice(0, 10);
   const hasConfirmedMobEnd = /^\d{4}-\d{2}-\d{2}$/.test(mobEndStr);
   const afterRecordedSiteEnd =
@@ -491,15 +497,35 @@ export function resolveTimesheetForWaveMonthCell(
  * — ใช้เมื่อช่วง mobilization ไม่ทับวันในปฏิทินตามฟิลด์ แต่มีข้อมูลลงเวลาจริงในเดือน (ข้อมูลขอบเขตไม่ตรงกัน)
  */
 export function assignmentHasTimesheetRowInCalendarMonth(
-  m: Pick<Assignment, 'id'>,
+  m: Pick<
+    Assignment,
+    | 'id'
+    | 'deploymentStatus'
+    | 'mobLocationEndDate'
+    | 'mobCycleNumber'
+    | 'unassignedAt'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'startDate'
+    | 'assignedDate'
+    | 'endDate'
+    | 'poActiveStandbyAutoStartYmd'
+    | 'poActiveStandbyAutoEndYmd'
+  >,
   monthYm: string,
   sheets: readonly Pick<DailyTimesheet, 'assignmentId' | 'date'>[] | undefined,
 ): boolean {
   if (!sheets?.length || !/^\d{4}-\d{2}$/.test(monthYm)) return false;
   const prefix = `${monthYm}-`;
-  return sheets.some(
-    (t) => typeof t.date === 'string' && t.date.startsWith(prefix) && t.assignmentId === m.id,
-  );
+  return sheets.some((t) => {
+    if (typeof t.date !== 'string' || !t.date.startsWith(prefix) || t.assignmentId !== m.id) {
+      return false;
+    }
+    return (
+      isYmdWithinAssignmentMobTimesheetWindow(m, t.date) ||
+      isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(m, t.date)
+    );
+  });
 }
 
 /** คนละหนึ่งแถวในงวดเดือนต่อ wave — สอดคล้อง `/timesheets/wave-month` (รองรับ PO scope / remob) */

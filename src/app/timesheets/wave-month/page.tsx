@@ -49,13 +49,15 @@ import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permi
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import {
+  assignmentHasAnyMobTimesheetDayInCalendarMonth,
   isYmdWithinAssignmentMobTimesheetWindow,
   isYmdEditableForAssignmentTimesheet,
+  waveMonthCellTimesheetVisible,
   waveRoundMonthLabel,
 } from '@/lib/constants/timesheet-ui';
 import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
 import { assignmentOverlapsYearMonthForPoDailyBoard } from '@/lib/ops/timesheet-hub-po-month';
-import { syncPoActiveAutoDailyForAssignment } from '@/lib/timesheet/po-active-auto-daily-sync';
+import { syncPoActiveAutoDailyForAssignment, purgeStalePoActiveAutoDailyForCalendarMonth } from '@/lib/timesheet/po-active-auto-daily-sync';
 import { isAssignmentEligibleForPoActiveAutoDaily } from '@/lib/timesheet/po-active-auto-daily-build';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import {
@@ -128,7 +130,7 @@ import {
 } from '@/lib/commercial/partial-po-month-billing';
 import { isPoMonthFullGridLock } from '@/lib/timesheet/po-month-review-status';
 import { isWorkerMonthClosureGridLocked } from '@/lib/timesheet/worker-month-closure';
-import { ensureWorkerMonthlyPayrollPeriodForYearMonth } from '@/lib/timesheet/po-month-timesheet-bridge';
+import { ensureWorkerMonthlyPayrollPeriodForYearMonth, syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import {
@@ -747,6 +749,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       if (isPoMonthFullGridLock(poMonthByPoId.get(a.poId))) continue;
       const workerClosure = workerClosureByKey.get(`${a.poId}|${a.workerId}`);
       if (workerClosure && isWorkerMonthClosureGridLocked(workerClosure.status)) continue;
+      if (!assignmentHasAnyMobTimesheetDayInCalendarMonth(a, monthYm)) continue;
       ids.push(a.id);
     }
     return ids;
@@ -770,6 +773,15 @@ export default function WaveMonthTimesheetSummaryPage() {
     if (poActiveAutoDailySyncLockRef.current) return;
     poActiveAutoDailySyncLockRef.current = true;
     try {
+      for (const a of mobAssignments) {
+        if ((a.mobLocationEndDate || '').trim()) {
+          try {
+            await purgeStalePoActiveAutoDailyForCalendarMonth(firestore, a.id, monthYm);
+          } catch {
+            /* best-effort */
+          }
+        }
+      }
       for (const aid of silentPoActiveAutoDailyIds) {
         try {
           await syncPoActiveAutoDailyForAssignment(firestore, aid, currentUser, {
@@ -783,7 +795,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     } finally {
       poActiveAutoDailySyncLockRef.current = false;
     }
-  }, [firestore, currentUser, canEditTs, silentPoActiveAutoDailyIds, monthYm]);
+  }, [firestore, currentUser, canEditTs, silentPoActiveAutoDailyIds, mobAssignments, monthYm]);
 
   useEffect(() => {
     void runWaveMonthPoActiveAutoHeal();
@@ -1270,7 +1282,8 @@ export default function WaveMonthTimesheetSummaryPage() {
       await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, monthYm, actorName);
       toast({
         title: `ปิดงวดบางส่วน ${total} คน`,
-        description: 'แก้ไขไม่ได้สำหรับคนที่ปิดแล้ว — กด «ส่งอนุมัติคนที่ปิดแล้ว» เมื่อพร้อมส่งผู้จัดการ',
+        description:
+          'แก้ไขไม่ได้สำหรับคนที่ปิดแล้ว · ระบบตั้ง readyForPayroll แล้ว — ไป Payroll Batch ตรวจสอบได้ · ส่งผู้จัดการอนุมัติเมื่อพร้อม',
       });
     } catch (e: unknown) {
       toast({
@@ -1291,6 +1304,29 @@ export default function WaveMonthTimesheetSummaryPage() {
     refreshWorkerClosures,
     toast,
   ]);
+
+  const handleSyncPayrollReadyFlags = useCallback(async () => {
+    if (!firestore || !monthYm) return;
+    setPartialWorkflowBusy(true);
+    try {
+      const sync = await syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews(firestore, monthYm);
+      toast({
+        title: 'ซิงก์พร้อมจ่าย Payroll แล้ว',
+        description:
+          sync.updated > 0
+            ? `ตั้ง readyForPayroll ${sync.updated} ใบงาน (${sync.syncedPoCount} PO)`
+            : 'ไม่พบใบงานที่อัปเดตได้ — อาจตั้งค่าแล้วหรือถูก LOCKED',
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ซิงก์ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPartialWorkflowBusy(false);
+    }
+  }, [firestore, monthYm, toast]);
 
   const handleSendPartialForReview = useCallback(async () => {
     if (!firestore || !currentUser || !canEditTs) return;
@@ -1402,8 +1438,7 @@ export default function WaveMonthTimesheetSummaryPage() {
           .filter((m) => m.waveId === wave.id && m.workerId === rw.workerId && m.id !== rosterAssignment.id)
           .map((m) => m.id);
         const dayCells = days.map((d) => {
-          const inMobWindow = isYmdWithinAssignmentMobTimesheetWindow(rosterAssignment, d);
-          const ts = resolveTimesheetForWaveMonthCell(
+          const tsRaw = resolveTimesheetForWaveMonthCell(
             wave.id,
             rw.workerId,
             d,
@@ -1414,8 +1449,8 @@ export default function WaveMonthTimesheetSummaryPage() {
             rosterAssignment,
             alternateMobIds,
           );
-          if (!inMobWindow && !ts) return '-';
-          if (ts) return timesheetWaveMonthCellDisplay(ts);
+          if (!waveMonthCellTimesheetVisible(rosterAssignment, d, tsRaw)) return '-';
+          if (tsRaw) return timesheetWaveMonthCellDisplay(tsRaw);
           return '-';
         });
         const rowKey = `${wave.id}|${rw.workerId}|${rosterAssignment.id}`;
@@ -2161,9 +2196,22 @@ export default function WaveMonthTimesheetSummaryPage() {
                               <Send className="h-3.5 w-3.5" />
                               ส่งอนุมัติคนที่ปิดแล้ว ({partialCloseStats.entryLocked})
                             </Button>
+                            {partialCloseStats.entryLocked > 0 ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-8 gap-1"
+                                disabled={partialWorkflowBusy}
+                                onClick={() => void handleSyncPayrollReadyFlags()}
+                              >
+                                <RefreshCw className="h-3.5 w-3.5" />
+                                ซิงก์พร้อมจ่าย Payroll
+                              </Button>
+                            ) : null}
                           </div>
                           <p className="text-[10px] text-muted-foreground">
-                            ติ๊กเลือกคนที่ timesheet ครบ → ปิดงวด → ส่งผู้จัดการอนุมัติรายคน · คนที่ «รอ timesheet» ยังแก้ไขได้
+                            ติ๊กเลือกคนที่ timesheet ครบ → ปิดงวด → ไป Payroll Batch ได้ทันที · กดซิงก์พร้อมจ่ายถ้า Batch ยังเห็น 0 คน · ส่งผู้จัดการอนุมัติเมื่อต้องการ
                           </p>
                           {overdueDeferredClosures.length > 0 ? (
                             <Alert variant="destructive" className="py-2">
@@ -2331,7 +2379,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                               </TableCell>
                               {days.map((d) => {
                                 /** จับคู่แบบเดียวกับ resolve ในเซลล์ — คอลัมน์รวมชม.ใช้ logic เดียวกัน */
-                                const ts = resolveTimesheetForWaveMonthCell(
+                                const tsRaw = resolveTimesheetForWaveMonthCell(
                                   wave.id,
                                   rw.workerId,
                                   d,
@@ -2342,6 +2390,9 @@ export default function WaveMonthTimesheetSummaryPage() {
                                   rosterAssignment,
                                   alternateMobIds,
                                 );
+                                const ts = waveMonthCellTimesheetVisible(rosterAssignment, d, tsRaw)
+                                  ? tsRaw
+                                  : undefined;
                                 const inMobWindow = isYmdEditableForAssignmentTimesheet(rosterAssignment, d, {
                                   hasPersistedTimesheetOnDate: !!ts,
                                 });
@@ -2367,7 +2418,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                                   canEditTs && (tsLocked || retroOnlyPayrollMonth || editableGrid);
                                 return (
                                   <TableCell key={d} className="px-0.5 text-center text-[11px] leading-none">
-                                    {!inMobWindow && !ts ? (
+                                    {!ts ? (
                                       <span
                                         className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-sm py-0.5 text-[11px] font-medium text-muted-foreground/40"
                                         title="นอกช่วง mobilization ตามฟิลด์บนเอกสาร — ยังไม่มีบันทึกรายวันที่จับคู่ได้"

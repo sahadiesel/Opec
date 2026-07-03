@@ -11,11 +11,13 @@ import {
   type DocumentReference,
   type Firestore,
 } from 'firebase/firestore';
-import type { Assignment, PayrollPeriod, PayrollPeriodStatus, PoMonthTimesheetReview, PurchaseOrder } from '@/lib/types';
+import type { Assignment, DailyTimesheet, PayrollPeriod, PayrollPeriodStatus, PoMonthTimesheetReview, PurchaseOrder } from '@/lib/types';
+import { partitionTimesheetsForPayrollReadiness } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
 import { resolveBillingMode } from '@/lib/commercial/resolve-billing-mode';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { purchaseOrderOverlapsYearMonth } from '@/lib/timesheet/po-location-month-shell';
-import { fetchWorkerClosuresForPoMonth } from '@/lib/timesheet/worker-month-closure';
+import { fetchWorkerClosuresForPoMonth, WORKER_MONTH_CLOSURE_PAYROLL_READY_STATUSES } from '@/lib/timesheet/worker-month-closure';
+import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 
 const FIRESTORE_BATCH_LIMIT = 400;
 /** Firestore `in` จำกัด 30 ค่า — ใช้แบ่ง waveId เวลาดึงใบงานตาม Wave จริงใต้ PO */
@@ -223,33 +225,7 @@ export async function markTimesheetsReadyForPayrollAfterPoMonthApproval(
     }
   }
 
-  let batch = writeBatch(db);
-  let n = 0;
-  let updated = 0;
-  const ts = Date.now();
-
-  for (const ref of refs) {
-    if (billingMode === 'MONTHLY') {
-      batch.update(ref, {
-        readyForPayroll: true,
-        readyForBilling: true,
-        updatedAt: ts,
-      });
-    } else {
-      batch.update(ref, {
-        readyForPayroll: true,
-        updatedAt: ts,
-      });
-    }
-    updated++;
-    n++;
-    if (n >= FIRESTORE_BATCH_LIMIT) {
-      await batch.commit();
-      batch = writeBatch(db);
-      n = 0;
-    }
-  }
-  if (n > 0) await batch.commit();
+  const { updated } = await applyPoMonthPayrollReadyFlags(db, refs, billingMode);
   return { updated };
 }
 
@@ -270,6 +246,70 @@ async function filterTimesheetRefsByWorkerIds(
     }
   }
   return out;
+}
+
+async function loadDailyTimesheetsFromRefs(refs: DocumentReference[]): Promise<DailyTimesheet[]> {
+  const out: DailyTimesheet[] = [];
+  for (let i = 0; i < refs.length; i += 100) {
+    const chunk = refs.slice(i, i + 100);
+    const snaps = await Promise.all(chunk.map((r) => getDoc(r)));
+    for (const s of snaps) {
+      if (!s.exists()) continue;
+      out.push({ id: s.id, ...(s.data() as object) } as DailyTimesheet);
+    }
+  }
+  return out;
+}
+
+async function applyPoMonthPayrollReadyFlags(
+  db: Firestore,
+  refs: DocumentReference[],
+  billingMode: 'MONTHLY' | 'TRIP',
+): Promise<{ updated: number; cleared: number }> {
+  if (refs.length === 0) return { updated: 0, cleared: 0 };
+  const tsList = await loadDailyTimesheetsFromRefs(refs);
+  const { payable, staleReady } = await partitionTimesheetsForPayrollReadiness(db, tsList);
+  const payableIds = new Set(payable.map((t) => t.id));
+  const staleIds = new Set(
+    staleReady.filter((t) => t.status !== 'LOCKED').map((t) => t.id),
+  );
+
+  let batch = writeBatch(db);
+  let n = 0;
+  let updated = 0;
+  let cleared = 0;
+  const ts = Date.now();
+
+  const flush = async () => {
+    if (n === 0) return;
+    await batch.commit();
+    batch = writeBatch(db);
+    n = 0;
+  };
+
+  for (const ref of refs) {
+    const id = ref.id;
+    if (payableIds.has(id)) {
+      if (billingMode === 'MONTHLY') {
+        batch.update(ref, { readyForPayroll: true, readyForBilling: true, updatedAt: ts });
+      } else {
+        batch.update(ref, { readyForPayroll: true, updatedAt: ts });
+      }
+      updated++;
+      n++;
+    } else if (staleIds.has(id)) {
+      if (billingMode === 'MONTHLY') {
+        batch.update(ref, { readyForPayroll: false, readyForBilling: false, updatedAt: ts });
+      } else {
+        batch.update(ref, { readyForPayroll: false, updatedAt: ts });
+      }
+      cleared++;
+      n++;
+    }
+    if (n >= FIRESTORE_BATCH_LIMIT) await flush();
+  }
+  await flush();
+  return { updated, cleared };
 }
 
 /** ตั้ง readyForPayroll / readyForBilling เฉพาะคนงานที่ระบุ (ปิดงวดบางส่วน) */
@@ -294,26 +334,7 @@ export async function markTimesheetsReadyForPoMonthWorkerIds(
     billingMode = await resolveBillingMode(db, { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder);
   }
 
-  let batch = writeBatch(db);
-  let n = 0;
-  let updated = 0;
-  const ts = Date.now();
-
-  for (const ref of refs) {
-    if (billingMode === 'MONTHLY') {
-      batch.update(ref, { readyForPayroll: true, readyForBilling: true, updatedAt: ts });
-    } else {
-      batch.update(ref, { readyForPayroll: true, updatedAt: ts });
-    }
-    updated++;
-    n++;
-    if (n >= FIRESTORE_BATCH_LIMIT) {
-      await batch.commit();
-      batch = writeBatch(db);
-      n = 0;
-    }
-  }
-  if (n > 0) await batch.commit();
+  const { updated } = await applyPoMonthPayrollReadyFlags(db, refs, billingMode);
   return { updated };
 }
 
@@ -386,9 +407,11 @@ export async function syncReadyPayrollFlagsForPoMonth(
 
   const closures = await fetchWorkerClosuresForPoMonth(db, pid, ym);
   if (closures.length > 0) {
-    const approvedIds = closures.filter((c) => c.status === 'approved').map((c) => c.workerId);
-    if (approvedIds.length === 0) return { updated: 0 };
-    return markTimesheetsReadyForPoMonthWorkerIds(db, pid, ym, approvedIds);
+    const readyWorkerIds = closures
+      .filter((c) => WORKER_MONTH_CLOSURE_PAYROLL_READY_STATUSES.includes(c.status))
+      .map((c) => c.workerId);
+    if (readyWorkerIds.length === 0) return { updated: 0 };
+    return markTimesheetsReadyForPoMonthWorkerIds(db, pid, ym, readyWorkerIds);
   }
 
   return markTimesheetsReadyForPayrollAfterPoMonthApproval(db, {

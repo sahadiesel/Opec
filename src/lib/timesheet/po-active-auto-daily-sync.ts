@@ -266,6 +266,40 @@ export async function syncPoActiveAutoDailyForAssignment(
   return { created, updated, skipped };
 }
 
+/** ลบแถว auto ค้างหลังจบไซต์ / ก่อน remob — ใช้เมื่อ mobilization ไม่ ACTIVE แล้วแต่ยังมี W ผิดช่วงในเดือน */
+export async function purgeStalePoActiveAutoDailyForCalendarMonth(
+  db: Firestore,
+  assignmentId: string,
+  monthYm: string,
+): Promise<number> {
+  const mobSnap = await getDoc(doc(db, 'mobilizations', assignmentId));
+  if (!mobSnap.exists()) return 0;
+  const assignment = { id: mobSnap.id, ...(mobSnap.data() as object) } as Assignment;
+  if (!/^\d{4}-\d{2}$/.test(monthYm.trim())) return 0;
+
+  const monthStart = `${monthYm}-01`;
+  const monthEnd = lastDayOfCalendarMonth(monthYm);
+  const todayYmd = thailandTodayYmd();
+  const through = monthEnd < todayYmd ? monthEnd : todayYmd;
+  if (monthStart > through) return 0;
+
+  const tsCol = collection(db, 'daily_timesheets');
+  let deleted = 0;
+  for (const date of eachYmdInRange(monthStart, through)) {
+    if (!shouldDeleteStalePoActiveAutoDailyRow(assignment, date)) continue;
+    const id = poActiveDailyTimesheetDocId(assignment.workerId, assignment.id, date);
+    const dRef = doc(tsCol, id);
+    const existing = await getDoc(dRef);
+    if (!existing.exists()) continue;
+    const cur = existing.data() as DailyTimesheet;
+    if (cur.poActiveAutoDaily !== true) continue;
+    if (isTimesheetFinanciallyImmutable(cur.status)) continue;
+    await deleteDoc(dRef);
+    deleted++;
+  }
+  return deleted;
+}
+
 /**
  * หยุดแบบ standby — เติม SB อัตโนมัติ N วัน แล้วระงับ work_day จนกว่าจะเริ่มงานใหม่ที่ Mobilization
  */

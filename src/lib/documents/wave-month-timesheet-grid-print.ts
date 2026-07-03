@@ -9,6 +9,24 @@ export type WaveMonthTimesheetGridPrintRow = {
   standbyHoursTotal: string;
 };
 
+/** แยก W+5 เป็น 2 บรรทัด (W บน · +5 ล่าง) สำหรับพิมพ์ */
+function formatWaveMonthDayCellPrintHtml(raw: string): string {
+  const cell = (raw ?? '').trim();
+  if (!cell || cell === '-') return escapeHtmlDoc('-');
+  if (cell === ' - ') return escapeHtmlDoc(' - ');
+
+  const hasDagger = cell.endsWith('†');
+  const core = hasDagger ? cell.slice(0, -1) : cell;
+  const stacked = /^(.+)\+(\d+(?:\.\d+)?)$/.exec(core);
+  if (stacked) {
+    const base = stacked[1];
+    const otLine = `+${stacked[2]}${hasDagger ? '†' : ''}`;
+    return `<span class="wm-cell-stack"><span class="wm-cell-top">${escapeHtmlDoc(base)}</span><span class="wm-cell-ot">${escapeHtmlDoc(otLine)}</span></span>`;
+  }
+
+  return escapeHtmlDoc(cell);
+}
+
 export function buildWaveMonthTimesheetGridPrintHtml(params: {
   monthLabel: string;
   monthYm: string;
@@ -40,7 +58,7 @@ export function buildWaveMonthTimesheetGridPrintHtml(params: {
       : rows
           .map((r) => {
             const dayCells = r.dayCells
-              .map((c) => `<td class="wm-day wm-cell">${escapeHtmlDoc(c || '-')}</td>`)
+              .map((c) => `<td class="wm-day wm-cell">${formatWaveMonthDayCellPrintHtml(c || '-')}</td>`)
               .join('');
             return `<tr>
               <td class="wm-worker">
@@ -66,7 +84,10 @@ export function buildWaveMonthTimesheetGridPrintHtml(params: {
   .wm-table th { background: #f3f4f6; font-weight: 700; text-align: center; }
   .wm-worker { width: 9.5rem; min-width: 9.5rem; text-align: left; vertical-align: top; }
   .wm-day { width: 1.35rem; min-width: 1.35rem; max-width: 1.35rem; padding: 1px !important; font-family: ui-monospace, monospace; font-size: 7pt; }
-  .wm-cell { text-align: center; font-weight: 600; }
+  .wm-cell { text-align: center; vertical-align: middle; }
+  .wm-cell-stack { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0; line-height: 1; min-height: 1.45em; }
+  .wm-cell-top { font-weight: 700; font-size: 7pt; }
+  .wm-cell-ot { font-weight: 600; font-size: 6pt; color: #92400e; letter-spacing: -0.02em; }
   .wm-num { width: 2.6rem; min-width: 2.6rem; text-align: center; font-weight: 700; white-space: nowrap; }
   .wm-standby { color: #0369a1; }
   .wm-sub { font-size: 6.5pt; color: #666; }
@@ -97,7 +118,7 @@ export function buildWaveMonthTimesheetGridPrintHtml(params: {
     <tbody>${tableRows}</tbody>
   </table>
   <p class="wm-legend">
-    <strong>คีย์:</strong> W=ทำงาน · SB=สแตนด์บาย · T=เดินทาง · M1=Mob · D1=Demob · «-»=ยังไม่มีบันทึก
+    <strong>คีย์:</strong> W=ทำงาน · SB=สแตนด์บาย · T=เดินทาง · M1=Mob · D1=Demob · «-»=ยังไม่มีบันทึก · โอทีแสดงบรรทัดล่าง (เช่น W แล้ว +5)
   </p>
   <p class="wm-foot">OPEC OpsFlow — ตารางสรุปลงเวลารายเดือน</p>
 </div>`;

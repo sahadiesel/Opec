@@ -5,6 +5,7 @@ import {
   assignmentHasSplitPriorAndNewCycleOnDoc,
   assignmentIsRemobMobilizationOnDoc,
   isYmdInRemobGapBetweenCycles,
+  isYmdAfterSiteEndAwaitingRemob,
   mobLocationEndDateCapsAssignmentTimesheetWindow,
   resolveMobSegmentStartYmd,
 } from '@/lib/constants/timesheet-ui';
@@ -53,6 +54,7 @@ export const PO_ACTIVE_STANDBY_STOP_AUTO_DAYS = 7;
 export function resolvePoActiveAutoDailySyncKind(a: Assignment, dateYmd: string): 'work_day' | 'standby_day' | null {
   if (!isAssignmentEligibleForPoActiveAutoDaily(a)) return null;
   if (isYmdInRemobGapBetweenCycles(a, dateYmd)) return null;
+  if (isYmdAfterSiteEndAwaitingRemob(a, dateYmd)) return null;
   const suspended = a.poActiveAutoWorkSuspended === true;
   const sbStart = (a.poActiveStandbyAutoStartYmd || '').trim().slice(0, 10);
   const sbEnd = (a.poActiveStandbyAutoEndYmd || '').trim().slice(0, 10);
@@ -177,6 +179,7 @@ export function shouldDeleteStalePoActiveAutoDailyRow(
   dateYmd: string,
 ): boolean {
   if (isYmdInRemobGapBetweenCycles(a, dateYmd)) return true;
+  if (isYmdAfterSiteEndAwaitingRemob(a, dateYmd)) return true;
   const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
   const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
   if (assignmentHasSplitPriorAndNewCycleOnDoc(a) && /^\d{4}-\d{2}-\d{2}$/.test(mobEnd) && dateYmd <= mobEnd) {

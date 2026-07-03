@@ -556,7 +556,7 @@ function PayrollBatchesPageContent() {
                   <Info className="h-5 w-5" />
                   <AlertTitle className="font-bold">ไม่มีคนงานพร้อมจ่ายในรอบนี้</AlertTitle>
                   <AlertDescription className="text-xs">
-                    ใบงานอาจถูกล็อกจาก batch ก่อนหน้าแล้ว — ลองเลือกเดือนอื่นหรือตรวจว่ายังมี daily ที่ readyForPayroll และ status ไม่ใช่ LOCKED
+                    ปิดงวดแล้วแต่ยังไม่มี readyForPayroll — กลับไปหน้าสรุปรายเดือนกด «ซิงก์พร้อมจ่าย Payroll» หรือปิดงวดบางส่วนอีกครั้ง · ตรวจว่าใบงานไม่ถูก LOCKED จาก batch ก่อนหน้า
                   </AlertDescription>
                 </Alert>
               )}
