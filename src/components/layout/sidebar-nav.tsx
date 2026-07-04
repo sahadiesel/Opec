@@ -87,6 +87,8 @@ import {
   canViewHrApprovalSubsection,
 } from '@/lib/navigation/nav-access';
 import { cn } from '@/lib/utils';
+import { useAccountingSidebarAlerts } from '@/hooks/use-accounting-sidebar-alerts';
+import { AccountingNavAlertDot } from '@/components/layout/accounting-nav-alert-dot';
 
 /** ข้อความเมนูหลัก sidebar — ตัวหนา ขนาดเล็กกว่าเดิม (text-xs) ให้พอดีกับความกว้างแถบ */
 const SIDEBAR_MAIN_ITEM_TEXT = 'text-xs font-bold leading-snug tracking-tight text-foreground';
@@ -499,6 +501,7 @@ export function SidebarNav({
   const admin = isSystemAdmin(user);
   const fullMenuAccess = admin || isExecutiveViewer(user);
   const profile = profiles?.[0] ?? null;
+  const { payrollAlert, apAlert } = useAccountingSidebarAlerts(user);
 
   return (
     <Sidebar variant="sidebar" collapsible="icon">
@@ -586,6 +589,9 @@ export function SidebarNav({
                                 <span className={cn(SIDEBAR_MAIN_ITEM_TEXT, 'text-left leading-snug line-clamp-2')}>
                                   {sub.title}
                                 </span>
+                                {sub.title === 'ระบบเจ้าหนี้' && apAlert ? (
+                                  <AccountingNavAlertDot title="มีบิลเจ้าหนี้ถึงกำหนดจ่ายหรือรอจ่าย" />
+                                ) : null}
                                 <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
                               </SidebarMenuButton>
                             </CollapsibleTrigger>
@@ -626,6 +632,9 @@ export function SidebarNav({
                               <SidebarMenuButton tooltip={sub.title} className="transition-all duration-200">
                                 <sub.icon className="h-4 w-4 text-muted-foreground" />
                                 <span className={cn(SIDEBAR_MAIN_ITEM_TEXT, 'truncate')}>{sub.title}</span>
+                                {payrollAlert ? (
+                                  <AccountingNavAlertDot title="มีงวดเงินเดือน/ค่าจ้างรอบัญชีจ่าย" />
+                                ) : null}
                                 <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
                               </SidebarMenuButton>
                             </CollapsibleTrigger>

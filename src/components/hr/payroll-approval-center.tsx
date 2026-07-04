@@ -382,26 +382,6 @@ export function PayrollApprovalCenterD6({
   const workerBlocking = hasBlockingRed(workerChecks);
   const officeBlocking = hasBlockingRed(officeChecks);
 
-  const handleOfficerSubmitForPayout = async () => {
-    if (!firestore || !selectedBatch || !canWorkerEditBatch) return;
-    if (!isSystemAdmin(currentUser) && !isPayrollOfficer(currentUser)) return;
-    setBusy(true);
-    try {
-      const svc = new PayrollService(firestore);
-      await svc.submitOfficerBatchForPayoutApproval(selectedBatch.id, currentUser);
-      toast({
-        title: 'ส่งขออนุมัติทำจ่ายแล้ว',
-        description: 'งวดรอการอนุมัติที่คิวของผู้จัดการ/ศูนย์อนุมัติ (HR_REVIEWED)',
-      });
-      setWorkerLines(null);
-      await loadWorkerLines(selectedBatch.id);
-    } catch (e) {
-      toast({ variant: 'destructive', title: 'ส่งคำขอไม่สำเร็จ', description: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const handleManagerApprovePayout = async () => {
     if (!firestore || !selectedBatch || workerBlocking || !canManagerApproveWorkerBatch) return;
     setBusy(true);
@@ -409,8 +389,8 @@ export function PayrollApprovalCenterD6({
       const svc = new PayrollService(firestore);
       await svc.managerApprovePayoutAndNotifyAccounting(selectedBatch.id, currentUser);
       toast({
-        title: 'อนุมัติจ่ายเงินแล้ว',
-        description: `Batch ${selectedBatch.id} → FINANCE_PREPARED (คิวบัญชีรอจ่าย — ไม่มีขั้นส่งบัญชีแยก)`,
+        title: 'อนุมัติและส่งบัญชีจ่ายเงินแล้ว',
+        description: `Batch ${selectedBatch.id} → FINANCE_PREPARED (คิวบัญชีรอจ่ายตามรายการฝ่ายเงินเดือน)`,
       });
       setWorkerLines(null);
       await loadWorkerLines(selectedBatch.id);
@@ -700,17 +680,12 @@ export function PayrollApprovalCenterD6({
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-base">C. การกระทำของผู้จัดการ</CardTitle>
+                      <CardDescription>
+                        ตรวจยอดและรายการแล้ว — อนุมัติครั้งเดียวเพื่อส่งเข้าคิวบัญชีจ่ายตามรายการที่ฝ่ายเงินเดือนเตรียมไว้
+                        (สถานะ FINANCE_PREPARED)
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                      {(isSystemAdmin(currentUser) || isPayrollOfficer(currentUser)) && canWorkerEditBatch && (
-                        <Button
-                          variant="default"
-                          disabled={busy || selectedBatch.status !== 'GENERATED' || workerBlocking}
-                          onClick={() => void handleOfficerSubmitForPayout()}
-                        >
-                          ส่งขออนุมัติทำจ่าย (ฝ่ายเงินเดือน)
-                        </Button>
-                      )}
                       <Button
                         disabled={
                           busy ||
@@ -720,7 +695,7 @@ export function PayrollApprovalCenterD6({
                         }
                         onClick={() => void handleManagerApprovePayout()}
                       >
-                        อนุมัติจ่ายเงิน
+                        อนุมัติและส่งบัญชีจ่ายเงิน
                       </Button>
                       <Button
                         variant="secondary"

@@ -74,4 +74,20 @@
   .animate-approval-new-request {
     animation: approval-new-request-blink 1s ease-in-out infinite;
   }
+
+  /** เมนูบัญชี — ไฟเตือนกลมกระพริบเหลือง-แดง */
+  @keyframes accounting-nav-alert-blink {
+    0%,
+    100% {
+      background-color: rgb(234 179 8);
+      box-shadow: 0 0 0 2px rgb(234 179 8 / 0.35);
+    }
+    50% {
+      background-color: rgb(220 38 38);
+      box-shadow: 0 0 0 3px rgb(220 38 38 / 0.45);
+    }
+  }
+  .animate-accounting-nav-alert {
+    animation: accounting-nav-alert-blink 1.1s ease-in-out infinite;
+  }
 }

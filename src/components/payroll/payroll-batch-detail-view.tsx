@@ -380,7 +380,7 @@ export function PayrollBatchDetailView({
       const svc = new PayrollService(firestore);
       await svc.managerApprovePayoutAndNotifyAccounting(batch.id, currentUser as User);
       toast({
-        title: 'อนุมัติจ่ายเงินแล้ว',
+        title: 'อนุมัติและส่งบัญชีจ่ายเงินแล้ว',
         description: 'สถานะ → FINANCE_PREPARED (คิวบัญชีรอจ่าย — ไม่มีขั้นส่งบัญชีแยก)',
       });
     } catch (e) {
@@ -642,7 +642,7 @@ export function PayrollBatchDetailView({
             <CardHeader className="pb-2">
               <CardTitle className="text-base">ผู้จัดการ/ศูนย์อนุมัติ</CardTitle>
               <CardDescription>
-                งวด: {period?.label || batch.payrollPeriodId} — ตรวจยอดรวมแล้ว กดอนุมัติจ่ายเงินเพื่อส่งเข้าคิวบัญชีรอจ่าย (FINANCE_PREPARED) โดยตรง
+                งวด: {period?.label || batch.payrollPeriodId} — ตรวจยอดรวมแล้ว กดอนุมัติและส่งบัญชีจ่ายเงินเพื่อเข้าคิวบัญชีรอจ่าย (FINANCE_PREPARED)
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-wrap items-center gap-2">
@@ -654,7 +654,7 @@ export function PayrollBatchDetailView({
                 onClick={() => void handleManagerApprovePayout()}
               >
                 {payoutActionBusy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
-                อนุมัติจ่ายเงิน
+                อนุมัติและส่งบัญชีจ่ายเงิน
               </Button>
               {canOpenPayrollApprovalCenter && (
                 <Button variant="outline" size="sm" asChild>
