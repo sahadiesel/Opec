@@ -330,6 +330,17 @@ export function PoDailyBoardCard({
   const [clearDayBusy, setClearDayBusy] = useState(false);
   /** แถวที่ผู้ใช้ล้างวันนี้แล้ว — ไม่โหลดค่า default และไม่บันทึกทับ */
   const [clearedRowIds, setClearedRowIds] = useState<Set<string>>(() => new Set());
+  /** แถวที่แก้บนจอแล้วยังไม่บันทึก — กัน loadRoster ทับ eventType (เช่น เปลี่ยนเป็น standby) */
+  const [dirtyRowIds, setDirtyRowIds] = useState<Set<string>>(() => new Set());
+
+  const markRowDirty = useCallback((assignmentId: string) => {
+    setDirtyRowIds((prev) => {
+      if (prev.has(assignmentId)) return prev;
+      const next = new Set(prev);
+      next.add(assignmentId);
+      return next;
+    });
+  }, []);
   const [billingModesByPo, setBillingModesByPo] = useState<PoBillingModeRow[] | null>(null);
   const [billingProceedHref, setBillingProceedHref] = useState<string | null>(null);
   const [rowDisplayFilter, setRowDisplayFilter] = useState<PoDailyBoardRowFilter>('all');
@@ -660,12 +671,23 @@ export function PoDailyBoardCard({
       }
     }
     setPersistedAssignmentIds(persisted);
-    setRosterData(next);
-  }, [firestore, targetDate, assignmentRows, poIds, defaultHoursByAssignmentId, clearedRowIds]);
+    setRosterData((prev) => {
+      for (const id of dirtyRowIds) {
+        if (clearedRowIds.has(id)) continue;
+        const local = prev[id];
+        if (local) next[id] = local;
+      }
+      return next;
+    });
+  }, [firestore, targetDate, assignmentRows, poIds, defaultHoursByAssignmentId, clearedRowIds, dirtyRowIds]);
 
   useEffect(() => {
     void loadRoster();
   }, [loadRoster]);
+
+  useEffect(() => {
+    setDirtyRowIds(new Set());
+  }, [targetDate]);
 
   const runSilentTodayAutoSync = useCallback(async () => {
     if (!firestore || !canEditTimesheets || anyMonthLocked || activeEligibleAssignmentIds.length === 0) return;
@@ -831,6 +853,10 @@ export function PoDailyBoardCard({
     }
     setClearedRowIds(nextCleared);
     setRosterData(updated);
+    for (const asgn of assignmentRows) {
+      if (nextCleared.has(asgn.id)) continue;
+      if (updated[asgn.id]) markRowDirty(asgn.id);
+    }
     toast({
       title: 'Bulk apply',
       description: 'ใช้กับแถวที่วันที่เลือกอยู่ในช่วงมอบหมายและยังแก้ได้',
@@ -1016,6 +1042,7 @@ export function PoDailyBoardCard({
           workMode: asgn.workMode ?? 'OFFSHORE',
           shiftType: 'DAY',
           status: 'DRAFT',
+          poActiveAutoDaily: false,
         });
       }
 
@@ -1046,6 +1073,7 @@ export function PoDailyBoardCard({
               : `ลบ ${deleted} รายการจากระบบ`,
         });
       }
+      setDirtyRowIds(new Set());
       await loadRoster();
     } catch (e: unknown) {
       toast({ variant: 'destructive', title: 'Error', description: e instanceof Error ? e.message : String(e) });
@@ -1542,9 +1570,13 @@ export function PoDailyBoardCard({
                   );
                   const worker = workers?.find((x) => x.id === asgn.workerId);
                   const et = raw?.eventType ?? 'work_day';
-                  /** หลัง mobLocationEndDate — ไม่โชว์ชม./ประเภทจากใบงานใน Firestore (กัน sync เกินวันจบ) */
+                  const showEventTypeEditor =
+                    !afterMobEnd || persisted || priorCycleWorkWhileAwaitingRemob;
+                  /** หลัง mob end — ซ่อนยอดจาก Firestore เฉพาะเมื่อไม่เปิดแก้ประเภทวัน */
+                  const maskAfterMobEnd =
+                    afterMobEnd && !(awaitingRemob && priorCycleWorkWhileAwaitingRemob);
                   const row =
-                    afterMobEnd && !(awaitingRemob && priorCycleWorkWhileAwaitingRemob)
+                    isRowCleared
                       ? {
                           eventType: 'work_day' as RateConditionEventType,
                           normalHours: 0,
@@ -1552,7 +1584,7 @@ export function PoDailyBoardCard({
                           remark: '',
                           status: undefined as DailyTimesheetStatus | undefined,
                         }
-                      : isRowCleared
+                      : maskAfterMobEnd && !showEventTypeEditor
                         ? {
                             eventType: 'work_day' as RateConditionEventType,
                             normalHours: 0,
@@ -1584,8 +1616,6 @@ export function PoDailyBoardCard({
                   const canFinishJob =
                     editableMobWindow &&
                     WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(asgn.deploymentStatus as Assignment['deploymentStatus']);
-                  const showEventTypeEditor =
-                    !afterMobEnd || persisted || priorCycleWorkWhileAwaitingRemob;
                   const eventSelectValue = isRowCleared
                     ? PO_DAILY_BOARD_EVENT_CLEAR
                     : row.eventType;
@@ -1640,6 +1670,12 @@ export function PoDailyBoardCard({
                                   next.add(asgn.id);
                                   return next;
                                 });
+                                setDirtyRowIds((prev) => {
+                                  if (!prev.has(asgn.id)) return prev;
+                                  const next = new Set(prev);
+                                  next.delete(asgn.id);
+                                  return next;
+                                });
                                 setRosterData((prev) => {
                                   const next = { ...prev };
                                   delete next[asgn.id];
@@ -1653,6 +1689,7 @@ export function PoDailyBoardCard({
                                 next.delete(asgn.id);
                                 return next;
                               });
+                              markRowDirty(asgn.id);
                               setRosterData((prev) => {
                                 const cur = prev[asgn.id] ?? {
                                   workerId: asgn.workerId,
@@ -1711,6 +1748,7 @@ export function PoDailyBoardCard({
                                 next.delete(asgn.id);
                                 return next;
                               });
+                              markRowDirty(asgn.id);
                               setRosterData((p) => ({
                                 ...p,
                                 [asgn.id]: { ...(p[asgn.id] || {}), normalHours: v },
@@ -1740,6 +1778,7 @@ export function PoDailyBoardCard({
                                 next.delete(asgn.id);
                                 return next;
                               });
+                              markRowDirty(asgn.id);
                               setRosterData((p) => ({
                                 ...p,
                                 [asgn.id]: { ...(p[asgn.id] || {}), ot15Hours: v },
@@ -1837,6 +1876,7 @@ export function PoDailyBoardCard({
                                 next.delete(asgn.id);
                                 return next;
                               });
+                              markRowDirty(asgn.id);
                               setRosterData((p) => ({
                                 ...p,
                                 [asgn.id]: {
