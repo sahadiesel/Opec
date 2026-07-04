@@ -256,10 +256,57 @@ export class TimesheetService {
       actionType: 'CORRECTION_REQ',
       entityType: 'DailyTimesheet',
       entityId: id,
+      reasonText: reason,
+      timesheetId: id,
+      sourceModule: 'operations',
+      afterSummary: 'Finalized timesheet flagged for correction. Financial readiness reset.'
+    });
+  }
+
+  /**
+   * แก้ชม. OT/ปกติบนใบงานที่ปิดงวดแล้ว (VERIFIED_PAPER / CLIENT_APPROVED ฯลฯ) — อนุญาต OT = 0
+   * ไม่แตะใบงานที่ LOCKED ในชุดจ่าย payroll
+   */
+  async correctClosedPeriodTimesheetHours(
+    id: string,
+    user: User,
+    input: { ot15Hours: number; normalHours?: number; reason: string },
+  ): Promise<void> {
+    assertPayrollPermission(user, 'timesheet', 'edit');
+    const docRef = doc(this.getCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('ไม่พบใบงาน');
+    const current = snap.data() as DailyTimesheet;
+    if (current.status === 'LOCKED') {
+      throw new Error('ใบงานถูกล็อกในชุดจ่าย payroll — ลบชุดจ่าย (System Admin) ก่อนแก้ OT');
+    }
+    const reason = String(input.reason || '').trim();
+    if (!reason) throw new Error('กรุณาระบุเหตุผลการแก้ไข');
+
+    const ot15 = Math.min(24, Math.max(0, Number(input.ot15Hours) || 0));
+    const patch: Record<string, unknown> = {
+      ot15Hours: ot15,
+      ot20Hours: 0,
+      ot30Hours: 0,
+      readyForPayroll: false,
+      readyForBilling: false,
+      updatedAt: Date.now(),
+    };
+    if (input.normalHours !== undefined) {
+      patch.normalHours = Math.min(24, Math.max(0, Number(input.normalHours) || 0));
+    }
+    const priorRemark = String(current.remark || '').trim();
+    patch.remark = priorRemark ? `${priorRemark} · แก้ OT: ${reason}` : `แก้ OT: ${reason}`;
+
+    await updateDoc(docRef, patch);
+    await writeAuditLog(this.db, user, {
+      actionType: 'UPDATE',
+      entityType: 'DailyTimesheet',
+      entityId: id,
       timesheetId: id,
       reasonText: reason,
       sourceModule: 'operations',
-      afterSummary: 'Finalized timesheet flagged for correction. Financial readiness reset.'
+      afterSummary: `Closed-period correction: OT15=${ot15}h (was ${current.ot15Hours ?? 0}h)`,
     });
   }
 

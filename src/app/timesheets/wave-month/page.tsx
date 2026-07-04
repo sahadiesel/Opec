@@ -218,6 +218,10 @@ function isTimesheetPayrollLocked(ts: DailyTimesheet | undefined): boolean {
   return ts?.status === 'LOCKED';
 }
 
+function canCorrectTimesheetOtDirect(ts: DailyTimesheet | undefined): boolean {
+  return !!ts?.id && ts.status !== 'LOCKED';
+}
+
 function buildSyntheticTimesheetForRetro(input: {
   workerId: string;
   workerName: string;
@@ -287,6 +291,7 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [cellEdit, setCellEdit] = useState<CellEditContext | null>(null);
   const [retroEdit, setRetroEdit] = useState<RetroEditContext | null>(null);
   const [retroAddedOt, setRetroAddedOt] = useState(0);
+  const [retroTargetOt, setRetroTargetOt] = useState(0);
   const [retroAddedStandby, setRetroAddedStandby] = useState(0);
   const [retroAddedM1Trips, setRetroAddedM1Trips] = useState(0);
   const [retroAddedD1Trips, setRetroAddedD1Trips] = useState(0);
@@ -343,7 +348,14 @@ export default function WaveMonthTimesheetSummaryPage() {
 
   useEffect(() => {
     if (!retroEdit) return;
-    setRetroAddedOt(0);
+    const ts = retroEdit.timesheet;
+    if (ts.eventType === 'work_day' && canCorrectTimesheetOtDirect(ts)) {
+      setRetroTargetOt(typeof ts.ot15Hours === 'number' ? ts.ot15Hours : 0);
+      setRetroAddedOt(0);
+    } else {
+      setRetroTargetOt(0);
+      setRetroAddedOt(0);
+    }
     setRetroAddedStandby(0);
     setRetroAddedM1Trips(retroEdit.timesheet.eventType === 'mobilization_day' ? 1 : 0);
     setRetroAddedD1Trips(retroEdit.timesheet.eventType === 'demobilization_day' ? 1 : 0);
@@ -1535,6 +1547,29 @@ export default function WaveMonthTimesheetSummaryPage() {
         setRetroEdit({ timesheet: ts!, workerName: rw.name, po });
         return;
       }
+      if (ts && canCorrectTimesheetOtDirect(ts)) {
+        const assignment =
+          waveMobs.find((m) => m.id === ts.assignmentId) ?? waveMobs.find((m) => m.workerId === rw.workerId);
+        if (!assignment) {
+          toast({
+            variant: 'destructive',
+            title: 'ไม่พบการมอบหมาย',
+            description: 'เพิ่ม Mobilization / Assignment ใน Wave ก่อน',
+          });
+          return;
+        }
+        setCellEdit({
+          wave,
+          po,
+          monthReview,
+          workerId: rw.workerId,
+          workerName: rw.name,
+          assignment,
+          cellDate,
+          timesheet: ts,
+        });
+        return;
+      }
       if (retroOnlyPayrollMonth) {
         const assignment = ts
           ? waveMobs.find((m) => m.id === ts.assignmentId) ?? waveMobs.find((m) => m.workerId === rw.workerId)
@@ -1619,22 +1654,6 @@ export default function WaveMonthTimesheetSummaryPage() {
   const performSaveCellEdit = useCallback(async () => {
     if (!firestore || !currentUser || !cellEdit) return;
     const { wave, po, monthReview, workerId, workerName, assignment, timesheet: openedTs } = cellEdit;
-    if (retroOnlyPayrollMonth) {
-      toast({
-        variant: 'destructive',
-        title: 'งวด payroll ปิดแล้ว',
-        description: 'ใช้ «แก้ไขย้อนหลัง» แทน — จะจ่ายในงวดถัดไปโดยไม่แก้ใบงานต้นทาง',
-      });
-      return;
-    }
-    if (!canEditTs || isRowLockedForWorker(po, monthReview, workerId)) {
-      toast({
-        variant: 'destructive',
-        title: 'บันทึกไม่ได้',
-        description: 'ไม่มีสิทธิ์หรืองวดถูกปิดแล้ว',
-      });
-      return;
-    }
     const service = new TimesheetService(firestore);
 
     const contractId = (assignment.contractId || po?.contractId || '').trim();
@@ -1659,15 +1678,61 @@ export default function WaveMonthTimesheetSummaryPage() {
       }
     }
 
+    const closedPeriodCorrection =
+      !!baseTs && canCorrectTimesheetOtDirect(baseTs) && service.isFinalized(baseTs.status as DailyTimesheetStatus);
+
+    if (retroOnlyPayrollMonth && !closedPeriodCorrection) {
+      toast({
+        variant: 'destructive',
+        title: 'งวด payroll ปิดแล้ว',
+        description: 'ใช้ «แก้ไขย้อนหลัง» แทน — จะจ่ายในงวดถัดไปโดยไม่แก้ใบงานต้นทาง',
+      });
+      return;
+    }
+    if (!canEditTs || (isRowLockedForWorker(po, monthReview, workerId) && !closedPeriodCorrection)) {
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกไม่ได้',
+        description: 'ไม่มีสิทธิ์หรืองวดถูกปิดแล้ว',
+      });
+      return;
+    }
+
     const inMobWindow = isYmdEditableForAssignmentTimesheet(assignment, editDate, {
       hasPersistedTimesheetOnDate: !!(openedTs || baseTs),
     });
-    if (!inMobWindow) {
+    if (!inMobWindow && !closedPeriodCorrection) {
       toast({
         variant: 'destructive',
         title: 'วันนี้บันทึกไม่ได้',
         description: 'อยู่นอกช่วง mobilization ที่อนุญาต — ลองยกเลิกจบงานบน Wave Board ถ้าต้องการลงเวลาต่อ',
       });
+      return;
+    }
+
+    const isWorkDay = editEvent === 'work_day';
+    const otHours = isWorkDay ? Math.min(24, Math.max(0, Number(editOtHours) || 0)) : 0;
+
+    if (closedPeriodCorrection && baseTs) {
+      setSavingCell(true);
+      try {
+        await service.correctClosedPeriodTimesheetHours(baseTs.id, currentUser, {
+          ot15Hours: otHours,
+          normalHours:
+            editEvent === 'unpaid_leave' ? 0 : Math.min(24, Math.max(0, Number(editHours) || 0)),
+          reason: editRemark.trim() || 'แก้ OT จาก wave-month',
+        });
+        toast({ title: 'บันทึกแล้ว', description: `อัปเดต OT เป็น ${otHours} ชม.` });
+        setCellEdit(null);
+      } catch (e: unknown) {
+        toast({
+          variant: 'destructive',
+          title: 'บันทึกไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setSavingCell(false);
+      }
       return;
     }
 
@@ -1749,6 +1814,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     editRemark,
     allWorkers,
     retroOnlyPayrollMonth,
+    isRowLockedForWorker,
   ]);
 
   const performSaveRetroEdit = useCallback(async () => {
@@ -1756,6 +1822,28 @@ export default function WaveMonthTimesheetSummaryPage() {
     setRetroSaving(true);
     try {
       const ev = retroEdit.timesheet.eventType;
+      const reason = retroReason.trim();
+      if (!reason) throw new Error('กรุณาระบุเหตุผลการแก้ไข');
+
+      if (ev === 'work_day' && canCorrectTimesheetOtDirect(retroEdit.timesheet)) {
+        const target = Math.min(24, Math.max(0, Number(retroTargetOt) || 0));
+        const source = retroEdit.timesheet.ot15Hours ?? 0;
+        if (Math.abs(target - source) < 0.001) {
+          throw new Error('ไม่มีการเปลี่ยนแปลง OT');
+        }
+        const service = new TimesheetService(firestore);
+        await service.correctClosedPeriodTimesheetHours(retroEdit.timesheet.id, currentUser as User, {
+          ot15Hours: target,
+          reason,
+        });
+        toast({
+          title: 'บันทึกแล้ว',
+          description: `อัปเดต OT จาก ${source} ชม. เป็น ${target} ชม. — ปิดงวดรายคนอีกครั้งก่อนสร้าง payroll`,
+        });
+        setRetroEdit(null);
+        return;
+      }
+
       await createTimesheetRetroAdjustment(firestore, currentUser as User, {
         sourceTimesheet: retroEdit.timesheet,
         sourceYearMonth: monthYm,
@@ -1767,7 +1855,7 @@ export default function WaveMonthTimesheetSummaryPage() {
             : undefined,
         addedM1Trips: ev === 'mobilization_day' ? retroAddedM1Trips : undefined,
         addedD1Trips: ev === 'demobilization_day' ? retroAddedD1Trips : undefined,
-        reason: retroReason.trim(),
+        reason,
       });
       toast({
         title: 'บันทึกแก้ไขย้อนหลังแล้ว',
@@ -1805,6 +1893,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     monthYm,
     retroApplyYm,
     retroAddedOt,
+    retroTargetOt,
     retroAddedStandby,
     retroAddedM1Trips,
     retroAddedD1Trips,
@@ -2728,22 +2817,41 @@ export default function WaveMonthTimesheetSummaryPage() {
                 </p>
               </div>
               {retroEdit.timesheet.eventType === 'work_day' ? (
-                <div className="space-y-1.5">
-                  <Label htmlFor="retro-ot">OT ชม. ที่เพิ่ม (0–24)</Label>
-                  <Input
-                    id="retro-ot"
-                    type="number"
-                    min={0}
-                    max={24}
-                    step={0.5}
-                    value={retroAddedOt}
-                    onChange={(e) => setRetroAddedOt(Number(e.target.value))}
-                    disabled={retroSaving}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    ของเดิมในสลิป: OT {retroEdit.timesheet.ot15Hours ?? 0} ชม. — ค่านี้เป็น <strong>ชม.เพิ่ม</strong> ไม่ใช่ยอดรวม
-                  </p>
-                </div>
+                canCorrectTimesheetOtDirect(retroEdit.timesheet) ? (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="retro-ot-target">OT ชม. (ยอดที่ต้องการ)</Label>
+                    <Input
+                      id="retro-ot-target"
+                      type="number"
+                      min={0}
+                      max={24}
+                      step={0.5}
+                      value={retroTargetOt}
+                      onChange={(e) => setRetroTargetOt(Number(e.target.value))}
+                      disabled={retroSaving}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      ของเดิมในสลิป: OT {retroEdit.timesheet.ot15Hours ?? 0} ชม. — ใส่ <strong>0</strong> ได้เพื่อลบ OT · แก้ข้อมูลต้นทางโดยตรง
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="retro-ot">OT ชม. ที่เพิ่ม (0–24)</Label>
+                    <Input
+                      id="retro-ot"
+                      type="number"
+                      min={0}
+                      max={24}
+                      step={0.5}
+                      value={retroAddedOt}
+                      onChange={(e) => setRetroAddedOt(Number(e.target.value))}
+                      disabled={retroSaving}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      ของเดิมในสลิป: OT {retroEdit.timesheet.ot15Hours ?? 0} ชม. — ค่านี้เป็น <strong>ชม.เพิ่ม</strong> ไม่ใช่ยอดรวม
+                    </p>
+                  </div>
+                )
               ) : retroEdit.timesheet.eventType === 'mobilization_day' ? (
                 <div className="space-y-3">
                   <div className="space-y-1.5">
@@ -2820,16 +2928,21 @@ export default function WaveMonthTimesheetSummaryPage() {
                   />
                 </div>
               )}
-              <div className="space-y-1.5">
-                <Label htmlFor="retro-apply-ym">จ่ายในงวด payroll</Label>
-                <Input
-                  id="retro-apply-ym"
-                  type="month"
-                  value={retroApplyYm}
-                  onChange={(e) => setRetroApplyYm(e.target.value)}
-                  disabled={retroSaving}
-                />
-              </div>
+              {!(
+                retroEdit.timesheet.eventType === 'work_day' &&
+                canCorrectTimesheetOtDirect(retroEdit.timesheet)
+              ) ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="retro-apply-ym">จ่ายในงวด payroll</Label>
+                  <Input
+                    id="retro-apply-ym"
+                    type="month"
+                    value={retroApplyYm}
+                    onChange={(e) => setRetroApplyYm(e.target.value)}
+                    disabled={retroSaving}
+                  />
+                </div>
+              ) : null}
               <div className="space-y-1.5">
                 <Label htmlFor="retro-reason">เหตุผล (บังคับ)</Label>
                 <Textarea
@@ -2841,51 +2954,58 @@ export default function WaveMonthTimesheetSummaryPage() {
                   placeholder="เช่น OT 29–31 พ.ค. ลืมลงก่อนปิด payroll"
                 />
               </div>
-              <div className="rounded-md border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-sm">
-                <span className="text-muted-foreground">ยอดจ่ายเพิ่ม (จากตารางอัตรา): </span>
-                {retroPayPreviewLoading ? (
-                  <span className="inline-flex items-center gap-1 text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> กำลังคำนวณ…
-                  </span>
-                ) : retroPayMissing.length > 0 ? (
-                  <span className="text-amber-900 font-medium">— ยังใส่อัตราไม่ครบ</span>
-                ) : retroPayPreview != null && retroPayPreview > 0 ? (
-                  <strong className="text-emerald-900 font-mono tabular-nums">
-                    ฿{retroPayPreview.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </strong>
-                ) : (
-                  <span className="text-muted-foreground">— กรอกชม. OT/standby เพื่อคำนวณ</span>
-                )}
-                <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
-                  ดึงจากตารางอัตราสัญญา ฝั่ง <strong>ต้นทุน (Cost)</strong> — เช่น OFF OT/hr, OFF M1/trip
-                </p>
-              </div>
-              {retroPayMissing.length > 0 ? (
-                <Alert variant="destructive" className="border-amber-300 bg-amber-50 text-amber-950">
-                  <AlertTitle className="text-sm">ยังไม่ได้ใส่อัตราในตารางสัญญา</AlertTitle>
-                  <AlertDescription className="text-xs space-y-2">
-                    <ul className="list-disc pl-4">
-                      {retroPayMissing.map((m, i) => (
-                        <li key={i}>{m.fieldLabel}</li>
-                      ))}
-                    </ul>
-                    <p>
-                      เปิดสัญญา → สลับเป็น <strong>ต้นทุน (Cost)</strong> → กรอกช่องที่ขาด (ไม่ใช่แท็บราคาขาย)
-                      {retroPayContractId ? (
-                        <>
-                          {' '}
-                          <Link
-                            href={retroContractRatesUrl(retroPayContractId)}
-                            className="font-medium underline"
-                            target="_blank"
-                          >
-                            ไปตารางอัตราสัญญา
-                          </Link>
-                        </>
-                      ) : null}
+              {!(
+                retroEdit.timesheet.eventType === 'work_day' &&
+                canCorrectTimesheetOtDirect(retroEdit.timesheet)
+              ) ? (
+                <>
+                  <div className="rounded-md border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-sm">
+                    <span className="text-muted-foreground">ยอดจ่ายเพิ่ม (จากตารางอัตรา): </span>
+                    {retroPayPreviewLoading ? (
+                      <span className="inline-flex items-center gap-1 text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> กำลังคำนวณ…
+                      </span>
+                    ) : retroPayMissing.length > 0 ? (
+                      <span className="text-amber-900 font-medium">— ยังใส่อัตราไม่ครบ</span>
+                    ) : retroPayPreview != null && retroPayPreview > 0 ? (
+                      <strong className="text-emerald-900 font-mono tabular-nums">
+                        ฿{retroPayPreview.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </strong>
+                    ) : (
+                      <span className="text-muted-foreground">— กรอกชม. OT/standby เพื่อคำนวณ</span>
+                    )}
+                    <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
+                      ดึงจากตารางอัตราสัญญา ฝั่ง <strong>ต้นทุน (Cost)</strong> — เช่น OFF OT/hr, OFF M1/trip
                     </p>
-                  </AlertDescription>
-                </Alert>
+                  </div>
+                  {retroPayMissing.length > 0 ? (
+                    <Alert variant="destructive" className="border-amber-300 bg-amber-50 text-amber-950">
+                      <AlertTitle className="text-sm">ยังไม่ได้ใส่อัตราในตารางสัญญา</AlertTitle>
+                      <AlertDescription className="text-xs space-y-2">
+                        <ul className="list-disc pl-4">
+                          {retroPayMissing.map((m, i) => (
+                            <li key={i}>{m.fieldLabel}</li>
+                          ))}
+                        </ul>
+                        <p>
+                          เปิดสัญญา → สลับเป็น <strong>ต้นทุน (Cost)</strong> → กรอกช่องที่ขาด (ไม่ใช่แท็บราคาขาย)
+                          {retroPayContractId ? (
+                            <>
+                              {' '}
+                              <Link
+                                href={retroContractRatesUrl(retroPayContractId)}
+                                className="font-medium underline"
+                                target="_blank"
+                              >
+                                ไปตารางอัตราสัญญา
+                              </Link>
+                            </>
+                          ) : null}
+                        </p>
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
+                </>
               ) : null}
             </div>
           ) : null}
@@ -2899,22 +3019,36 @@ export default function WaveMonthTimesheetSummaryPage() {
                 retroSaving ||
                 !retroEdit ||
                 retroPayMissing.length > 0 ||
+                !retroReason.trim() ||
                 (() => {
+                  if (
+                    retroEdit?.timesheet.eventType === 'work_day' &&
+                    canCorrectTimesheetOtDirect(retroEdit.timesheet)
+                  ) {
+                    const target = Math.min(24, Math.max(0, Number(retroTargetOt) || 0));
+                    const source = retroEdit.timesheet.ot15Hours ?? 0;
+                    return Math.abs(target - source) < 0.001;
+                  }
                   const hasDelta =
                     retroAddedOt > 0 ||
                     retroAddedStandby > 0 ||
                     retroAddedM1Trips > 0 ||
                     retroAddedD1Trips > 0;
                   return (
-                    hasDelta &&
-                    (retroPayPreviewLoading || retroPayPreview == null || retroPayPreview <= 0)
+                    !hasDelta ||
+                    (hasDelta &&
+                      (retroPayPreviewLoading || retroPayPreview == null || retroPayPreview <= 0))
                   );
                 })()
               }
               onClick={() => void performSaveRetroEdit()}
             >
               {retroSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              บันทึกแก้ไขย้อนหลัง
+              {retroEdit &&
+              retroEdit.timesheet.eventType === 'work_day' &&
+              canCorrectTimesheetOtDirect(retroEdit.timesheet)
+                ? 'บันทึก'
+                : 'บันทึกแก้ไขย้อนหลัง'}
             </Button>
           </DialogFooter>
         </DialogContent>
