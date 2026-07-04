@@ -313,6 +313,51 @@ async function applyPoMonthPayrollReadyFlags(
 }
 
 /** ตั้ง readyForPayroll / readyForBilling เฉพาะคนงานที่ระบุ (ปิดงวดบางส่วน) */
+/** ล้าง readyForPayroll เฉพาะคนงานที่ระบุ (หลังยกเลิก payroll batch) */
+export async function clearReadyPayrollFlagsForPoMonthWorkerIds(
+  db: Firestore,
+  poId: string,
+  yearMonth: string,
+  workerIds: string[],
+): Promise<{ updated: number }> {
+  const ym = yearMonth.trim();
+  const pid = poId.trim();
+  const allow = new Set(workerIds.map((id) => id.trim()).filter(Boolean));
+  if (!pid || !/^\d{4}-\d{2}$/.test(ym) || allow.size === 0) return { updated: 0 };
+
+  const allRefs = await gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(db, pid, ym);
+  const refs = await filterTimesheetRefsByWorkerIds(db, allRefs, allow);
+  if (refs.length === 0) return { updated: 0 };
+
+  let billingMode: 'MONTHLY' | 'TRIP' = 'MONTHLY';
+  const poSnap = await getDoc(doc(db, 'purchase_orders', pid));
+  if (poSnap.exists()) {
+    billingMode = await resolveBillingMode(db, { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder);
+  }
+
+  let batch = writeBatch(db);
+  let n = 0;
+  let updated = 0;
+  const ts = Date.now();
+
+  for (const ref of refs) {
+    if (billingMode === 'MONTHLY') {
+      batch.update(ref, { readyForPayroll: false, readyForBilling: false, updatedAt: ts });
+    } else {
+      batch.update(ref, { readyForPayroll: false, updatedAt: ts });
+    }
+    updated++;
+    n++;
+    if (n >= FIRESTORE_BATCH_LIMIT) {
+      await batch.commit();
+      batch = writeBatch(db);
+      n = 0;
+    }
+  }
+  if (n > 0) await batch.commit();
+  return { updated };
+}
+
 export async function markTimesheetsReadyForPoMonthWorkerIds(
   db: Firestore,
   poId: string,

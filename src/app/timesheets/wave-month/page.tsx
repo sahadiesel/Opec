@@ -215,10 +215,7 @@ type CellEditContext = {
 };
 
 function isTimesheetPayrollLocked(ts: DailyTimesheet | undefined): boolean {
-  return (
-    !!ts?.status &&
-    ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED'].includes(ts.status as DailyTimesheetStatus)
-  );
+  return ts?.status === 'LOCKED';
 }
 
 function buildSyntheticTimesheetForRetro(input: {

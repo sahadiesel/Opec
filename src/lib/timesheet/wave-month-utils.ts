@@ -299,17 +299,13 @@ export function monthHasPayrollLockedTimesheets(
   );
 }
 
-/** แก้ไขในเดือนนี้ต้องผ่าน retro เท่านั้น — ไม่แก้ daily_timesheets ตรง */
+/** แก้ไขในเดือนนี้ต้องผ่าน retro เท่านั้น — เมื่อมีใบงาน LOCKED จาก payroll */
 export function isRetroOnlyPayrollMonth(
   monthYm: string,
   monthSheets: readonly DailyTimesheet[],
-  poMonthReviews: readonly { status?: string }[] | undefined,
+  _poMonthReviews: readonly { status?: string }[] | undefined,
 ): boolean {
-  if (monthHasPayrollLockedTimesheets(monthYm, monthSheets)) return true;
-  for (const r of poMonthReviews ?? []) {
-    if (r.status === 'approved' || r.status === 'entry_locked') return true;
-  }
-  return false;
+  return monthHasPayrollLockedTimesheets(monthYm, monthSheets);
 }
 
 export function hasActiveRetroAdjustments(

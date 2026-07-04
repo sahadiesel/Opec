@@ -16,6 +16,7 @@ import type {
   WorkerMonthTimesheetClosure,
 } from '@/lib/types';
 import {
+  clearReadyPayrollFlagsForPoMonthWorkerIds,
   markTimesheetsReadyForPoMonthWorkerIds,
   poMonthTimesheetReviewDocId,
 } from '@/lib/timesheet/po-month-timesheet-bridge';
@@ -349,6 +350,61 @@ export async function partialCloseWorkersForPoMonth(
   await markTimesheetsReadyForPoMonthWorkerIds(db, poId, yearMonth, closedWorkerIds);
   await syncPoMonthReviewFromClosures(db, poId, yearMonth, actor, params.periodBounds);
   return { closed };
+}
+
+const REOPENABLE_AFTER_PAYROLL_CANCEL: WorkerMonthClosureStatus[] = [
+  'entry_locked',
+  'pending_manager_review',
+];
+
+/** เปิดงวดรายคนกลับหลังยกเลิก payroll batch — ให้แก้ OT ใน wave-month ได้ */
+export async function reopenWorkerMonthClosuresAfterPayrollCancel(
+  db: Firestore,
+  params: {
+    poId: string;
+    yearMonth: string;
+    workerIds: string[];
+    actor: User;
+    periodBounds?: { periodStartDate: string; periodEndDate: string };
+  },
+): Promise<{ reopened: number }> {
+  const { poId, yearMonth, workerIds, actor, periodBounds } = params;
+  const allow = new Set(workerIds.map((id) => id.trim()).filter(Boolean));
+  if (allow.size === 0) return { reopened: 0 };
+
+  const closures = await fetchWorkerClosuresForPoMonth(db, poId, yearMonth);
+  let reopened = 0;
+  const reopenedIds: string[] = [];
+
+  for (const c of closures) {
+    if (!allow.has(c.workerId)) continue;
+    if (!REOPENABLE_AFTER_PAYROLL_CANCEL.includes(c.status)) continue;
+    await upsertWorkerClosure(db, {
+      poId,
+      yearMonth,
+      workerId: c.workerId,
+      workerName: c.workerName,
+      status: 'open',
+      actor,
+      patch: {
+        entryLockedAt: deleteField(),
+        entryLockedByUserId: deleteField(),
+        entryLockedByName: deleteField(),
+        submittedAt: deleteField(),
+        submittedByUserId: deleteField(),
+        submittedByName: deleteField(),
+      },
+    });
+    reopened++;
+    reopenedIds.push(c.workerId);
+  }
+
+  if (reopenedIds.length > 0) {
+    await clearReadyPayrollFlagsForPoMonthWorkerIds(db, poId, yearMonth, reopenedIds);
+    await syncPoMonthReviewFromClosures(db, poId, yearMonth, actor, periodBounds);
+  }
+
+  return { reopened };
 }
 
 export async function sendEntryLockedWorkersForManagerReview(

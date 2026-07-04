@@ -16,6 +16,7 @@ import {
   CollectionReference,
   limit,
   type DocumentData,
+  type QuerySnapshot,
 } from 'firebase/firestore';
 import { 
   PayrollBatch,
@@ -101,6 +102,7 @@ import {
   hasApprovedMonthlyTimesheetForYearMonth,
   shouldGatePayrollOnMonthlyApproval,
 } from '@/lib/payroll/monthly-timesheet-approval-gate';
+import { reopenWorkerMonthClosuresAfterPayrollCancel } from '@/lib/timesheet/worker-month-closure';
 import {
   aggregateDailyTimesheetsPayrollChunk,
   mergePayrollTimesheetAggChunks,
@@ -746,6 +748,8 @@ export class PayrollService {
         const tsRef = doc(this.db, 'daily_timesheets', id);
         wb.update(tsRef, {
           status: 'VERIFIED_PAPER',
+          readyForPayroll: false,
+          readyForBilling: false,
           lockedAt: deleteField(),
           lockedBy: deleteField(),
           updatedAt: now,
@@ -754,6 +758,60 @@ export class PayrollService {
       await wb.commit();
       if (i + chunkSize < unique.length) await payrollSleep(PAYROLL_FS_COMMIT_GAP_MS);
     }
+  }
+
+  /** ปลดล็อกใบงาน + เปิดงวดรายคนกลับ — ใช้ก่อนลบหรือสร้าง payroll batch ใหม่ */
+  private async revertPayrollBatchSourceLocks(
+    batch: PayrollBatch,
+    linesSnap: QuerySnapshot,
+    user: User,
+  ): Promise<string[]> {
+    const tsIds: string[] = [];
+    for (const d of linesSnap.docs) {
+      const line = d.data();
+      line.sourceTimesheetIds?.forEach((id) => tsIds.push(id));
+    }
+
+    const periodSnap = await getDoc(doc(this.db, 'payroll_periods', batch.payrollPeriodId));
+    const period = periodSnap.exists() ? (periodSnap.data() as PayrollPeriod) : null;
+    const payrollYearMonth = period ? calendarYearMonthFromPeriodStart(period.startDate) : null;
+
+    const poWorkerMap = new Map<string, Set<string>>();
+    const uniqueTsIds = [...new Set(tsIds)].filter(Boolean);
+    for (let i = 0; i < uniqueTsIds.length; i += 100) {
+      const slice = uniqueTsIds.slice(i, i + 100);
+      const snaps = await Promise.all(slice.map((id) => getDoc(doc(this.db, 'daily_timesheets', id))));
+      for (const snap of snaps) {
+        if (!snap.exists()) continue;
+        const ts = { id: snap.id, ...(snap.data() as object) } as DailyTimesheet;
+        const poId = String(ts.purchaseOrderId || '').trim();
+        if (!poId) continue;
+        const ym = payrollYearMonth || String(ts.date || '').slice(0, 7);
+        if (!/^\d{4}-\d{2}$/.test(ym)) continue;
+        const key = `${poId}|${ym}`;
+        if (!poWorkerMap.has(key)) poWorkerMap.set(key, new Set());
+        poWorkerMap.get(key)!.add(ts.workerId);
+      }
+    }
+
+    await this.unlockTimesheetsForPayrollBatchAdmin(tsIds);
+
+    for (const [key, ids] of poWorkerMap) {
+      const sep = key.indexOf('|');
+      const poId = key.slice(0, sep);
+      const yearMonth = key.slice(sep + 1);
+      await reopenWorkerMonthClosuresAfterPayrollCancel(this.db, {
+        poId,
+        yearMonth,
+        workerIds: [...ids],
+        actor: user,
+        periodBounds: period
+          ? { periodStartDate: period.startDate, periodEndDate: period.endDate }
+          : undefined,
+      });
+    }
+
+    return tsIds;
   }
 
   private async deletePayrollBatchSubcollectionAndDoc(batchId: string): Promise<void> {
@@ -787,12 +845,7 @@ export class PayrollService {
       throw new Error('ลบไม่ได้: งวดนี้ส่งบัญชีหรือจ่ายแล้ว');
     }
     const linesSnap = await getDocs(collection(this.db, 'payroll_batches', batchId, 'lines'));
-    const tsIds: string[] = [];
-    linesSnap.forEach((d) => {
-      const line = d.data() as PayrollBatchLine;
-      line.sourceTimesheetIds?.forEach((id) => tsIds.push(id));
-    });
-    await this.unlockTimesheetsForPayrollBatchAdmin(tsIds);
+    const tsIds = await this.revertPayrollBatchSourceLocks(batch, linesSnap, user);
     await this.clearCashAdvanceRecoveriesForPayrollBatch(batchId);
     await this.deletePayrollBatchSubcollectionAndDoc(batchId);
     await writeAuditLog(this.db, user, {
@@ -801,7 +854,7 @@ export class PayrollService {
       entityId: batchId,
       payrollBatchId: batchId,
       sourceModule: 'hr',
-      afterSummary: 'Admin deleted payroll batch; source daily timesheets unlocked (VERIFIED_PAPER)',
+      afterSummary: 'Admin deleted payroll batch; timesheets unlocked and worker month closures reopened for edit',
     });
   }
 
@@ -843,12 +896,7 @@ export class PayrollService {
     const periodId = batch.payrollPeriodId;
     const scope = batch.workModeScope;
     const linesSnap = await getDocs(collection(this.db, 'payroll_batches', batchId, 'lines'));
-    const tsIds: string[] = [];
-    linesSnap.forEach((d) => {
-      const line = d.data() as PayrollBatchLine;
-      line.sourceTimesheetIds?.forEach((id) => tsIds.push(id));
-    });
-    await this.unlockTimesheetsForPayrollBatchAdmin(tsIds);
+    await this.revertPayrollBatchSourceLocks(batch, linesSnap, user);
     await this.clearCashAdvanceRecoveriesForPayrollBatch(batchId);
     await this.deletePayrollBatchSubcollectionAndDoc(batchId);
     await writeAuditLog(this.db, user, {
