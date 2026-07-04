@@ -3,7 +3,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
@@ -11,7 +10,6 @@ import { Download, Upload, Pencil } from 'lucide-react';
 import type { ContractMobDemobLocation, MainContract, Position, PositionRate } from '@/lib/types';
 import {
   buildRateSheetColumns,
-  parseRateSheetNumber,
   readRateSheetCell,
   type RateSheetColumnDef,
   type RateSheetSide,
@@ -244,8 +242,8 @@ export function ContractRateSheetSpreadsheet({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        สกุลเงิน: <strong>{contract.currency}</strong> — แก้ไขช่องแล้ว blur หรือ Enter เพื่อบันทึก
-        {!editable && ' (โหมดดูอย่างเดียว)'}
+        สกุลเงิน: <strong>{contract.currency}</strong> — กดปุ่ม <Pencil className="inline h-3 w-3" /> แก้ไขเพื่อบันทึกอัตรา
+        {!canMutate && ' (โหมดดูอย่างเดียว)'}
       </p>
 
       <div className="overflow-x-auto rounded-lg border max-h-[min(70vh,900px)]">
@@ -308,37 +306,18 @@ export function ContractRateSheetSpreadsheet({
                   </TableCell>
                   {columns.map((col) => {
                     const val = readCell(rate, col);
-                    const cellKey = `${rate.id}-${side}-${col.id}-${val ?? 'empty'}`;
                     return (
                       <TableCell
                         key={col.id}
                         className={`p-0.5 ${col.group === 'offshore' ? 'bg-sky-50/20' : 'bg-emerald-50/20'}`}
                       >
-                        {editable ? (
-                          <Input
-                            type="number"
-                            min={0}
-                            step="any"
-                            className={`h-7 w-full min-w-[4.25rem] text-xs px-1 text-right border-transparent focus:border-input ${
-                              side === 'sell' ? 'font-medium text-green-700' : 'font-medium text-amber-800'
-                            }`}
-                            defaultValue={val != null && val > 0 ? val : ''}
-                            key={cellKey}
-                            onBlur={(e) => {
-                              const next = parseRateSheetNumber(e.target.value);
-                              const prev = val;
-                              if (next === prev || (next == null && prev == null)) return;
-                              onCommitCell(rate, side, col, next);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                            }}
-                          />
-                        ) : (
-                          <span className="block text-right text-xs px-1 py-1 tabular-nums">
-                            {val != null && val > 0 ? val.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
-                          </span>
-                        )}
+                        <span
+                          className={`block text-right text-xs px-1 py-1 tabular-nums ${
+                            side === 'sell' ? 'font-medium text-green-700' : 'font-medium text-amber-800'
+                          }`}
+                        >
+                          {val != null && val > 0 ? val.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—'}
+                        </span>
                       </TableCell>
                     );
                   })}
