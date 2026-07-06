@@ -130,6 +130,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const arReconcileAttempted = useRef(false);
 
   const invRef = useMemoFirebase(() => (firestore ? doc(firestore, 'tax_invoices', id) : null), [firestore, id]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: invoice, isLoading: isInvLoading } = useDoc<TaxInvoice>(invRef as any);
 
   const showWhtBlock = useMemo(() => {
@@ -150,6 +151,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     () => (firestore && invoice ? doc(firestore, 'customers', invoice.customerId) : null),
     [firestore, invoice?.customerId]
   );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: customer } = useDoc<Customer>(customerRef as any);
 
   const sourceCommercialRef = useMemoFirebase(
@@ -159,12 +161,14 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
         : null,
     [firestore, invoice?.sourceCommercialInvoiceId]
   );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: sourceCommercial } = useDoc<CommercialInvoice>(sourceCommercialRef as any);
 
   const billingNoteRef = useMemoFirebase(
     () => (firestore && invoice ? doc(firestore, 'billing_notes', invoice.billingNoteId) : null),
     [firestore, invoice?.billingNoteId]
   );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: billingNote } = useDoc<BillingNote>(billingNoteRef as any);
 
   const billingLinesQuery = useMemoFirebase(
@@ -174,6 +178,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
         : null,
     [firestore, invoice?.billingNoteId]
   );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: billingLines } = useCollection<BillingNoteLine>(billingLinesQuery as any);
 
   const companyProfileRef = useMemoFirebase(
@@ -188,6 +193,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     email?: string;
     addressLine1?: string;
     addressLine2?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }>(companyProfileRef as any);
 
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
@@ -239,6 +245,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     () => (firestore && isAccountingActor ? collection(firestore, 'bank_accounts') : null),
     [firestore, isAccountingActor],
   );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: bankAccountRows } = useCollection<BankAccount>(bankAccountsQuery as any);
   const receiveBankOptions = useMemo(
     () =>
@@ -437,6 +444,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
         /* ไฟล์อาจถูกลบไปแล้ว — ยังตัดรายการออกจากเอกสาร */
       }
       const next = (invoice.timesheetPaperAttachments ?? []).filter((a) => a.id !== att.id);
+      // eslint-disable-next-line react-hooks/purity
       await updateDoc(invRef, { timesheetPaperAttachments: next, updatedAt: Date.now() });
       toast({ title: 'ลบรายการแนบแล้ว' });
     } catch (err) {
@@ -644,7 +652,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <AppShell user={currentUser as User} onLogout={() => {}}>
-      <div className="max-w-5xl mx-auto space-y-6">
+      <div className="max-w-7xl mx-auto space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" onClick={() => router.push('/tax-invoices')}>
@@ -765,8 +773,8 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
           </Alert>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card className="md:col-span-2">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <Card className="md:col-span-3">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <FileBadge className="h-5 w-5 text-primary" /> ข้อมูลใบกำกับภาษี (Invoice Info)
