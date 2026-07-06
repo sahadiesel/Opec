@@ -18,7 +18,8 @@ export function TaxInvoiceLinesTable({
   numberLocale,
   columnHeaders,
   emptyLabel,
-  currency,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  currency: _currency,
 }: {
   lines: BillingNoteLine[] | null | undefined;
   /** ลำดับ/ข้อความเดียวกับใบเรียกเก็บ (ลูกค้า approve) — ถ้ามีจะแสดงแทนรายการใบวางบิล */
@@ -95,10 +96,10 @@ export function TaxInvoiceLinesTable({
                 <TableCell>{row.desc}</TableCell>
                 <TableCell className="text-right tabular-nums">{row.q.toLocaleString(numberLocale)}</TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {currency} {row.up.toLocaleString(numberLocale, { minimumFractionDigits: 2 })}
+                  {row.up.toLocaleString(numberLocale, { minimumFractionDigits: 2 })}
                 </TableCell>
                 <TableCell className="text-right tabular-nums font-medium">
-                  {currency} {row.am.toLocaleString(numberLocale, { minimumFractionDigits: 2 })}
+                  {row.am.toLocaleString(numberLocale, { minimumFractionDigits: 2 })}
                 </TableCell>
               </TableRow>
             ))
