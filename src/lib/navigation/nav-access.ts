@@ -206,6 +206,7 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/accounting/withholding-tax', 'withholding_tax_items'],
   ['/accounting/withholding-payroll', 'worker_payroll'],
   ['/accounting/withholding-vendor', 'withholding_tax_items'],
+  ['/accounting/withholding-opec', 'withholding_tax_items'],
   ['/billing-notes', 'billing_notes'],
   ['/tax-invoices', 'tax_invoices'],
   ['/receipts', 'receipts'],

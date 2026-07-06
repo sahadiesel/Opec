@@ -15,6 +15,7 @@ import type { BillingNote, TaxInvoice, User } from '@/lib/types';
 import { releaseSequenceSlotIfLastIssued } from '@/lib/services/numbering-service';
 import { writeAuditLog } from '@/lib/services/audit-service';
 import { deleteTaxInvoiceAttachmentFile } from '@/lib/storage/tax-invoice-attachments';
+import { deleteTaxInvoiceWhtFile } from '@/lib/storage/tax-invoice-wht-attachments';
 import {
   assertTaxInvoiceAllowsRemovingLinkedAr,
   deleteTaxInvoiceLinkedArIfPresent,
@@ -70,6 +71,16 @@ export async function deleteTaxInvoiceBundleAsAdmin(
         await deleteTaxInvoiceAttachmentFile(firebaseApp, att.storagePath);
       } catch {
         /* best-effort — object may already be gone */
+      }
+    }
+  }
+
+  if (firebaseApp && invoice.whtAttachments?.length) {
+    for (const att of invoice.whtAttachments) {
+      try {
+        await deleteTaxInvoiceWhtFile(firebaseApp, att.storagePath);
+      } catch {
+        /* best-effort */
       }
     }
   }

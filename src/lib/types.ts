@@ -3395,6 +3395,8 @@ export interface TaxInvoice {
   issuedByName?: string;
   /** แนบรูปสลิป/เอกสารขณะสถานะ DRAFT */
   timesheetPaperAttachments?: TaxInvoiceTimesheetAttachment[];
+  /** แนบรูป/เอกสารหัก ณ ที่จ่าย ที่ได้รับจากลูกค้า */
+  whtAttachments?: TaxInvoiceTimesheetAttachment[];
   /** อ้างอิงแถวลูกหนี้ (AR) หลังออกเอกสารจริง */
   arEntryId?: string;
   /** ลูกค้ายืนยันยอด billing (แยกจาก payroll) — หลังตั้งค่า timesheet ที่เกี่ยวข้องจะถูกล็อก */

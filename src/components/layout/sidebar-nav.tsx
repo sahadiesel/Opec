@@ -99,6 +99,7 @@ interface NavItem {
   key: ModuleKey;
   title: string;
   href: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   icon: any;
 }
 
@@ -135,6 +136,7 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
       { key: 'tax_invoices', title: 'ใบกำกับภาษี', href: '/tax-invoices', icon: FileBadge },
       { key: 'receipts', title: 'ใบเสร็จรับเงิน (ลูกค้า)', href: '/receipts', icon: Receipt },
       { key: 'accounts_receivable', title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight },
+      { key: 'withholding_tax_items', title: 'หัก ณ ที่จ่าย ( OPEC )', href: '/accounting/withholding-opec', icon: Percent },
     ],
   },
   {
