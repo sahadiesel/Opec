@@ -495,7 +495,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     try {
       const { taxInvoiceId } = await createTaxInvoiceDraftFromIssuedCommercial(firestore, invoice.id, currentUser);
       toast({
-        title: 'สร้างใบวางบิล + ใบกำกับภาษี (ร่าง) แล้ว',
+        title: 'สร้างใบกำกับภาษี(ตัวจริง) แล้ว',
         description:
           'ส่งลูกค้า/พิมพ์ได้จากหน้าใบกำกับ — ยังไม่ e-Tax — ใบเสร็จรับเงินอีกขั้นหลังลูกค้าโอนและบัญชียืนยันรับเงิน',
       });
@@ -756,7 +756,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
             <AlertTitle>ขั้นตอนบัญชี — ใบกำกับภาษี แยกจาก ใบเสร็จรับเงิน</AlertTitle>
             <AlertDescription className="space-y-2 text-sm">
               <p>
-                สร้าง <strong>ใบวางบิล + ใบกำกับภาษี (ร่าง)</strong> จากใบนี้เพื่อส่งลูกค้า — <strong>ใบเสร็จรับเงิน</strong> ออก
+                สร้าง <strong>ใบวางบิล + ใบกำกับภาษี (ตัวจริง)</strong> จากใบนี้เพื่อส่งลูกค้า — <strong>ใบเสร็จรับเงิน</strong> ออก
                 หลังลูกค้าโอนและบัญชียืนยันรับเงิน (พิมพ์/ e-Tax ตามนโยบายบริษัท)
               </p>
               {invoice.linkedTaxInvoiceId ? (
@@ -774,7 +774,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   onClick={() => void handleCreateTaxFromCommercial()}
                 >
                   {taxFromComBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileBadge className="h-4 w-4" />}
-                  สร้างใบกำกับภาษี (ร่าง) + ใบวางบิล
+                  สร้างใบกำกับภาษี(ตัวจริง)
                 </Button>
               ) : (
                 <p className="text-muted-foreground">
@@ -1166,10 +1166,10 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       <AlertDialog open={offerTaxDialogOpen} onOpenChange={setOfferTaxDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>สร้างใบวางบิล + ใบกำกับภาษี (ร่าง)?</AlertDialogTitle>
+            <AlertDialogTitle>สร้างใบกำกับภาษี(ตัวจริง) ?</AlertDialogTitle>
             <AlertDialogDescription>
-              ระบบจะสร้างใบวางบิลและใบกำกับภาษี (ร่าง) จากใบเรียกเก็บนี้เพื่อส่งลูกค้า (คนละชุดกับใบเสร็จรับเงิน) — หลังลูกค้าโอน
-              บัญชียืนยันรับเงินแล้วจะออกใบกำกับ (ISSUED) ปิด AR / ลง cashbook ตามเมนูบัญชี
+              ระบบจะสร้างใบวางบิลและใบกำกับภาษี (ตัวจริง) จากใบเรียกเก็บนี้เพื่อส่งลูกค้า (คนละชุดกับใบเสร็จรับเงิน) — หลังลูกค้าโอน
+              บัญชียืนยันรับเงินแล้วจะออกใบเสร็จรับเงิน ปิด AR / ลง cashbook ตามเมนูบัญชี
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

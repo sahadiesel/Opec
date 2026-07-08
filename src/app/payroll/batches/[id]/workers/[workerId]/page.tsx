@@ -550,9 +550,10 @@ export default function PayrollBatchWorkerLinePage({
               resolved.tax,
               resolved.sso,
               Math.max(0, Math.min(35, autoTimesheetMarginalRate)),
+              d8Line.deductionsBreakdown.social_security,
             );
           } else {
-            p = pitFromMonthlyGross(eg, resolved.tax, resolved.sso);
+            p = pitFromMonthlyGross(eg, resolved.tax, resolved.sso, d8Line.deductionsBreakdown.social_security);
           }
           if (!cancelled) {
             setPreviewPitAuto(p);
@@ -574,9 +575,10 @@ export default function PayrollBatchWorkerLinePage({
             resolved.tax,
             resolved.sso,
             Math.max(0, Math.min(35, autoTimesheetMarginalRate)),
+            d8Line.deductionsBreakdown.social_security,
           );
         } else {
-          deductions.pit_withholding = pitFromMonthlyGross(eg, resolved.tax, resolved.sso);
+          deductions.pit_withholding = pitFromMonthlyGross(eg, resolved.tax, resolved.sso, d8Line.deductionsBreakdown.social_security);
         }
         deductionRows
           .filter((r) => r.label.trim() && Number(r.amount) > 0)
@@ -731,7 +733,8 @@ export default function PayrollBatchWorkerLinePage({
     const model = buildPayslipFromWorkerLine(line, batch, pl, companyProfile ?? undefined);
     if (timesheets.length > 0 && grossCtx) {
       const incomeLines = buildWorkerPayslipIncomeLinesFromTimesheets(line, timesheets, grossCtx);
-      if (incomeLines.length > 0) {
+      const liveGross = Math.round(incomeLines.reduce((s, x) => s + x.amount, 0) * 100) / 100;
+      if (incomeLines.length > 0 && Math.abs(liveGross - model.grossTotal) < 0.01) {
         return { ...model, incomeLines };
       }
     }

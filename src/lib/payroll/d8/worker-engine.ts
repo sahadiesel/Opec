@@ -26,8 +26,10 @@ export function computeWorkerPayrollLineD8(input: WorkerPayrollD8Input): {
 } {
   const gross = Math.max(0, input.grossFromTimesheets);
 
-  const ss = socialSecurityFromPolicy(gross, input.policies.sso);
-  const pit = pitFromMonthlyGross(gross, input.policies.tax, input.policies.sso);
+  const allowances = Number(input.earningsBreakdown?.hr_allowances) || 0;
+  const ssoBase = Math.max(0, gross - allowances);
+  const ss = socialSecurityFromPolicy(ssoBase, input.policies.sso);
+  const pit = pitFromMonthlyGross(gross, input.policies.tax, input.policies.sso, ss);
   const fixed = fixedDeductionsFromPolicy(input.policies.allowanceDeduction);
 
   const deductionsBreakdown: Record<string, number> = {

@@ -93,7 +93,7 @@ export type PayrollRestDaySchedule = {
   costMultipliers: {
     publicHoliday: number;
     sunday: number;
-    sundayOt: number;
+    sundayOt?: number;
   };
 };
 
@@ -142,7 +142,7 @@ export function resolvePayrollRestDay(dateStr: string, schedule: PayrollRestDayS
 
   const pattern = schedule.weeklyRestPattern || 'none';
   const sunday = Number(cost.sunday ?? 1);
-  const sundayOt = Number(cost.sundayOt ?? cost.sunday ?? 1);
+  const sundayOt = cost.sundayOt != null && !isNaN(Number(cost.sundayOt)) ? Number(cost.sundayOt) : undefined;
 
   if (pattern === 'sunday_only' && dow === 0) {
     return {
@@ -223,20 +223,21 @@ export interface WorkDayPackageCostResult {
 /**
  * ยอดฐาน: กรอบ 8 ชม.ปกติ + ส่วนเกินใน normal × ตัวคูณ OT สัญญา (เมื่อใช้) + OT แยก tier
  */
+/**
+ * ยอดฐาน: กรอบ 8 ชม.ปกติ + ส่วนเกินใน normal + OT แยก tier
+ */
 function computeBaseWorkAmount(
-  h: number,
-  otContract: number,
+  normalH: number,
+  otH: number,
   w: ParsedWorkDayHours,
-  overflowMultiplyOtContract: boolean,
 ): { normalPart: number; overflowPart: number; tierPart: number } {
   const tierPart =
-    h *
+    normalH *
     (w.o15 * PACKAGE_OT_TIER_MULT.OT_1_5 +
       w.o20 * PACKAGE_OT_TIER_MULT.OT_2_0 +
       w.o30 * PACKAGE_OT_TIER_MULT.OT_3_0);
-  const normalPart = w.legalNormal * h;
-  const overflowPart =
-    w.overflowNormal * h * (overflowMultiplyOtContract ? otContract : 1);
+  const normalPart = w.legalNormal * normalH;
+  const overflowPart = w.overflowNormal * otH;
   return { normalPart, overflowPart, tierPart };
 }
 
@@ -274,11 +275,10 @@ function resolveWorkDayHourlyAndParts(
   input: WorkDayPackageCostInput,
 ): {
   baseH: number;
-  effectiveH: number;
+  effectiveNormalH: number;
+  effectiveOtH: number;
   w: ParsedWorkDayHours;
   rest: RestDayResolution;
-  otContract: number;
-  overflowMultiplyOtContract: boolean;
   mode: WorkDayPackageCostResult['mode'];
 } {
   const baseH = deriveCostNormalHourlyRate({
@@ -293,11 +293,10 @@ function resolveWorkDayHourlyAndParts(
   if (!rest.active) {
     return {
       baseH,
-      effectiveH: baseH,
+      effectiveNormalH: baseH,
+      effectiveOtH: baseH * otContract,
       w,
       rest,
-      otContract,
-      overflowMultiplyOtContract: true,
       mode: 'weekday_split',
     };
   }
@@ -305,22 +304,21 @@ function resolveWorkDayHourlyAndParts(
     const mult = Math.max(0, rest.publicHolidayWrap ?? 1);
     return {
       baseH,
-      effectiveH: baseH * mult,
+      effectiveNormalH: baseH * mult,
+      effectiveOtH: baseH * mult,
       w,
       rest,
-      otContract,
-      overflowMultiplyOtContract: false,
       mode: 'public_holiday_wrap',
     };
   }
   const sm = Math.max(0, rest.weeklyNormalMult ?? 1);
+  const som = Math.max(0, rest.weeklyOtMult ?? otContract);
   return {
     baseH,
-    effectiveH: baseH * sm,
+    effectiveNormalH: baseH * sm,
+    effectiveOtH: baseH * som,
     w,
     rest,
-    otContract,
-    overflowMultiplyOtContract: false,
     mode: 'weekly_rest_split',
   };
 }
@@ -332,17 +330,16 @@ export const OFFSHORE_PACKAGE_HOURS = 12 as const;
 export function computeWorkDayPayslipAmountParts(
   input: WorkDayPackageCostInput,
 ): WorkDayPayslipAmountParts {
-  const { effectiveH, w, rest, otContract, overflowMultiplyOtContract } =
+  const { effectiveNormalH, effectiveOtH, w, rest } =
     resolveWorkDayHourlyAndParts(input);
   const { normalPart, overflowPart } = computeBaseWorkAmount(
-    effectiveH,
-    otContract,
+    effectiveNormalH,
+    effectiveOtH,
     w,
-    overflowMultiplyOtContract,
   );
-  const ot15Amount = roundMoney(effectiveH * w.o15 * PACKAGE_OT_TIER_MULT.OT_1_5);
-  const ot20Amount = roundMoney(effectiveH * w.o20 * PACKAGE_OT_TIER_MULT.OT_2_0);
-  const ot30Amount = roundMoney(effectiveH * w.o30 * PACKAGE_OT_TIER_MULT.OT_3_0);
+  const ot15Amount = roundMoney(effectiveNormalH * w.o15 * PACKAGE_OT_TIER_MULT.OT_1_5);
+  const ot20Amount = roundMoney(effectiveNormalH * w.o20 * PACKAGE_OT_TIER_MULT.OT_2_0);
+  const ot30Amount = roundMoney(effectiveNormalH * w.o30 * PACKAGE_OT_TIER_MULT.OT_3_0);
 
   let baseAmount: number;
   let overflowOtAmount = 0;
@@ -355,7 +352,7 @@ export function computeWorkDayPayslipAmountParts(
     const hoursBeyond12 = Math.max(0, w.nh - OFFSHORE_PACKAGE_HOURS);
     overflowBeyond12Hours = hoursBeyond12;
     overflowBeyond12Amount = roundMoney(
-      hoursBeyond12 * effectiveH * (overflowMultiplyOtContract ? otContract : 1),
+      hoursBeyond12 * effectiveOtH,
     );
     baseAmount = roundMoney(normalPart + overflowPart - overflowBeyond12Amount);
   } else {

@@ -68,7 +68,10 @@ export async function buildSingleTimesheetGrossContext(
     contractIds.map(async (contractId) => {
       const contractSnap = await getDoc(doc(db, 'main_contracts', contractId));
       if (contractSnap.exists()) {
-        contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+        const contractData = { ...(contractSnap.data() as MainContract), id: contractSnap.id };
+        const ratesSnap = await getDocs(collection(db, 'main_contracts', contractId, 'position_rates'));
+        contractData.positionRates = ratesSnap.docs.map(d => ({ id: d.id, ...(d.data() as object) } as PositionRate));
+        contractMap.set(contractId, contractData);
       }
     }),
   );
@@ -85,7 +88,10 @@ export async function buildSingleTimesheetGrossContext(
       if (contractMap.has(contractId)) return;
       const contractSnap = await getDoc(doc(db, 'main_contracts', contractId));
       if (contractSnap.exists()) {
-        contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+        const contractData = { ...(contractSnap.data() as MainContract), id: contractSnap.id };
+        const ratesSnap = await getDocs(collection(db, 'main_contracts', contractId, 'position_rates'));
+        contractData.positionRates = ratesSnap.docs.map(d => ({ id: d.id, ...(d.data() as object) } as PositionRate));
+        contractMap.set(contractId, contractData);
       }
     }),
   );

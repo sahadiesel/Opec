@@ -272,11 +272,11 @@ export function ContractRateSheetSpreadsheet({
               )}
             </TableRow>
             <TableRow>
-              <TableHead className="sticky left-0 z-30 bg-muted/60 border-r text-[10px]">#</TableHead>
+              <TableHead className="sticky left-0 z-30 bg-muted/60 border-r text-[10px] text-center">#</TableHead>
               {columns.map((col) => (
                 <TableHead
                   key={col.id}
-                  className={`text-[10px] whitespace-nowrap px-1 min-w-[4.5rem] ${
+                  className={`text-[10px] text-center whitespace-nowrap px-1 min-w-[4.5rem] ${
                     col.group === 'offshore' ? 'bg-sky-50/40' : 'bg-emerald-50/40'
                   }`}
                   title={col.label}
@@ -284,7 +284,7 @@ export function ContractRateSheetSpreadsheet({
                   {col.shortLabel}
                 </TableHead>
               ))}
-              {onEditRate && canMutate && <TableHead className="sticky right-0 bg-muted/60 border-l" />}
+              {onEditRate && canMutate && <TableHead className="sticky right-0 bg-muted/60 border-l text-center" />}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -312,7 +312,7 @@ export function ContractRateSheetSpreadsheet({
                         className={`p-0.5 ${col.group === 'offshore' ? 'bg-sky-50/20' : 'bg-emerald-50/20'}`}
                       >
                         <span
-                          className={`block text-right text-xs px-1 py-1 tabular-nums ${
+                          className={`block text-center text-xs px-1 py-1 tabular-nums ${
                             side === 'sell' ? 'font-medium text-green-700' : 'font-medium text-amber-800'
                           }`}
                         >

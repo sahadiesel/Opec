@@ -90,20 +90,28 @@ export function listPartialBillingCandidates(
     if (inv.poId !== poId) return false;
     if (inv.sourcePoMonthReviewId === reviewId) return true;
     if (period && inv.periodStart === period.start && inv.periodEnd === period.end) return true;
+    if (period && inv.periodStart && inv.periodEnd && inv.periodStart <= period.end && inv.periodEnd >= period.start) {
+      return true;
+    }
     return false;
   });
+
+  const unbilledApproved = approved.filter(
+    (c) => !related.some((inv) => commercialInvoiceCoversAnyWorker(inv, c.workerId))
+  );
+  if (unbilledApproved.length === 0) return [];
 
   const out: PartialBillingCandidate[] = [];
   const batchNos = [
     ...new Set(
-      approved
+      unbilledApproved
         .map((c) => c.closureBatchNo)
         .filter((n): n is number => typeof n === 'number' && n > 0),
     ),
   ].sort((a, b) => a - b);
 
   for (const batchNo of batchNos) {
-    const inBatch = approved.filter((c) => c.closureBatchNo === batchNo);
+    const inBatch = unbilledApproved.filter((c) => c.closureBatchNo === batchNo);
     const workerIds = normalizeWorkerIdSet(inBatch.map((c) => c.workerId));
     if (workerIds.length === 0) continue;
     if (related.some((inv) => commercialInvoiceCoversWorkerSet(inv, workerIds))) continue;
@@ -119,9 +127,9 @@ export function listPartialBillingCandidates(
   }
 
   const inKnownBatch = new Set(
-    approved.filter((c) => c.closureBatchNo != null && c.closureBatchNo > 0).map((c) => c.workerId),
+    unbilledApproved.filter((c) => c.closureBatchNo != null && c.closureBatchNo > 0).map((c) => c.workerId),
   );
-  const singles = approved.filter((c) => !inKnownBatch.has(c.workerId));
+  const singles = unbilledApproved.filter((c) => !inKnownBatch.has(c.workerId));
   for (const c of singles) {
     const workerIds = [c.workerId];
     if (related.some((inv) => commercialInvoiceCoversWorkerSet(inv, workerIds))) continue;

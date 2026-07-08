@@ -943,6 +943,8 @@ export interface MainContract {
    * อัตราจากตารางราคาสัญญา (mobDemobRoundTrip) — ไม่รวม M1/D1 รายวัน
    */
   tripBillMobDemobFee?: boolean;
+  /** Cached position rates subcollection for payroll/billing resolution. */
+  positionRates?: PositionRate[];
   /**
    * @deprecated ถูก sync ฝั่งสัญญา (เฟส 4–6) — ไม่ใช้ block อนุมัติแล้ว; ดูฐานต้นทุนได้ที่ /positions
    * รัน `migrate:phase6` เพื่อลบ field เหล่านี้จาก Firestore

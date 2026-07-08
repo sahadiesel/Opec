@@ -47,8 +47,9 @@ export function socialSecurityFromPolicy(
 export function monthlyPitAnnualizationBaseFromGross(
   grossMonthlyBeforeSs: number,
   ssoPolicy: PayrollPolicyRecord | null,
+  customSso?: number,
 ): number {
-  const ss = socialSecurityFromPolicy(grossMonthlyBeforeSs, ssoPolicy);
+  const ss = customSso !== undefined ? customSso : socialSecurityFromPolicy(grossMonthlyBeforeSs, ssoPolicy);
   return Math.max(0, grossMonthlyBeforeSs - ss);
 }
 
@@ -57,8 +58,9 @@ export function pitFromMonthlyGross(
   grossMonthly: number,
   taxPolicy: PayrollPolicyRecord | null,
   ssoPolicy: PayrollPolicyRecord | null,
+  customSso?: number,
 ): number {
-  return pitFromPolicy(monthlyPitAnnualizationBaseFromGross(grossMonthly, ssoPolicy), taxPolicy);
+  return pitFromPolicy(monthlyPitAnnualizationBaseFromGross(grossMonthly, ssoPolicy, customSso), taxPolicy);
 }
 
 export function pitFromMonthlyGrossWithMarginalCeiling(
@@ -66,9 +68,10 @@ export function pitFromMonthlyGrossWithMarginalCeiling(
   taxPolicy: PayrollPolicyRecord | null,
   ssoPolicy: PayrollPolicyRecord | null,
   maxMarginalRatePercent: number,
+  customSso?: number,
 ): number {
   return pitFromPolicyWithMarginalCeiling(
-    monthlyPitAnnualizationBaseFromGross(grossMonthly, ssoPolicy),
+    monthlyPitAnnualizationBaseFromGross(grossMonthly, ssoPolicy, customSso),
     taxPolicy,
     maxMarginalRatePercent,
   );

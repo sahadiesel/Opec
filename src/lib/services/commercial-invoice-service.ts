@@ -223,14 +223,16 @@ export function poMonthReviewMissingCommercialInvoice(
   invoices: CommercialInvoice[],
   closures: WorkerMonthTimesheetClosure[] = [],
 ): boolean {
+  const { start, end } = resolvePoMonthPeriodBounds(review);
   const related = invoices.filter(
     (inv) =>
       inv.status !== 'VOID' &&
       inv.poId === review.poId &&
-      inv.waveId === PO_MONTH_WAVE_PLACEHOLDER &&
       (inv.sourcePoMonthReviewId === review.id ||
-        (inv.periodStart === resolvePoMonthPeriodBounds(review).start &&
-          inv.periodEnd === resolvePoMonthPeriodBounds(review).end)),
+        (inv.periodStart &&
+          inv.periodEnd &&
+          inv.periodStart <= end &&
+          inv.periodEnd >= start)),
   );
   const approved = closures.filter((c) => c.status === 'approved');
   if (approved.length === 0) {

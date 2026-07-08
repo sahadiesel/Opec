@@ -42,6 +42,7 @@ import {
 import {
   ensureWorkerMonthlyPayrollPeriodForYearMonth,
   syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews,
+  resolvePoMonthPeriodBounds,
 } from '@/lib/timesheet/po-month-timesheet-bridge';
 import {
   approveWorkerMonthClosure,
@@ -52,8 +53,11 @@ import {
 import {
   ensureCommercialDraftInvoiceAfterMonthApproval,
   ensureCommercialDraftInvoiceAfterPoMonthApproval,
-  tryEnsurePartialCommercialDraftForCompletedBatch,
+  createCommercialDraftInvoiceForPoMonth,
 } from '@/lib/services/commercial-invoice-service';
+import { Checkbox } from '@/components/ui/checkbox';
+import { timestampToHtmlDateValue } from '@/lib/date-thai';
+import { normalizeWorkerIdSet } from '@/lib/commercial/partial-po-month-billing';
 import { CheckCircle2, XCircle, ChevronLeft, ExternalLink, FileText, Images } from 'lucide-react';
 import { waveRoundMonthLabel } from '@/lib/constants/timesheet-ui';
 import { isWaveMonthAttachmentPdf } from '@/lib/timesheet/wave-month-utils';
@@ -62,6 +66,14 @@ function formatThaiCalendarMonthYearFromYm(ym: string): string | null {
   if (!/^\d{4}-\d{2}$/.test(ym)) return null;
   const d = new Date(`${ym}-01T12:00:00`);
   return d.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
+}
+
+function getNowMs(): number {
+  return Date.now();
+}
+
+function getTodayHtmlDateString(): string {
+  return timestampToHtmlDateValue(Date.now());
 }
 
 export default function TimesheetMonthApprovalQueuePage() {
@@ -74,6 +86,7 @@ export default function TimesheetMonthApprovalQueuePage() {
   >(() => new Map());
   const [photoDialogRow, setPhotoDialogRow] = useState<WaveMonthTimesheetReview | null>(null);
   const [photoDialogPo, setPhotoDialogPo] = useState<PoMonthTimesheetReview | null>(null);
+  const [selectedClosureIds, setSelectedClosureIds] = useState<Set<string>>(new Set());
 
   const canSeePage =
     currentUser &&
@@ -213,10 +226,10 @@ export default function TimesheetMonthApprovalQueuePage() {
       const ref = doc(firestore, 'wave_month_timesheet_reviews', row.id);
       await updateDoc(ref, {
         status: next,
-        reviewedAt: Date.now(),
+        reviewedAt: getNowMs(),
         reviewedByUserId: currentUser.id,
         reviewedByName: currentUser.displayName || currentUser.email || row.id,
-        updatedAt: Date.now(),
+        updatedAt: getNowMs(),
       });
       if (next === 'approved') {
         const approvedRow: WaveMonthTimesheetReview = { ...row, status: 'approved' };
@@ -263,10 +276,10 @@ export default function TimesheetMonthApprovalQueuePage() {
       const ref = doc(firestore, 'po_month_timesheet_reviews', row.id);
       await updateDoc(ref, {
         status: next,
-        reviewedAt: Date.now(),
+        reviewedAt: getNowMs(),
         reviewedByUserId: currentUser.id,
         reviewedByName: currentUser.displayName || currentUser.email || row.id,
-        updatedAt: Date.now(),
+        updatedAt: getNowMs(),
       });
       if (next === 'approved') {
         const approvedRow: PoMonthTimesheetReview = { ...row, status: 'approved' };
@@ -324,20 +337,22 @@ export default function TimesheetMonthApprovalQueuePage() {
         const { payrollUpdated } = await approveWorkerMonthClosure(firestore, closure, currentUser);
         const actorName = currentUser.displayName || currentUser.email || currentUser.id;
         await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, row.yearMonth, actorName);
-        const billing = await tryEnsurePartialCommercialDraftForCompletedBatch(
-          firestore,
-          row.poId,
-          row.yearMonth,
-          currentUser,
-        );
-        const billingLine =
-          billing.kind === 'created'
-            ? ` — สร้างใบแจ้งหนี้ ${billing.invoiceNo} (${billing.workerCount} คน)`
-            : billing.kind === 'waiting_batch'
-              ? ` — Invoice: ${billing.reason}`
-              : billing.kind === 'skipped'
-                ? ` — Invoice: ${billing.reason}`
-                : '';
+        
+        const { start, end } = resolvePoMonthPeriodBounds(row);
+        const workerIds = [closure.workerId];
+        const issueDate = getTodayHtmlDateString();
+        const billing = await createCommercialDraftInvoiceForPoMonth(firestore, {
+          poId: row.poId,
+          periodStart: start,
+          periodEnd: end,
+          issueDate,
+          actor: currentUser,
+          sourcePoMonthReviewId: row.id,
+          workerIds,
+          notes: closure.workerName ? `Partial: ${closure.workerName}` : undefined,
+        });
+
+        const billingLine = ` — สร้างใบแจ้งหนี้ ${billing.invoiceNo} (1 คน)`;
         const po = poById.get(row.poId);
         toast({
           title: 'อนุมัติรายคนแล้ว',
@@ -351,6 +366,128 @@ export default function TimesheetMonthApprovalQueuePage() {
           description: `${closure.workerName ?? closure.workerId} · ${row.yearMonth} · ${po?.poCode ?? row.poId}`,
         });
       }
+      const refreshed = await fetchWorkerClosuresForPoMonth(firestore, row.poId, row.yearMonth);
+      setWorkerClosuresByReviewId((prev) => {
+        const nextMap = new Map(prev);
+        if (refreshed.length > 0) nextMap.set(row.id, refreshed);
+        else nextMap.delete(row.id);
+        return nextMap;
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleApproveSelectedClosures = async (
+    row: PoMonthTimesheetReview,
+    pendingWorkers: WorkerMonthTimesheetClosure[],
+  ) => {
+    if (!firestore || !currentUser || !canAct) return;
+    const selectedInRow = pendingWorkers.filter((w) => selectedClosureIds.has(w.id));
+    if (selectedInRow.length === 0) return;
+
+    const confirm = window.confirm(`อนุมัติผู้ปฏิบัติงานที่เลือกจำนวน ${selectedInRow.length} คน ใช่หรือไม่?`);
+    if (!confirm) return;
+
+    setBusyId(row.id);
+    try {
+      const actorName = currentUser.displayName || currentUser.email || currentUser.id;
+      let payrollUpdated = 0;
+      for (const closure of selectedInRow) {
+        const res = await approveWorkerMonthClosure(firestore, closure, currentUser);
+        payrollUpdated += res.payrollUpdated;
+      }
+
+      await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, row.yearMonth, actorName);
+
+      const { start, end } = resolvePoMonthPeriodBounds(row);
+      const workerIds = normalizeWorkerIdSet(selectedInRow.map((w) => w.workerId));
+      const issueDate = getTodayHtmlDateString();
+      const workerNames = selectedInRow
+        .map((c) => c.workerName || c.workerId)
+        .filter(Boolean)
+        .join(', ');
+
+      const billing = await createCommercialDraftInvoiceForPoMonth(firestore, {
+        poId: row.poId,
+        periodStart: start,
+        periodEnd: end,
+        issueDate,
+        actor: currentUser,
+        sourcePoMonthReviewId: row.id,
+        workerIds,
+        notes: workerNames ? `Partial billing (อนุมัติรายคน): ${workerNames}` : undefined,
+      });
+
+      const po = poById.get(row.poId);
+      toast({
+        title: 'อนุมัติรายการที่เลือกแล้ว',
+        description: `อนุมัติ ${selectedInRow.length} คน · ${row.yearMonth} · ${po?.poCode ?? row.poId} — ตั้งพร้อมจ่าย payroll ${payrollUpdated} ใบงาน — สร้างใบแจ้งหนี้ ${billing.invoiceNo} แล้ว`,
+      });
+
+      setSelectedClosureIds((prev) => {
+        const next = new Set(prev);
+        for (const w of selectedInRow) {
+          next.delete(w.id);
+        }
+        return next;
+      });
+
+      const refreshed = await fetchWorkerClosuresForPoMonth(firestore, row.poId, row.yearMonth);
+      setWorkerClosuresByReviewId((prev) => {
+        const nextMap = new Map(prev);
+        if (refreshed.length > 0) nextMap.set(row.id, refreshed);
+        else nextMap.delete(row.id);
+        return nextMap;
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleRejectSelectedClosures = async (
+    row: PoMonthTimesheetReview,
+    pendingWorkers: WorkerMonthTimesheetClosure[],
+  ) => {
+    if (!firestore || !currentUser || !canAct) return;
+    const selectedInRow = pendingWorkers.filter((w) => selectedClosureIds.has(w.id));
+    if (selectedInRow.length === 0) return;
+
+    const confirm = window.confirm(`ปฏิเสธผู้ปฏิบัติงานที่เลือกจำนวน ${selectedInRow.length} คน ใช่หรือไม่?`);
+    if (!confirm) return;
+
+    setBusyId(row.id);
+    try {
+      for (const closure of selectedInRow) {
+        await rejectWorkerMonthClosure(firestore, closure, currentUser);
+      }
+
+      const po = poById.get(row.poId);
+      toast({
+        title: 'ปฏิเสธรายการที่เลือกแล้ว',
+        description: `ปฏิเสธ ${selectedInRow.length} คน · ${row.yearMonth} · ${po?.poCode ?? row.poId}`,
+      });
+
+      setSelectedClosureIds((prev) => {
+        const next = new Set(prev);
+        for (const w of selectedInRow) {
+          next.delete(w.id);
+        }
+        return next;
+      });
+
       const refreshed = await fetchWorkerClosuresForPoMonth(firestore, row.poId, row.yearMonth);
       setWorkerClosuresByReviewId((prev) => {
         const nextMap = new Map(prev);
@@ -541,12 +678,81 @@ export default function TimesheetMonthApprovalQueuePage() {
                                 )}
                               </TableCell>
                             </TableRow>
+                            {usePerWorker && (
+                              <TableRow className="bg-muted/40 border-b border-t">
+                                <TableCell className="w-12 text-center py-2">
+                                  <Checkbox
+                                    checked={
+                                      pendingWorkers.length > 0 &&
+                                      pendingWorkers.every((w) => selectedClosureIds.has(w.id))
+                                    }
+                                    onCheckedChange={(checked) => {
+                                      setSelectedClosureIds((prev) => {
+                                        const next = new Set(prev);
+                                        for (const w of pendingWorkers) {
+                                          if (checked) {
+                                            next.add(w.id);
+                                          } else {
+                                            next.delete(w.id);
+                                          }
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                    disabled={!canAct}
+                                  />
+                                </TableCell>
+                                <TableCell colSpan={2} className="text-xs font-semibold text-muted-foreground py-2">
+                                  เลือกพนักงาน ({pendingWorkers.length} คน)
+                                </TableCell>
+                                <TableCell colSpan={3} className="text-right py-2 pr-4">
+                                  <div className="flex justify-end gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="default"
+                                      className="h-7 text-xs gap-1"
+                                      disabled={!canAct || !pendingWorkers.some((w) => selectedClosureIds.has(w.id)) || busyId != null}
+                                      onClick={() => void handleApproveSelectedClosures(row, pendingWorkers)}
+                                    >
+                                      <CheckCircle2 className="h-3 w-3" />
+                                      อนุมัติที่เลือก ({pendingWorkers.filter((w) => selectedClosureIds.has(w.id)).length})
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-7 text-xs gap-1"
+                                      disabled={!canAct || !pendingWorkers.some((w) => selectedClosureIds.has(w.id)) || busyId != null}
+                                      onClick={() => void handleRejectSelectedClosures(row, pendingWorkers)}
+                                    >
+                                      <XCircle className="h-3 w-3" />
+                                      ปฏิเสธที่เลือก
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            )}
                             {usePerWorker
                               ? pendingWorkers.map((closure) => {
                                   const busyKey = `${row.id}:${closure.workerId}`;
                                   return (
                                     <TableRow key={closure.id} className="bg-muted/20">
-                                      <TableCell />
+                                      <TableCell className="w-12 text-center py-2">
+                                        <Checkbox
+                                          checked={selectedClosureIds.has(closure.id)}
+                                          onCheckedChange={(checked) => {
+                                            setSelectedClosureIds((prev) => {
+                                              const next = new Set(prev);
+                                              if (checked) {
+                                                next.add(closure.id);
+                                              } else {
+                                                next.delete(closure.id);
+                                              }
+                                              return next;
+                                            });
+                                          }}
+                                          disabled={!canAct}
+                                        />
+                                      </TableCell>
                                       <TableCell colSpan={2} className="text-sm">
                                         <span className="font-medium">{closure.workerName ?? closure.workerId}</span>
                                         <Badge variant="secondary" className="ml-2 text-[10px]">
@@ -561,7 +767,7 @@ export default function TimesheetMonthApprovalQueuePage() {
                                             size="sm"
                                             className="gap-1 h-8"
                                             disabled={!canAct || busyId === busyKey}
-                                            onClick={() => setWorkerStatusPo(row, closure, 'approved')}
+                                            onClick={() => void setWorkerStatusPo(row, closure, 'approved')}
                                           >
                                             <CheckCircle2 className="h-3.5 w-3.5" />
                                             อนุมัติ
@@ -571,7 +777,7 @@ export default function TimesheetMonthApprovalQueuePage() {
                                             variant="outline"
                                             className="gap-1 h-8"
                                             disabled={!canAct || busyId === busyKey}
-                                            onClick={() => setWorkerStatusPo(row, closure, 'rejected')}
+                                            onClick={() => void setWorkerStatusPo(row, closure, 'rejected')}
                                           >
                                             <XCircle className="h-3.5 w-3.5" />
                                             ปฏิเสธ

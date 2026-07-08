@@ -314,6 +314,8 @@ export function hasActiveRetroAdjustments(
   return (adjustments ?? []).some((a) => a.status !== 'void');
 }
 
+
+
 /**
  * แสดงเซลล์รายเดือนรวมแก้ไขย้อนหลัง — ต่อท้าย † เมื่อมีการแก้ไข
  */
@@ -336,7 +338,7 @@ export function timesheetWaveMonthCellDisplayWithRetro(
     const sb = retroAddedStandbyHours(activeRetro);
     if (m1 > 0) return m1 > 1 ? `M1+${m1}†` : 'M1†';
     if (d1 > 0) return d1 > 1 ? `D1+${d1}†` : 'D1†';
-    if (sb > 0) return `SB+${sb}†`;
+    if (sb > 0) return `SB†`;
     const ot = retroAddedOtHours(activeRetro);
     if (ot > 0) return `W+${ot}†`;
     return ' - ';
@@ -366,7 +368,7 @@ export function timesheetWaveMonthCellDisplayWithRetro(
   } else if (retroD1 > 0) {
     label = retroD1 > 1 ? `${abbr}+${retroD1}` : abbr;
   } else if (retroSb > 0) {
-    label = `${abbr}+${retroSb}`;
+    label = abbr;
   } else {
     label = abbr;
   }

@@ -254,7 +254,10 @@ export class PayrollService {
       contractIds.map(async (cid) => {
         const contractSnap = await getDoc(doc(this.db, 'main_contracts', cid));
         if (contractSnap.exists()) {
-          contractMap.set(cid, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+          const contractData = { ...(contractSnap.data() as MainContract), id: contractSnap.id };
+          const ratesSnap = await getDocs(collection(this.db, 'main_contracts', cid, 'position_rates'));
+          contractData.positionRates = ratesSnap.docs.map(d => ({ id: d.id, ...(d.data() as object) } as PositionRate));
+          contractMap.set(cid, contractData);
         }
       }),
     );
@@ -271,7 +274,10 @@ export class PayrollService {
         if (contractMap.has(cid)) return;
         const contractSnap = await getDoc(doc(this.db, 'main_contracts', cid));
         if (contractSnap.exists()) {
-          contractMap.set(cid, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+          const contractData = { ...(contractSnap.data() as MainContract), id: contractSnap.id };
+          const ratesSnap = await getDocs(collection(this.db, 'main_contracts', cid, 'position_rates'));
+          contractData.positionRates = ratesSnap.docs.map(d => ({ id: d.id, ...(d.data() as object) } as PositionRate));
+          contractMap.set(cid, contractData);
         }
       }),
     );
@@ -438,7 +444,10 @@ export class PayrollService {
       contractIds.map(async (contractId) => {
         const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
         if (contractSnap.exists()) {
-          contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+          const contractData = { ...(contractSnap.data() as MainContract), id: contractSnap.id };
+          const ratesSnap = await getDocs(collection(this.db, 'main_contracts', contractId, 'position_rates'));
+          contractData.positionRates = ratesSnap.docs.map(d => ({ id: d.id, ...(d.data() as object) } as PositionRate));
+          contractMap.set(contractId, contractData);
         }
       }),
     );
@@ -453,7 +462,10 @@ export class PayrollService {
         if (contractMap.has(contractId)) return;
         const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
         if (contractSnap.exists()) {
-          contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+          const contractData = { ...(contractSnap.data() as MainContract), id: contractSnap.id };
+          const ratesSnap = await getDocs(collection(this.db, 'main_contracts', contractId, 'position_rates'));
+          contractData.positionRates = ratesSnap.docs.map(d => ({ id: d.id, ...(d.data() as object) } as PositionRate));
+          contractMap.set(contractId, contractData);
         }
       }),
     );
@@ -1317,7 +1329,10 @@ export class PayrollService {
       contractIds.map(async (contractId) => {
         const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
         if (contractSnap.exists()) {
-          contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+          const contractData = { ...(contractSnap.data() as MainContract), id: contractSnap.id };
+          const ratesSnap = await getDocs(collection(this.db, 'main_contracts', contractId, 'position_rates'));
+          contractData.positionRates = ratesSnap.docs.map(d => ({ id: d.id, ...(d.data() as object) } as PositionRate));
+          contractMap.set(contractId, contractData);
         }
       }),
     );
@@ -1334,7 +1349,10 @@ export class PayrollService {
         if (contractMap.has(contractId)) return;
         const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
         if (contractSnap.exists()) {
-          contractMap.set(contractId, { ...(contractSnap.data() as MainContract), id: contractSnap.id });
+          const contractData = { ...(contractSnap.data() as MainContract), id: contractSnap.id };
+          const ratesSnap = await getDocs(collection(this.db, 'main_contracts', contractId, 'position_rates'));
+          contractData.positionRates = ratesSnap.docs.map(d => ({ id: d.id, ...(d.data() as object) } as PositionRate));
+          contractMap.set(contractId, contractData);
         }
       }),
     );
@@ -1506,12 +1524,14 @@ export class PayrollService {
           resolvedPolicies.tax,
           resolvedPolicies.sso,
           clamped,
+          deductions.social_security,
         );
       } else {
         deductions.pit_withholding = pitFromMonthlyGross(
           effectiveGross,
           resolvedPolicies.tax,
           resolvedPolicies.sso,
+          deductions.social_security,
         );
       }
     }
@@ -1732,9 +1752,15 @@ export class PayrollService {
           resolved.tax,
           resolved.sso,
           clamped,
+          deductions.social_security,
         );
       } else {
-        deductions.pit_withholding = pitFromMonthlyGross(effectiveGross, resolved.tax, resolved.sso);
+        deductions.pit_withholding = pitFromMonthlyGross(
+          effectiveGross,
+          resolved.tax,
+          resolved.sso,
+          deductions.social_security,
+        );
       }
     }
     input.deductionItems.forEach((d, idx) => {
