@@ -309,14 +309,6 @@ function resolvePayrollLaborBaseCore(input: {
         };
       }
       if (contractBaselineResolution) return contractBaselineResolution;
-      const pOnly = positionRateForLaborMode(linePos, mode);
-      if (pOnly > 0) {
-        return {
-          baseCost: pOnly,
-          fromPositionModel: true,
-          resolution: { rate: pOnly, source: 'position_default', workMode: mode },
-        };
-      }
       return { baseCost: 0, fromPositionModel: true, resolution: null };
     }
 
@@ -328,14 +320,6 @@ function resolvePayrollLaborBaseCore(input: {
       };
     }
     if (contractBaselineResolution) return contractBaselineResolution;
-    const p = positionRateForLaborMode(linePos, mode);
-    if (p > 0) {
-      return {
-        baseCost: p,
-        fromPositionModel: true,
-        resolution: { rate: p, source: 'position_default', workMode: mode },
-      };
-    }
     return { baseCost: 0, fromPositionModel: true, resolution: null };
   }
 
@@ -347,14 +331,6 @@ function resolvePayrollLaborBaseCore(input: {
     };
   }
   if (contractBaselineResolution) return contractBaselineResolution;
-  const p = positionRateForLaborMode(linePos, mode);
-  if (p > 0) {
-    return {
-      baseCost: p,
-      fromPositionModel: true,
-      resolution: { rate: p, source: 'position_default', workMode: mode },
-    };
-  }
   return { baseCost: 0, fromPositionModel: true, resolution: null };
 }
 

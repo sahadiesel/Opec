@@ -327,21 +327,16 @@ export function readRateSheetCell(
   }
 
   if (side === 'cost' && context?.position) {
-    const pos = context.position;
     const pid = rate.positionId;
     if (col.category === 'onshore_working_day') {
       const raw = context.contract?.laborCostBaselinesByPositionId?.[pid]?.onshore;
       const n = Number(raw);
-      if (Number.isFinite(n) && n > 0) return n;
-      const p = Number(pos.defaultLaborCostOnshore);
-      return Number.isFinite(p) && p > 0 ? p : undefined;
+      return Number.isFinite(n) && n > 0 ? n : undefined;
     }
     if (col.category === 'offshore_working_day') {
       const raw = context.contract?.laborCostBaselinesByPositionId?.[pid]?.offshore;
       const n = Number(raw);
-      if (Number.isFinite(n) && n > 0) return n;
-      const p = Number(pos.defaultLaborCostOffshore);
-      return Number.isFinite(p) && p > 0 ? p : undefined;
+      return Number.isFinite(n) && n > 0 ? n : undefined;
     }
   }
 

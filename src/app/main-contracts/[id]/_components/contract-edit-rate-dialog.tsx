@@ -87,15 +87,11 @@ export function ContractEditRateDialog({
   onSaveLaborBaseline,
 }: ContractEditRateDialogProps) {
   const [form, setForm] = useState<Partial<PositionRate>>({});
-  const [laborOnshoreInput, setLaborOnshoreInput] = useState('');
-  const [laborOffshoreInput, setLaborOffshoreInput] = useState('');
 
   useEffect(() => {
     if (!open || !rate) return;
     setForm(rateToFormState(rate));
-    setLaborOnshoreInput(laborCostOnshore > 0 ? String(laborCostOnshore) : '');
-    setLaborOffshoreInput(laborCostOffshore > 0 ? String(laborCostOffshore) : '');
-  }, [open, rate?.id, rate, laborCostOnshore, laborCostOffshore]);
+  }, [open, rate?.id, rate]);
 
   const positionDisplayName = useMemo(() => {
     if (!rate) return '';
@@ -169,7 +165,9 @@ export function ContractEditRateDialog({
 
     onSave(rate.id, payload);
     if (canEditCostSide && onSaveLaborBaseline) {
-      onSaveLaborBaseline(rate.positionId, laborOnshoreInput, laborOffshoreInput, {
+      const onshoreCostStr = String(sanitizedMatrix?.cost?.onshore?.workingDay ?? '').trim();
+      const offshoreCostStr = String(sanitizedMatrix?.cost?.offshore?.workingDay ?? '').trim();
+      onSaveLaborBaseline(rate.positionId, onshoreCostStr, offshoreCostStr, {
         onshore: positionDefaultLaborOnshore,
         offshore: positionDefaultLaborOffshore,
       });
@@ -192,36 +190,7 @@ export function ContractEditRateDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {rate && canViewCostFields && canEditCostSide && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-md border border-amber-200/80 bg-amber-50/40 p-4">
-            <div className="sm:col-span-2">
-              <p className="text-sm font-semibold text-amber-900">ต้นทุนค่าแรง (ทับสัญญา)</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                ว่างหรือเท่าฐานตำแหน่ง (ON {positionDefaultLaborOnshore || '—'} / OFF {positionDefaultLaborOffshore || '—'}) = ใช้ค่าจากตำแหน่งงาน
-              </p>
-            </div>
-            <div className="grid gap-2">
-              <Label>ต้นทุน Onshore / วัน</Label>
-              <Input
-                type="number"
-                min={0}
-                step="any"
-                value={laborOnshoreInput}
-                onChange={(e) => setLaborOnshoreInput(e.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>ต้นทุน Offshore / วัน</Label>
-              <Input
-                type="number"
-                min={0}
-                step="any"
-                value={laborOffshoreInput}
-                onChange={(e) => setLaborOffshoreInput(e.target.value)}
-              />
-            </div>
-          </div>
-        )}
+
 
         {rate && (
           <PositionRateFormFields

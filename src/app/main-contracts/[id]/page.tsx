@@ -82,19 +82,19 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-/** ต้นทุนที่ใช้จริงต่อวัน — ทับในสัญญาก่อน แล้วจึงฐานจากตำแหน่ง */
+/** ต้นทุนที่ใช้จริงต่อวัน */
 function effectiveLaborOnshore(pos: Position, contract: MainContract, positionId: string): number {
   const raw = contract.laborCostBaselinesByPositionId?.[positionId]?.onshore;
   const n = Number(raw);
   if (Number.isFinite(n) && n > 0) return n;
-  return Number(pos.defaultLaborCostOnshore) || 0;
+  return 0;
 }
 
 function effectiveLaborOffshore(pos: Position, contract: MainContract, positionId: string): number {
   const raw = contract.laborCostBaselinesByPositionId?.[positionId]?.offshore;
   const n = Number(raw);
   if (Number.isFinite(n) && n > 0) return n;
-  return Number(pos.defaultLaborCostOffshore) || 0;
+  return 0;
 }
 
 const DEFAULT_OT_KEY: OvertimeRuleKey = 'MULT_1_5';
@@ -745,6 +745,14 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
       : 0;
     const finalOnSell = matrixSync.sellRateOnshore ?? onSell;
     const finalOffSell = matrixSync.sellRateOffshore ?? offSell;
+
+    const onshoreCostStr = String(sanitizedMatrix?.cost?.onshore?.workingDay ?? '').trim();
+    const offshoreCostStr = String(sanitizedMatrix?.cost?.offshore?.workingDay ?? '').trim();
+    if (canEditCostSide && (onshoreCostStr || offshoreCostStr)) {
+      commitLaborBaseline(newRate.positionId || '', 'onshore', onshoreCostStr, 0);
+      commitLaborBaseline(newRate.positionId || '', 'offshore', offshoreCostStr, 0);
+    }
+
     const { costBaseline: _dropCost, ...newRateFields } = newRate;
     const policySell = effectiveRatePolicy.sell || {};
     const policyCost = effectiveRatePolicy.cost || {};

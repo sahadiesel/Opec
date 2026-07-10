@@ -83,48 +83,6 @@ export function PositionRateFormFields({
         )}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="grid gap-2">
-          <Label>ราคาขาย Onshore</Label>
-          <Input
-            type="number"
-            min={0}
-            step="any"
-            disabled={!canEditSellSide || isSupplementalContract}
-            value={newRate.sellRateOnshore === undefined || newRate.sellRateOnshore === null ? '' : newRate.sellRateOnshore}
-            onChange={(e) => {
-              const raw = e.target.value;
-              const n = raw === '' ? NaN : parseFloat(raw);
-              const v = Number.isFinite(n) && n > 0 ? n : undefined;
-              setNewRate({
-                ...newRate,
-                sellRateOnshore: v,
-                sellRate: legacySellRateMirror({ ...newRate, sellRateOnshore: v }),
-              });
-            }}
-          />
-        </div>
-        <div className="grid gap-2">
-          <Label>ราคาขาย Offshore</Label>
-          <Input
-            type="number"
-            min={0}
-            step="any"
-            disabled={!canEditSellSide || isSupplementalContract}
-            value={newRate.sellRateOffshore === undefined || newRate.sellRateOffshore === null ? '' : newRate.sellRateOffshore}
-            onChange={(e) => {
-              const raw = e.target.value;
-              const n = raw === '' ? NaN : parseFloat(raw);
-              const v = Number.isFinite(n) && n > 0 ? n : undefined;
-              setNewRate({
-                ...newRate,
-                sellRateOffshore: v,
-                sellRate: legacySellRateMirror({ ...newRate, sellRateOffshore: v }),
-              });
-            }}
-          />
-        </div>
-      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="grid gap-2">
