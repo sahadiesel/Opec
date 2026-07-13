@@ -12,28 +12,6 @@ import type {
 } from '@/lib/types';
 import { createEmptyPositionRateMatrix, autoCalculateMatrixFields } from '@/lib/commercial/position-rate-matrix';
 
-function parseRateInput(raw: string): number | undefined {
-  if (raw.trim() === '') return undefined;
-  const n = parseFloat(raw);
-  return Number.isFinite(n) && n > 0 ? n : undefined;
-}
-
-function rateInputValue(v: number | undefined): string {
-  return v != null && v > 0 ? String(v) : '';
-}
-
-interface SideFieldsProps {
-  title: string;
-  side: 'offshore' | 'onshore';
-  bundleKey: 'sell' | 'cost';
-  matrix: PositionRateMatrix;
-  mobDemobLocations: ContractMobDemobLocation[];
-  disabled?: boolean;
-  onChange: (matrix: PositionRateMatrix) => void;
-  normalWorkHoursOnshore: number;
-  normalWorkHoursOffshore: number;
-}
-
 function SideFields({
   title,
   side,
@@ -50,11 +28,12 @@ function SideFields({
 
   const [m1Mult, setM1Mult] = useState<number | 'custom'>(0.5);
   const [d1Mult, setD1Mult] = useState<number | 'custom'>(0.5);
+  const [localRaw, setLocalRaw] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (side === 'offshore') {
       const wd = sideData.workingDay;
-      if (wd && wd > 0) {
+      if (wd && wd >= 0) {
         const m1 = (sideData as any).m1PerTrip;
         const d1 = (sideData as any).d1PerTrip;
         if (m1 !== undefined && m1 !== null) {
@@ -75,7 +54,7 @@ function SideFields({
         }
       }
     }
-  }, [sideData.workingDay]);
+  }, [sideData.workingDay, side, sideData]);
 
   const patchSide = (patch: Partial<PositionRateOffshoreSide & PositionRateOnshoreSide>) => {
     let updatedFields = { ...patch };
@@ -99,13 +78,34 @@ function SideFields({
     onChange(next);
   };
 
+  const handleInput = (field: string, raw: string) => {
+    setLocalRaw((prev) => ({ ...prev, [field]: raw }));
+    const n = parseFloat(raw);
+    const val = Number.isFinite(n) && n >= 0 ? n : undefined;
+    patchSide({ [field]: val } as any);
+  };
+
   const patchMob = (locationKey: string, raw: string) => {
-    const amount = parseRateInput(raw);
+    const fieldKey = `mob_${locationKey}`;
+    setLocalRaw((prev) => ({ ...prev, [fieldKey]: raw }));
+    const n = parseFloat(raw);
+    const amount = Number.isFinite(n) && n >= 0 ? n : undefined;
     const prev = (sideData as PositionRateOffshoreSide).mobDemobRoundTrip ?? {};
     const mobDemobRoundTrip = { ...prev };
     if (amount != null) mobDemobRoundTrip[locationKey] = amount;
     else delete mobDemobRoundTrip[locationKey];
     patchSide({ mobDemobRoundTrip } as Partial<PositionRateOffshoreSide>);
+  };
+
+  const getValue = (field: string, numValue: number | undefined) => {
+    const raw = localRaw[field];
+    if (raw !== undefined) {
+      const parsed = parseFloat(raw);
+      if ((Number.isNaN(parsed) && numValue == null) || parsed === numValue) {
+        return raw;
+      }
+    }
+    return numValue != null && numValue >= 0 ? String(numValue) : '';
   };
 
   return (
@@ -119,8 +119,8 @@ function SideFields({
             min={0}
             step="any"
             disabled={disabled}
-            value={rateInputValue(sideData.workingDay)}
-            onChange={(e) => patchSide({ workingDay: parseRateInput(e.target.value) })}
+            value={getValue('workingDay', sideData.workingDay)}
+            onChange={(e) => handleInput('workingDay', e.target.value)}
           />
         </div>
         <div className="grid gap-1">
@@ -130,8 +130,8 @@ function SideFields({
             min={0}
             step="any"
             disabled={disabled}
-            value={rateInputValue(sideData.standbyDay)}
-            onChange={(e) => patchSide({ standbyDay: parseRateInput(e.target.value) })}
+            value={getValue('standbyDay', sideData.standbyDay)}
+            onChange={(e) => handleInput('standbyDay', e.target.value)}
           />
         </div>
         {side === 'offshore' ? (
@@ -143,8 +143,8 @@ function SideFields({
                 min={0}
                 step="any"
                 disabled={disabled}
-                value={rateInputValue((sideData as PositionRateOffshoreSide).otPerHour)}
-                onChange={(e) => patchSide({ otPerHour: parseRateInput(e.target.value) } as Partial<PositionRateOffshoreSide>)}
+                value={getValue('otPerHour', (sideData as PositionRateOffshoreSide).otPerHour)}
+                onChange={(e) => handleInput('otPerHour', e.target.value)}
               />
             </div>
             <div className="grid gap-1">
@@ -156,8 +156,8 @@ function SideFields({
                   step="any"
                   disabled={disabled || m1Mult !== 'custom'}
                   className="w-2/3 font-mono"
-                  value={rateInputValue((sideData as PositionRateOffshoreSide).m1PerTrip)}
-                  onChange={(e) => patchSide({ m1PerTrip: parseRateInput(e.target.value) } as Partial<PositionRateOffshoreSide>)}
+                  value={getValue('m1PerTrip', (sideData as PositionRateOffshoreSide).m1PerTrip)}
+                  onChange={(e) => handleInput('m1PerTrip', e.target.value)}
                 />
                 <Select
                   disabled={disabled}
@@ -167,9 +167,10 @@ function SideFields({
                     setM1Mult(nextM1Mult);
                     if (nextM1Mult !== 'custom') {
                       const wd = sideData.workingDay;
-                      if (wd && wd > 0) {
+                      if (wd && wd >= 0) {
                         const m1Val = Math.round((wd * nextM1Mult) * 100) / 100;
                         patchSide({ m1PerTrip: m1Val } as Partial<PositionRateOffshoreSide>);
+                        setLocalRaw((prev) => ({ ...prev, m1PerTrip: String(m1Val) }));
                       }
                     }
                   }}
@@ -194,8 +195,8 @@ function SideFields({
                   step="any"
                   disabled={disabled || d1Mult !== 'custom'}
                   className="w-2/3 font-mono"
-                  value={rateInputValue((sideData as PositionRateOffshoreSide).d1PerTrip)}
-                  onChange={(e) => patchSide({ d1PerTrip: parseRateInput(e.target.value) } as Partial<PositionRateOffshoreSide>)}
+                  value={getValue('d1PerTrip', (sideData as PositionRateOffshoreSide).d1PerTrip)}
+                  onChange={(e) => handleInput('d1PerTrip', e.target.value)}
                 />
                 <Select
                   disabled={disabled}
@@ -205,9 +206,10 @@ function SideFields({
                     setD1Mult(nextD1Mult);
                     if (nextD1Mult !== 'custom') {
                       const wd = sideData.workingDay;
-                      if (wd && wd > 0) {
+                      if (wd && wd >= 0) {
                         const d1Val = Math.round((wd * nextD1Mult) * 100) / 100;
                         patchSide({ d1PerTrip: d1Val } as Partial<PositionRateOffshoreSide>);
+                        setLocalRaw((prev) => ({ ...prev, d1PerTrip: String(d1Val) }));
                       }
                     }
                   }}
@@ -233,10 +235,8 @@ function SideFields({
                 min={0}
                 step="any"
                 disabled={disabled}
-                value={rateInputValue((sideData as PositionRateOnshoreSide).otNormalPerHour)}
-                onChange={(e) =>
-                  patchSide({ otNormalPerHour: parseRateInput(e.target.value) } as Partial<PositionRateOnshoreSide>)
-                }
+                value={getValue('otNormalPerHour', (sideData as PositionRateOnshoreSide).otNormalPerHour)}
+                onChange={(e) => handleInput('otNormalPerHour', e.target.value)}
               />
             </div>
             <div className="grid gap-1">
@@ -246,8 +246,8 @@ function SideFields({
                 min={0}
                 step="any"
                 disabled={disabled}
-                value={rateInputValue((sideData as PositionRateOnshoreSide).ot2PerHour)}
-                onChange={(e) => patchSide({ ot2PerHour: parseRateInput(e.target.value) } as Partial<PositionRateOnshoreSide>)}
+                value={getValue('ot2PerHour', (sideData as PositionRateOnshoreSide).ot2PerHour)}
+                onChange={(e) => handleInput('ot2PerHour', e.target.value)}
               />
             </div>
             <div className="grid gap-1">
@@ -257,8 +257,8 @@ function SideFields({
                 min={0}
                 step="any"
                 disabled={disabled}
-                value={rateInputValue((sideData as PositionRateOnshoreSide).ot3PerHour)}
-                onChange={(e) => patchSide({ ot3PerHour: parseRateInput(e.target.value) } as Partial<PositionRateOnshoreSide>)}
+                value={getValue('ot3PerHour', (sideData as PositionRateOnshoreSide).ot3PerHour)}
+                onChange={(e) => handleInput('ot3PerHour', e.target.value)}
               />
             </div>
           </>
@@ -279,7 +279,7 @@ function SideFields({
                   min={0}
                   step="any"
                   disabled={disabled}
-                  value={rateInputValue((sideData as PositionRateOffshoreSide).mobDemobRoundTrip?.[loc.key])}
+                  value={getValue(`mob_${loc.key}`, (sideData as PositionRateOffshoreSide).mobDemobRoundTrip?.[loc.key])}
                   onChange={(e) => patchMob(loc.key, e.target.value)}
                 />
               </div>
