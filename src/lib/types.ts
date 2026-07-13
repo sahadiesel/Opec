@@ -2290,7 +2290,7 @@ export interface PayrollRun {
   notes?: string;
 }
 
-export type PayrollType = 'MONTHLY' | 'WAVE_BASED' | 'SPECIAL_RUN' | 'ADJUSTMENT';
+export type PayrollType = 'MONTHLY' | 'WAVE_BASED' | 'SPECIAL_RUN' | 'ADJUSTMENT' | 'SUPPLEMENTAL';
 
 export interface PayrollLine {
   id: string;
@@ -2322,6 +2322,7 @@ export interface PayrollLine {
 export interface PayrollBatch {
   id: string;
   payrollPeriodId: string;
+  batchType?: 'NORMAL' | 'SUPPLEMENTAL';
   workModeScope: 'onshore' | 'offshore' | 'mixed';
   status: PayrollBatchStatus;
   d8LifecycleStatus?: PayrollLifecycleStatus;

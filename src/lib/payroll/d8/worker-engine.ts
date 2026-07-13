@@ -14,6 +14,9 @@ export type WorkerPayrollD8Input = {
   grossFromTimesheets: number;
   rate: { summary: string; conditionIds?: string[]; laborTermIds?: string[] };
   earningsBreakdown: Record<string, number>;
+  batchType?: 'NORMAL' | 'SUPPLEMENTAL';
+  /** ฐานรายได้สุทธิของรอบก่อนหน้าในเดือนภาษีเดียวกัน (เพื่อคำนวณฐานภาษีสะสมรอบตกเบิก) */
+  priorPaidTaxableGross?: number;
 };
 
 /**
@@ -27,9 +30,23 @@ export function computeWorkerPayrollLineD8(input: WorkerPayrollD8Input): {
   const gross = Math.max(0, input.grossFromTimesheets);
 
   const allowances = Number(input.earningsBreakdown?.hr_allowances) || 0;
-  const ssoBase = Math.max(0, gross - allowances);
-  const ss = socialSecurityFromPolicy(ssoBase, input.policies.sso);
-  const pit = pitFromMonthlyGross(gross, input.policies.tax, input.policies.sso, ss);
+  
+  let ss = 0;
+  let pit = 0;
+
+  if (input.batchType === 'SUPPLEMENTAL') {
+    // ไม่มีประกันสังคมในรอบตกเบิก
+    ss = 0;
+    // ภาษีรอบตกเบิก = ภาษีของ (ฐานเดิม + ตกเบิก) - ภาษีของฐานเดิม
+    const priorGross = Math.max(0, input.priorPaidTaxableGross || 0);
+    const taxTotal = pitFromMonthlyGross(priorGross + gross, input.policies.tax, input.policies.sso, 0);
+    const taxPrior = pitFromMonthlyGross(priorGross, input.policies.tax, input.policies.sso, 0);
+    pit = Math.max(0, taxTotal - taxPrior);
+  } else {
+    const ssoBase = Math.max(0, gross - allowances);
+    ss = socialSecurityFromPolicy(ssoBase, input.policies.sso);
+    pit = pitFromMonthlyGross(gross, input.policies.tax, input.policies.sso, ss);
+  }
   const fixed = fixedDeductionsFromPolicy(input.policies.allowanceDeduction);
 
   const deductionsBreakdown: Record<string, number> = {

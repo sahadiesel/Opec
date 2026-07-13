@@ -204,6 +204,7 @@ function PayrollBatchesPageContent() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [targetPeriodId, setTargetPeriodId] = useState('');
+  const [batchType, setBatchType] = useState<'NORMAL' | 'SUPPLEMENTAL'>('NORMAL');
   const [workModeFilter, setWorkModeScope] = useState<'onshore' | 'offshore' | 'mixed'>('mixed');
   const [preflight, setPreflight] = useState<PayrollPreflightResult | null>(null);
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<Set<string>>(() => new Set());
@@ -231,7 +232,7 @@ function PayrollBatchesPageContent() {
     try {
       await ensureWorkerPeriodDocument();
       const service = new PayrollService(firestore);
-      const result = await service.preflightPayrollCheck(targetPeriodId, { workModeScope: workModeFilter });
+      const result = await service.preflightPayrollCheck(targetPeriodId, { workModeScope: workModeFilter, batchType });
       setPreflight(result);
       setSelectedWorkerIds(new Set(result.eligibleWorkers.map((w) => w.workerId)));
       setIsGenerateOpen(true);
@@ -284,6 +285,7 @@ function PayrollBatchesPageContent() {
       const batchId = await service.generatePayrollBatch(targetPeriodId, currentUser, {
         workModeScope: workModeFilter,
         workerIds: [...selectedWorkerIds],
+        batchType,
       });
       
       setIsGenerateOpen(false);
@@ -477,9 +479,26 @@ function PayrollBatchesPageContent() {
                   >
                     <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="mixed">ทั้งหมด (All modes)</SelectItem>
-                      <SelectItem value="offshore">Offshore เท่านั้น</SelectItem>
-                      <SelectItem value="onshore">Onshore เท่านั้น</SelectItem>
+                      <SelectItem value="mixed">รวมทุกรูปแบบ (Mixed)</SelectItem>
+                      <SelectItem value="onshore">เฉพาะฝั่ง (Onshore)</SelectItem>
+                      <SelectItem value="offshore">เฉพาะแท่น (Offshore)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="font-bold">ประเภทของรอบจ่าย (Batch Type)</Label>
+                  <Select
+                    onValueChange={(v: 'NORMAL' | 'SUPPLEMENTAL') => {
+                      setBatchType(v);
+                      setPreflight(null);
+                      setSelectedWorkerIds(new Set());
+                    }}
+                    value={batchType}
+                  >
+                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="NORMAL">จ่ายรอบปกติ (จากใบงาน Timesheet)</SelectItem>
+                      <SelectItem value="SUPPLEMENTAL">ตกเบิก/จ่ายเพิ่ม (เฉพาะรายการแก้ไขย้อนหลัง)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

@@ -115,6 +115,7 @@ import {
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 import { filterTimesheetsForWorkerPayrollAsync, loadWorkerPayableTimesheetsForPeriod } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
+import { markRetroAdjustmentsApplied, retroAdjustmentsToPriorPeriodLabels } from './timesheet-retro-adjustment-service';
 
 function round2Payroll(n: number): number {
   return Math.round(n * 100) / 100;
@@ -173,6 +174,214 @@ function isAdminPayrollBatchDeleteBlocked(status: PayrollBatchStatus): boolean {
  * Enforces financial integrity through immutable snapshots and gated state changes.
  */
 export class PayrollService {
+
+  async generateSupplementalPayrollBatch(
+    periodId: string, 
+    user: User, 
+    filters?: { workerIds?: string[] }
+  ): Promise<string> {
+    if (!canPreparePayroll(user)) throw new Error('Permission denied: prepare payroll');
+    assertPayrollPermission(user, 'payroll_worker', 'create_batch');
+
+    const periodRef = doc(this.db, 'payroll_periods', periodId);
+    const periodSnap = await getDoc(periodRef);
+    if (!periodSnap.exists()) throw new Error('ไม่พบรอบบัญชี (payroll period)');
+    const period = periodSnap.data() as PayrollPeriod;
+    const payrollYearMonth = calendarYearMonthFromPeriodStart(period.startDate);
+    if (!payrollYearMonth) throw new Error('รอบบัญชีมีวันที่เริ่มต้นไม่ถูกต้อง');
+
+    // 1. Fetch unapplied approved retro adjustments for this month
+    const retroQuery = query(
+      collection(this.db, 'timesheet_retro_adjustments'),
+      where('applyPayrollYearMonth', '==', payrollYearMonth),
+      where('status', '==', 'approved')
+    );
+    const retroSnap = await getDocs(retroQuery);
+    let retroItems = retroSnap.docs
+      .map(d => ({ ...d.data(), id: d.id } as import('@/lib/types').TimesheetRetroAdjustment));
+
+    if (filters?.workerIds?.length) {
+      const allow = new Set(filters.workerIds.map((id) => id.trim()).filter(Boolean));
+      retroItems = retroItems.filter((r) => allow.has(r.workerId));
+    }
+
+    if (retroItems.length === 0) {
+      throw new Error('ไม่พบรายการแก้ไขย้อนหลัง (ตกเบิก) ที่รอจ่ายในรอบนี้');
+    }
+
+    // 2. Group by worker
+    const itemsByWorker = new Map<string, import('@/lib/types').TimesheetRetroAdjustment[]>();
+    retroItems.forEach(r => {
+      const list = itemsByWorker.get(r.workerId) || [];
+      list.push(r);
+      itemsByWorker.set(r.workerId, list);
+    });
+
+    // 3. Load policies for each worker
+    const workerIds = Array.from(itemsByWorker.keys());
+    const workerMap = new Map<string, import('@/lib/types').RegistryWorker>();
+    const paymentMap = new Map<string, WorkerPaymentProfile>();
+    await Promise.all(workerIds.map(async id => {
+      const snap = await getDoc(doc(this.db, 'registry_workers', id));
+      if (snap.exists()) workerMap.set(id, { ...snap.data(), id: snap.id } as import('@/lib/types').RegistryWorker);
+      const paySnap = await getDoc(doc(this.db, 'worker_payment_profiles', id));
+      if (paySnap.exists()) paymentMap.set(id, { ...paySnap.data(), id: paySnap.id } as WorkerPaymentProfile);
+    }));
+
+    // Load active policies
+    const { getActivePayrollPoliciesAt } = await import('@/lib/payroll/d8/policies');
+    const policies = await getActivePayrollPoliciesAt(this.db, period.endDate);
+
+    // 4. Calculate accumulated gross for the same tax month
+    const priorGrossMap = new Map<string, number>();
+    const priorBatchesQuery = query(
+      collection(this.db, 'payroll_batches'),
+      where('payrollPeriodId', '==', periodId),
+      where('batchType', '!=', 'SUPPLEMENTAL')
+    );
+    const priorBatchesSnap = await getDocs(priorBatchesQuery);
+    const priorBatchIds = priorBatchesSnap.docs.map(d => d.id);
+    
+    if (priorBatchIds.length > 0) {
+      for (const batchId of priorBatchIds) {
+        for (let i = 0; i < workerIds.length; i += 30) {
+          const chunk = workerIds.slice(i, i + 30);
+          const linesQuery = query(
+            collection(this.db, 'payroll_batches', batchId, 'lines'),
+            where('workerId', 'in', chunk)
+          );
+          const linesSnap = await getDocs(linesQuery);
+          linesSnap.forEach(docSnap => {
+            const line = docSnap.data() as PayrollBatchLine;
+            const current = priorGrossMap.get(line.workerId) || 0;
+            // Only sum taxable gross. Usually, gross amount is taxable.
+            priorGrossMap.set(line.workerId, current + (line.grossAmount || 0));
+          });
+        }
+      }
+    }
+
+    // 5. Generate lines
+    const batchId = doc(collection(this.db, 'payroll_batches')).id;
+    let batchGross = 0;
+    let batchDeductions = 0;
+    let batchNet = 0;
+    const lines: PayrollBatchLine[] = [];
+
+    const now = Date.now();
+    for (const [workerId, adjustments] of itemsByWorker) {
+      let workerGross = 0;
+      adjustments.forEach(r => workerGross += (r.computedPayAmountBaht || 0));
+      
+      const priorGross = priorGrossMap.get(workerId) || 0;
+      
+            const d8Line = computeWorkerPayrollLineD8({
+        asOfDate: period.endDate,
+        policies,
+        grossFromTimesheets: workerGross,
+        rate: { summary: 'Supplemental Run' },
+        earningsBreakdown: {},
+        batchType: 'SUPPLEMENTAL',
+        priorPaidTaxableGross: priorGross
+      });
+
+      const lineNetAmount = Math.round(d8Line.netAmount * 100) / 100;
+      const lineDedTotal = Object.values(d8Line.deductionsBreakdown).reduce((a, b) => a + (Number(b) || 0), 0);
+
+      batchGross += workerGross;
+      batchDeductions += lineDedTotal;
+      batchNet += lineNetAmount;
+
+      const profile = workerMap.get(workerId);
+      const payment = paymentMap.get(workerId);
+
+      const lineId = doc(collection(this.db, 'payroll_batches', batchId, 'lines')).id;
+      const priorItems = retroAdjustmentsToPriorPeriodLabels(adjustments);
+      // Fill in amount for prior items
+      for (const pi of priorItems) {
+        const adj = adjustments.find(a => pi.label.includes(a.reason) && a.sourceYearMonth === pi.sourceYearMonth);
+        if (adj) pi.amount = adj.computedPayAmountBaht || 0;
+      }
+
+      const line: PayrollBatchLine = {
+        id: lineId,
+        payrollBatchId: batchId,
+        workerId,
+        workerNameSnapshot: profile ? `${profile.firstNameTh} ${profile.lastNameTh}` : 'Unknown',
+        workerPaymentProfileSnapshot: payment || {},
+        assignmentIds: [],
+        sourceTimesheetIds: [],
+        periodStartDate: period.startDate,
+        periodEndDate: period.endDate,
+        eventBreakdown: {},
+        earningsBreakdown: {},
+        deductionsBreakdown: d8Line.deductionsBreakdown,
+        grossAmount: workerGross,
+        netAmount: lineNetAmount,
+        d8Snapshot: d8Line.snapshot,
+        exportStatus: 'pending',
+        hrLineAdjustments: {
+          allowanceItems: [],
+          deductionItems: [],
+          priorPeriodAllowanceItems: priorItems,
+          pitWithholdingOverride: null
+        }
+      };
+      lines.push(line);
+    }
+
+    // 6. Write batch and lines
+    const batch: PayrollBatch = {
+      id: batchId,
+      payrollPeriodId: periodId,
+      batchType: 'SUPPLEMENTAL',
+      workModeScope: 'mixed',
+      status: 'GENERATED',
+      d8LifecycleStatus: batchStatusToD8Lifecycle('GENERATED'),
+      totalWorkers: lines.length,
+      grossAmount: batchGross,
+      totalDeductions: batchDeductions,
+      netAmount: batchNet,
+      createdBy: user.displayName,
+      updatedBy: user.displayName,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const headerWb = writeBatch(this.db);
+    headerWb.set(doc(this.db, 'payroll_batches', batchId), batch);
+    
+    // Write lines and update adjustments in batches
+    for (let i = 0; i < lines.length; i += 300) {
+      const slice = lines.slice(i, i + 300);
+      const lineWb = writeBatch(this.db);
+      for (const line of slice) {
+        lineWb.set(doc(this.db, 'payroll_batches', batchId, 'lines', line.id), PayrollBatchLineSchema.parse(line));
+      }
+      await lineWb.commit();
+    }
+
+    // Mark adjustments as applied
+    for (const [workerId, adjustments] of itemsByWorker) {
+      const line = lines.find(l => l.workerId === workerId);
+      if (line) {
+        await markRetroAdjustmentsApplied(this.db, user, adjustments.map(a => a.id), batchId, line.id);
+      }
+    }
+
+    await writeAuditLog(this.db, user, {
+      actionType: 'GENERATE',
+      entityType: 'PayrollBatch',
+      entityId: batchId,
+      payrollBatchId: batchId,
+      entityLabel: `${period.label} Supplemental Batch`,
+      sourceModule: 'hr',
+      afterSummary: `Generated supplemental batch for ${lines.length} workers.`
+    });
+
+    return batchId;
+  }
+
   constructor(private db: Firestore) {}
 
   /** รอบจ่ายรายเดือน — ต้องมีเอกสาร PO+เดือน / Wave เดือนที่ปิดงวดแล้ว (ล็อก / ส่งตรวจ / อนุมัติ) ก่อนประมวลผล */
@@ -209,7 +418,7 @@ export class PayrollService {
    */
   async preflightPayrollCheck(
     periodId: string,
-    filters?: { workModeScope?: 'onshore' | 'offshore' | 'mixed' },
+    filters?: { workModeScope?: 'onshore' | 'offshore' | 'mixed'; batchType?: 'NORMAL' | 'SUPPLEMENTAL' },
   ): Promise<PayrollPreflightResult> {
     const periodRef = doc(this.db, 'payroll_periods', periodId);
     const periodSnap = await getDoc(periodRef);
@@ -364,12 +573,16 @@ export class PayrollService {
   async generatePayrollBatch(
     periodId: string, 
     user: User, 
-    filters?: { workModeScope?: 'onshore' | 'offshore' | 'mixed'; workerIds?: string[] },
+    filters?: { workModeScope?: 'onshore' | 'offshore' | 'mixed'; workerIds?: string[]; batchType?: 'NORMAL' | 'SUPPLEMENTAL' },
   ): Promise<string> {
     if (!canPreparePayroll(user)) {
       throw new Error('Permission denied: prepare payroll');
     }
     assertPayrollPermission(user, 'payroll_worker', 'create_batch');
+    if (filters?.batchType === 'SUPPLEMENTAL') {
+      return this.generateSupplementalPayrollBatch(periodId, user, { workerIds: filters.workerIds });
+    }
+
     const periodRef = doc(this.db, 'payroll_periods', periodId);
     const periodSnap = await getDoc(periodRef);
     if (!periodSnap.exists()) throw new Error('ไม่พบรอบบัญชี (payroll period)');
@@ -481,6 +694,19 @@ export class PayrollService {
         }
       }),
     );
+
+    const retroQuery = query(
+      collection(this.db, 'timesheet_retro_adjustments'),
+      where('applyPayrollYearMonth', '==', monthlyGate.payrollYearMonth),
+      where('status', '==', 'applied')
+    );
+    const retroSnap = await getDocs(retroQuery);
+    const retroItems = retroSnap.docs.map(d => ({ ...d.data(), id: d.id } as import('@/lib/types').TimesheetRetroAdjustment));
+    const retroByWorker = new Map<string, import('@/lib/types').TimesheetRetroAdjustment[]>();
+    for (const r of retroItems) {
+      if (!retroByWorker.has(r.workerId)) retroByWorker.set(r.workerId, []);
+      retroByWorker.get(r.workerId)!.push(r);
+    }
 
     const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, timesheets);
 
@@ -661,6 +887,7 @@ export class PayrollService {
         ...(incomeSegments
           ? { incomeSegments }
           : { payslipWorkDaySplit: computeWorkDayPackagePayslipSplit(workerTs, aggDeps) }),
+        ...(workerPriorItems.length > 0 ? { hrLineAdjustments: { allowanceItems: [], deductionItems: [], priorPeriodAllowanceItems: workerPriorItems, pitWithholdingOverride: null } } : {}),
       };
 
       lines.push(line);

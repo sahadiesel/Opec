@@ -20,6 +20,7 @@ export const PayrollPeriodSchema = z.object({
 export const PayrollBatchSchema = z.object({
   id: z.string().optional(),
   payrollPeriodId: z.string().min(1, 'Payroll Period ID is required'),
+  batchType: z.enum(['NORMAL', 'SUPPLEMENTAL']).optional(),
   workModeScope: z.enum(['onshore', 'offshore', 'mixed']),
   status: z.enum([
     'DRAFT', 
