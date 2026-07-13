@@ -1206,6 +1206,9 @@ export class PayrollService {
     const linesSnap = await getDocs(collection(this.db, 'payroll_batches', batchId, 'lines'));
     await this.revertPayrollBatchSourceLocks(batch, linesSnap, user);
     await this.clearCashAdvanceRecoveriesForPayrollBatch(batchId);
+    if (batch.batchType === 'SUPPLEMENTAL') {
+      await revertRetroAdjustmentsForPayrollBatch(this.db, user, batchId);
+    }
     await this.deletePayrollBatchSubcollectionAndDoc(batchId);
     await writeAuditLog(this.db, user, {
       actionType: 'DELETE',
@@ -1215,6 +1218,10 @@ export class PayrollService {
       sourceModule: 'hr',
       afterSummary: 'Admin removed batch before regenerate (unlock + delete)',
     });
+    
+    if (batch.batchType === 'SUPPLEMENTAL') {
+      return this.generateSupplementalPayrollBatch(periodId, user);
+    }
     return this.generatePayrollBatch(periodId, user, { workModeScope: scope });
   }
 
