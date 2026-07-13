@@ -44,6 +44,114 @@ function money(n: number) {
 }
 
 export function PayslipDocument({ model, className }: { model: PayslipViewModel; className?: string }) {
+  const renderDataSection = (
+    title: string | null,
+    incomeLines: import('@/lib/payroll/payslip-model').PayslipLineItem[],
+    grossTotal: number,
+    deductionLines: import('@/lib/payroll/payslip-model').PayslipLineItem[],
+    deductionsTotal: number,
+    netPay: number,
+    leaveSummaryLines?: import('@/lib/payroll/payslip-model').PayslipLeaveSummaryLine[],
+    colorScheme: 'normal' | 'retro' = 'normal'
+  ) => {
+    const isRetro = colorScheme === 'retro';
+    const themeColor = isRetro ? '#0369a1' : '#0f766e';
+    const bgLight = isRetro ? '#f0f9ff' : '#ecfdf5';
+    const borderLight = isRetro ? '#bae6fd' : '#99f6e4';
+    const gradLight = isRetro ? 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)' : 'linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)';
+    const gradBorder = isRetro ? '#7dd3fc' : '#6ee7b7';
+    const textDark = isRetro ? '#0c4a6e' : '#065f46';
+    const numDark = isRetro ? '#0369a1' : '#047857';
+
+    return (
+      <div className={title ? 'mt-6 pt-2' : ''}>
+        {title && (
+          <div style={{ margin: '0 0 16px 0', borderTop: `2px dashed ${themeColor}`, position: 'relative' }}>
+            <span style={{ position: 'absolute', top: -10, left: 16, background: '#fff', padding: '0 8px', fontSize: 13, fontWeight: 800, color: themeColor }}>
+              {title}
+            </span>
+          </div>
+        )}
+        <section>
+          <h2 className="payslip-section-title" style={isRetro ? { color: themeColor, borderBottomColor: borderLight } : undefined}>รายได้ / Earnings</h2>
+          <table className="payslip-table">
+            <thead>
+              <tr>
+                <th scope="col">รายการ</th>
+                <th scope="col" style={{ width: '32%', textAlign: 'right' }}>จำนวน (บาท)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {incomeLines.map((row, i) => (
+                <tr key={`${row.label}-${i}`}>
+                  <td className="lbl">{row.label}</td>
+                  <td className="amt">{money(row.amount)}</td>
+                </tr>
+              ))}
+              <tr className="payslip-total-row">
+                <td style={isRetro ? { background: bgLight, color: themeColor, borderTopColor: borderLight } : undefined}>รวมรายได้ (Gross)</td>
+                <td className="amt" style={isRetro ? { background: bgLight, color: themeColor, borderTopColor: borderLight } : undefined}>{money(grossTotal)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        {leaveSummaryLines && leaveSummaryLines.length > 0 ? (
+          <section style={{ marginTop: 18 }}>
+            <h2 className="payslip-section-title" style={isRetro ? { color: themeColor, borderBottomColor: borderLight } : undefined}>สรุปการลา / Leave summary</h2>
+            <table className="payslip-table">
+              <thead>
+                <tr>
+                  <th scope="col">รายการ</th>
+                  <th scope="col" style={{ width: '32%' }}>หมายเหตุ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leaveSummaryLines.map((row, i) => (
+                  <tr key={`${row.label}-${i}`}>
+                    <td className="lbl">{row.label}</td>
+                    <td className="lbl" style={{ fontSize: 12, color: '#64748b' }}>{row.detail || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        ) : null}
+
+        <section style={{ marginTop: 18 }}>
+          <h2 className="payslip-section-title" style={isRetro ? { color: themeColor, borderBottomColor: borderLight } : undefined}>รายการหัก / Deductions</h2>
+          <table className="payslip-table">
+            <thead>
+              <tr>
+                <th scope="col">รายการ</th>
+                <th scope="col" style={{ width: '32%', textAlign: 'right' }}>จำนวน (บาท)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deductionLines.map((row, i) => (
+                <tr key={`${row.label}-${i}`}>
+                  <td className="lbl">{row.label}</td>
+                  <td className="amt" style={{ color: '#b91c1c' }}>−{money(row.amount)}</td>
+                </tr>
+              ))}
+              <tr className="payslip-total-row">
+                <td style={isRetro ? { background: bgLight, color: themeColor, borderTopColor: borderLight } : undefined}>รวมหัก</td>
+                <td className="amt" style={{ color: '#b91c1c', ...(isRetro ? { background: bgLight, borderTopColor: borderLight } : {}) }}>
+                  −{money(deductionsTotal)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <div className="payslip-net" style={isRetro ? { background: gradLight, borderColor: gradBorder } : undefined}>
+          <span className="payslip-net-label" style={isRetro ? { color: textDark } : undefined}>รับสุทธิ (Net pay)</span>
+          <span className="payslip-net-amt" style={isRetro ? { color: numDark } : undefined}>{money(netPay)}</span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className={`payslip-root rounded-lg border border-border bg-card p-5 shadow-sm print:border-0 print:shadow-none print:bg-white ${className ?? ''}`}>
       <style dangerouslySetInnerHTML={{ __html: PAYSLIP_STYLES }} />
@@ -77,7 +185,15 @@ export function PayslipDocument({ model, className }: { model: PayslipViewModel;
           <dt>เลขที่อ้างอิง / Reference</dt>
           <dd className="mono">{model.documentRef}</dd>
         </div>
-        {model.paymentDateLabel ? (
+        {model.isSupplemental && (model.normalPaymentDateLabel || model.paymentDateLabel) ? (
+          <div>
+            <dt>วันที่จ่าย / Payment date</dt>
+            <dd style={{ lineHeight: 1.6 }}>
+              <div style={{ color: '#0f766e' }}>งวดปกติ: {model.normalPaymentDateLabel || '—'}</div>
+              <div style={{ color: '#0369a1' }}>ตกเบิก: {model.paymentDateLabel || '—'}</div>
+            </dd>
+          </div>
+        ) : model.paymentDateLabel ? (
           <div>
             <dt>วันที่จ่าย / Payment date</dt>
             <dd>{model.paymentDateLabel}</dd>
@@ -85,95 +201,19 @@ export function PayslipDocument({ model, className }: { model: PayslipViewModel;
         ) : null}
       </dl>
 
-      <section>
-        <h2 className="payslip-section-title">รายได้ / Earnings</h2>
-        <table className="payslip-table">
-          <thead>
-            <tr>
-              <th scope="col">รายการ</th>
-              <th scope="col" style={{ width: '32%', textAlign: 'right' }}>
-                จำนวน (บาท)
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {model.incomeLines.map((row, i) => (
-              <tr key={`${row.label}-${i}`}>
-                <td className="lbl">{row.label}</td>
-                <td className="amt">{money(row.amount)}</td>
-              </tr>
-            ))}
-            <tr className="payslip-total-row">
-              <td>รวมรายได้ (Gross)</td>
-              <td className="amt">{money(model.grossTotal)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
-
-      {model.leaveSummaryLines && model.leaveSummaryLines.length > 0 ? (
-        <section style={{ marginTop: 18 }}>
-          <h2 className="payslip-section-title">สรุปการลา / Leave summary</h2>
-          <table className="payslip-table">
-            <thead>
-              <tr>
-                <th scope="col">รายการ</th>
-                <th scope="col" style={{ width: '32%' }}>
-                  หมายเหตุ
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {model.leaveSummaryLines.map((row, i) => (
-                <tr key={`${row.label}-${i}`}>
-                  <td className="lbl">{row.label}</td>
-                  <td className="lbl" style={{ fontSize: 12, color: '#64748b' }}>
-                    {row.detail || '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      ) : null}
-
-      <section style={{ marginTop: 18 }}>
-        <h2 className="payslip-section-title">รายการหัก / Deductions</h2>
-        <table className="payslip-table">
-          <thead>
-            <tr>
-              <th scope="col">รายการ</th>
-              <th scope="col" style={{ width: '32%', textAlign: 'right' }}>
-                จำนวน (บาท)
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {model.deductionLines.map((row, i) => (
-              <tr key={`${row.label}-${i}`}>
-                <td className="lbl">{row.label}</td>
-                <td className="amt" style={{ color: '#b91c1c' }}>
-                  −{money(row.amount)}
-                </td>
-              </tr>
-            ))}
-            <tr className="payslip-total-row">
-              <td>รวมหัก</td>
-              <td className="amt" style={{ color: '#b91c1c' }}>
-                −{money(model.deductionsTotal)}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
-
-      <div className="payslip-net">
-        <span className="payslip-net-label">รับสุทธิ (Net pay)</span>
-        <span className="payslip-net-amt">{money(model.netPay)}</span>
-      </div>
+      {renderDataSection(
+        null,
+        model.incomeLines,
+        model.grossTotal,
+        model.deductionLines,
+        model.deductionsTotal,
+        model.netPay,
+        model.leaveSummaryLines,
+        'normal'
+      )}
 
       {model.roundingNote ? (
-        <p className="payslip-disclaimer" style={{ color: '#b45309' }}>
+        <p className="payslip-disclaimer" style={{ color: '#b45309', marginTop: 24 }}>
           หมายเหตุ: ยอดรับสุทธิอ้างอิงจาก snapshot บน Payroll Line อาจต่างจากผลลบแบบง่ายเล็กน้อยจากการปัดเศษหรือการปรับยอด
         </p>
       ) : null}

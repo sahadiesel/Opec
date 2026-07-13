@@ -31,7 +31,7 @@ import { isSystemAdmin } from '@/lib/permission-core';
 import { workerPayrollBatchStatusLabelTh } from '@/lib/payroll/worker-batch-status-display';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, query, orderBy, limit } from 'firebase/firestore';
+import { collection, query, orderBy, limit, where, getDocs, updateDoc, doc, deleteField } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
@@ -294,6 +294,7 @@ function PayrollBatchesPageContent() {
       toast({ title: "สร้าง Payroll Batch สำเร็จ", description: "ข้อมูลกำลังถูกประมวลผล" });
       router.push(`/payroll/batches/${batchId}`);
     } catch (e: any) {
+      console.error('[PayrollBatch] สร้าง Batch ล้มเหลว:', e);
       let desc = e?.message ?? String(e);
       if (/resource-exhausted|maximum bandwidth for writes/i.test(String(desc))) {
         desc =
@@ -801,7 +802,7 @@ function PayrollBatchesPageContent() {
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="flex items-center justify-end gap-1 flex-wrap">
-                          {isAdmin && (
+                          {isAdmin && !adminBatchActionsBlocked(b.status) && (
                             <>
                               <Button
                                 type="button"
@@ -809,7 +810,6 @@ function PayrollBatchesPageContent() {
                                 size="sm"
                                 className="h-8 px-2 text-destructive border-destructive/30 hover:bg-destructive/10"
                                 title="ลบชุดจ่าย (Admin)"
-                                disabled={adminBatchActionsBlocked(b.status)}
                                 onClick={() => setDeleteTarget(b)}
                               >
                                 <Trash2 className="h-3.5 w-3.5 shrink-0" />
@@ -821,7 +821,6 @@ function PayrollBatchesPageContent() {
                                 size="sm"
                                 className="h-8 px-2"
                                 title="สร้างชุดจ่ายใหม่ (Regenerate)"
-                                disabled={adminBatchActionsBlocked(b.status)}
                                 onClick={() => setRegenTarget(b)}
                               >
                                 <RefreshCw className="h-3.5 w-3.5 shrink-0" />

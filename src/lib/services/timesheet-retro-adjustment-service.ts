@@ -8,6 +8,7 @@ import {
   query,
   updateDoc,
   where,
+  deleteField,
   type Firestore,
 } from 'firebase/firestore';
 import type { DailyTimesheet, PriorPeriodAllowanceItem, TimesheetRetroAdjustment, User } from '@/lib/types';
@@ -336,4 +337,37 @@ export async function markRetroAdjustmentsApplied(
       afterSummary: `Marked ${adjustmentIds.length} retro adjustment(s) applied on payroll line`,
     });
   }
+}
+
+export async function revertRetroAdjustmentsForPayrollBatch(
+  db: Firestore,
+  user: User,
+  payrollBatchId: string,
+): Promise<void> {
+  const q = query(
+    collection(db, COLLECTION),
+    where('appliedPayrollBatchId', '==', payrollBatchId)
+  );
+  const snap = await getDocs(q);
+  if (snap.empty) return;
+  
+  const now = Date.now();
+  for (const docSnap of snap.docs) {
+    await updateDoc(doc(db, COLLECTION, docSnap.id), {
+      status: 'approved',
+      appliedAt: deleteField(),
+      appliedPayrollBatchId: deleteField(),
+      payrollWorkerLineId: deleteField(),
+      updatedAt: now,
+    });
+  }
+  
+  await writeAuditLog(db, user, {
+    actionType: 'UPDATE',
+    entityType: 'TimesheetRetroAdjustment',
+    entityId: snap.docs.map(d => d.id).join(','),
+    payrollBatchId,
+    sourceModule: 'hr',
+    afterSummary: `Reverted ${snap.size} retro adjustment(s) to approved because payroll batch was deleted`,
+  });
 }

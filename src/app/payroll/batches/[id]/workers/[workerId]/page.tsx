@@ -24,7 +24,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import type {
   DailyTimesheet,
   PayrollBatch,
@@ -246,6 +246,41 @@ export default function PayrollBatchWorkerLinePage({
   const [autoTimesheetMarginalRate, setAutoTimesheetMarginalRate] = useState(35);
   const [adjNotes, setAdjNotes] = useState('');
   const [retroImportBusy, setRetroImportBusy] = useState(false);
+
+  const [normalBatch, setNormalBatch] = useState<PayrollBatch | null>(null);
+  const [normalLine, setNormalLine] = useState<PayrollBatchLine | null>(null);
+
+  useEffect(() => {
+    if (!firestore || !batch || batch.batchType !== 'SUPPLEMENTAL') return;
+    const fetchNormalData = async () => {
+      try {
+        const q = query(
+          collection(firestore, 'payroll_batches'),
+          where('payrollPeriodId', '==', batch.payrollPeriodId)
+        );
+        const snaps = await getDocs(q);
+        if (!snaps.empty) {
+          const normalDoc = snaps.docs.find((d) => {
+            const data = d.data();
+            return !data.batchType || data.batchType === 'NORMAL';
+          });
+          if (normalDoc) {
+            const nb = { id: normalDoc.id, ...normalDoc.data() } as PayrollBatch;
+            setNormalBatch(nb);
+            const nlSnap = await getDoc(
+              doc(firestore, 'payroll_batches', nb.id, 'lines', `${nb.id}_${workerId}`)
+            );
+            if (nlSnap.exists()) {
+              setNormalLine({ id: nlSnap.id, ...nlSnap.data() } as PayrollBatchLine);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch normal batch data', err);
+      }
+    };
+    fetchNormalData();
+  }, [firestore, batch?.payrollPeriodId, batch?.batchType, workerId]);
 
   const payrollApplyYearMonth = useMemo(
     () => (period?.endDate ? period.endDate.slice(0, 7) : ''),
@@ -730,7 +765,14 @@ export default function PayrollBatchWorkerLinePage({
   const slipModel = useMemo(() => {
     if (!line || !batch) return null;
     const pl = period?.label || batch.payrollPeriodId;
-    const model = buildPayslipFromWorkerLine(line, batch, pl, companyProfile ?? undefined);
+    const model = buildPayslipFromWorkerLine(
+      line,
+      batch,
+      pl,
+      companyProfile ?? undefined,
+      normalLine,
+      normalBatch
+    );
     if (timesheets.length > 0 && grossCtx) {
       const incomeLines = buildWorkerPayslipIncomeLinesFromTimesheets(line, timesheets, grossCtx);
       const liveGross = Math.round(incomeLines.reduce((s, x) => s + x.amount, 0) * 100) / 100;
@@ -748,6 +790,8 @@ export default function PayrollBatchWorkerLinePage({
     companyProfile?.companyNameEn,
     timesheets,
     grossCtx,
+    normalLine,
+    normalBatch,
   ]);
   const pitFromLine = Number(line?.deductionsBreakdown?.pit_withholding ?? 0);
 
@@ -798,7 +842,7 @@ export default function PayrollBatchWorkerLinePage({
                 HR settings (ภาษี · ประกันสังคม)
               </Link>
             </Button>
-            {canSaveAdjustments ? (
+            {canSaveAdjustments && batch?.batchType !== 'SUPPLEMENTAL' ? (
               <Button type="button" variant="secondary" size="sm" onClick={() => setRecalcOpen(true)}>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 คำนวณใหม่จากใบงาน (คนนี้เท่านั้น)

@@ -127,6 +127,10 @@ export const PayrollBatchLineSchema = z.object({
     .object({
       allowanceItems: z.array(z.object({ label: z.string(), amount: z.number() })).default([]),
       deductionItems: z.array(z.object({ label: z.string(), amount: z.number() })).default([]),
+      priorPeriodAllowanceItems: z
+        .array(z.object({ sourceYearMonth: z.string(), label: z.string(), amount: z.number() }))
+        .optional()
+        .default([]),
       workerPitMode: z
         .enum(['manual_baht', 'auto_timesheet', 'auto_salary_base'] as const)
         .optional()

@@ -69,6 +69,15 @@ export type PayslipViewModel = {
   leaveSummaryLines?: PayslipLeaveSummaryLine[];
   /** true ถ้ายอดรวมรายการกับ snapshot คลาดกันเล็กน้อย (ปัดเศษ) */
   roundingNote?: boolean;
+
+  /** ข้อมูลสำหรับงวดตกเบิก (Supplemental Run) */
+  isSupplemental?: boolean;
+  normalPaymentDateLabel?: string;
+  normalIncomeLines?: PayslipLineItem[];
+  normalGrossTotal?: number;
+  normalDeductionLines?: PayslipLineItem[];
+  normalDeductionsTotal?: number;
+  normalNetPay?: number;
 };
 
 export function formatPolicyVersionFromSnapshot(s?: PayrollLineD8Snapshot | null): string {
@@ -407,6 +416,8 @@ export function buildPayslipFromWorkerLine(
   batch: PayrollBatch,
   periodLabel: string,
   companyProfile?: PayslipCompanyProfileSource,
+  normalLine?: PayrollBatchLine | null,
+  normalBatch?: PayrollBatch | null,
 ): PayslipViewModel {
   const { companyNameTh, companyNameEn } = resolvePayslipCompanyNames(companyProfile);
   const incomeLines = buildWorkerPayslipIncomeLines(line);
@@ -414,23 +425,83 @@ export function buildPayslipFromWorkerLine(
 
   const snapshotGross = line.d8Snapshot?.gross;
   const sumIncome = sumLines(incomeLines);
-  const grossTotal =
+  let grossTotal =
     snapshotGross != null && Number.isFinite(snapshotGross)
       ? round2(snapshotGross)
       : sumIncome > 0
         ? sumIncome
         : round2(line.grossAmount);
 
-  const deductionsTotal = sumLines(deductionLines);
+  let deductionsTotal = sumLines(deductionLines);
   const netFromLine = round2(line.netAmount);
   const netFromSnapshot = line.d8Snapshot?.net != null ? round2(line.d8Snapshot.net) : null;
   /** หักเบิกล่วงหน้าอยู่ที่บรรทัด batch ไม่ได้อยู่ใน D8 snapshot เดิม — ใช้ยอดสุทธิจากบรรทัด */
   const hasCashAdvanceRecovery = Number(line.deductionsBreakdown?.cash_advance_recovery) > 0;
-  const netPay =
+  let netPay =
     hasCashAdvanceRecovery || netFromSnapshot == null ? netFromLine : netFromSnapshot;
 
   const impliedNet = round2(grossTotal - deductionsTotal);
   const roundingNote = Math.abs(impliedNet - netPay) >= 0.02;
+
+  const isSupplemental = batch.batchType === 'SUPPLEMENTAL';
+  let normalIncomeLines: PayslipLineItem[] | undefined;
+  let normalDeductionLines: PayslipLineItem[] | undefined;
+  let normalGrossTotal: number | undefined;
+  let normalDeductionsTotal: number | undefined;
+  let normalNetPay: number | undefined;
+  let normalPaymentDateLabel: string | undefined;
+
+  if (isSupplemental && normalLine && normalBatch) {
+    const normInc = buildWorkerPayslipIncomeLines(normalLine);
+    const normDed = buildWorkerPayslipDeductionLines(normalLine);
+    const snapGross = normalLine.d8Snapshot?.gross;
+    const sInc = sumLines(normInc);
+    const normGross =
+      snapGross != null && Number.isFinite(snapGross)
+        ? round2(snapGross)
+        : sInc > 0
+          ? sInc
+          : round2(normalLine.grossAmount);
+    
+    const normNetFromLine = round2(normalLine.netAmount);
+    const normNetFromSnap = normalLine.d8Snapshot?.net != null ? round2(normalLine.d8Snapshot.net) : null;
+    const hasCAR = Number(normalLine.deductionsBreakdown?.cash_advance_recovery) > 0;
+    const normNet = hasCAR || normNetFromSnap == null ? normNetFromLine : normNetFromSnap;
+    normalPaymentDateLabel = formatPaymentDate(workerPaymentTimestamp(normalBatch));
+
+    // Merge Income Lines
+    const mergedIncMap = new Map<string, number>();
+    for (const it of [...normInc, ...incomeLines]) {
+      mergedIncMap.set(it.label, (mergedIncMap.get(it.label) || 0) + it.amount);
+    }
+    incomeLines.length = 0;
+    for (const [label, amount] of mergedIncMap.entries()) {
+      if (amount !== 0) incomeLines.push({ label, amount: round2(amount) });
+    }
+
+    // Merge Deduction Lines (excluding the newly added 'Already Paid')
+    const mergedDedMap = new Map<string, number>();
+    for (const it of [...normDed, ...deductionLines]) {
+      mergedDedMap.set(it.label, (mergedDedMap.get(it.label) || 0) + it.amount);
+    }
+    deductionLines.length = 0;
+    for (const [label, amount] of mergedDedMap.entries()) {
+      if (amount !== 0) deductionLines.push({ label, amount: round2(amount) });
+    }
+
+    // Add 'Already Paid' deduction
+    if (normNet > 0) {
+      deductionLines.push({
+        label: `หักยอดที่ชำระไปแล้ว (งวดปกติ)`,
+        amount: round2(normNet),
+      });
+    }
+
+    // Recompute totals
+    grossTotal = round2(normGross + grossTotal);
+    deductionsTotal = sumLines(deductionLines);
+    netPay = round2(grossTotal - deductionsTotal);
+  }
 
   return {
     companyNameTh,
@@ -453,6 +524,13 @@ export function buildPayslipFromWorkerLine(
     deductionsTotal,
     netPay,
     roundingNote,
+    isSupplemental,
+    normalPaymentDateLabel,
+    normalIncomeLines,
+    normalGrossTotal,
+    normalDeductionLines,
+    normalDeductionsTotal,
+    normalNetPay,
   };
 }
 
