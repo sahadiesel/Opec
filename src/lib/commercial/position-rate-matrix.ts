@@ -415,3 +415,65 @@ export function parseRateSheetNumber(raw: string): number | undefined {
   const n = parseFloat(t.replace(/,/g, ''));
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
+
+export function autoCalculateMatrixFields(
+  side: 'onshore' | 'offshore',
+  workingDay: number | undefined,
+  normalHours: number, // 8 or 12
+  currentSideData: any = {},
+  m1Multiplier?: number,
+  d1Multiplier?: number,
+): any {
+  if (workingDay === undefined || workingDay === null || isNaN(workingDay)) {
+    return {
+      ...currentSideData,
+      workingDay: undefined,
+    };
+  }
+
+  // 1. Calculate Standby / วัน (50% of Working Day rate)
+  const standbyDay = Math.round((workingDay * 0.5) * 100) / 100;
+
+  // 2. Calculate Hourly Rate (R) and OT Rates
+  let hourlyRate = 0;
+  if (side === 'offshore') {
+    const divisor = normalHours === 12 ? 14 : 8;
+    hourlyRate = workingDay / divisor;
+    
+    const otPerHour = Math.round((hourlyRate * 1.5) * 100) / 100;
+
+    // Calculate M1 / D1 based on multiplier
+    const m1PerTrip = m1Multiplier != null
+      ? Math.round((workingDay * m1Multiplier) * 100) / 100
+      : currentSideData.m1PerTrip;
+      
+    const d1PerTrip = d1Multiplier != null
+      ? Math.round((workingDay * d1Multiplier) * 100) / 100
+      : currentSideData.d1PerTrip;
+
+    return {
+      ...currentSideData,
+      workingDay,
+      standbyDay,
+      otPerHour,
+      ...(m1PerTrip !== undefined ? { m1PerTrip } : {}),
+      ...(d1PerTrip !== undefined ? { d1PerTrip } : {}),
+    };
+  } else {
+    const divisor = normalHours === 12 ? 14 : 8;
+    hourlyRate = workingDay / divisor;
+
+    const otNormalPerHour = Math.round((hourlyRate * 1.5) * 100) / 100;
+    const ot2PerHour = Math.round((hourlyRate * 2.0) * 100) / 100;
+    const ot3PerHour = Math.round((hourlyRate * 3.0) * 100) / 100;
+
+    return {
+      ...currentSideData,
+      workingDay,
+      standbyDay,
+      otNormalPerHour,
+      ot2PerHour,
+      ot3PerHour,
+    };
+  }
+}

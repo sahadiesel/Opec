@@ -10,6 +10,7 @@ import { OVERTIME_RULE_OPTIONS } from '@/lib/contract-position-rate-extras';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
 import { legacySellRateMirror, normalizeNormalWorkHoursFields } from '@/lib/commercial/position-rate-sell';
 import { PositionRateMatrixFields } from './position-rate-matrix-fields';
+import { autoCalculateMatrixFields } from '@/lib/commercial/position-rate-matrix';
 
 export interface PositionRateFormFieldsProps {
   newRate: Partial<PositionRate>;
@@ -91,11 +92,25 @@ export function PositionRateFormFields({
             disabled={isSupplementalContract}
             onValueChange={(v) => {
               const hours = Number(v) as 8 | 12;
-              setNewRate({
+              const updatedRate = {
                 ...newRate,
                 normalWorkHoursOnshore: hours,
                 ...normalizeNormalWorkHoursFields({ ...newRate, normalWorkHoursOnshore: hours }),
-              });
+              };
+              const matrix = updatedRate.rateMatrix;
+              if (matrix) {
+                // onshore sell
+                const onSellWd = matrix.sell?.onshore?.workingDay;
+                if (onSellWd) {
+                  matrix.sell.onshore = autoCalculateMatrixFields('onshore', onSellWd, hours, matrix.sell.onshore);
+                }
+                // onshore cost
+                const onCostWd = matrix.cost?.onshore?.workingDay;
+                if (onCostWd) {
+                  matrix.cost.onshore = autoCalculateMatrixFields('onshore', onCostWd, hours, matrix.cost.onshore);
+                }
+              }
+              setNewRate(updatedRate);
             }}
             value={String(newRate.normalWorkHoursOnshore ?? 8)}
           >
@@ -114,11 +129,25 @@ export function PositionRateFormFields({
             disabled={isSupplementalContract}
             onValueChange={(v) => {
               const hours = Number(v) as 8 | 12;
-              setNewRate({
+              const updatedRate = {
                 ...newRate,
                 normalWorkHoursOffshore: hours,
                 ...normalizeNormalWorkHoursFields({ ...newRate, normalWorkHoursOffshore: hours }),
-              });
+              };
+              const matrix = updatedRate.rateMatrix;
+              if (matrix) {
+                // offshore sell
+                const offSellWd = matrix.sell?.offshore?.workingDay;
+                if (offSellWd) {
+                  matrix.sell.offshore = autoCalculateMatrixFields('offshore', offSellWd, hours, matrix.sell.offshore);
+                }
+                // offshore cost
+                const offCostWd = matrix.cost?.offshore?.workingDay;
+                if (offCostWd) {
+                  matrix.cost.offshore = autoCalculateMatrixFields('offshore', offCostWd, hours, matrix.cost.offshore);
+                }
+              }
+              setNewRate(updatedRate);
             }}
             value={String(newRate.normalWorkHoursOffshore ?? 12)}
           >
@@ -185,24 +214,28 @@ export function PositionRateFormFields({
 
       <PositionRateMatrixFields
         rateMatrix={newRate.rateMatrix}
-        onChange={(rateMatrix) => setNewRate({ ...newRate, rateMatrix })}
+        onChange={(rateMatrix) => {
+          const onshoreVal = rateMatrix.sell?.onshore?.workingDay;
+          const offshoreVal = rateMatrix.sell?.offshore?.workingDay;
+          setNewRate({
+            ...newRate,
+            rateMatrix,
+            sellRateOnshore: onshoreVal,
+            sellRateOffshore: offshoreVal,
+            sellRate: legacySellRateMirror({
+              ...newRate,
+              sellRateOnshore: onshoreVal,
+              sellRateOffshore: offshoreVal,
+            }),
+          });
+        }}
         mobDemobLocations={mobDemobLocations}
         canEditSell={canEditSellSide && !isSupplementalContract}
         canEditCost={canEditCostSide}
         canViewCost={canViewCostFields}
         disabled={isSupplementalContract}
-        onWorkingDaySellChange={(onshore, offshore) => {
-          setNewRate({
-            ...newRate,
-            ...(onshore != null ? { sellRateOnshore: onshore } : {}),
-            ...(offshore != null ? { sellRateOffshore: offshore } : {}),
-            sellRate: legacySellRateMirror({
-              ...newRate,
-              sellRateOnshore: onshore ?? newRate.sellRateOnshore,
-              sellRateOffshore: offshore ?? newRate.sellRateOffshore,
-            }),
-          });
-        }}
+        normalWorkHoursOnshore={newRate.normalWorkHoursOnshore ?? 8}
+        normalWorkHoursOffshore={newRate.normalWorkHoursOffshore ?? 12}
       />
     </div>
   );
