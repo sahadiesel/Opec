@@ -12,6 +12,7 @@ import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile'
 import { sanitizePrintFileBaseName } from '@/lib/documents/standard-document-print';
 import { ArrowLeft, Loader2, Printer } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 
 export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -49,6 +50,11 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
   const periodLabel = period?.label || `${batch?.payrollPeriodId ?? ''}`;
   const { profile: companyProfile } = useCompanyDocumentProfile();
 
+  const { normalBatches, normalLines } = useNormalBatchesAndLines(
+    batch?.payrollPeriodId,
+    batch?.batchType === 'SUPPLEMENTAL'
+  );
+
   const models = useMemo(() => {
     if (!batch || !lines?.length) return [];
     const sorted = [...lines].sort((a, b) =>
@@ -57,8 +63,19 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
         numeric: true,
       }),
     );
-    return sorted.map((line) => buildPayslipFromWorkerLine(line, batch, periodLabel, companyProfile ?? undefined));
-  }, [batch, lines, periodLabel, companyProfile?.companyNameTh, companyProfile?.companyNameEn, companyProfile?.documentHeaderLogoUrl]);
+    return sorted.map((line) => {
+      const normalLine = normalLines.find((l) => l.workerId === line.workerId);
+      const normalBatch = normalLine ? normalBatches.find((b) => b.id === normalLine.batchId) : undefined;
+      return buildPayslipFromWorkerLine(
+        line,
+        batch,
+        periodLabel,
+        companyProfile ?? undefined,
+        normalLine,
+        normalBatch
+      );
+    });
+  }, [batch, lines, periodLabel, companyProfile?.companyNameTh, companyProfile?.companyNameEn, companyProfile?.documentHeaderLogoUrl, normalBatches, normalLines]);
 
   const handlePrintAll = () => window.print();
 

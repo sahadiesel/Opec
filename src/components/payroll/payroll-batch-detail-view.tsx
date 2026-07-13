@@ -21,6 +21,8 @@ import {
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { WorkerPayrollWhtSingleDialog } from '@/components/payroll/worker-payroll-wht-single-dialog';
 import { WorkerPayrollWhtBatchDialog } from '@/components/payroll/worker-payroll-wht-batch-dialog';
+import { PayrollRegenerateConfirmDialog } from '@/components/payroll/payroll-regenerate-confirm-dialog';
+import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
@@ -246,6 +248,11 @@ export function PayrollBatchDetailView({
       setPayoutBankId('');
     }
   }, [batch?.payoutBankAccountId, batch?.id]);
+
+  const { normalBatches, normalLines } = useNormalBatchesAndLines(
+    batch?.payrollPeriodId,
+    batch?.batchType === 'SUPPLEMENTAL'
+  );
 
   const payoutAccountLabel = useMemo(() => {
     if (!batch?.payoutBankAccountId) return null;
@@ -907,11 +914,15 @@ export function PayrollBatchDetailView({
                       const periodLabel = period?.label || batch.payrollPeriodId;
                       let slipModel: PayslipViewModel | null = null;
                       try {
+                        const normalLine = normalLines.find((l) => l.workerId === line.workerId);
+                        const normalBatch = normalLine ? normalBatches.find((b) => b.id === normalLine.batchId) : undefined;
                         slipModel = buildPayslipFromWorkerLine(
                           line,
                           batch,
                           periodLabel,
                           companyProfile ?? undefined,
+                          normalLine,
+                          normalBatch
                         );
                       } catch {
                         slipModel = null;
