@@ -18,7 +18,7 @@ import {
   normalizeNormalWorkHoursFields,
 } from '@/lib/commercial/position-rate-sell';
 import { PositionRateFormFields } from './position-rate-form-fields';
-import { preparePositionRateMatrixPayload, sanitizePositionRateMatrix, hasSellPricing } from '@/lib/commercial/position-rate-matrix';
+import { preparePositionRateMatrixPayload, sanitizePositionRateMatrix, hasSellPricing, autoCalculateMatrixFields } from '@/lib/commercial/position-rate-matrix';
 
 type RatePolicy = NonNullable<MainContract['rateMultiplierPolicy']>;
 
@@ -90,8 +90,69 @@ export function ContractEditRateDialog({
 
   useEffect(() => {
     if (!open || !rate) return;
-    setForm(rateToFormState(rate));
-  }, [open, rate?.id, rate]);
+    const initialForm = rateToFormState(rate);
+    const matrix = { ...initialForm.rateMatrix } || {};
+
+    // 1. Sell side Working Day:
+    const sell = { ...matrix.sell };
+    const sellOnshore = { ...sell.onshore };
+    const sellOffshore = { ...sell.offshore };
+    if (sellOnshore.workingDay === undefined || sellOnshore.workingDay === null) {
+      const effSellOn = effectiveSellOnshore(rate);
+      if (effSellOn > 0) sellOnshore.workingDay = effSellOn;
+    }
+    if (sellOffshore.workingDay === undefined || sellOffshore.workingDay === null) {
+      const effSellOff = effectiveSellOffshore(rate);
+      if (effSellOff > 0) sellOffshore.workingDay = effSellOff;
+    }
+
+    const normalOn = initialForm.normalWorkHoursOnshore ?? 8;
+    const normalOff = initialForm.normalWorkHoursOffshore ?? 12;
+
+    if (sellOnshore.workingDay !== undefined) {
+      const computed = autoCalculateMatrixFields('onshore', sellOnshore.workingDay, normalOn, sellOnshore);
+      sell.onshore = { ...computed };
+    } else {
+      sell.onshore = sellOnshore;
+    }
+
+    if (sellOffshore.workingDay !== undefined) {
+      const computed = autoCalculateMatrixFields('offshore', sellOffshore.workingDay, normalOff, sellOffshore);
+      sell.offshore = { ...computed };
+    } else {
+      sell.offshore = sellOffshore;
+    }
+    matrix.sell = sell;
+
+    // 2. Cost side Working Day:
+    const cost = { ...matrix.cost };
+    const costOnshore = { ...cost.onshore };
+    const costOffshore = { ...cost.offshore };
+    if (costOnshore.workingDay === undefined || costOnshore.workingDay === null) {
+      if (laborCostOnshore > 0) costOnshore.workingDay = laborCostOnshore;
+    }
+    if (costOffshore.workingDay === undefined || costOffshore.workingDay === null) {
+      if (laborCostOffshore > 0) costOffshore.workingDay = laborCostOffshore;
+    }
+
+    if (costOnshore.workingDay !== undefined) {
+      const computed = autoCalculateMatrixFields('onshore', costOnshore.workingDay, normalOn, costOnshore);
+      cost.onshore = { ...computed };
+    } else {
+      cost.onshore = costOnshore;
+    }
+
+    if (costOffshore.workingDay !== undefined) {
+      const computed = autoCalculateMatrixFields('offshore', costOffshore.workingDay, normalOff, costOffshore);
+      cost.offshore = { ...computed };
+    } else {
+      cost.offshore = costOffshore;
+    }
+    matrix.cost = cost;
+
+    initialForm.rateMatrix = matrix;
+    setForm(initialForm);
+  }, [open, rate?.id, rate, laborCostOnshore, laborCostOffshore]);
 
   const positionDisplayName = useMemo(() => {
     if (!rate) return '';
