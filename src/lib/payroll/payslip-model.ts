@@ -57,6 +57,8 @@ export type PayslipViewModel = {
   documentRef: string;
   /** แสดงเมื่องวดอนุมัติแล้วเท่านั้น (office) — ไม่ตั้งค่าก่อน HR อนุมัติ */
   paymentDateLabel?: string;
+  isSupplemental?: boolean;
+  normalPaymentDateLabel?: string;
   policyVersionLabel: string;
   /** รายการรายได้แต่ละบรรทัด (ครบทั้ง timesheet + HR) */
   incomeLines: PayslipLineItem[];
@@ -491,8 +493,9 @@ export function buildPayslipFromWorkerLine(
 
     // Add 'Already Paid' deduction
     if (normNet > 0) {
+      const pDateLabel = normalPaymentDateLabel && normalPaymentDateLabel !== '-' ? `เมื่อ ${normalPaymentDateLabel}` : '';
       deductionLines.push({
-        label: `หักยอดที่ชำระไปแล้ว (งวดปกติ)`,
+        label: `หักยอดที่ชำระไปแล้ว (งวดปกติ${pDateLabel ? ' ' + pDateLabel : ''})`,
         amount: round2(normNet),
       });
     }
@@ -507,11 +510,13 @@ export function buildPayslipFromWorkerLine(
     companyNameTh,
     companyNameEn,
     companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
-    employeeName: line.workerNameSnapshot,
-    periodLabel: periodLabel || formatYmdRangeThaiBE(line.periodStartDate, line.periodEndDate),
-    payrollTypeLabel: 'ลูกจ้าง / Worker Payroll (Timesheet batch)',
+    employeeName: line.workerNameSnapshot || line.workerId,
+    periodLabel,
+    payrollTypeLabel: 'Worker Payroll (Timesheet batch)',
     documentRef: batch.id,
     paymentDateLabel: formatPaymentDate(workerPaymentTimestamp(batch)),
+    isSupplemental,
+    normalPaymentDateLabel,
     policyVersionLabel: formatPolicyVersionFromSnapshot(line.d8Snapshot),
     incomeLines:
       incomeLines.length > 0

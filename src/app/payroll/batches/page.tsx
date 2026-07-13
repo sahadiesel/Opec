@@ -137,6 +137,29 @@ function PayrollBatchesPageContent() {
       router.replace('/accounting/worker-payroll');
     }
   }, [searchParams, router]);
+
+  useEffect(() => {
+    if (!firestore) return;
+    const fixOrphans = async () => {
+      const q = query(collection(firestore, 'timesheet_retro_adjustments'), where('appliedPayrollBatchId', '==', 'PAY-46593363'));
+      const snap = await getDocs(q);
+      if (snap.size > 0) {
+        console.log('Found', snap.size, 'orphaned adjustments, fixing...');
+        for (const docSnap of snap.docs) {
+          await updateDoc(doc(firestore, 'timesheet_retro_adjustments', docSnap.id), {
+            status: 'approved',
+            appliedAt: deleteField(),
+            appliedPayrollBatchId: deleteField(),
+            payrollWorkerLineId: deleteField(),
+            updatedAt: Date.now(),
+          });
+        }
+        console.log('Fixed orphaned adjustments!');
+      }
+    };
+    fixOrphans();
+  }, [firestore]);
+
   const showGenerateBatch = canCreateWorkerPayroll && canPrepareWorkerPayroll;
 
   const batchQuery = useMemoFirebase(() => {

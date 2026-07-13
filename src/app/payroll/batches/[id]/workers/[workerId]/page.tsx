@@ -260,18 +260,20 @@ export default function PayrollBatchWorkerLinePage({
         );
         const snaps = await getDocs(q);
         if (!snaps.empty) {
-          const normalDoc = snaps.docs.find((d) => {
+          const normalDocs = snaps.docs.filter((d) => {
             const data = d.data();
             return !data.batchType || data.batchType === 'NORMAL';
           });
-          if (normalDoc) {
+          
+          for (const normalDoc of normalDocs) {
             const nb = { id: normalDoc.id, ...normalDoc.data() } as PayrollBatch;
-            setNormalBatch(nb);
             const nlSnap = await getDoc(
               doc(firestore, 'payroll_batches', nb.id, 'lines', `${nb.id}_${workerId}`)
             );
             if (nlSnap.exists()) {
+              setNormalBatch(nb);
               setNormalLine({ id: nlSnap.id, ...nlSnap.data() } as PayrollBatchLine);
+              break; // Found the batch containing this worker
             }
           }
         }
@@ -773,7 +775,7 @@ export default function PayrollBatchWorkerLinePage({
       normalLine,
       normalBatch
     );
-    if (timesheets.length > 0 && grossCtx) {
+    if (batch.batchType !== 'SUPPLEMENTAL' && timesheets.length > 0 && grossCtx) {
       const incomeLines = buildWorkerPayslipIncomeLinesFromTimesheets(line, timesheets, grossCtx);
       const liveGross = Math.round(incomeLines.reduce((s, x) => s + x.amount, 0) * 100) / 100;
       if (incomeLines.length > 0 && Math.abs(liveGross - model.grossTotal) < 0.01) {
