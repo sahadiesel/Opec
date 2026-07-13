@@ -427,6 +427,46 @@ export class PayrollService {
 
     const monthlyGate = await this.assertMonthlyTimesheetApprovalForPeriod(period);
 
+    if (filters?.batchType === 'SUPPLEMENTAL') {
+      const payrollYearMonth = calendarYearMonthFromPeriodStart(period.startDate);
+      if (!payrollYearMonth) throw new Error('รอบบัญชีมีวันที่เริ่มต้นไม่ถูกต้อง');
+      const retroQuery = query(
+        collection(this.db, 'timesheet_retro_adjustments'),
+        where('applyPayrollYearMonth', '==', payrollYearMonth),
+        where('status', '==', 'approved')
+      );
+      const retroSnap = await getDocs(retroQuery);
+      const retroItems = retroSnap.docs.map(d => ({ ...d.data(), id: d.id } as import('@/lib/types').TimesheetRetroAdjustment));
+      
+      const workerRetroMap = new Map<string, import('@/lib/types').TimesheetRetroAdjustment[]>();
+      for (const r of retroItems) {
+        if (!workerRetroMap.has(r.workerId)) workerRetroMap.set(r.workerId, []);
+        workerRetroMap.get(r.workerId)!.push(r);
+      }
+      
+      const eligibleWorkers: PayrollPreflightEligibleWorker[] = [];
+      for (const [workerId, items] of workerRetroMap.entries()) {
+        eligibleWorkers.push({
+          workerId,
+          workerName: items[0].workerNameSnapshot || 'Unknown',
+          timesheetCount: items.length, // representing adjustment count
+          hasZeroGross: false,
+        });
+      }
+      
+      eligibleWorkers.sort((a, b) => a.workerName.localeCompare(b.workerName, 'th'));
+      
+      return {
+        totalWorkers: eligibleWorkers.length,
+        totalTimesheets: retroItems.length,
+        eligibleWorkers,
+        zeroGrossWorkers: [],
+        hasWarnings: false,
+        missingApprovedMonthlyTimesheet: monthlyGate.missingApprovedMonthlyTimesheet,
+        payrollYearMonth: monthlyGate.payrollYearMonth,
+      };
+    }
+
     const tsQuery = query(
       collection(this.db, 'daily_timesheets'),
       where('date', '>=', period.startDate),
