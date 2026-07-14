@@ -154,9 +154,15 @@ function formatThaiMoneyAmount(n: number): string {
 }
 
 function standbyDaysFromEventBreakdown(ev: Record<string, number> | undefined): number {
-  const n = Number(ev?.standby_day ?? 0);
+  // รวม standby_day + mobilization_day + demobilization_day ทั้งหมดที่เป็น standby-package events
+  const n =
+    (Number(ev?.standby_day) || 0) +
+    (Number(ev?.mobilization_day) || 0) +
+    (Number(ev?.demobilization_day) || 0) +
+    (Number(ev?.travel_day) || 0);
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
+
 
 function isStandbyDayPolicyKey(key: string): boolean {
   return key.replace(/_policy$/i, '').replace(/_package$/i, '') === 'standby_day';
