@@ -229,18 +229,17 @@ export function retroAdjustmentsToPriorPeriodLabels(
   for (const [sourceYearMonth, rows] of byMonth) {
     for (const r of rows) {
       const parts: string[] = [];
-      const ot = (r.addedOt15Hours || 0) + (r.addedOt20Hours || 0) + (r.addedOt30Hours || 0);
-      if (ot > 0) parts.push(`OT +${ot} ชม. (${r.workDateYmd.slice(8, 10)}/${r.workDateYmd.slice(5, 7)})`);
-      if ((r.addedStandbyHours || 0) > 0) {
-        parts.push(`Standby/M1 +${r.addedStandbyHours} ชม. (${r.workDateYmd.slice(8, 10)}/${r.workDateYmd.slice(5, 7)})`);
-      }
-      if ((r.addedM1Trips || 0) > 0) {
-        parts.push(`M1 +${r.addedM1Trips} trip (${r.workDateYmd.slice(8, 10)}/${r.workDateYmd.slice(5, 7)})`);
-      }
-      if ((r.addedD1Trips || 0) > 0) {
-        parts.push(`D1 +${r.addedD1Trips} trip (${r.workDateYmd.slice(8, 10)}/${r.workDateYmd.slice(5, 7)})`);
-      }
-      const label = `[แก้ไขย้อนหลัง] ${parts.join(' · ')} — ${r.reason}`.slice(0, 200);
+      const dt = `(${r.workDateYmd.slice(8, 10)}/${r.workDateYmd.slice(5, 7)})`;
+      if ((r.addedOt15Hours || 0) > 0) parts.push(`OT1.5 +${r.addedOt15Hours} ชม. ${dt}`);
+      if ((r.addedOt20Hours || 0) > 0) parts.push(`OT2.0 +${r.addedOt20Hours} ชม. ${dt}`);
+      if ((r.addedOt30Hours || 0) > 0) parts.push(`OT3.0 +${r.addedOt30Hours} ชม. ${dt}`);
+      if ((r.addedStandbyHours || 0) > 0) parts.push(`Standby/M1 +${r.addedStandbyHours} ชม. ${dt}`);
+      if ((r.addedM1Trips || 0) > 0) parts.push(`M1 +${r.addedM1Trips} trip ${dt}`);
+      if ((r.addedD1Trips || 0) > 0) parts.push(`D1 +${r.addedD1Trips} trip ${dt}`);
+
+      const srcYm = String(r.sourceYearMonth || '').trim();
+      const srcBit = /^\d{4}-\d{2}$/.test(srcYm) ? `งวด ${srcYm} · ` : '';
+      const label = `[${srcBit}แก้ไขย้อนหลัง] ${parts.join(' · ')} — ${r.reason}`.slice(0, 200);
       out.push({
         sourceYearMonth,
         label,
@@ -254,15 +253,18 @@ export function retroAdjustmentsToPriorPeriodLabels(
 /** แปลง retro เป็นบรรทัด prior-period สำหรับ payroll — ต้องใส่ amount เองหรือคำนวณจาก gross diff */
 export function formatRetroAdjustmentSummaryLabel(r: TimesheetRetroAdjustment): string {
   const parts: string[] = [];
-  const ot = (r.addedOt15Hours || 0) + (r.addedOt20Hours || 0) + (r.addedOt30Hours || 0);
-  if (ot > 0) parts.push(`OT +${ot} ชม.`);
-  if ((r.addedStandbyHours || 0) > 0) parts.push(`Standby +${r.addedStandbyHours} ชม.`);
-  if ((r.addedM1Trips || 0) > 0) parts.push(`M1 +${r.addedM1Trips} trip`);
-  if ((r.addedD1Trips || 0) > 0) parts.push(`D1 +${r.addedD1Trips} trip`);
-  const dateShort = r.workDateYmd;
+  const dt = `(${r.workDateYmd.slice(8, 10)}/${r.workDateYmd.slice(5, 7)})`;
+  
+  if ((r.addedOt15Hours || 0) > 0) parts.push(`OT1.5 +${r.addedOt15Hours} ชม. ${dt}`);
+  if ((r.addedOt20Hours || 0) > 0) parts.push(`OT2.0 +${r.addedOt20Hours} ชม. ${dt}`);
+  if ((r.addedOt30Hours || 0) > 0) parts.push(`OT3.0 +${r.addedOt30Hours} ชม. ${dt}`);
+  if ((r.addedStandbyHours || 0) > 0) parts.push(`Standby/M1 +${r.addedStandbyHours} ชม. ${dt}`);
+  if ((r.addedM1Trips || 0) > 0) parts.push(`M1 +${r.addedM1Trips} trip ${dt}`);
+  if ((r.addedD1Trips || 0) > 0) parts.push(`D1 +${r.addedD1Trips} trip ${dt}`);
+  
   const srcYm = String(r.sourceYearMonth || '').trim();
   const srcBit = /^\d{4}-\d{2}$/.test(srcYm) ? `งวด ${srcYm} · ` : '';
-  return `[${srcBit}แก้ไขย้อนหลัง ${dateShort}] ${parts.join(' · ')} — ${r.reason}`.slice(0, 180);
+  return `[${srcBit}แก้ไขย้อนหลัง] ${parts.join(' · ')} — ${r.reason}`.slice(0, 180);
 }
 
 /**
