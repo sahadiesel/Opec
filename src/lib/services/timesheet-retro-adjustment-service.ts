@@ -209,9 +209,14 @@ export async function retroAdjustmentsToPriorPeriodItemsWithPay(
   db: Firestore,
   items: readonly TimesheetRetroAdjustment[],
 ): Promise<PriorPeriodAllowanceItem[]> {
-  // ทำงานแบบ parallel เพื่อลดเวลา (แทนที่จะรอทีละรายการ)
+  // เรียงตามวันที่ก่อน แล้วค่อยคำนวณแบบ parallel
+  const sorted = [...items].sort((a, b) => {
+    const ymCmp = (a.sourceYearMonth || '').localeCompare(b.sourceYearMonth || '');
+    if (ymCmp !== 0) return ymCmp;
+    return (a.workDateYmd || '').localeCompare(b.workDateYmd || '');
+  });
   return Promise.all(
-    items.map(async (r) => {
+    sorted.map(async (r) => {
       const amount = await resolveRetroAdjustmentPayBaht(db, r);
       return {
         sourceYearMonth: r.sourceYearMonth,
@@ -221,6 +226,7 @@ export async function retroAdjustmentsToPriorPeriodItemsWithPay(
     }),
   );
 }
+
 
 export function retroAdjustmentsToPriorPeriodLabels(
   items: readonly TimesheetRetroAdjustment[],
