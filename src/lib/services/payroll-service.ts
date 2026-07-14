@@ -929,6 +929,9 @@ export class PayrollService {
         });
       }
 
+      const workerRetros = retroByWorker.get(workerId) ?? [];
+      const workerPriorItems = await retroAdjustmentsToPriorPeriodItemsWithPay(this.db, workerRetros);
+
       const line: PayrollBatchLine = {
         id: `${batchId}_${workerId}`,
         payrollBatchId: batchId,
