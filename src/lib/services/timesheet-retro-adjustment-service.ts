@@ -209,16 +209,17 @@ export async function retroAdjustmentsToPriorPeriodItemsWithPay(
   db: Firestore,
   items: readonly TimesheetRetroAdjustment[],
 ): Promise<PriorPeriodAllowanceItem[]> {
-  const out: PriorPeriodAllowanceItem[] = [];
-  for (const r of items) {
-    const amount = await resolveRetroAdjustmentPayBaht(db, r);
-    out.push({
-      sourceYearMonth: r.sourceYearMonth,
-      label: formatRetroAdjustmentSummaryLabel(r),
-      amount,
-    });
-  }
-  return out;
+  // ทำงานแบบ parallel เพื่อลดเวลา (แทนที่จะรอทีละรายการ)
+  return Promise.all(
+    items.map(async (r) => {
+      const amount = await resolveRetroAdjustmentPayBaht(db, r);
+      return {
+        sourceYearMonth: r.sourceYearMonth,
+        label: formatRetroAdjustmentSummaryLabel(r),
+        amount,
+      };
+    }),
+  );
 }
 
 export function retroAdjustmentsToPriorPeriodLabels(
