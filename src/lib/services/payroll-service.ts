@@ -118,6 +118,7 @@ import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-
 import { 
   markRetroAdjustmentsApplied, 
   retroAdjustmentsToPriorPeriodLabels,
+  retroAdjustmentsToPriorPeriodItemsWithPay,
   revertRetroAdjustmentsForPayrollBatch 
 } from './timesheet-retro-adjustment-service';
 
@@ -285,8 +286,11 @@ export class PayrollService {
 
     const now = Date.now();
     for (const [workerId, adjustments] of itemsByWorker) {
-      let workerGross = 0;
-      adjustments.forEach(r => workerGross += (r.computedPayAmountBaht || 0));
+      // คำนวณยอดใหม่จาก rate matrix จริง (ไม่เชื่อ computedPayAmountBaht snapshot)
+      console.log(`[Supplemental] คำนวณยอด retro ใหม่จาก rate matrix สำหรับ worker ${workerId} (${adjustments.length} รายการ)`);
+      const priorItems = await retroAdjustmentsToPriorPeriodItemsWithPay(this.db, adjustments);
+      let workerGross = priorItems.reduce((s, it) => s + (it.amount || 0), 0);
+      console.log(`[Supplemental] worker ${workerId}: gross=${workerGross} (จาก ${priorItems.length} รายการ)`);
       
       const priorGross = priorGrossMap.get(workerId) || 0;
       
@@ -311,13 +315,6 @@ export class PayrollService {
       const payment = paymentMap.get(workerId);
 
       const lineId = `${batchId}_${workerId}`;
-      const priorItems = retroAdjustmentsToPriorPeriodLabels(adjustments);
-      // Fill in amount for prior items
-      for (const pi of priorItems) {
-        const adj = adjustments.find(a => pi.label.includes(a.reason) && a.sourceYearMonth === pi.sourceYearMonth);
-        if (adj) pi.amount = adj.computedPayAmountBaht || 0;
-      }
-
       const line: PayrollBatchLine = {
         id: lineId,
         payrollBatchId: batchId,

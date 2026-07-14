@@ -174,22 +174,23 @@ export async function loadPendingRetroForWorkerPayrollMonth(
     .filter((r) => r.status === 'approved');
 }
 
-/** คำนวณ/ดึงยอดบาทสำหรับนำเข้า payroll — ใช้ snapshot หรือคำนวณใหม่ */
+/** คำนวณ/ดึงยอดบาทสำหรับนำเข้า payroll — คำนวณจาก rate matrix เสมอ (ไม่เชื่อ snapshot) */
 export async function resolveRetroAdjustmentPayBaht(
   db: Firestore,
   adjustment: TimesheetRetroAdjustment,
   sourceTimesheet?: DailyTimesheet | null,
 ): Promise<number> {
-  const stored = Number(adjustment.computedPayAmountBaht);
-  if (Number.isFinite(stored) && stored > 0) return Math.round(stored * 100) / 100;
-
   let ts = sourceTimesheet ?? null;
   if (!ts) {
     const { getDoc } = await import('firebase/firestore');
     const snap = await getDoc(doc(db, 'daily_timesheets', adjustment.sourceTimesheetId));
     if (snap.exists()) ts = { id: snap.id, ...(snap.data() as object) } as DailyTimesheet;
   }
-  if (!ts) return 0;
+  if (!ts) {
+    // fallback: ถ้าไม่มี timesheet ใช้ snapshot เท่าที่มี
+    const stored = Number(adjustment.computedPayAmountBaht);
+    return Number.isFinite(stored) && stored > 0 ? Math.round(stored * 100) / 100 : 0;
+  }
 
   const payResult = await computeRetroAdjustmentPayFromFirestore(
     db,
@@ -197,8 +198,12 @@ export async function resolveRetroAdjustmentPayBaht(
     retroHoursDeltaFromAdjustment(adjustment),
   );
   if (payResult.ok) return payResult.amountBaht;
-  return 0;
+
+  // fallback: ถ้าคำนวณไม่ได้ (missing rate) ใช้ snapshot
+  const stored = Number(adjustment.computedPayAmountBaht);
+  return Number.isFinite(stored) && stored > 0 ? Math.round(stored * 100) / 100 : 0;
 }
+
 
 export async function retroAdjustmentsToPriorPeriodItemsWithPay(
   db: Firestore,
