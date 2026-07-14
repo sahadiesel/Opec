@@ -231,8 +231,14 @@ export async function retroAdjustmentsToPriorPeriodItemsWithPay(
 export function retroAdjustmentsToPriorPeriodLabels(
   items: readonly TimesheetRetroAdjustment[],
 ): PriorPeriodAllowanceItem[] {
+  const sorted = [...items].sort((a, b) => {
+    const ymCmp = (a.sourceYearMonth || '').localeCompare(b.sourceYearMonth || '');
+    if (ymCmp !== 0) return ymCmp;
+    return (a.workDateYmd || '').localeCompare(b.workDateYmd || '');
+  });
+  
   const byMonth = new Map<string, TimesheetRetroAdjustment[]>();
-  for (const r of items) {
+  for (const r of sorted) {
     const list = byMonth.get(r.sourceYearMonth) ?? [];
     list.push(r);
     byMonth.set(r.sourceYearMonth, list);
