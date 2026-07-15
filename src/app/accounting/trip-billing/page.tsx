@@ -14,7 +14,6 @@ import {
   Loader2,
   Users,
   FileText,
-  CheckCircle2,
   Clock,
   AlertCircle,
 } from 'lucide-react';
@@ -56,7 +55,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import type { PurchaseOrder, TripBillingBatch, User } from '@/lib/types';
 import { billingModeLabel } from '@/lib/commercial/resolve-billing-mode';
-import { syncTripBillingForPo, approveTripBillingBatch, finalizeStandbyOnlyTripBatch, isStandbyOnlyClosedTripBatch } from '@/lib/services/trip-billing-service';
+import { syncTripBillingForPo, finalizeStandbyOnlyTripBatch, isStandbyOnlyClosedTripBatch } from '@/lib/services/trip-billing-service';
 import { ensureCommercialDraftInvoiceForTripBatch } from '@/lib/services/commercial-invoice-service';
 import {
   resolveTripMobDemobLocationChoice,
@@ -160,27 +159,6 @@ export default function TripBillingPage() {
     }
   }, [firestore, currentUser, selectedPo, toast]);
 
-  const handleApprove = async (batch: TripBillingBatch) => {
-    if (!firestore || !currentUser) return;
-    setBusyId(batch.id);
-    try {
-      const res = await approveTripBillingBatch(firestore, batch.id, currentUser as User);
-      toast({
-        title: 'อนุมัติวางบิลแล้ว',
-        description: `ตั้ง readyForBilling ${res.updatedTimesheets} ใบงาน — พร้อมสร้าง invoice`,
-      });
-      setLocalBatches([]);
-    } catch (e: unknown) {
-      toast({
-        variant: 'destructive',
-        title: 'อนุมัติไม่สำเร็จ',
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setBusyId(null);
-    }
-  };
-
   const handleFinalizeStandbyOnly = async (batch: TripBillingBatch) => {
     if (!firestore || !currentUser) return;
     setBusyId(`sb_${batch.id}`);
@@ -188,7 +166,7 @@ export default function TripBillingPage() {
       const res = await finalizeStandbyOnlyTripBatch(firestore, batch.id, currentUser as User);
       toast({
         title: 'ปิดรอบ SB-only แล้ว',
-        description: `สมาชิก ${res.closedMembers} คน · จบรอบ ${res.periodEnd} — กดอนุมัติวางบิลต่อได้`,
+        description: `สมาชิก ${res.closedMembers} คน · จบรอบ ${res.periodEnd} — กดสร้างใบวางบิลได้เลย`,
       });
       setSbOnlyDialog(null);
       const { loadTripBillingBatchesForPo } = await import('@/lib/services/mob-cycle-billing-sync');
@@ -436,23 +414,7 @@ export default function TripBillingPage() {
                           </TableCell>
                           <TableCell>{batchStatusBadge(batch.status)}</TableCell>
                           <TableCell className="text-right space-x-2 whitespace-nowrap">
-                            {batch.status === 'ready' && (
-                              <Button
-                                size="sm"
-                                disabled={isBusy}
-                                onClick={() => handleApprove(batch)}
-                              >
-                                {isBusy ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <>
-                                    <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
-                                    อนุมัติวางบิล
-                                  </>
-                                )}
-                              </Button>
-                            )}
-                            {batch.status === 'approved' && (
+                            {(batch.status === 'ready' || batch.status === 'approved') && (
                               <Button
                                 size="sm"
                                 variant="default"
@@ -464,7 +426,7 @@ export default function TripBillingPage() {
                                 ) : (
                                   <>
                                     <FileText className="mr-1 h-3.5 w-3.5" />
-                                    สร้าง Invoice
+                                    สร้างใบวางบิล
                                   </>
                                 )}
                               </Button>
@@ -575,9 +537,8 @@ export default function TripBillingPage() {
                   Ritrong วันที่ 29–30 มิ.ย. และ 1–3 ก.ค.
                 </p>
                 <p>
-                  ระบบจะตั้งวันจบรอบ = วัน standby สุดท้ายของทุกคนในชุดนี้ แล้วสถานะจะเป็น
-                  「พร้อมวางบิล」 — จากนั้นกดอนุมัติ → สร้าง Invoice ตามปกติ (ไม่คิดค่า MOB
-                  ไป-กลับ)
+                  ระบบจะตั้งวันจบรอบ = วัน standby สุดท้ายของทุกคนในชุดนี้ แล้วอนุมัติพร้อมวางบิลอัตโนมัติ
+                  — กด「สร้างใบวางบิล」ได้เลย (ไม่คิดค่า MOB ไป-กลับ)
                 </p>
                 {sbOnlyDialog ? (
                   <p className="font-medium text-foreground">

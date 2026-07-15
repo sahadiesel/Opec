@@ -137,6 +137,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const [offerTaxDialogOpen, setOfferTaxDialogOpen] = useState(false);
   const [draftLines, setDraftLines] = useState<CommercialInvoiceLine[]>([]);
   const [notesDraft, setNotesDraft] = useState('');
+  /** ต้องกด「แก้ไข/เพิ่มรายการ」ก่อน จึงแก้จำนวน/ราคา/หมายเหตุได้ */
+  const [linesEditing, setLinesEditing] = useState(false);
   const [verifyPayBusy, setVerifyPayBusy] = useState(false);
   const [verifyBankId, setVerifyBankId] = useState<string>('');
   const [verifyEntryDate, setVerifyEntryDate] = useState('');
@@ -192,6 +194,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     if (!invoice) return;
     setDraftLines((invoice.lines ?? []).map((l) => ({ ...l })));
     setNotesDraft(invoice.notes ?? '');
+    setLinesEditing(false);
   }, [invoice?.id, invoice?.updatedAt]);
 
   useEffect(() => {
@@ -245,6 +248,17 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const { data: quotation } = useDoc<Quotation>(quotationRef as any);
 
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
+
+  /** โหมด ENG ขณะแก้ไข — คงข้อความบรรทัดเป็นอังกฤษ (ไม่ต้องสลับไทย) */
+  useEffect(() => {
+    if (!linesEditing || printLocale !== 'en') return;
+    setDraftLines((rows) =>
+      rows.map((r) => ({
+        ...r,
+        description: translateCommercialLineDescriptionToEn(r.description || ''),
+      })),
+    );
+  }, [linesEditing, printLocale]);
 
   const previewTotals = useMemo(() => {
     if (!invoice) return { before: 0, vat: 0, total: 0 };
@@ -434,6 +448,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
         notes: notesDraft,
       });
       toast({ title: 'บันทึกแล้ว', description: 'อัปเดตรายการ เงื่อนไข/หมายเหตุ และยอดก่อน VAT / VAT / รวม' });
+      setLinesEditing(false);
     } catch (e: unknown) {
       toast({
         variant: 'destructive',
@@ -443,6 +458,13 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     } finally {
       setSaveBusy(false);
     }
+  };
+
+  const cancelLinesEditing = () => {
+    if (!invoice) return;
+    setDraftLines((invoice.lines ?? []).map((l) => ({ ...l })));
+    setNotesDraft(invoice.notes ?? '');
+    setLinesEditing(false);
   };
 
   const handleRegenerateFromTimesheets = async () => {
@@ -562,8 +584,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       {
         id: newLineId(),
         description: docEn
-          ? 'Discount / surcharge (specify details)'
-          : 'ส่วนลด / ค่าเพิ่ม (ระบุรายละเอียด)',
+          ? 'New line (specify details)'
+          : 'รายการใหม่ (ระบุรายละเอียด)',
         quantity: 1,
         unitPrice: 0,
         amount: 0,
@@ -571,6 +593,10 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       },
     ]);
   };
+
+  const canEditDraftLines = Boolean(
+    invoice && invoice.status === 'DRAFT' && canAct && linesEditing,
+  );
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -860,26 +886,49 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
         {canAct && invoice.status === 'DRAFT' && (
           <div className="print:hidden flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
-            <Button className="gap-2 shrink-0" onClick={() => void handleSendToCustomer()} disabled={actionBusy}>
-              {actionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              {invoice.customerRevisionRequestedAt
-                ? 'ส่งกลับไปให้ลูกค้าตรวจสอบ (Portal)'
-                : 'ส่งให้ลูกค้าตรวจสอบ (Portal)'}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              className="gap-2 shrink-0"
-              onClick={() => void handleSaveDraftLines()}
-              disabled={saveBusy}
-            >
-              {saveBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              บันทึกการแก้ไขรายการ
-            </Button>
-            <Button type="button" variant="outline" className="gap-2 shrink-0" onClick={addManualAdjustmentLine}>
-              <Plus className="h-4 w-4" />
-              เพิ่มส่วนลด / ค่าเพิ่ม
-            </Button>
+            {!linesEditing ? (
+              <Button
+                type="button"
+                className="gap-2 shrink-0"
+                onClick={() => setLinesEditing(true)}
+                disabled={actionBusy || saveBusy || regenerateBusy}
+              >
+                <Pencil className="h-4 w-4" />
+                แก้ไข/เพิ่มรายการ
+              </Button>
+            ) : (
+              <>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="gap-2 shrink-0"
+                  onClick={() => void handleSaveDraftLines()}
+                  disabled={saveBusy}
+                >
+                  {saveBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  บันทึกการแก้ไขรายการ
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2 shrink-0"
+                  onClick={addManualAdjustmentLine}
+                  disabled={saveBusy}
+                >
+                  <Plus className="h-4 w-4" />
+                  เพิ่มบรรทัด
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="gap-2 shrink-0"
+                  onClick={cancelLinesEditing}
+                  disabled={saveBusy}
+                >
+                  ยกเลิกแก้ไข
+                </Button>
+              </>
+            )}
             {canRegenerateFromTimesheets && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
@@ -887,7 +936,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                     type="button"
                     variant="outline"
                     className="gap-2 shrink-0 border-blue-300 text-blue-800 hover:bg-blue-50 dark:text-blue-200 dark:hover:bg-blue-950/40"
-                    disabled={regenerateBusy || saveBusy || actionBusy}
+                    disabled={regenerateBusy || saveBusy || actionBusy || linesEditing}
                   >
                     {regenerateBusy ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -902,7 +951,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                     <AlertDialogTitle>ดึงรายการจาก timesheet ใหม่?</AlertDialogTitle>
                     <AlertDialogDescription>
                       ระบบจะคำนวณบรรทัดค่าแรงจาก timesheet ที่พร้อมวางบิลในงวดนี้อีกครั้ง (รวมทุก wave ใต้ PO
-                      สำหรับงวด PO+เดือน) และแทนที่บรรทัดเดิมจาก timesheet — บรรทัดส่วนลด/ค่าเพิ่มที่เพิ่มเองจะยังอยู่
+                      สำหรับงวด PO+เดือน) และแทนที่บรรทัดเดิมจาก timesheet — บรรทัดที่เพิ่มเองจะยังอยู่
                       · เลขที่ใบและสถานะ DRAFT ไม่เปลี่ยน
                     </AlertDialogDescription>
                   </AlertDialogHeader>
@@ -918,36 +967,51 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
           </div>
         )}
 
-        {canAdminVoid && (invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER') && (
+        {(canAct && invoice.status === 'DRAFT') ||
+        (canAdminVoid && (invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER')) ? (
           <div className="print:hidden flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button type="button" variant="destructive" className="gap-2 shrink-0" disabled={voidBusy}>
-                  {voidBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
-                  ยกเลิกใบนี้ (VOID)
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>ยกเลิกใบแจ้งหนี้นี้?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    เฉพาะผู้ดูแลระบบ — ใช้เมื่อรายการหรือการคำนวณไม่ถูกต้อง สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO
-                    ได้อีกครั้ง (ไม่ลบประวัติเอกสาร) · ใบที่ลูกค้า/ฝ่ายยืนยันแล้ว (ISSUED) ยกเลิกไม่ได้
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>ไม่</AlertDialogCancel>
-                  <AlertDialogAction
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    onClick={() => void handleVoid()}
-                  >
-                    ยืนยันยกเลิก
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            {canAct && invoice.status === 'DRAFT' && (
+              <Button
+                className="gap-2 shrink-0"
+                onClick={() => void handleSendToCustomer()}
+                disabled={actionBusy || linesEditing || saveBusy}
+              >
+                {actionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {invoice.customerRevisionRequestedAt
+                  ? 'ส่งกลับไปให้ลูกค้าตรวจสอบ (Portal)'
+                  : 'ส่งให้ลูกค้าตรวจสอบ (Portal)'}
+              </Button>
+            )}
+            {canAdminVoid && (invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER') && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button type="button" variant="destructive" className="gap-2 shrink-0" disabled={voidBusy}>
+                    {voidBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
+                    ยกเลิกใบนี้ (VOID)
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>ยกเลิกใบแจ้งหนี้นี้?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      เฉพาะผู้ดูแลระบบ — ใช้เมื่อรายการหรือการคำนวณไม่ถูกต้อง สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO
+                      ได้อีกครั้ง (ไม่ลบประวัติเอกสาร) · ใบที่ลูกค้า/ฝ่ายยืนยันแล้ว (ISSUED) ยกเลิกไม่ได้
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>ไม่</AlertDialogCancel>
+                    <AlertDialogAction
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      onClick={() => void handleVoid()}
+                    >
+                      ยืนยันยกเลิก
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </div>
-        )}
+        ) : null}
 
         {invoice.status === 'PENDING_CUSTOMER' && (
           <Alert className="border-amber-200 bg-amber-50/80">
@@ -1001,8 +1065,9 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               )}
               {invoice.status === 'DRAFT' && canAct && (
                 <span className="block mt-1 text-xs">
-                  รายการรวมตามตำแหน่งจาก PO — แก้จำนวน/ราคาได้ และเพิ่มบรรทัดส่วนลดหรือค่าเพิ่ม (จำนวน × ราคา/หน่วย = ยอด;
-                  ส่วนลดใส่ราคาต่อหน่วยติดลบได้)
+                  {linesEditing
+                    ? 'โหมดแก้ไข — แก้ข้อความ/จำนวน/ราคาได้ และกด「เพิ่มบรรทัด」สำหรับส่วนลดหรือค่าเพิ่ม (ราคาติดลบได้) แล้วกดบันทึก'
+                    : 'กด「แก้ไข/เพิ่มรายการ」ก่อน จึงจะแก้ตัวเลขหรือเพิ่มบรรทัดได้'}
                 </span>
               )}
             </CardDescription>
@@ -1015,7 +1080,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   <TableHead className="text-right w-28">{lineCols.qty}</TableHead>
                   <TableHead className="text-right w-36">{lineCols.unit}</TableHead>
                   <TableHead className="text-right pr-6 w-36">{lineCols.amt}</TableHead>
-                  {invoice.status === 'DRAFT' && canAct && (
+                  {canEditDraftLines && (
                     <TableHead className="w-12 print:hidden" aria-label="ลบ" />
                   )}
                 </TableRow>
@@ -1024,12 +1089,10 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 {(invoice.status === 'DRAFT' && canAct ? draftLines : invoice.lines ?? []).map((line) => {
                   const isManualLine = line.lineSource === 'manual';
                   const displayDesc = lineDescription(line.description || '—', line.workerName);
-                  const showDescInput =
-                    invoice.status === 'DRAFT' && canAct && (!docEn || isManualLine);
                   return (
                   <TableRow key={line.id}>
                     <TableCell className="pl-6 max-w-md align-top">
-                      {showDescInput ? (
+                      {canEditDraftLines ? (
                         <Input
                           className="font-medium text-sm h-9"
                           value={line.description}
@@ -1038,11 +1101,6 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                       ) : (
                         <div className="font-medium text-sm leading-snug">{displayDesc}</div>
                       )}
-                      {invoice.status === 'DRAFT' && canAct && docEn && !isManualLine ? (
-                        <p className="text-xs text-muted-foreground mt-1 leading-snug">
-                          Switch to <strong>ไทย</strong> to edit auto-generated line text.
-                        </p>
-                      ) : null}
                       {isManualLine && (
                         <div className="text-xs text-muted-foreground mt-0.5">
                           {docEn ? 'Manual adjustment' : 'ปรับยอดด้วยมือ'}
@@ -1050,7 +1108,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                       )}
                     </TableCell>
                     <TableCell className="text-right align-top">
-                      {invoice.status === 'DRAFT' && canAct ? (
+                      {canEditDraftLines ? (
                         <Input
                           className="text-right h-9 font-mono text-sm"
                           type="number"
@@ -1065,7 +1123,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                       )}
                     </TableCell>
                     <TableCell className="text-right align-top">
-                      {invoice.status === 'DRAFT' && canAct ? (
+                      {canEditDraftLines ? (
                         <Input
                           className="text-right h-9 font-mono text-sm"
                           type="number"
@@ -1085,7 +1143,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                         minimumFractionDigits: 2,
                       })}
                     </TableCell>
-                    {invoice.status === 'DRAFT' && canAct && (
+                    {canEditDraftLines && (
                       <TableCell className="print:hidden align-top">
                         <Button
                           type="button"
@@ -1119,7 +1177,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   placeholder="ระบุเงื่อนไขการเรียกเก็บหรือหมายเหตุที่ต้องการแสดงในเอกสารพิมพ์..."
                   value={notesDraft}
                   onChange={(e) => setNotesDraft(e.target.value)}
-                  disabled={invoice.status !== 'DRAFT' || !canAct}
+                  disabled={!canEditDraftLines}
                 />
               </div>
               <div className="flex flex-col sm:flex-row sm:justify-end text-sm order-1 lg:order-2">

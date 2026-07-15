@@ -102,6 +102,8 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
   const showWht = options?.showWithholdingOnDocument === true;
   const withholdingForDocs = showWht ? roundMoney2((com.amountBeforeTax * ratePct) / 100) : 0;
 
+  const termNotes = (com.notes ?? '').trim();
+
   const billingNotePayload: Omit<BillingNote, 'id'> = {
     billingNoteNo,
     customerId: com.customerId,
@@ -119,7 +121,7 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
     netAmount: com.totalAmount,
     currency: com.currency || 'THB',
     status: 'SUBMITTED',
-    notes: `สร้างอัตโนมัติจากใบเรียกเก็บ ${com.invoiceNo}`,
+    notes: termNotes || `สร้างอัตโนมัติจากใบเรียกเก็บ ${com.invoiceNo}`,
     createdAt: now,
     createdBy: actor.displayName || actor.email || actor.id,
     updatedAt: now,
@@ -146,7 +148,8 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
     totalAmount: com.totalAmount,
     currency: com.currency || 'THB',
     status: 'DRAFT',
-    notes: `จากใบเรียกเก็บ ${com.invoiceNo} — ใบกำกับภาษี+ใบวางบิล (ยังไม่ e-Tax) — ใบเสร็จรับเงินอีกขั้นหลังรับเงินจริง`,
+    // คัดลอก Term & Note จากใบเรียกเก็บ เพื่อแสดงบนเอกสารพิมพ์
+    notes: termNotes,
     createdByUid: actor.id,
     createdByName: (actor.displayName || actor.email || actor.id).trim(),
     ...(com.customerApprovedAt

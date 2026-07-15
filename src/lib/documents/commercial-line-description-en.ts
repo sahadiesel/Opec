@@ -66,10 +66,19 @@ export function translateCommercialLineDescriptionToEn(text: string): string {
   s = s.replace(/ทำงานวันหยุดนักขัตฤกษ์/g, 'Public holiday work');
   s = s.replace(/ทำงานวันหยุด/g, 'Weekly off-day work');
   s = s.replace(/ค่าแรงวันทำงาน/g, 'Daily wage');
+  // Compound standby + mob/demob before single-word replaces (spelling variants included)
+  s = s.replace(
+    /สแตน(?:ด์)?บาย\s*[-—–]?\s*ดีโมบิ(?:ไลเซชัน|ลเซชั่น|ไลเซชั่น|ลเซชัน)/g,
+    'Standby demobilization',
+  );
+  s = s.replace(
+    /สแตน(?:ด์)?บาย\s*[-—–]?\s*โมบิ(?:ไลเซชัน|ลเซชั่น|ไลเซชั่น|ลเซชัน)/g,
+    'Standby mobilization',
+  );
   s = s.replace(/สแตนด์บาย|สแตนบาย/g, 'Standby');
   s = s.replace(/วันเดินทาง/g, 'Travel day');
-  s = s.replace(/ดีโมบิไลเซชัน/g, 'Demobilization');
-  s = s.replace(/โมบิไลเซชัน/g, 'Mobilization');
+  s = s.replace(/ดีโมบิ(?:ไลเซชัน|ลเซชั่น|ไลเซชั่น|ลเซชัน)/g, 'Demobilization');
+  s = s.replace(/โมบิ(?:ไลเซชัน|ลเซชั่น|ไลเซชั่น|ลเซชัน)/g, 'Mobilization');
   s = s.replace(/ส่วนลด\s*\/\s*ค่าเพิ่ม/g, 'Discount / surcharge');
   s = s.replace(/\(ระบุรายละเอียด\)/g, '(specify details)');
   s = s.replace(/หน่วย/g, 'units');

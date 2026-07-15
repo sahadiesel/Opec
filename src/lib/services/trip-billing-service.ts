@@ -91,7 +91,7 @@ function lastStandbyDateFromTimesheets(timesheets: readonly DailyTimesheet[]): s
 
 /**
  * ปิดรอบ standby-only (ไม่มี M1/วันทำงาน/D1) — ตั้ง tripEndDate = วัน SB สุดท้าย
- * เพื่อให้ชุดวางบิลเป็น ready และสร้างใบแจ้งหนี้ได้ (ไม่คิดค่า MOB ไป-กลับ)
+ * อัปเดตเป็น ready แล้วอนุมัติอัตโนมัติ เพื่อกดสร้างใบวางบิลได้ทันที (ไม่คิดค่า MOB ไป-กลับ)
  */
 export async function finalizeStandbyOnlyTripBatch(
   db: Firestore,
@@ -106,7 +106,7 @@ export async function finalizeStandbyOnlyTripBatch(
   if (batch.status === 'invoiced') throw new Error('ชุดนี้ออก invoice แล้ว');
   if (batch.status === 'void') throw new Error('ชุดนี้ถูกยกเลิกแล้ว');
   if (batch.status === 'approved' || batch.status === 'ready') {
-    throw new Error('ชุดนี้พร้อมวางบิลอยู่แล้ว — กดอนุมัติ/สร้าง invoice ได้เลย');
+    throw new Error('ชุดนี้พร้อมวางบิลอยู่แล้ว — กดสร้างใบวางบิลได้เลย');
   }
   if (batch.status !== 'draft') {
     throw new Error(`สถานะชุดวางบิลคือ ${batch.status} — ปิดรอบ SB-only ไม่ได้`);
@@ -194,6 +194,9 @@ export async function finalizeStandbyOnlyTripBatch(
     notes: [batch.notes, `ปิดรอบ SB-only โดย ${actorName}`].filter(Boolean).join(' · ').slice(0, 500),
     updatedAt: now,
   });
+
+  // ปิดพร้อมวางบิลแล้ว — อนุมัติอัตโนมัติ เพื่อกดสร้างใบวางบิลได้ทันที
+  await approveTripBillingBatch(db, batchId, actor);
 
   return { closedMembers: closedReviews.length, periodEnd };
 }

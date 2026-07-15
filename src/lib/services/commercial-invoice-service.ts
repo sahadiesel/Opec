@@ -46,6 +46,7 @@ import { fetchWorkerClosuresForPoMonth } from '@/lib/timesheet/worker-month-clos
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { generateBillingLines, generateBillingLinesForMobCycles } from '@/lib/services/billing-line-generator';
 import {
+  approveTripBillingBatch,
   markTripBatchInvoiced,
   releaseTripBillingBatchAfterInvoiceRemoved,
 } from '@/lib/services/trip-billing-service';
@@ -1135,17 +1136,26 @@ export async function ensureCommercialDraftInvoiceForTripBatch(
   actor: User,
   options?: { tripMobDemobLocationKey?: string },
 ): Promise<{ ok: true; id: string; invoiceNo: string } | { ok: false; reason: string }> {
-  if (batch.status !== 'approved') {
-    return { ok: false, reason: 'ชุดวางบิลยังไม่ได้อนุมัติ — กด «อนุมัติวางบิล» ก่อนสร้าง invoice' };
+  // ready → อนุมัติอัตโนมัติ แล้วสร้างใบวางบิลได้เลย (ไม่ต้องกดอนุมัติแยก)
+  let workingBatch = batch;
+  if (workingBatch.status === 'ready') {
+    await approveTripBillingBatch(db, workingBatch.id, actor);
+    workingBatch = { ...workingBatch, status: 'approved' };
   }
-  const existing = await findCommercialInvoiceByTripBatch(db, batch.id);
+  if (workingBatch.status !== 'approved') {
+    return {
+      ok: false,
+      reason: `สถานะชุดวางบิลคือ ${workingBatch.status} — ต้องปิดรอบพร้อมวางบิลก่อนสร้าง invoice`,
+    };
+  }
+  const existing = await findCommercialInvoiceByTripBatch(db, workingBatch.id);
   if (existing?.id) {
     return { ok: false, reason: `มีใบแจ้งหนี้แล้ว (${existing.invoiceNo || existing.id})` };
   }
   try {
     const { id, invoiceNo } = await createCommercialDraftInvoiceForTripBatch(
       db,
-      batch,
+      workingBatch,
       actor,
       undefined,
       options,
