@@ -1021,6 +1021,12 @@ export async function generateBillingLinesForMobCycles(
     return base;
   }
 
+  const { isStandbyOnlyClosedTripBatch } = await import('@/lib/services/trip-billing-service');
+  if (await isStandbyOnlyClosedTripBatch(db, ids)) {
+    base.warnings.push('รอบ standby-only — ไม่คิดค่า Mob/Demob ไป-กลับ');
+    return base;
+  }
+
   let mobKey = (options?.tripMobDemobLocationKey || '').trim();
   if (!mobKey) {
     const { resolveTripMobDemobLocationChoice } = await import('@/lib/services/trip-mob-demob-billing');

@@ -833,6 +833,13 @@ export interface MobCycleBillingReview {
   status: MobCycleBillingReviewStatus;
   tripBillingBatchId?: string;
   demobilizationTimesheetId?: string;
+  /**
+   * ปิดรอบวางบิลแบบ standby-only (ไม่มี M1/D1) — sync จะคง tripEndDate เดิมไว้
+   * จนกว่าจะมี mobilization_day / work_day / demobilization_day
+   */
+  standbyOnlyClosed?: boolean;
+  standbyOnlyClosedAt?: number;
+  standbyOnlyClosedByName?: string;
   createdAt: number;
   updatedAt: number;
 }

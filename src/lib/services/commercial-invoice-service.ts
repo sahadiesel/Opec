@@ -997,7 +997,11 @@ export async function createCommercialDraftInvoiceForTripBatch(
   const poEarly = { ...poSnapEarly.data(), id: poSnapEarly.id } as PurchaseOrder;
 
   let tripMobDemobLocationKey = (options?.tripMobDemobLocationKey || '').trim() || undefined;
-  if (poEarly.contractId) {
+  const { isStandbyOnlyClosedTripBatch } = await import('@/lib/services/trip-billing-service');
+  const standbyOnlyClosed = await isStandbyOnlyClosedTripBatch(db, batch.memberMobCycleIds);
+  if (standbyOnlyClosed) {
+    tripMobDemobLocationKey = undefined;
+  } else if (poEarly.contractId) {
     const mcSnap = await getDoc(doc(db, 'main_contracts', poEarly.contractId));
     if (mcSnap.exists()) {
       const mc = mcSnap.data() as MainContract;
@@ -1044,7 +1048,9 @@ export async function createCommercialDraftInvoiceForTripBatch(
   if (!poSnap.exists()) throw new Error('ไม่พบ PO');
   const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
 
-  const waveCodeLabel = `รอบเดินทาง · M1 ${batch.tripAnchorStartDate}`;
+  const waveCodeLabel = standbyOnlyClosed
+    ? `รอบ Standby · เริ่ม ${batch.tripAnchorStartDate}`
+    : `รอบเดินทาง · M1 ${batch.tripAnchorStartDate}`;
 
   const vatPercent = await resolveVatPercent(db, po.customerId, po.contractId);
   const amountBeforeTax = roundMoney(gen.totalAmount);

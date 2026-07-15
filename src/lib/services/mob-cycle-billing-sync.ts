@@ -121,6 +121,22 @@ function isTripActivityTimesheet(ts: DailyTimesheet): boolean {
   );
 }
 
+/** รอบนี้มีแต่ standby — ไม่มี M1 / วันทำงาน / D1 (ใช้ปิดวางบิลได้โดยไม่รอ demob) */
+export function isStandbyOnlyActivityTimesheets(timesheets: readonly DailyTimesheet[]): boolean {
+  const activity = timesheets.filter(isTripActivityTimesheet);
+  if (activity.length === 0) return false;
+  return activity.every((t) => t.eventType === 'standby_day');
+}
+
+function lastStandbyDateYmd(timesheets: readonly DailyTimesheet[]): string | undefined {
+  const days = timesheets
+    .filter((t) => t.eventType === 'standby_day')
+    .map((t) => String(t.date || '').slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  return days.length ? days[days.length - 1] : undefined;
+}
+
 function listDemobDatesYmd(allTimesheets: DailyTimesheet[]): string[] {
   return allTimesheets
     .filter((t) => t.eventType === 'demobilization_day')
@@ -309,7 +325,19 @@ function buildReviewFromTimesheets(
   if (!tripAnchorStartDate) return null;
 
   const tripStartDate = tripAnchorStartDate;
-  const tripEndDate = demobDays.length ? demobDays[demobDays.length - 1] : undefined;
+  let tripEndDate = demobDays.length ? demobDays[demobDays.length - 1] : undefined;
+
+  const standbyOnly = isStandbyOnlyActivityTimesheets(timesheets);
+  const keepStandbyOnlyClose =
+    !!existing?.standbyOnlyClosed &&
+    standbyOnly &&
+    demobDays.length === 0 &&
+    !!String(existing.tripEndDate || '').trim();
+
+  if (!tripEndDate && keepStandbyOnlyClose) {
+    tripEndDate = String(existing!.tripEndDate).slice(0, 10);
+  }
+
   const spansYearMonths =
     tripEndDate != null
       ? yearMonthsBetween(tripStartDate, tripEndDate)
@@ -339,6 +367,13 @@ function buildReviewFromTimesheets(
     status,
     tripBillingBatchId: batchId,
     demobilizationTimesheetId: demobTs?.id,
+    standbyOnlyClosed: keepStandbyOnlyClose ? true : false,
+    ...(keepStandbyOnlyClose
+      ? {
+          standbyOnlyClosedAt: existing?.standbyOnlyClosedAt,
+          standbyOnlyClosedByName: existing?.standbyOnlyClosedByName,
+        }
+      : {}),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   }) as MobCycleBillingReview;

@@ -56,7 +56,7 @@ import { useToast } from '@/hooks/use-toast';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import type { PurchaseOrder, TripBillingBatch, User } from '@/lib/types';
 import { billingModeLabel } from '@/lib/commercial/resolve-billing-mode';
-import { syncTripBillingForPo, approveTripBillingBatch } from '@/lib/services/trip-billing-service';
+import { syncTripBillingForPo, approveTripBillingBatch, finalizeStandbyOnlyTripBatch, isStandbyOnlyClosedTripBatch } from '@/lib/services/trip-billing-service';
 import { ensureCommercialDraftInvoiceForTripBatch } from '@/lib/services/commercial-invoice-service';
 import {
   resolveTripMobDemobLocationChoice,
@@ -96,6 +96,7 @@ export default function TripBillingPage() {
     options: TripMobDemobLocationOption[];
     selectedKey: string;
   } | null>(null);
+  const [sbOnlyDialog, setSbOnlyDialog] = useState<TripBillingBatch | null>(null);
 
   const canSee = currentUser && canView(currentUser, 'draft_invoices');
 
@@ -180,6 +181,33 @@ export default function TripBillingPage() {
     }
   };
 
+  const handleFinalizeStandbyOnly = async (batch: TripBillingBatch) => {
+    if (!firestore || !currentUser) return;
+    setBusyId(`sb_${batch.id}`);
+    try {
+      const res = await finalizeStandbyOnlyTripBatch(firestore, batch.id, currentUser as User);
+      toast({
+        title: 'ปิดรอบ SB-only แล้ว',
+        description: `สมาชิก ${res.closedMembers} คน · จบรอบ ${res.periodEnd} — กดอนุมัติวางบิลต่อได้`,
+      });
+      setSbOnlyDialog(null);
+      const { loadTripBillingBatchesForPo } = await import('@/lib/services/mob-cycle-billing-sync');
+      if (selectedPo) {
+        setLocalBatches(await loadTripBillingBatchesForPo(firestore, selectedPo.id));
+      } else {
+        setLocalBatches([]);
+      }
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ปิดรอบ SB-only ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleCreateInvoice = async (batch: TripBillingBatch) => {
     if (!firestore || !currentUser || !selectedPo?.contractId) {
       toast({
@@ -191,6 +219,10 @@ export default function TripBillingPage() {
     }
     setBusyId(`inv_${batch.id}`);
     try {
+      if (await isStandbyOnlyClosedTripBatch(firestore, batch.memberMobCycleIds)) {
+        await doCreateInvoice(batch, undefined);
+        return;
+      }
       const choice = await resolveTripMobDemobLocationChoice(
         firestore,
         selectedPo.contractId,
@@ -283,6 +315,7 @@ export default function TripBillingPage() {
             <h1 className="text-2xl font-semibold tracking-tight">ทำใบแจ้งหนี้แบบ Trip</h1>
             <p className="text-muted-foreground text-sm mt-1 max-w-2xl">
               Thai Nippon / Offshore — จัดกลุ่มคนที่ mobilize พร้อมกัน (M1 วันเดียวกัน) → ออก invoice เดียวเมื่อทุกคน demob (D1)
+              · รอบ standby อย่างเดียว (ไม่มี M1/D1) กด「ปิดรอบ SB-only」ได้
             </p>
           </div>
           <Button variant="outline" asChild>
@@ -362,7 +395,7 @@ export default function TripBillingPage() {
                 </div>
               ) : batches.length === 0 ? (
                 <p className="text-muted-foreground text-sm py-8 text-center">
-                  ยังไม่มีชุดวางบิล — กด «ซิงก์ชุดวางบิล» หลังมี timesheet M1/D1
+                  ยังไม่มีชุดวางบิล — กด «ซิงก์ชุดวางบิล» หลังมี timesheet M1/D1 หรือ SB
                 </p>
               ) : (
                 <Table>
@@ -383,7 +416,10 @@ export default function TripBillingPage() {
                       const periodLabel = batch.periodEnd
                         ? `${formatStoredDateThaiBE(batch.periodStart)} – ${formatStoredDateThaiBE(batch.periodEnd)}`
                         : `${formatStoredDateThaiBE(batch.periodStart)} – (ยังทำงาน)`;
-                      const isBusy = busyId === batch.id || busyId === `inv_${batch.id}`;
+                      const isBusy =
+                        busyId === batch.id ||
+                        busyId === `inv_${batch.id}` ||
+                        busyId === `sb_${batch.id}`;
 
                       return (
                         <TableRow key={batch.id}>
@@ -441,10 +477,24 @@ export default function TripBillingPage() {
                               </Button>
                             )}
                             {batch.status === 'draft' && (
-                              <span className="inline-flex items-center text-xs text-muted-foreground">
-                                <Clock className="mr-1 h-3.5 w-3.5" />
-                                รอ D1 ครบทุกคน
-                              </span>
+                              <div className="inline-flex flex-col items-end gap-1.5">
+                                <span className="inline-flex items-center text-xs text-muted-foreground">
+                                  <Clock className="mr-1 h-3.5 w-3.5" />
+                                  รอ D1 ครบทุกคน
+                                </span>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={isBusy || busyId === `sb_${batch.id}`}
+                                  onClick={() => setSbOnlyDialog(batch)}
+                                >
+                                  {busyId === `sb_${batch.id}` ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    'ปิดรอบ SB-only'
+                                  )}
+                                </Button>
+                              </div>
                             )}
                           </TableCell>
                         </TableRow>
@@ -504,6 +554,51 @@ export default function TripBillingPage() {
               }}
             >
               สร้าง Invoice
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={sbOnlyDialog != null}
+        onOpenChange={(open) => {
+          if (!open) setSbOnlyDialog(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>ปิดรอบวางบิลแบบ Standby only?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  ใช้เมื่อคนงานมา standby แต่ไม่ลงงาน (ไม่มี M1/D1) และต้องวางบิลค่า SB — เช่น
+                  Ritrong วันที่ 29–30 มิ.ย. และ 1–3 ก.ค.
+                </p>
+                <p>
+                  ระบบจะตั้งวันจบรอบ = วัน standby สุดท้ายของทุกคนในชุดนี้ แล้วสถานะจะเป็น
+                  「พร้อมวางบิล」 — จากนั้นกดอนุมัติ → สร้าง Invoice ตามปกติ (ไม่คิดค่า MOB
+                  ไป-กลับ)
+                </p>
+                {sbOnlyDialog ? (
+                  <p className="font-medium text-foreground">
+                    สมาชิก:{' '}
+                    {[...new Set(sbOnlyDialog.memberWorkerNames ?? [])].filter(Boolean).join(', ') ||
+                      '—'}
+                  </p>
+                ) : null}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!sbOnlyDialog || busyId != null}
+              onClick={(e) => {
+                e.preventDefault();
+                if (sbOnlyDialog) void handleFinalizeStandbyOnly(sbOnlyDialog);
+              }}
+            >
+              ยืนยันปิดรอบ SB-only
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
