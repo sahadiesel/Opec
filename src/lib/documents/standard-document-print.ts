@@ -1489,10 +1489,14 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
       ${lineRows || `<tr><td colspan="5" style="text-align:center;color:#737373">${escapeHtmlDoc(emptyLines)}</td></tr>`}
     </tbody>
   </table>`;
-  const totalsHtml = buildStandardTotalsBlockHtml({
-    rows: totalRows,
-    amountInWords: totalWords,
-    amountInWordsLayout: 'taxFullLine',
+  const totalsHtml = buildStandardTotalsWithNotesRowHtml({
+    totalsParams: {
+      rows: totalRows,
+      amountInWords: totalWords,
+      amountInWordsLayout: 'taxFullLine',
+    },
+    notes: invoice.notes,
+    notesTitle: printT(L, 'termsNotes'),
   });
   const mainHtml = `${partyHtml}
   ${tableHtml}

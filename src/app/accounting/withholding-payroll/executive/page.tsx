@@ -43,7 +43,10 @@ import type {
   OfficePayrollLine,
   BankAccount,
   WhtTaxPaymentProofAttachment,
+  OfficeStaff,
+  ExecutivePayrollStaff,
 } from '@/lib/types';
+import { resolveStaffNationalId } from '@/app/accounting/social-security-payroll/sso-section-utils';
 import { canView, canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { canViewHrPayrollFlowSubsection } from '@/lib/navigation/nav-access';
 import { isSystemAdmin } from '@/lib/permission-core';
@@ -125,7 +128,10 @@ function describeExecutivePrintFilters(searchTerm: string, monthFilter: string):
   return lines;
 }
 
-function buildExecutivePrintRows(rows: ExecutiveWhtRow[]): WithholdingExecutivePayrollListPrintRow[] {
+function buildExecutivePrintRows(
+  rows: ExecutiveWhtRow[],
+  nationalIdByStaffId?: ReadonlyMap<string, string>,
+): WithholdingExecutivePayrollListPrintRow[] {
   return rows.map(({ run, line, tax, paid, paymentYmd }) => {
     const wagePaid = isOfficePayrollWagePaid(run, line);
     return {
@@ -134,7 +140,7 @@ function buildExecutivePrintRows(rows: ExecutiveWhtRow[]): WithholdingExecutiveP
       runLabel: run.payrollRunNo || run.id,
       payrollMonth: run.payrollMonth || '—',
       earnerName: line.staffName || '—',
-      earnerId: line.staffId,
+      earnerId: resolveStaffNationalId(line.staffId, nationalIdByStaffId),
       paymentDate: paymentYmd,
       paidLabel: fmtBaht(paid),
       amountLabel: fmtBaht(tax),
@@ -191,6 +197,40 @@ export default function AccountingWithholdingPayrollExecutivePage() {
     isLoading: loadingExecutiveRuns,
     error: executiveRunsErr,
   } = useCollection<OfficePayrollRun>(executiveRunsQuery as any);
+
+  const officeStaffQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return collection(firestore, 'office_staff');
+  }, [firestore]);
+
+  const executiveStaffQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return collection(firestore, 'executive_payroll_staff');
+  }, [firestore]);
+
+  const { data: officeStaffRegistry } = useCollection<OfficeStaff>(officeStaffQuery as any);
+  const { data: executiveStaffRegistry } = useCollection<ExecutivePayrollStaff>(executiveStaffQuery as any);
+
+  const nationalIdByOfficeStaffId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const staff of officeStaffRegistry ?? []) {
+      const id = staff.nationalId?.trim();
+      if (id) map.set(staff.id, id);
+    }
+    return map;
+  }, [officeStaffRegistry]);
+
+  const nationalIdByExecutiveStaffId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const staff of executiveStaffRegistry ?? []) {
+      let id = staff.nationalId?.trim();
+      if (!id && staff.linkedOfficeStaffId) {
+        id = nationalIdByOfficeStaffId.get(staff.linkedOfficeStaffId)?.trim();
+      }
+      if (id) map.set(staff.id, id);
+    }
+    return map;
+  }, [executiveStaffRegistry, nationalIdByOfficeStaffId]);
 
   useEffect(() => {
     if (!firestore || executiveRuns === undefined) return;
@@ -249,10 +289,20 @@ export default function AccountingWithholdingPayrollExecutivePage() {
       const rid = run.id.toLowerCase();
       const lid = line.id.toLowerCase();
       const sid = line.staffId.toLowerCase();
+      const nid = (nationalIdByExecutiveStaffId.get(line.staffId) || '').toLowerCase();
       const ym = (run.payrollMonth || '').toLowerCase();
-      return name.includes(t) || rn.includes(t) || rid.includes(t) || lid.includes(t) || sid.includes(t) || ym.includes(t) || paymentYmd.includes(t);
+      return (
+        name.includes(t) ||
+        rn.includes(t) ||
+        rid.includes(t) ||
+        lid.includes(t) ||
+        sid.includes(t) ||
+        nid.includes(t) ||
+        ym.includes(t) ||
+        paymentYmd.includes(t)
+      );
     });
-  }, [executiveRows, q]);
+  }, [executiveRows, q, nationalIdByExecutiveStaffId]);
 
   const filteredExecutive = useMemo(() => {
     if (monthFilter === 'ALL') return executiveRowsBySearch;
@@ -318,7 +368,7 @@ export default function AccountingWithholdingPayrollExecutivePage() {
 
       setPrintBusy(true);
       try {
-        const printRows = buildExecutivePrintRows(source);
+        const printRows = buildExecutivePrintRows(source, nationalIdByExecutiveStaffId);
         const { rows, truncated } = capWithholdingPayrollListPrintRows(printRows);
         const totalTax = source.reduce((sum, { tax }) => sum + tax, 0);
         const generatedAt = new Date().toLocaleString('th-TH', {
@@ -359,7 +409,15 @@ export default function AccountingWithholdingPayrollExecutivePage() {
         setPrintBusy(false);
       }
     },
-    [filteredExecutive, executiveRows, q, monthFilter, currentUser?.displayName, toast],
+    [
+      filteredExecutive,
+      executiveRows,
+      nationalIdByExecutiveStaffId,
+      q,
+      monthFilter,
+      currentUser?.displayName,
+      toast,
+    ],
   );
 
   const openPayTaxDialog = useCallback(() => {
@@ -840,7 +898,12 @@ export default function AccountingWithholdingPayrollExecutivePage() {
                             <div className="truncate font-medium" title={line.staffName || '—'}>
                               {line.staffName || '—'}
                             </div>
-                            <div className="truncate text-xs text-muted-foreground font-mono">{line.staffId}</div>
+                            <div
+                              className="truncate text-xs text-muted-foreground font-mono"
+                              title={resolveStaffNationalId(line.staffId, nationalIdByExecutiveStaffId)}
+                            >
+                              {resolveStaffNationalId(line.staffId, nationalIdByExecutiveStaffId)}
+                            </div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
                           <TableCell className="text-right tabular-nums text-sm">{fmtBaht(paid)}</TableCell>

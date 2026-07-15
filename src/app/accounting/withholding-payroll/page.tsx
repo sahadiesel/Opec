@@ -38,7 +38,13 @@ import type {
   OfficePayrollLine,
   BankAccount,
   WhtTaxPaymentProofAttachment,
+  Worker,
+  OfficeStaff,
 } from '@/lib/types';
+import {
+  resolveWorkerNationalId,
+  resolveStaffNationalId,
+} from '@/app/accounting/social-security-payroll/sso-section-utils';
 import { canSeeAccountingPillarUi, canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { canViewHrPayrollFlowSubsection } from '@/lib/navigation/nav-access';
 import { isSystemAdmin } from '@/lib/permission-core';
@@ -223,6 +229,8 @@ function ymLabelTh(ym: string): string {
 function buildWithholdingPayrollPrintRows(
   workers: WorkerWhtRow[],
   offices: OfficeWhtRow[],
+  nationalIdByWorkerId?: ReadonlyMap<string, string>,
+  nationalIdByOfficeStaffId?: ReadonlyMap<string, string>,
 ): WithholdingPayrollListPrintRow[] {
   const rows: WithholdingPayrollListPrintRow[] = [];
   for (const { batch, line, pit, paid, paymentYmd } of workers) {
@@ -233,7 +241,7 @@ function buildWithholdingPayrollPrintRows(
       taxStatus: whtTaxStatusLabel(wagePaid, isWorkerPayrollWhtTaxPaid(line)),
       batchLabel: batch.id,
       earnerName: line.workerNameSnapshot || '—',
-      earnerId: line.workerId,
+      earnerId: resolveWorkerNationalId(line, nationalIdByWorkerId),
       paymentDate: paymentYmd,
       paidLabel: fmtBaht(paid),
       amountLabel: fmtBaht(pit),
@@ -247,7 +255,7 @@ function buildWithholdingPayrollPrintRows(
       taxStatus: whtTaxStatusLabel(wagePaid, isOfficePayrollWhtTaxPaid(line)),
       batchLabel: run.payrollRunNo || run.id,
       earnerName: line.staffName || '—',
-      earnerId: line.staffId,
+      earnerId: resolveStaffNationalId(line.staffId, nationalIdByOfficeStaffId),
       paymentDate: paymentYmd,
       paidLabel: fmtBaht(paid),
       amountLabel: fmtBaht(tax),
@@ -324,6 +332,37 @@ export default function AccountingWithholdingPayrollHubPage() {
 
   const { data: batches, isLoading: loadingBatches, error: batchesErr } = useCollection<PayrollBatch>(batchesQuery as any);
   const { data: officeRuns, isLoading: loadingRuns, error: runsErr } = useCollection<OfficePayrollRun>(officeRunsQuery as any);
+
+  const workersQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return collection(firestore, 'workers');
+  }, [firestore]);
+
+  const officeStaffQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return collection(firestore, 'office_staff');
+  }, [firestore]);
+
+  const { data: workerRegistry } = useCollection<Worker>(workersQuery as any);
+  const { data: officeStaffRegistry } = useCollection<OfficeStaff>(officeStaffQuery as any);
+
+  const nationalIdByWorkerId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const worker of workerRegistry ?? []) {
+      const id = worker.thaiNationalId?.trim();
+      if (id) map.set(worker.id, id);
+    }
+    return map;
+  }, [workerRegistry]);
+
+  const nationalIdByOfficeStaffId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const staff of officeStaffRegistry ?? []) {
+      const id = staff.nationalId?.trim();
+      if (id) map.set(staff.id, id);
+    }
+    return map;
+  }, [officeStaffRegistry]);
 
   useEffect(() => {
     if (!firestore || batches === undefined) return;
@@ -424,9 +463,17 @@ export default function AccountingWithholdingPayrollHubPage() {
       const bid = batch.id.toLowerCase();
       const lid = line.id.toLowerCase();
       const wid = line.workerId.toLowerCase();
-      return name.includes(t) || bid.includes(t) || lid.includes(t) || wid.includes(t) || paymentYmd.includes(t);
+      const nid = (nationalIdByWorkerId.get(line.workerId) || '').toLowerCase();
+      return (
+        name.includes(t) ||
+        bid.includes(t) ||
+        lid.includes(t) ||
+        wid.includes(t) ||
+        nid.includes(t) ||
+        paymentYmd.includes(t)
+      );
     });
-  }, [workerRows, q]);
+  }, [workerRows, q, nationalIdByWorkerId]);
 
   const officeRowsBySearch = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -437,10 +484,20 @@ export default function AccountingWithholdingPayrollHubPage() {
       const rid = run.id.toLowerCase();
       const lid = line.id.toLowerCase();
       const sid = line.staffId.toLowerCase();
+      const nid = (nationalIdByOfficeStaffId.get(line.staffId) || '').toLowerCase();
       const ym = (run.payrollMonth || '').toLowerCase();
-      return name.includes(t) || rn.includes(t) || rid.includes(t) || lid.includes(t) || sid.includes(t) || ym.includes(t) || paymentYmd.includes(t);
+      return (
+        name.includes(t) ||
+        rn.includes(t) ||
+        rid.includes(t) ||
+        lid.includes(t) ||
+        sid.includes(t) ||
+        nid.includes(t) ||
+        ym.includes(t) ||
+        paymentYmd.includes(t)
+      );
     });
-  }, [officeRows, q]);
+  }, [officeRows, q, nationalIdByOfficeStaffId]);
 
   const filteredWorker = useMemo(() => {
     if (monthFilter === 'ALL') return workerRowsBySearch;
@@ -544,7 +601,12 @@ export default function AccountingWithholdingPayrollHubPage() {
     async (scope: 'filtered' | 'all') => {
       const workers = scope === 'filtered' ? filteredWorker : workerRows;
       const offices = scope === 'filtered' ? filteredOffice : officeRows;
-      const sourceRows = buildWithholdingPayrollPrintRows(workers, offices);
+      const sourceRows = buildWithholdingPayrollPrintRows(
+        workers,
+        offices,
+        nationalIdByWorkerId,
+        nationalIdByOfficeStaffId,
+      );
 
       if (sourceRows.length === 0) {
         toast({
@@ -609,6 +671,8 @@ export default function AccountingWithholdingPayrollHubPage() {
       filteredOffice,
       workerRows,
       officeRows,
+      nationalIdByWorkerId,
+      nationalIdByOfficeStaffId,
       q,
       monthFilter,
       currentUser?.displayName,
@@ -1222,7 +1286,12 @@ export default function AccountingWithholdingPayrollHubPage() {
                             <div className="truncate font-medium" title={line.workerNameSnapshot || '—'}>
                               {line.workerNameSnapshot || '—'}
                             </div>
-                            <div className="truncate text-xs text-muted-foreground font-mono">{line.workerId}</div>
+                            <div
+                              className="truncate text-xs text-muted-foreground font-mono"
+                              title={resolveWorkerNationalId(line, nationalIdByWorkerId)}
+                            >
+                              {resolveWorkerNationalId(line, nationalIdByWorkerId)}
+                            </div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
                           <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>
@@ -1390,7 +1459,12 @@ export default function AccountingWithholdingPayrollHubPage() {
                             <div className="truncate font-medium" title={line.staffName || '—'}>
                               {line.staffName || '—'}
                             </div>
-                            <div className="truncate text-xs text-muted-foreground font-mono">{line.staffId}</div>
+                            <div
+                              className="truncate text-xs text-muted-foreground font-mono"
+                              title={resolveStaffNationalId(line.staffId, nationalIdByOfficeStaffId)}
+                            >
+                              {resolveStaffNationalId(line.staffId, nationalIdByOfficeStaffId)}
+                            </div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
                           <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>

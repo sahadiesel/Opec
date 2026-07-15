@@ -125,6 +125,9 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const [editInvoiceOpen, setEditInvoiceOpen] = useState(false);
   const [editShowWht, setEditShowWht] = useState(false);
   const [savingInvoiceEdit, setSavingInvoiceEdit] = useState(false);
+  const [editNotesOpen, setEditNotesOpen] = useState(false);
+  const [notesDraft, setNotesDraft] = useState('');
+  const [savingNotes, setSavingNotes] = useState(false);
   const [printPresetOpen, setPrintPresetOpen] = useState(false);
   const [accountingPrintPreset, setAccountingPrintPreset] = useState<'p1' | 'p2' | 'p3' | 'p4'>('p1');
   const arReconcileAttempted = useRef(false);
@@ -640,6 +643,39 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     }
   };
 
+  const handleSaveTaxInvoiceNotes = async () => {
+    if (!firestore || !invoice || !invRef || !currentUser) return;
+    if (invoice.status === 'CANCELLED') {
+      toast({ variant: 'destructive', title: 'ไม่สามารถแก้ไข', description: 'เอกสารถูกยกเลิกแล้ว' });
+      return;
+    }
+    if (!isAccountingActor) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
+      return;
+    }
+    setSavingNotes(true);
+    try {
+      await updateDoc(invRef, {
+        notes: notesDraft.trim(),
+        updatedAt: Date.now(),
+      });
+      setEditNotesOpen(false);
+      toast({
+        title: 'บันทึก Term & Note แล้ว',
+        description: 'รายการและตัวเลขใบกำกับไม่ได้ถูกแก้ไข — อัปเดตเฉพาะเงื่อนไข/หมายเหตุ',
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setSavingNotes(false);
+    }
+  };
+
   if (isInvLoading || appUserLoading || !invoice || !currentUser) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -888,8 +924,16 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               </div>
 
               <div className="space-y-2 pt-4">
-                <Label>หมายเหตุ:</Label>
-                <p className="text-sm italic text-muted-foreground">{invoice.notes || 'ไม่มีหมายเหตุ'}</p>
+                <Label className="text-xs font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
+                  <Info className="h-3 w-3" /> Term &amp; Note (เงื่อนไขและหมายเหตุ)
+                </Label>
+                <div className="rounded-md border bg-muted/20 px-3 py-2.5">
+                  {invoice.notes?.trim() ? (
+                    <p className="text-sm whitespace-pre-wrap leading-relaxed">{invoice.notes.trim()}</p>
+                  ) : (
+                    <p className="text-sm italic text-muted-foreground">ยังไม่มีเงื่อนไข/หมายเหตุ</p>
+                  )}
+                </div>
               </div>
 
               {invoice.billingApprovalToken && (
@@ -1016,6 +1060,20 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                     <Info className="h-4 w-4 shrink-0" />
                     เอกสารออกจริงแล้ว — บันทึกลูกหนี้ (AR) และใบวางบิลเป็น INVOICED
                   </div>
+                )}
+                {isAccountingActor && invoice.status !== 'CANCELLED' && (
+                  <Button
+                    variant="outline"
+                    className="w-full border-white/40 bg-white/10 text-white hover:bg-white/20 font-semibold"
+                    type="button"
+                    onClick={() => {
+                      setNotesDraft(invoice.notes ?? '');
+                      setEditNotesOpen(true);
+                    }}
+                  >
+                    <Pencil className="h-4 w-4 mr-2" />
+                    แก้ไข Term &amp; Note
+                  </Button>
                 )}
                 {isAccountingActor && (
                   <Button
@@ -1305,6 +1363,39 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               </Button>
               <Button type="button" onClick={() => void handleSaveTaxInvoiceEdit()} disabled={savingInvoiceEdit}>
                 {savingInvoiceEdit ? <Loader2 className="h-4 w-4 animate-spin" /> : 'บันทึก'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={editNotesOpen} onOpenChange={setEditNotesOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>แก้ไข Term &amp; Note</DialogTitle>
+              <DialogDescription>
+                แก้ไขเงื่อนไขและหมายเหตุที่แสดงบนใบกำกับเท่านั้น — ไม่สามารถแก้รายการหรือตัวเลขบนเอกสารที่ล็อกแล้ว
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="tax-invoice-notes" className="text-xs font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
+                <Info className="h-3 w-3" /> Term &amp; Note (เงื่อนไขและหมายเหตุ)
+              </Label>
+              <Textarea
+                id="tax-invoice-notes"
+                className="text-sm min-h-[160px] resize-y"
+                placeholder={'เช่น Manpower supply "Offshore" Service Charge\nProject Name : …\nSubcontract No : …'}
+                value={notesDraft}
+                onChange={(e) => setNotesDraft(e.target.value)}
+                disabled={savingNotes}
+              />
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setEditNotesOpen(false)} disabled={savingNotes}>
+                ยกเลิก
+              </Button>
+              <Button type="button" onClick={() => void handleSaveTaxInvoiceNotes()} disabled={savingNotes}>
+                {savingNotes ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                บันทึก
               </Button>
             </DialogFooter>
           </DialogContent>
