@@ -401,6 +401,13 @@ export default function AccountsPayablePage() {
                             >
                               {item.documentNo}
                             </Link>
+                          ) : item.origin === 'RENTAL_CONTRACT' && item.rentalContractId ? (
+                            <Link
+                              href={`/accounting/rental-contracts/${item.rentalContractId}`}
+                              className="text-primary underline hover:no-underline"
+                            >
+                              {item.documentNo}
+                            </Link>
                           ) : (
                             item.documentNo
                           )}

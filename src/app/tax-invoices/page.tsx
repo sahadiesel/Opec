@@ -17,11 +17,13 @@ import {
   Loader2,
   Trash2,
   Printer,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   formatStoredDateThaiBE,
 } from '@/lib/date-thai';
 import { TaxInvoice, TaxInvoiceStatus, User, Customer, CommercialInvoice, MoneyReceipt } from '@/lib/types';
+import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -65,6 +67,17 @@ import {
 
 function formatTaxInvoiceMoney(amount: number, currency = 'THB'): string {
   return `${currency} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+}
+
+/** ตารางรายการ — ไม่ใส่รหัสสกุลเงิน เพื่อประหยัดความกว้าง */
+function formatTaxInvoiceMoneyPlain(amount: number): string {
+  return amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** ยอดหัก ณ ที่จ่ายบนใบกำกับ — 0 ถ้าไม่มี / ไม่ถึงเกณฑ์ */
+function taxInvoiceWhtAmount(inv: TaxInvoice): number {
+  const w = Number(inv.withholdingTaxAmount) || 0;
+  return w > 0.005 ? roundMoney2(w) : 0;
 }
 
 export default function TaxInvoicesPage() {
@@ -582,13 +595,15 @@ export default function TaxInvoicesPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="py-4 pl-6 font-bold">เลขที่ (Invoice No.)</TableHead>
-                    <TableHead className="font-bold">ลูกค้า (Customer)</TableHead>
-                    <TableHead className="font-bold">วันที่ออก</TableHead>
-                    <TableHead className="font-bold">เลขที่ใบเสร็จ</TableHead>
+                    <TableHead className="py-4 pl-6 font-bold whitespace-nowrap">เลขที่ (Invoice No.)</TableHead>
+                    <TableHead className="font-bold min-w-[14rem] max-w-[18rem] w-[16rem]">ลูกค้า (Customer)</TableHead>
+                    <TableHead className="font-bold whitespace-nowrap">วันที่ออก</TableHead>
+                    <TableHead className="font-bold whitespace-nowrap">เลขที่ใบเสร็จ</TableHead>
                     <TableHead className="text-right font-bold whitespace-nowrap">ก่อนภาษี</TableHead>
                     <TableHead className="text-right font-bold whitespace-nowrap">ภาษี</TableHead>
                     <TableHead className="text-right font-bold whitespace-nowrap">ยอดรวมสุทธิ</TableHead>
+                    <TableHead className="text-right font-bold whitespace-nowrap">ยอด หัก ณ ที่จ่าย</TableHead>
+                    <TableHead className="text-right font-bold whitespace-nowrap">ยอดรับสุทธิ</TableHead>
                     <TableHead className="text-right font-bold w-[1%] whitespace-nowrap">สถานะ</TableHead>
                     <TableHead className="pr-6 text-right w-[1%] whitespace-nowrap">จัดการ</TableHead>
                   </TableRow>
@@ -597,6 +612,9 @@ export default function TaxInvoicesPage() {
                   {filteredInvoices.map((inv) => {
                     const customer = customers?.find(c => c.id === inv.customerId);
                     const receiptNo = resolveReceiptNo(inv);
+                    const whtAmt = taxInvoiceWhtAmount(inv);
+                    const netReceived = roundMoney2((Number(inv.totalAmount) || 0) - whtAmt);
+                    const hasWhtDoc = (inv.whtAttachments?.length ?? 0) > 0;
                     return (
                       <TableRow 
                         key={inv.id} 
@@ -604,10 +622,13 @@ export default function TaxInvoicesPage() {
                         onClick={() => router.push(`/tax-invoices/${inv.id}`)}
                       >
                         <TableCell className="py-4 pl-6 font-bold text-primary font-mono">{inv.taxInvoiceNo}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2 text-sm font-bold text-primary">
-                            <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
-                            {customer?.name || 'N/A'}
+                        <TableCell className="min-w-[14rem] max-w-[18rem] w-[16rem]">
+                          <div
+                            className="flex items-center gap-1.5 text-sm font-bold text-primary min-w-0"
+                            title={customer?.name || 'N/A'}
+                          >
+                            <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate">{customer?.name || 'N/A'}</span>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -618,13 +639,33 @@ export default function TaxInvoicesPage() {
                         </TableCell>
                         <TableCell className="font-mono text-sm text-muted-foreground">{receiptNo}</TableCell>
                         <TableCell className="text-right font-mono text-sm tabular-nums whitespace-nowrap">
-                          {formatTaxInvoiceMoney(inv.taxableAmount ?? 0, inv.currency)}
+                          {formatTaxInvoiceMoneyPlain(inv.taxableAmount ?? 0)}
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm tabular-nums whitespace-nowrap">
-                          {formatTaxInvoiceMoney(inv.vatAmount ?? 0, inv.currency)}
+                          {formatTaxInvoiceMoneyPlain(inv.vatAmount ?? 0)}
                         </TableCell>
                         <TableCell className="text-right font-black text-primary tabular-nums whitespace-nowrap">
-                          {formatTaxInvoiceMoney(inv.totalAmount ?? 0, inv.currency)}
+                          {formatTaxInvoiceMoneyPlain(inv.totalAmount ?? 0)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm tabular-nums whitespace-nowrap">
+                          {whtAmt > 0 ? (
+                            <span className="inline-flex items-center justify-end gap-1">
+                              {formatTaxInvoiceMoneyPlain(whtAmt)}
+                              {!hasWhtDoc ? (
+                                <span title="ยังไม่มีเอกสารแนบหัก ณ ที่จ่าย">
+                                  <AlertTriangle
+                                    className="h-3.5 w-3.5 shrink-0 text-amber-500 stroke-[2.5] stroke-red-600 fill-amber-300"
+                                    aria-label="ยังไม่มีเอกสารแนบหัก ณ ที่จ่าย"
+                                  />
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm font-semibold tabular-nums whitespace-nowrap">
+                          {formatTaxInvoiceMoneyPlain(netReceived)}
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end">{getStatusBadge(inv.status)}</div>
@@ -666,14 +707,14 @@ export default function TaxInvoicesPage() {
                   })}
                   {!isLoading && (!invoices || invoices.length === 0) && (
                     <TableRow>
-                      <TableCell colSpan={9} className="py-20 text-center italic text-muted-foreground">
+                      <TableCell colSpan={11} className="py-20 text-center italic text-muted-foreground">
                         ไม่มีรายการใบกำกับภาษีในระบบ
                       </TableCell>
                     </TableRow>
                   )}
                   {!isLoading && (invoices?.length ?? 0) > 0 && filteredInvoices.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={9} className="py-20 text-center text-muted-foreground">
+                      <TableCell colSpan={11} className="py-20 text-center text-muted-foreground">
                         ไม่พบรายการที่ตรงกับการค้นหาหรือเดือนที่เลือก
                       </TableCell>
                     </TableRow>

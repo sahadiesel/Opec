@@ -21,6 +21,9 @@ import {
   ExternalLink,
   UserCheck,
   Pencil,
+  Paperclip,
+  AlertTriangle,
+  FileText,
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useFirebaseApp, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, addDoc } from 'firebase/firestore';
@@ -74,6 +77,11 @@ import {
   validateTimesheetImageFile,
 } from '@/lib/storage/tax-invoice-attachments';
 import {
+  uploadTaxInvoiceWhtFile,
+  deleteTaxInvoiceWhtFile,
+  validateTaxInvoiceWhtFile,
+} from '@/lib/storage/tax-invoice-wht-attachments';
+import {
   buildTaxInvoicePrintHtml,
   openStandardPrintWindow,
   type TaxInvoicePrintSheet,
@@ -109,10 +117,14 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const firestore = useFirestore();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const whtFileInputRef = useRef<HTMLInputElement>(null);
 
   const [issuing, setIssuing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [whtUploading, setWhtUploading] = useState(false);
+  const [whtRemovingId, setWhtRemovingId] = useState<string | null>(null);
+  const [whtPreviewAtt, setWhtPreviewAtt] = useState<TaxInvoiceTimesheetAttachment | null>(null);
   const [billingApproveOpen, setBillingApproveOpen] = useState(false);
   const [billingApproveNote, setBillingApproveNote] = useState('');
   const [billingApproving, setBillingApproving] = useState(false);
@@ -455,6 +467,70 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ' });
     } finally {
       setRemovingId(null);
+    }
+  };
+
+  const handleWhtFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files?.length || !invRef || !invoice || !currentUser || !firebaseApp) return;
+    if (!isAccountingActor) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
+      return;
+    }
+    if (invoice.status === 'CANCELLED') return;
+
+    setWhtUploading(true);
+    try {
+      let next = [...(invoice.whtAttachments ?? [])];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const v = validateTaxInvoiceWhtFile(file);
+        if (v) {
+          toast({ variant: 'destructive', title: file.name, description: v });
+          continue;
+        }
+        const att = await uploadTaxInvoiceWhtFile(
+          firebaseApp,
+          invoice.id,
+          file,
+          currentUser.id,
+          currentUser.displayName || currentUser.email || 'User',
+        );
+        next = [...next, att];
+      }
+      await updateDoc(invRef, { whtAttachments: next, updatedAt: Date.now() });
+      toast({ title: 'แนบเอกสารหัก ณ ที่จ่ายแล้ว', description: `จำนวนไฟล์: ${next.length}` });
+    } catch (err) {
+      console.error(err);
+      toast({ variant: 'destructive', title: 'อัปโหลดไม่สำเร็จ', description: String(err) });
+    } finally {
+      setWhtUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveWhtAttachment = async (att: TaxInvoiceTimesheetAttachment) => {
+    if (!invRef || !invoice || !firebaseApp) return;
+    if (!isAccountingActor) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
+      return;
+    }
+    if (!window.confirm(`ยืนยันลบไฟล์แนบ "${att.fileName}"?`)) return;
+    setWhtRemovingId(att.id);
+    try {
+      try {
+        await deleteTaxInvoiceWhtFile(firebaseApp, att.storagePath);
+      } catch {
+        /* best-effort */
+      }
+      const next = (invoice.whtAttachments ?? []).filter((a) => a.id !== att.id);
+      await updateDoc(invRef, { whtAttachments: next, updatedAt: Date.now() });
+      toast({ title: 'ลบเอกสารแนบแล้ว' });
+    } catch (err) {
+      console.error(err);
+      toast({ variant: 'destructive', title: 'ลบไม่สำเร็จ' });
+    } finally {
+      setWhtRemovingId(null);
     }
   };
 
@@ -1075,6 +1151,35 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                     แก้ไข Term &amp; Note
                   </Button>
                 )}
+                {isAccountingActor && invoice.status !== 'CANCELLED' && (
+                  <div className="space-y-2">
+                    <input
+                      ref={whtFileInputRef}
+                      type="file"
+                      multiple
+                      accept="application/pdf,image/jpeg,image/png,image/webp,.pdf,.jpg,.jpeg,.png,.webp"
+                      className="hidden"
+                      onChange={(e) => void handleWhtFileChange(e)}
+                    />
+                    <Button
+                      variant="outline"
+                      className="w-full border-white/40 bg-white/10 text-white hover:bg-white/20 font-semibold"
+                      type="button"
+                      disabled={whtUploading}
+                      onClick={() => whtFileInputRef.current?.click()}
+                    >
+                      {whtUploading ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Paperclip className="h-4 w-4 mr-2" />
+                      )}
+                      แนบเอกสารหัก ณ ที่จ่าย
+                    </Button>
+                    <p className="text-[10px] text-white/70 leading-snug px-0.5">
+                      เอกสารที่ได้รับจากลูกค้า (PDF / รูป) — แสดงในกรอบด้านล่าง และกดดูขยายได้
+                    </p>
+                  </div>
+                )}
                 {isAccountingActor && (
                   <Button
                     variant="ghost"
@@ -1100,6 +1205,98 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                   <span>อัปเดตล่าสุด:</span>
                   <span>{formatDateTimeThaiBE(invoice.updatedAt)}</span>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-2 border-blue-400 bg-blue-50/40 dark:border-blue-600 dark:bg-blue-950/20 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs font-bold uppercase tracking-wider text-blue-800 dark:text-blue-200 flex items-center gap-2">
+                  <Paperclip className="h-3.5 w-3.5" />
+                  เอกสารแนบหัก ณ ที่จ่าย
+                  {(Number(invoice.withholdingTaxAmount) || 0) > 0.005 &&
+                  (invoice.whtAttachments?.length ?? 0) === 0 ? (
+                    <span title="ยังไม่มีเอกสารแนบ">
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-500 stroke-[2.5] stroke-red-600 fill-amber-300" />
+                    </span>
+                  ) : null}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {(invoice.whtAttachments?.length ?? 0) === 0 ? (
+                  <p className="text-xs text-muted-foreground italic">
+                    {(Number(invoice.withholdingTaxAmount) || 0) > 0.005
+                      ? 'ยังไม่มีเอกสารแนบ — แนบจากส่วนการดำเนินการด้านบน'
+                      : 'ไม่มีเอกสารแนบ'}
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {(invoice.whtAttachments ?? []).map((att) => {
+                      const isImage = (att.contentType || '').startsWith('image/');
+                      return (
+                        <li
+                          key={att.id}
+                          className="flex items-center gap-2 rounded-md border border-blue-200 bg-white/80 dark:border-blue-800 dark:bg-background/60 p-2"
+                        >
+                          {isImage ? (
+                            <button
+                              type="button"
+                              className="h-12 w-12 shrink-0 overflow-hidden rounded border bg-muted"
+                              onClick={() => setWhtPreviewAtt(att)}
+                              title="กดเพื่อขยายดู"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={att.downloadUrl}
+                                alt={att.fileName}
+                                className="h-full w-full object-cover"
+                              />
+                            </button>
+                          ) : (
+                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded border bg-muted">
+                              <FileText className="h-5 w-5 text-muted-foreground" />
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <p className="text-[11px] font-medium truncate" title={att.fileName}>
+                              {att.fileName}
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-[10px] px-2"
+                                onClick={() => {
+                                  if (isImage) setWhtPreviewAtt(att);
+                                  else window.open(att.downloadUrl, '_blank', 'noopener,noreferrer');
+                                }}
+                              >
+                                <ExternalLink className="h-3 w-3 mr-1" />
+                                ขยายดู
+                              </Button>
+                              {isAccountingActor ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-[10px] px-2 text-destructive hover:text-destructive"
+                                  disabled={whtRemovingId === att.id}
+                                  onClick={() => void handleRemoveWhtAttachment(att)}
+                                >
+                                  {whtRemovingId === att.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="h-3 w-3" />
+                                  )}
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -1330,6 +1527,47 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 พิมพ์
               </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={!!whtPreviewAtt}
+          onOpenChange={(open) => {
+            if (!open) setWhtPreviewAtt(null);
+          }}
+        >
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle className="truncate pr-8">{whtPreviewAtt?.fileName || 'เอกสารแนบ'}</DialogTitle>
+              <DialogDescription>กดเปิดแท็บใหม่หากต้องการดูเต็มหน้าจอหรือดาวน์โหลด</DialogDescription>
+            </DialogHeader>
+            {whtPreviewAtt ? (
+              <div className="space-y-3">
+                {(whtPreviewAtt.contentType || '').startsWith('image/') ? (
+                  <div className="max-h-[70vh] overflow-auto rounded-md border bg-muted/30 p-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={whtPreviewAtt.downloadUrl}
+                      alt={whtPreviewAtt.fileName}
+                      className="mx-auto max-h-[65vh] w-auto max-w-full object-contain"
+                    />
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">ไฟล์นี้เปิดในแท็บใหม่เพื่อดูเนื้อหา</p>
+                )}
+                <DialogFooter>
+                  <Button variant="outline" type="button" asChild>
+                    <a href={whtPreviewAtt.downloadUrl} target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="h-4 w-4 mr-2" />
+                      เปิดแท็บใหม่
+                    </a>
+                  </Button>
+                  <Button type="button" onClick={() => setWhtPreviewAtt(null)}>
+                    ปิด
+                  </Button>
+                </DialogFooter>
+              </div>
+            ) : null}
           </DialogContent>
         </Dialog>
 

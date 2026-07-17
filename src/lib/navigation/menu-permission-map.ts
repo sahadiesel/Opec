@@ -87,7 +87,7 @@ export const MENU_PERMISSION_GROUPS: MenuPermissionGroup[] = [
         moduleKey: 'store_inventory',
         label: 'การจัดการคลังสินค้า/เอกสาร (Store & Vendor)',
         path: '/store',
-        note: 'รวม vendors, PR, purchases, vendor bills',
+        note: 'รวม vendors, PR, purchases, vendor bills, หัก ณ ที่จ่ายคู่ค้า',
       },
       { moduleKey: 'draft_invoices', label: 'ทำใบแจ้งหนี้แบบ Monthly', path: '/draft-invoices' },
       { moduleKey: 'operations_petty_cash', label: 'Petty Cash — เบิกหน้างาน', path: '/operations/petty-cash' },
@@ -109,6 +109,12 @@ export const MENU_PERMISSION_GROUPS: MenuPermissionGroup[] = [
         label: 'ระบบเจ้าหนี้ (AP)',
         path: '/ap-bills',
         note: 'รวม ap_bills, accounts_payable',
+      },
+      {
+        moduleKey: 'accounts_payable',
+        label: 'การจัดการสัญญา (Contracts)',
+        path: '/accounting/contracts',
+        note: 'ค่าเช่าเชื่อม AP + Cashbook + WHT · rental_contracts / rental_payables',
       },
       {
         moduleKey: 'executive_payroll',

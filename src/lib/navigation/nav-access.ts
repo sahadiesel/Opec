@@ -202,6 +202,8 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/worker-document-catalog', 'worker_documents'],
   ['/accounts-receivable', 'accounts_receivable'],
   ['/accounts-payable', 'accounts_payable'],
+  ['/accounting/contracts', 'accounts_payable'],
+  ['/accounting/rental-contracts', 'accounts_payable'],
   ['/accounting/outgoing-review', 'accounts_payable'],
   ['/accounting/withholding-tax', 'withholding_tax_items'],
   ['/accounting/withholding-payroll', 'worker_payroll'],
@@ -323,6 +325,8 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     ['/ap-bills', 'ap_bills'],
     ['/accounts-receivable', 'accounts_receivable'],
     ['/accounts-payable', 'accounts_payable'],
+    ['/accounting/contracts', 'accounts_payable'],
+    ['/accounting/rental-contracts', 'accounts_payable'],
     ['/cashbook', 'cashbook'],
     ['/bank-accounts', 'bank_accounts'],
     ['/accounting/executive-payroll', 'executive_payroll'],
@@ -335,7 +339,8 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     ['/accounting/office-payroll', 'office_payroll'],
     ['/accounting/worker-payroll', 'worker_payroll'],
     ['/accounting/cash-advances-payout', 'cash_advances'],
-  ].sort((a, b) => b[0].length - a[0].length);
+  ];
+  accountingPathModules.sort((a, b) => b[0].length - a[0].length);
   for (const [pre, key] of accountingPathModules) {
     if (p === pre || p.startsWith(`${pre}/`)) {
       return admin || canView(user, key, profile);

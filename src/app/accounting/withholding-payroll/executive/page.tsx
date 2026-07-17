@@ -59,7 +59,7 @@ import {
   officeWageStatusLabel,
   whtTaxStatusLabel,
 } from '@/lib/payroll/payroll-wht-tax-payment-model';
-import { recordExecutivePayrollWhtTaxPayment } from '@/lib/services/payroll-wht-tax-payment-service';
+import { recordExecutivePayrollWhtTaxPayment, markExecutivePayrollWhtTaxPaidWithoutCashbook } from '@/lib/services/payroll-wht-tax-payment-service';
 import { uploadPayrollWhtTaxPaymentProof } from '@/lib/storage/payroll-wht-tax-payment-proofs';
 import {
   buildWithholdingExecutivePayrollListPrintHtml,
@@ -166,12 +166,19 @@ export default function AccountingWithholdingPayrollExecutivePage() {
   const [payTaxOpen, setPayTaxOpen] = useState(false);
   const [payTaxBankId, setPayTaxBankId] = useState('');
   const [payTaxDate, setPayTaxDate] = useState(() => new Date().toISOString().slice(0, 10));
+  /** true = บันทึกสถานะจ่ายแล้วเท่านั้น (ไม่ตัดบัญชี / ไม่ลง cashbook) */
+  const [payTaxStatusOnly, setPayTaxStatusOnly] = useState(false);
   const [payTaxBusy, setPayTaxBusy] = useState(false);
   const [payTaxAttachments, setPayTaxAttachments] = useState<WhtTaxPaymentProofAttachment[]>([]);
   const [attachProofBusy, setAttachProofBusy] = useState(false);
   const [sessionProofAttachments, setSessionProofAttachments] = useState<WhtTaxPaymentProofAttachment[]>([]);
 
   const canPayWhtTax = useMemo(() => canExecuteBankCashbookPayments(currentUser), [currentUser]);
+  /** บันทึกสถานะจ่ายแล้วโดยไม่ตัดบัญชี — เฉพาะ Admin */
+  const canMarkWhtStatusOnly = useMemo(
+    () => isSystemAdmin(currentUser) || isSimpleAdmin(currentUser),
+    [currentUser],
+  );
 
   const bankAccountsQuery = useMemoFirebase(
     () =>
@@ -435,6 +442,7 @@ export default function AccountingWithholdingPayrollExecutivePage() {
       return kept.length > 0 ? new Set(kept) : new Set(payableIds);
     });
     setPayTaxOpen(true);
+    setPayTaxStatusOnly(false);
     setPayTaxBankId((prev) =>
       prev && operatingBankOptions.some((b) => b.id === prev) ? prev : (operatingBankOptions[0]?.id ?? ''),
     );
@@ -502,10 +510,6 @@ export default function AccountingWithholdingPayrollExecutivePage() {
 
   const handleConfirmPayWhtTax = useCallback(async () => {
     if (!firestore || !currentUser) return;
-    if (!payTaxBankId.trim()) {
-      toast({ variant: 'destructive', title: 'กรุณาเลือกบัญชีธนาคาร' });
-      return;
-    }
     if (selectedPayRows.length === 0) {
       toast({
         variant: 'destructive',
@@ -514,13 +518,29 @@ export default function AccountingWithholdingPayrollExecutivePage() {
       });
       return;
     }
-    if (payTaxAttachments.length === 0) {
-      toast({
-        variant: 'destructive',
-        title: 'ยังไม่ได้แนบเอกสาร',
-        description: 'กรุณาแนบหลักฐานการโอนก่อนยืนยันจ่ายภาษี',
-      });
-      return;
+
+    if (payTaxStatusOnly) {
+      if (!canMarkWhtStatusOnly) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีสิทธิ์',
+          description: 'บันทึกสถานะจ่ายภาษีโดยไม่ตัดบัญชีได้เฉพาะผู้ดูแลระบบ (Admin) เท่านั้น',
+        });
+        return;
+      }
+    } else {
+      if (!payTaxBankId.trim()) {
+        toast({ variant: 'destructive', title: 'กรุณาเลือกบัญชีธนาคาร' });
+        return;
+      }
+      if (payTaxAttachments.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ยังไม่ได้แนบเอกสาร',
+          description: 'กรุณาแนบหลักฐานการโอนก่อนยืนยันจ่ายภาษี',
+        });
+        return;
+      }
     }
 
     setPayTaxBusy(true);
@@ -533,28 +553,42 @@ export default function AccountingWithholdingPayrollExecutivePage() {
       for (const row of selectedPayRows) {
         try {
           const { run, line, tax } = row;
-          const result = await recordExecutivePayrollWhtTaxPayment(firestore, currentUser as User, {
-            run,
-            line,
-            taxAmount: tax,
-            bankAccountId: payTaxBankId,
-            entryDate: payTaxDate,
-            earnerName: line.staffName || line.staffId,
-            proofAttachments: payTaxAttachments,
-          });
           const key = executiveRowKey(run.id, line.id);
-          paidKeys.add(key);
           const now = Date.now();
-          lineUpdates.set(key, {
-            whtTaxCashbookEntryId: result.cashbookEntryId,
-            whtTaxCashbookEntryNo: result.entryNo,
-            whtTaxPaidAt: now,
-            whtTaxPaymentBankAccountId: payTaxBankId,
-            whtTaxPaymentProofAttachments: mergeUniqueProofAttachments(
-              line.whtTaxPaymentProofAttachments ?? [],
-              payTaxAttachments,
-            ),
-          });
+          if (payTaxStatusOnly) {
+            await markExecutivePayrollWhtTaxPaidWithoutCashbook(firestore, currentUser as User, {
+              run,
+              line,
+            });
+            paidKeys.add(key);
+            lineUpdates.set(key, {
+              whtTaxPaidAt: now,
+              whtTaxPaidWithoutCashbook: true,
+              whtTaxPaidByUid: currentUser.id,
+              whtTaxPaidByName: currentUser.displayName || currentUser.email || currentUser.id,
+            });
+          } else {
+            const result = await recordExecutivePayrollWhtTaxPayment(firestore, currentUser as User, {
+              run,
+              line,
+              taxAmount: tax,
+              bankAccountId: payTaxBankId,
+              entryDate: payTaxDate,
+              earnerName: line.staffName || line.staffId,
+              proofAttachments: payTaxAttachments,
+            });
+            paidKeys.add(key);
+            lineUpdates.set(key, {
+              whtTaxCashbookEntryId: result.cashbookEntryId,
+              whtTaxCashbookEntryNo: result.entryNo,
+              whtTaxPaidAt: now,
+              whtTaxPaymentBankAccountId: payTaxBankId,
+              whtTaxPaymentProofAttachments: mergeUniqueProofAttachments(
+                line.whtTaxPaymentProofAttachments ?? [],
+                payTaxAttachments,
+              ),
+            });
+          }
           success += 1;
         } catch (e) {
           const name = row.line.staffName || row.line.staffId;
@@ -580,12 +614,17 @@ export default function AccountingWithholdingPayrollExecutivePage() {
 
       if (errors.length === 0) {
         toast({
-          title: 'บันทึกจ่ายภาษีหัก ณ ที่จ่ายแล้ว',
-          description: `จ่ายสำเร็จ ${success} รายการ · ตัดบัญชีและบันทึก cashbook เรียบร้อย`,
+          title: payTaxStatusOnly ? 'บันทึกสถานะจ่ายภาษีแล้ว' : 'บันทึกจ่ายภาษีหัก ณ ที่จ่ายแล้ว',
+          description: payTaxStatusOnly
+            ? `อัปเดตสถานะ ${success} รายการ · ไม่ตัดบัญชีและไม่ลง cashbook`
+            : `จ่ายสำเร็จ ${success} รายการ · ตัดบัญชีและบันทึก cashbook เรียบร้อย`,
         });
-        setSessionProofAttachments([]);
-        setPayTaxAttachments([]);
+        if (!payTaxStatusOnly) {
+          setSessionProofAttachments([]);
+          setPayTaxAttachments([]);
+        }
         setPayTaxOpen(false);
+        setPayTaxStatusOnly(false);
       } else if (success > 0) {
         toast({
           variant: 'destructive',
@@ -595,7 +634,7 @@ export default function AccountingWithholdingPayrollExecutivePage() {
       } else {
         toast({
           variant: 'destructive',
-          title: 'จ่ายภาษีไม่สำเร็จ',
+          title: payTaxStatusOnly ? 'บันทึกสถานะไม่สำเร็จ' : 'จ่ายภาษีไม่สำเร็จ',
           description: errors.slice(0, 3).join(' · '),
         });
       }
@@ -607,6 +646,8 @@ export default function AccountingWithholdingPayrollExecutivePage() {
     currentUser,
     payTaxBankId,
     payTaxDate,
+    payTaxStatusOnly,
+    canMarkWhtStatusOnly,
     selectedPayRows,
     payTaxAttachments,
     toast,
@@ -931,12 +972,22 @@ export default function AccountingWithholdingPayrollExecutivePage() {
           </CardContent>
         </Card>
 
-        <Dialog open={payTaxOpen} onOpenChange={(open) => !open && !payTaxBusy && setPayTaxOpen(false)}>
+        <Dialog
+          open={payTaxOpen}
+          onOpenChange={(open) => {
+            if (!open && !payTaxBusy) {
+              setPayTaxOpen(false);
+              setPayTaxStatusOnly(false);
+            }
+          }}
+        >
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) — ผู้บริหาร</DialogTitle>
               <DialogDescription>
-                เลือกบัญชีธนาคารสำหรับตัดจ่ายภาษี — ระบบจะบันทึกรายการ cashbook แยกตามรายการที่เลือก
+                {payTaxStatusOnly
+                  ? 'บันทึกสถานะ «จ่ายแล้ว» เท่านั้น — ไม่ตัดบัญชีธนาคารและไม่ลง cashbook'
+                  : 'เลือกบัญชีธนาคารสำหรับตัดจ่ายภาษี — ระบบจะบันทึกรายการ cashbook แยกตามรายการที่เลือก'}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 text-sm">
@@ -947,87 +998,118 @@ export default function AccountingWithholdingPayrollExecutivePage() {
                   <span className="font-semibold text-primary tabular-nums">{fmtBaht(selectedTaxTotal)}</span>
                 </p>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="wht-exec-pay-bank">บัญชีธนาคารที่ตัดจ่าย</Label>
-                <Select value={payTaxBankId} onValueChange={setPayTaxBankId}>
-                  <SelectTrigger id="wht-exec-pay-bank">
-                    <SelectValue placeholder="เลือกบัญชี ACTIVE" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {operatingBankOptions.map((b) => (
-                      <SelectItem key={b.id} value={b.id}>
-                        {b.bankName} · {b.accountName} [{b.accountCode}]
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="wht-exec-pay-date">วันที่ตัดบัญชี</Label>
-                <Input
-                  id="wht-exec-pay-date"
-                  type="date"
-                  value={payTaxDate}
-                  onChange={(e) => setPayTaxDate(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>เอกสารการโอน (บังคับแนบ)</Label>
-                <p className="text-[11px] text-muted-foreground leading-snug">
-                  แนบสลิปหรือหลักฐานการโอนภาษีหัก ณ ที่จ่าย — รองรับ PDF หรือรูปภาพ (สูงสุด 10 MB ต่อไฟล์)
-                </p>
-                <input
-                  ref={payTaxProofInputRef}
-                  type="file"
-                  multiple
-                  accept="application/pdf,image/jpeg,image/jpg,image/png,image/webp,image/gif,.pdf,.jpg,.jpeg,.png,.webp,.gif"
-                  className="hidden"
-                  onChange={(e) => void handleAttachPayTaxProof(e.target.files)}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="gap-2"
-                  disabled={attachProofBusy || payTaxBusy}
-                  onClick={() => payTaxProofInputRef.current?.click()}
-                >
-                  {attachProofBusy ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Paperclip className="h-4 w-4" />
-                  )}
-                  แนบเอกสาร
-                </Button>
-                {payTaxAttachments.length > 0 ? (
-                  <ul className="rounded-md border bg-muted/20 px-3 py-2 space-y-1.5">
-                    {payTaxAttachments.map((a) => (
-                      <li key={a.id} className="flex items-center gap-2 min-w-0 text-xs">
-                        <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 flex-1 truncate" title={a.fileName}>
-                          {a.fileName}
-                        </span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 shrink-0 px-2"
-                          disabled={attachProofBusy || payTaxBusy}
-                          onClick={() => handleRemovePayTaxProof(a.id)}
-                        >
-                          ลบ
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-xs text-amber-800 dark:text-amber-200/90">
-                    ยังไม่มีเอกสารแนบ — ต้องแนบก่อนจึงจะกดยืนยันจ่ายได้
-                  </p>
-                )}
-              </div>
+              {canMarkWhtStatusOnly ? (
+                <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2.5 dark:border-amber-800 dark:bg-amber-950/30 cursor-pointer">
+                  <Checkbox
+                    checked={payTaxStatusOnly}
+                    onCheckedChange={(v) => setPayTaxStatusOnly(v === true)}
+                    disabled={payTaxBusy}
+                    className="mt-0.5"
+                  />
+                  <span className="space-y-0.5">
+                    <span className="block font-medium text-amber-950 dark:text-amber-100">
+                      บันทึกสถานะอย่างเดียว (ไม่ตัดบัญชี)
+                    </span>
+                    <span className="block text-[11px] text-amber-900/80 dark:text-amber-200/80 leading-snug">
+                      ใช้เมื่อจ่ายภาษีไปแล้วช่วงระบบยังไม่สมบูรณ์ — อัปเดตเป็น «จ่ายแล้ว» โดยไม่ลง cashbook
+                      · เฉพาะ Admin · มีบันทึกใน audit log
+                    </span>
+                  </span>
+                </label>
+              ) : null}
+              {!payTaxStatusOnly ? (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="wht-exec-pay-bank">บัญชีธนาคารที่ตัดจ่าย</Label>
+                    <Select value={payTaxBankId} onValueChange={setPayTaxBankId}>
+                      <SelectTrigger id="wht-exec-pay-bank">
+                        <SelectValue placeholder="เลือกบัญชี ACTIVE" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {operatingBankOptions.map((b) => (
+                          <SelectItem key={b.id} value={b.id}>
+                            {b.bankName} · {b.accountName} [{b.accountCode}]
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="wht-exec-pay-date">วันที่ตัดบัญชี</Label>
+                    <Input
+                      id="wht-exec-pay-date"
+                      type="date"
+                      value={payTaxDate}
+                      onChange={(e) => setPayTaxDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>เอกสารการโอน (บังคับแนบ)</Label>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      แนบสลิปหรือหลักฐานการโอนภาษีหัก ณ ที่จ่าย — รองรับ PDF หรือรูปภาพ (สูงสุด 10 MB ต่อไฟล์)
+                    </p>
+                    <input
+                      ref={payTaxProofInputRef}
+                      type="file"
+                      multiple
+                      accept="application/pdf,image/jpeg,image/jpg,image/png,image/webp,image/gif,.pdf,.jpg,.jpeg,.png,.webp,.gif"
+                      className="hidden"
+                      onChange={(e) => void handleAttachPayTaxProof(e.target.files)}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2"
+                      disabled={attachProofBusy || payTaxBusy}
+                      onClick={() => payTaxProofInputRef.current?.click()}
+                    >
+                      {attachProofBusy ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Paperclip className="h-4 w-4" />
+                      )}
+                      แนบเอกสาร
+                    </Button>
+                    {payTaxAttachments.length > 0 ? (
+                      <ul className="rounded-md border bg-muted/20 px-3 py-2 space-y-1.5">
+                        {payTaxAttachments.map((a) => (
+                          <li key={a.id} className="flex items-center gap-2 min-w-0 text-xs">
+                            <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="min-w-0 flex-1 truncate" title={a.fileName}>
+                              {a.fileName}
+                            </span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 shrink-0 px-2"
+                              disabled={attachProofBusy || payTaxBusy}
+                              onClick={() => handleRemovePayTaxProof(a.id)}
+                            >
+                              ลบ
+                            </Button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-xs text-amber-800 dark:text-amber-200/90">
+                        ยังไม่มีเอกสารแนบ — ต้องแนบก่อนจึงจะกดยืนยันจ่ายได้
+                      </p>
+                    )}
+                  </div>
+                </>
+              ) : null}
             </div>
             <DialogFooter className="gap-2 sm:gap-0">
-              <Button type="button" variant="outline" disabled={payTaxBusy} onClick={() => setPayTaxOpen(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={payTaxBusy}
+                onClick={() => {
+                  setPayTaxOpen(false);
+                  setPayTaxStatusOnly(false);
+                }}
+              >
                 ยกเลิก
               </Button>
               <Button
@@ -1036,14 +1118,15 @@ export default function AccountingWithholdingPayrollExecutivePage() {
                 disabled={
                   payTaxBusy ||
                   attachProofBusy ||
-                  !payTaxBankId ||
                   selectedPayRows.length === 0 ||
-                  payTaxAttachments.length === 0
+                  (!payTaxStatusOnly && (!payTaxBankId || payTaxAttachments.length === 0))
                 }
                 onClick={() => void handleConfirmPayWhtTax()}
               >
                 {payTaxBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                ยืนยันจ่ายภาษี ({selectedPayRows.length})
+                {payTaxStatusOnly
+                  ? `บันทึกสถานะจ่ายแล้ว (${selectedPayRows.length})`
+                  : `ยืนยันจ่ายภาษี (${selectedPayRows.length})`}
               </Button>
             </DialogFooter>
           </DialogContent>

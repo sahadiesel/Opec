@@ -414,7 +414,19 @@ export const MODULE_FIRESTORE_SPECS: ModuleFirestoreSpec[] = [
     label: 'เจ้าหนี้การค้า (AP)',
     domain: 'accounting',
     fnPrefix: 'AccountsPayable',
-    paths: [{ path: 'accounts_payable/{id}', shape: 'crud' }],
+    paths: [
+      { path: 'accounts_payable/{id}', shape: 'crud' },
+      {
+        path: 'rental_contracts/{id}',
+        shape: 'read-only',
+        note: 'การเขียนใช้ custom approval transition ใน preserved firestore rules',
+      },
+      {
+        path: 'rental_payables/{id}',
+        shape: 'read-only',
+        note: 'สร้างโดย Cloud Scheduler หรือ accounting manager/admin',
+      },
+    ],
   },
   {
     moduleKey: 'withholding_tax_items',

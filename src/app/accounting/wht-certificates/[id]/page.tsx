@@ -450,37 +450,38 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
 
   const refreshFromMaster = async () => {
     if (!firestore || !currentUser || !wht || !certRef) return;
-    if (!wht.sourceVendorBillId?.trim()) {
+    if (!wht.sourceVendorBillId?.trim() && !wht.sourceRentalPayableId?.trim()) {
       toast({
         variant: 'destructive',
         title: 'อัปเดตไม่ได้',
-        description: 'เอกสารนี้ไม่มีอ้างอิงใบวางบิล — ไม่ทราบคู่ค้า',
+        description: 'เอกสารนี้ไม่มีอ้างอิงใบวางบิลหรือรอบค่าเช่า — ไม่ทราบคู่ค้า',
       });
       return;
     }
 
     setBusy('refresh-master');
     try {
-      const billSnap = await getDoc(doc(firestore, 'purchase_vendor_bills', wht.sourceVendorBillId));
-      if (!billSnap.exists()) {
-        toast({
-          variant: 'destructive',
-          title: 'อัปเดตไม่ได้',
-          description: 'ไม่พบใบวางบิลต้นทาง',
-        });
-        return;
+      let vendorId = '';
+      if (wht.sourceRentalPayableId?.trim()) {
+        const payableSnap = await getDoc(doc(firestore, 'rental_payables', wht.sourceRentalPayableId));
+        vendorId = payableSnap.exists() ? String(payableSnap.data().vendorId || '').trim() : '';
+      } else if (wht.sourceVendorBillId?.trim()) {
+        const billSnap = await getDoc(doc(firestore, 'purchase_vendor_bills', wht.sourceVendorBillId));
+        const bill = billSnap.exists()
+          ? ({ id: billSnap.id, ...billSnap.data() } as PurchaseVendorBill)
+          : null;
+        vendorId = bill?.vendorId?.trim() || '';
       }
-      const bill = { id: billSnap.id, ...billSnap.data() } as PurchaseVendorBill;
-      if (!bill.vendorId?.trim()) {
+      if (!vendorId) {
         toast({
           variant: 'destructive',
           title: 'อัปเดตไม่ได้',
-          description: 'ใบวางบิลไม่มีรหัสคู่ค้า',
+          description: 'ไม่พบรายการต้นทางหรือรหัสคู่ค้า',
         });
         return;
       }
 
-      const vendorSnap = await getDoc(doc(firestore, 'vendors', bill.vendorId));
+      const vendorSnap = await getDoc(doc(firestore, 'vendors', vendorId));
       if (!vendorSnap.exists()) {
         toast({
           variant: 'destructive',
@@ -561,7 +562,13 @@ export default function WhtCertificateDetailPage({ params }: { params: Promise<{
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="flex items-center gap-3 flex-wrap">
           <Button variant="ghost" size="icon" asChild>
-            <Link href={`/store/vendor-bills/${wht.sourceVendorBillId}`}>
+            <Link
+              href={
+                wht.sourceRentalContractId
+                  ? `/accounting/rental-contracts/${wht.sourceRentalContractId}`
+                  : `/store/vendor-bills/${wht.sourceVendorBillId}`
+              }
+            >
               <ArrowLeft className="h-5 w-5" />
             </Link>
           </Button>

@@ -1790,7 +1790,108 @@ export interface AccountsPayable {
   createdAt: number;
   updatedAt: number;
   /** สร้างจากใบรับวางบิลคลัง */
-  origin?: 'STORE_VENDOR_BILL';
+  origin?: 'STORE_VENDOR_BILL' | 'RENTAL_CONTRACT';
+  /** รอบค่าเช่าที่สร้าง AP นี้ */
+  rentalPayableId?: string;
+  rentalContractId?: string;
+}
+
+export type RentalContractStatus =
+  | 'DRAFT'
+  | 'PENDING_APPROVAL'
+  | 'ACTIVE'
+  | 'REJECTED'
+  | 'CANCELLED'
+  | 'EXPIRED';
+
+export type RentalPayableStatus = 'PENDING' | 'PAID' | 'VOID';
+
+/** ประเภทสัญญาเช่าภายใต้เมนูการจัดการสัญญา */
+export type LeaseContractKind = 'PROPERTY' | 'VEHICLE';
+
+/** สัญญาเช่าที่ OPEC เป็นผู้เช่า — collection `rental_contracts` */
+export interface RentalContract {
+  id: string;
+  contractNo: string;
+  /** ไม่ระบุ = PROPERTY (สัญญาเดิม) */
+  leaseKind?: LeaseContractKind;
+  lessorVendorId: string;
+  lessorVendorName: string;
+  tenantName: string;
+  rentedItemDescription: string;
+  monthlyRentAmount: number;
+  startDate: string;
+  endDate: string;
+  /** วันที่ครบกำหนดของแต่ละเดือน (1–31; เกินวันสุดท้ายจะใช้วันสุดท้ายของเดือน) */
+  paymentDayOfMonth: number;
+  withholdingTaxRatePercent: number;
+  status: RentalContractStatus;
+  /** ทำสัญญาที่ */
+  madeAtLocation?: string;
+  /** วันที่ทำสัญญา (YYYY-MM-DD) */
+  contractDate?: string;
+  /** ที่ตั้ง/รายละเอียดทรัพย์สิน (บ้าน อาคาร โรงงาน) */
+  propertyAddress?: string;
+  propertyCategory?: 'HOUSE' | 'BUILDING' | 'FACTORY' | 'OTHER';
+  /** ยี่ห้อรถยนต์ */
+  vehicleBrand?: string;
+  /** เลขทะเบียน */
+  vehiclePlateNo?: string;
+  /** ระยะเวลาเช่า (เดือน) — สัญญาเช่ารถ */
+  leaseDurationMonths?: number;
+  /** ชำระค่าเช่าล่วงหน้ากี่เดือน */
+  advanceRentMonths?: number;
+  /** เงินประกันการเช่า */
+  securityDepositAmount?: number;
+  notes?: string;
+  createdAt: number;
+  createdByUid: string;
+  createdByName: string;
+  updatedAt: number;
+  submittedAt?: number;
+  submittedByUid?: string;
+  submittedByName?: string;
+  approvedAt?: number;
+  approvedByUid?: string;
+  approvedByName?: string;
+  rejectedAt?: number;
+  rejectedByUid?: string;
+  rejectedByName?: string;
+  rejectionReason?: string;
+  cancelledAt?: number;
+  cancelledByUid?: string;
+  cancelledByName?: string;
+  cancellationReason?: string;
+}
+
+/** ค่าเช่ารายเดือนที่รอฝ่ายบัญชีทำจ่าย — collection `rental_payables` */
+export interface RentalPayable {
+  id: string;
+  contractId: string;
+  contractNo: string;
+  vendorId: string;
+  vendorName: string;
+  periodMonth: string;
+  dueDate: string;
+  description: string;
+  grossAmount: number;
+  withholdingTaxRatePercent: number;
+  withholdingTaxAmount: number;
+  netPayableAmount: number;
+  status: RentalPayableStatus;
+  apEntryId: string;
+  createdAt: number;
+  updatedAt: number;
+  paidAt?: number;
+  paidByUid?: string;
+  paidByName?: string;
+  bankAccountId?: string;
+  paymentMethod?: PaymentMethod;
+  cashbookEntryId?: string;
+  cashbookEntryNo?: string;
+  whtCertificateDocumentId?: string;
+  voidedAt?: number;
+  voidReason?: string;
 }
 
 export interface AccountsReceivable {
@@ -2219,6 +2320,11 @@ export interface OfficePayrollLine {
   whtTaxPaidByUid?: string;
   whtTaxPaidByName?: string;
   whtTaxPaymentBankAccountId?: string;
+  /**
+   * true = บันทึกสถานะจ่ายภาษีแล้วโดยไม่ลง cashbook/ตัดบัญชี
+   * (ใช้กับรายการที่จ่ายจริงไปแล้วช่วงระบบยังไม่สมบูรณ์)
+   */
+  whtTaxPaidWithoutCashbook?: boolean;
   /** หลักฐานการโอนภาษีหัก ณ ที่จ่าย — แนบตอนจ่ายภาษี */
   whtTaxPaymentProofAttachments?: WhtTaxPaymentProofAttachment[];
   /** นำส่งประกันสังคม (ฝั่งลูกจ้าง) แล้ว — ref cashbook */
@@ -2475,6 +2581,11 @@ export interface PayrollBatchLine {
   whtTaxPaidByUid?: string;
   whtTaxPaidByName?: string;
   whtTaxPaymentBankAccountId?: string;
+  /**
+   * true = บันทึกสถานะจ่ายภาษีแล้วโดยไม่ลง cashbook/ตัดบัญชี
+   * (ใช้กับรายการที่จ่ายจริงไปแล้วช่วงระบบยังไม่สมบูรณ์)
+   */
+  whtTaxPaidWithoutCashbook?: boolean;
   /** หลักฐานการโอนภาษีหัก ณ ที่จ่าย — แนบตอนจ่ายภาษี */
   whtTaxPaymentProofAttachments?: WhtTaxPaymentProofAttachment[];
   /** นำส่งประกันสังคม (ฝั่งลูกจ้าง) แล้ว — ref cashbook */
@@ -2925,6 +3036,9 @@ export interface WithholdingAtSourceItem {
   remittedNote?: string;
   createdAt: number;
   updatedAt: number;
+  /** แหล่งที่มาจากสัญญาเช่า (ถ้ามี) */
+  sourceRentalContractId?: string;
+  sourceRentalPayableId?: string;
 }
 
 /** หนังสือรับรองหัก ณ ที่จ่าย ม.50 ทวิ — สถานะเอกสารหลัก */
@@ -3079,6 +3193,9 @@ export interface WithholdingCertificateDocument {
   sourcePurchaseId: string;
   sourceCashbookEntryId?: string;
   sourceWithholdingAtSourceItemId?: string;
+  /** แหล่งที่มาจากสัญญาเช่า (ถ้ามี) */
+  sourceRentalContractId?: string;
+  sourceRentalPayableId?: string;
 
   /** อนุญาตออกเอกสารทางการแม้ไม่มีเลขผู้เสียภาษีคู่ค้า — เฉพาะแอดมิน + ระบุเหตุผล */
   payeeTaxIdMissingOverride?: boolean;

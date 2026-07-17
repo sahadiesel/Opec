@@ -145,6 +145,12 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
     items: [
       { key: 'ap_bills', title: 'รับวางบิลเจ้าหนี้ (AP Bills)', href: '/ap-bills', icon: Inbox },
       { key: 'accounts_payable', title: 'เจ้าหนี้การค้า (AP)', href: '/accounts-payable', icon: ArrowDownLeft },
+      {
+        key: 'accounts_payable',
+        title: 'การจัดการสัญญา',
+        href: '/accounting/contracts',
+        icon: FileSignature,
+      },
     ],
   },
   {
@@ -246,12 +252,13 @@ function sidebarMatrixVisibility(user: User, item: NavItem): boolean | null {
   return sidebarMatrixVisibilityForPath(user, item.href.split('#')[0]);
 }
 
-/** ลำดับเมนูย่อยภายใต้ «การจัดการคลังสินค้า/เอกสาร» — คู่ค้า → PR → PO → รับวางบิล → หน้าคลัง */
+/** ลำดับเมนูย่อยภายใต้ «การจัดการคลังสินค้า/เอกสาร» — คู่ค้า → PR → PO → รับวางบิล → หัก ณ ที่จ่ายคู่ค้า → หน้าคลัง */
 const OPS_WAREHOUSE_SUB_PATHS = [
   '/vendors',
   '/store/purchase-requests',
   '/purchases',
   '/store/vendor-bills',
+  '/accounting/withholding-vendor',
   '/store',
 ] as const;
 
@@ -339,6 +346,12 @@ const navGroups: NavGroup[] = [
         title: 'รับวางบิล (Vendor billing)',
         href: '/store/vendor-bills',
         icon: FileText,
+      },
+      {
+        key: 'withholding_tax_items',
+        title: 'หัก ณ ที่จ่าย (คู่ค้า)',
+        href: '/accounting/withholding-vendor',
+        icon: Percent,
       },
       { key: 'store_inventory', title: UI_LABELS.STORE, href: '/store', icon: Warehouse },
       {
@@ -928,7 +941,7 @@ export function SidebarNav({
                         <SidebarMenuItem>
                           <CollapsibleTrigger asChild>
                             <SidebarMenuButton
-                              tooltip="คู่ค้า · PR · ใบสั่งซื้อ · รับวางบิล · คลัง"
+                              tooltip="คู่ค้า · PR · ใบสั่งซื้อ · รับวางบิล · หัก ณ ที่จ่ายคู่ค้า · คลัง"
                               className="transition-all duration-200"
                             >
                               <Warehouse className="h-4 w-4 text-muted-foreground" />

@@ -2,6 +2,9 @@
 
 import { Firestore, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { recordCashbookMovementWithBalance } from '@/lib/services/cashbook-bank-movement';
+import { writeAuditLog } from '@/lib/services/audit-service';
+import { isSystemAdmin } from '@/lib/permission-core';
+import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import {
   isOfficePayrollWagePaid,
   isOfficePayrollWhtTaxPaid,
@@ -16,6 +19,13 @@ import type {
   User,
   WhtTaxPaymentProofAttachment,
 } from '@/lib/types';
+
+/** บันทึกสถานะจ่ายภาษีโดยไม่ตัดบัญชี — เฉพาะ Admin */
+function assertCanMarkWhtTaxPaidWithoutCashbook(user: User): void {
+  if (!isSystemAdmin(user) && !isSimpleAdmin(user)) {
+    throw new Error('บันทึกสถานะจ่ายภาษีโดยไม่ตัดบัญชีได้เฉพาะผู้ดูแลระบบ (Admin) เท่านั้น');
+  }
+}
 
 function mergeWhtTaxProofAttachments(
   existing: WhtTaxPaymentProofAttachment[] | undefined,
@@ -95,6 +105,49 @@ export async function recordWorkerPayrollWhtTaxPayment(
   return { cashbookEntryId, entryNo };
 }
 
+/**
+ * บันทึกสถานะจ่ายภาษีหัก ณ ที่จ่ายแล้วเท่านั้น — ไม่ลง cashbook / ไม่ตัดบัญชีธนาคาร
+ * ใช้กับรายการที่จ่ายจริงไปแล้วช่วงระบบยังไม่สมบูรณ์
+ */
+export async function markWorkerPayrollWhtTaxPaidWithoutCashbook(
+  db: Firestore,
+  user: User,
+  params: { batch: PayrollBatch; line: PayrollBatchLine },
+): Promise<void> {
+  assertCanMarkWhtTaxPaidWithoutCashbook(user);
+  const { batch, line } = params;
+  if (!isWorkerPayrollWagePaid(batch, line)) {
+    throw new Error('ยังไม่ได้จ่ายค่าแรง/เงินเดือน — ไม่สามารถบันทึกสถานะจ่ายภาษีได้');
+  }
+  if (isWorkerPayrollWhtTaxPaid(line)) {
+    throw new Error('รายการนี้จ่ายภาษีหัก ณ ที่จ่ายแล้ว');
+  }
+  const now = Date.now();
+  const earner = (line.workerNameSnapshot || line.workerId || '').trim() || line.id;
+  await updateDoc(doc(db, 'payroll_batches', batch.id, 'lines', line.id), {
+    whtTaxPaidAt: now,
+    whtTaxPaidByUid: user.id,
+    whtTaxPaidByName: user.displayName || user.email || user.id,
+    whtTaxPaidWithoutCashbook: true,
+    updatedAt: now,
+  });
+  await writeAuditLog(db, user, {
+    actionType: 'UPDATE',
+    entityType: 'PayrollBatchLine',
+    entityId: line.id,
+    payrollBatchId: batch.id,
+    entityLabel: `WHT status-only · ลูกจ้าง ${earner}`,
+    sourceModule: 'accounting',
+    sourcePath: '/accounting/withholding-payroll',
+    reasonCode: 'WHT_TAX_PAID_STATUS_ONLY',
+    reasonText: 'บันทึกสถานะจ่ายภาษีหัก ณ ที่จ่ายโดยไม่ลง cashbook (legacy / ไม่ตัดบัญชี)',
+    beforeSummary: 'รอจ่าย',
+    afterSummary: `จ่ายแล้ว (ไม่ตัดบัญชี) · batch ${batch.id} · ${earner}`,
+    changedFields: ['whtTaxPaidAt', 'whtTaxPaidWithoutCashbook', 'whtTaxPaidByUid', 'whtTaxPaidByName'],
+    linkedIds: [batch.id, line.id],
+  });
+}
+
 export async function recordOfficePayrollWhtTaxPayment(
   db: Firestore,
   user: User,
@@ -161,6 +214,46 @@ export async function recordOfficePayrollWhtTaxPayment(
   });
 
   return { cashbookEntryId, entryNo };
+}
+
+/** บันทึกสถานะจ่ายภาษีแล้วเท่านั้น — ไม่ลง cashbook / ไม่ตัดบัญชี (พนักงานออฟฟิศ) */
+export async function markOfficePayrollWhtTaxPaidWithoutCashbook(
+  db: Firestore,
+  user: User,
+  params: { run: OfficePayrollRun; line: OfficePayrollLine },
+): Promise<void> {
+  assertCanMarkWhtTaxPaidWithoutCashbook(user);
+  const { run, line } = params;
+  if (!isOfficePayrollWagePaid(run, line)) {
+    throw new Error('ยังไม่ได้จ่ายเงินเดือน — ไม่สามารถบันทึกสถานะจ่ายภาษีได้');
+  }
+  if (isOfficePayrollWhtTaxPaid(line)) {
+    throw new Error('รายการนี้จ่ายภาษีหัก ณ ที่จ่ายแล้ว');
+  }
+  const now = Date.now();
+  const earner = (line.staffName || line.staffId || '').trim() || line.id;
+  const runLabel = run.payrollRunNo || run.id;
+  await updateDoc(doc(db, 'office_payroll_runs', run.id, 'lines', line.id), {
+    whtTaxPaidAt: now,
+    whtTaxPaidByUid: user.id,
+    whtTaxPaidByName: user.displayName || user.email || user.id,
+    whtTaxPaidWithoutCashbook: true,
+    updatedAt: now,
+  });
+  await writeAuditLog(db, user, {
+    actionType: 'UPDATE',
+    entityType: 'OfficePayrollLine',
+    entityId: line.id,
+    entityLabel: `WHT status-only · ออฟฟิศ ${earner}`,
+    sourceModule: 'accounting',
+    sourcePath: '/accounting/withholding-payroll',
+    reasonCode: 'WHT_TAX_PAID_STATUS_ONLY',
+    reasonText: 'บันทึกสถานะจ่ายภาษีหัก ณ ที่จ่ายโดยไม่ลง cashbook (legacy / ไม่ตัดบัญชี)',
+    beforeSummary: 'รอจ่าย',
+    afterSummary: `จ่ายแล้ว (ไม่ตัดบัญชี) · งวด ${runLabel} · ${earner}`,
+    changedFields: ['whtTaxPaidAt', 'whtTaxPaidWithoutCashbook', 'whtTaxPaidByUid', 'whtTaxPaidByName'],
+    linkedIds: [run.id, line.id],
+  });
 }
 
 /** งวดเงินเดือนผู้บริหาร — โครงสร้างบรรทัดเดียวกับ office payroll */
@@ -230,4 +323,44 @@ export async function recordExecutivePayrollWhtTaxPayment(
   });
 
   return { cashbookEntryId, entryNo };
+}
+
+/** บันทึกสถานะจ่ายภาษีแล้วเท่านั้น — ไม่ลง cashbook / ไม่ตัดบัญชี (ผู้บริหาร) */
+export async function markExecutivePayrollWhtTaxPaidWithoutCashbook(
+  db: Firestore,
+  user: User,
+  params: { run: OfficePayrollRun; line: OfficePayrollLine },
+): Promise<void> {
+  assertCanMarkWhtTaxPaidWithoutCashbook(user);
+  const { run, line } = params;
+  if (!isOfficePayrollWagePaid(run, line)) {
+    throw new Error('ยังไม่ได้จ่ายเงินเดือน — ไม่สามารถบันทึกสถานะจ่ายภาษีได้');
+  }
+  if (isOfficePayrollWhtTaxPaid(line)) {
+    throw new Error('รายการนี้จ่ายภาษีหัก ณ ที่จ่ายแล้ว');
+  }
+  const now = Date.now();
+  const earner = (line.staffName || line.staffId || '').trim() || line.id;
+  const runLabel = run.payrollRunNo || run.id;
+  await updateDoc(doc(db, 'executive_payroll_runs', run.id, 'lines', line.id), {
+    whtTaxPaidAt: now,
+    whtTaxPaidByUid: user.id,
+    whtTaxPaidByName: user.displayName || user.email || user.id,
+    whtTaxPaidWithoutCashbook: true,
+    updatedAt: now,
+  });
+  await writeAuditLog(db, user, {
+    actionType: 'UPDATE',
+    entityType: 'ExecutivePayrollLine',
+    entityId: line.id,
+    entityLabel: `WHT status-only · ผู้บริหาร ${earner}`,
+    sourceModule: 'accounting',
+    sourcePath: '/accounting/withholding-payroll/executive',
+    reasonCode: 'WHT_TAX_PAID_STATUS_ONLY',
+    reasonText: 'บันทึกสถานะจ่ายภาษีหัก ณ ที่จ่ายโดยไม่ลง cashbook (legacy / ไม่ตัดบัญชี)',
+    beforeSummary: 'รอจ่าย',
+    afterSummary: `จ่ายแล้ว (ไม่ตัดบัญชี) · งวด ${runLabel} · ${earner}`,
+    changedFields: ['whtTaxPaidAt', 'whtTaxPaidWithoutCashbook', 'whtTaxPaidByUid', 'whtTaxPaidByName'],
+    linkedIds: [run.id, line.id],
+  });
 }

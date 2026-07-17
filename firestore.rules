@@ -617,6 +617,27 @@ service cloud.firestore {
       allow read: if rs19();
       allow write: if blockExecutiveWrite() && rs19();
     }
+    match /rental_contracts/{id} {
+      allow read: if rs19();
+      allow create: if blockExecutiveWrite()
+        && rs19()
+        && request.resource.data.status == 'DRAFT';
+      allow update: if blockExecutiveWrite() && (
+        isAccountingManagerOrAdmin()
+        || (
+          isInternalUser()
+          && userRole() == 'accounting_officer'
+          && resource.data.status in ['DRAFT', 'REJECTED']
+          && request.resource.data.status == 'PENDING_APPROVAL'
+        )
+      );
+      allow delete: if isAdmin();
+    }
+    match /rental_payables/{id} {
+      allow read: if rs19();
+      allow create, update: if isAccountingManagerOrAdmin();
+      allow delete: if isAdmin();
+    }
     // Trip billing (M1→D1) — ซิงก์จาก mobilization + timesheet
     match /mob_cycle_billing_reviews/{id} {
       allow read: if rs0() || rs12();
@@ -755,6 +776,28 @@ service cloud.firestore {
     }
     //    generated gate  path 
     // ===== Critical infrastructure paths (not in matrix) =====
+    // Rental contracts — custom approval transitions (preserve when regenerating matrix rules)
+    match /rental_contracts/{id} {
+      allow read: if rs19();
+      allow create: if blockExecutiveWrite()
+        && rs19()
+        && request.resource.data.status == 'DRAFT';
+      allow update: if blockExecutiveWrite() && (
+        isAccountingManagerOrAdmin()
+        || (
+          isInternalUser()
+          && userRole() == 'accounting_officer'
+          && resource.data.status in ['DRAFT', 'REJECTED']
+          && request.resource.data.status == 'PENDING_APPROVAL'
+        )
+      );
+      allow delete: if isAdmin();
+    }
+    match /rental_payables/{id} {
+      allow read: if rs19();
+      allow create, update: if isAccountingManagerOrAdmin();
+      allow delete: if isAdmin();
+    }
     match /users/{userId} {
       allow get: if request.auth != null && (
         request.auth.uid == userId

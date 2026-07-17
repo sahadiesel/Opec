@@ -3,6 +3,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { PO_ACTIVE_AUTO_DAILY_FN_ACTOR, runPoActiveAutoDailyScheduledJob } from './poActiveAutoDailyRun';
+import { runRentalContractDailyJob } from './rentalContractSchedule';
 
 const REGION = 'asia-southeast1';
 
@@ -32,6 +33,26 @@ export const poActiveAutoDailySchedule = onSchedule(
     logger.info('[poActiveAutoDailySchedule] start', { actor: PO_ACTIVE_AUTO_DAILY_FN_ACTOR });
     const totals = await runPoActiveAutoDailyScheduledJob(db);
     logger.info('[poActiveAutoDailySchedule] done', {
+      ...totals,
+      durationMs: Date.now() - started,
+    });
+  },
+);
+
+/** สร้างเจ้าหนี้ค่าเช่ารายเดือนเมื่อถึงวันครบกำหนด — id deterministic ป้องกันสร้างซ้ำ */
+export const rentalContractDailySchedule = onSchedule(
+  {
+    schedule: '20 0 * * *',
+    timeZone: 'Asia/Bangkok',
+    region: REGION,
+    memory: '256MiB',
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const started = Date.now();
+    logger.info('[rentalContractDailySchedule] start');
+    const totals = await runRentalContractDailyJob(db);
+    logger.info('[rentalContractDailySchedule] done', {
       ...totals,
       durationMs: Date.now() - started,
     });
