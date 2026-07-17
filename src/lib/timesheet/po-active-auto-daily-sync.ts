@@ -215,6 +215,16 @@ export async function syncPoActiveAutoDailyForAssignment(
         skipped++;
         continue;
       }
+      // อย่าทับ M1/D1 ที่แก้มือแล้วแต่ยังค้าง flag auto (กัน D1 หายแล้ว trip billing รอค้าง)
+      const curEvent = String(cur.eventType || '');
+      if (
+        curEvent === 'mobilization_day' ||
+        curEvent === 'demobilization_day' ||
+        (curEvent !== kind && curEvent !== 'work_day' && curEvent !== 'standby_day')
+      ) {
+        skipped++;
+        continue;
+      }
       batch.update(
         dRef,
         omitUndefined({

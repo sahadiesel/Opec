@@ -197,11 +197,13 @@ export function validatePayrollOfficeWhtPrint(input: {
     }
     const nidDigits = (staff.nationalId || '').replace(/\D/g, '');
     const tidDigits = (staff.taxId || '').replace(/\D/g, '');
-    if (nidDigits.length !== 13 && tidDigits.length !== 13) {
+    if (reg === 'executive_payroll_staff' && nidDigits.length !== 13) {
       errors.push(
-        reg === 'executive_payroll_staff'
-          ? 'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ต้องมีเลขบัตรประชาชน 13 หลักหรือเลขผู้เสียภาษี 13 หลัก (กรอกในทะเบียนผู้บริหาร หรือผูก linkedOfficeStaffId เพื่อดึงจากทะเบียน office_staff)'
-          : 'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: พนักงานต้องมีเลขบัตรประชาชน 13 หลักหรือเลขผู้เสียภาษี 13 หลักในระบบ',
+        'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ผู้บริหารต้องมีเลขบัตรประชาชน 13 หลัก (กรอกในทะเบียนผู้บริหาร หรือผูก linkedOfficeStaffId เพื่อดึงจากทะเบียน office_staff)',
+      );
+    } else if (reg !== 'executive_payroll_staff' && nidDigits.length !== 13 && tidDigits.length !== 13) {
+      errors.push(
+        'ไม่สามารถออกใบหัก ณ ที่จ่ายได้: พนักงานต้องมีเลขบัตรประชาชน 13 หลักหรือเลขผู้เสียภาษี 13 หลักในระบบ',
       );
     }
     if (!(staff.address || '').trim() || (staff.address || '').trim().length < 5) {
@@ -237,6 +239,14 @@ export function validatePayrollOfficeWhtPrint(input: {
     const wht = pitAmountOffice(line);
     if (wht <= 0.005) {
       warnings.push('ไม่มีภาษีหัก ณ ที่จ่ายในงวดนี้ — แสดงยอดภาษีเป็น 0.00');
+    }
+    const pitMode = line.hrLineAdjustments?.pitMode ?? 'SYSTEM';
+    if (
+      reg === 'executive_payroll_staff' &&
+      (pitMode === 'MANUAL_PERCENT' || pitMode === 'MANUAL_AMOUNT') &&
+      !(line.hrLineAdjustments?.pitManualIncomeLabel || '').trim()
+    ) {
+      errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ระบุชื่อรายการหัก ณ ที่จ่ายแบบกำหนดเองก่อนพิมพ์เอกสาร');
     }
   }
 

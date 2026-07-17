@@ -64,6 +64,7 @@ export type ApplyOfficeLineHrAdjustmentsInput = {
   pitMode?: OfficePayrollPitMode;
   pitManualPercent?: number | null;
   pitManualAmountBaht?: number | null;
+  pitManualIncomeLabel?: string | null;
 };
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
 import { writeAuditLog } from './audit-service';
@@ -2223,6 +2224,10 @@ export class PayrollService {
     });
 
     const trimmedNotes = input.notes?.trim();
+    const pitManualIncomeLabel =
+      pitMode === 'MANUAL_PERCENT' || pitMode === 'MANUAL_AMOUNT'
+        ? (input.pitManualIncomeLabel || '').trim()
+        : '';
     const hrLineAdjustments: OfficePayrollLineHrAdjustments = {
       allowanceItems: input.allowanceItems,
       deductionItems: input.deductionItems,
@@ -2233,6 +2238,7 @@ export class PayrollService {
         pitMode === 'MANUAL_PERCENT' ? Math.max(0, Math.min(100, Number(input.pitManualPercent) || 0)) : null,
       pitManualAmountBaht:
         pitMode === 'MANUAL_AMOUNT' ? Math.max(0, Number(input.pitManualAmountBaht) || 0) : null,
+      pitManualIncomeLabel: pitManualIncomeLabel || null,
       updatedAt: Date.now(),
       updatedBy: user.displayName || user.email || user.id,
     };

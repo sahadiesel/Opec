@@ -313,14 +313,21 @@ function buildReviewFromTimesheets(
     .filter(Boolean)
     .sort();
 
-  let tripAnchorStartDate =
-    mobDays[0] ||
-    String(assignment.mobStandbyDate || '').slice(0, 10) ||
-    String(assignment.mobWorkingStartDate || '').slice(0, 10) ||
-    String(assignment.startDate || '').slice(0, 10);
+  let tripAnchorStartDate = mobDays[0] || '';
 
+  // รอบที่ไม่มี M1 (เช่น work_day หลัง D1 จาก auto) — ใช้วันแรกของรอบนี้
+  // ห้าม fallback ไป mobStandby/start ของ assignment เพราะจะไปชน batch รอบที่ปิด D1 แล้ว
   if (!tripAnchorStartDate && timesheets.length > 0) {
-    tripAnchorStartDate = [...timesheets.map((t) => t.date)].sort()[0];
+    tripAnchorStartDate = [...timesheets.map((t) => String(t.date || '').slice(0, 10))]
+      .filter(Boolean)
+      .sort()[0] || '';
+  }
+
+  if (!tripAnchorStartDate) {
+    tripAnchorStartDate =
+      String(assignment.mobStandbyDate || '').slice(0, 10) ||
+      String(assignment.mobWorkingStartDate || '').slice(0, 10) ||
+      String(assignment.startDate || '').slice(0, 10);
   }
   if (!tripAnchorStartDate) return null;
 
@@ -450,7 +457,7 @@ export async function syncMobCycleBillingReviewsForPo(
   return { reviews, batches };
 }
 
-/** คนเดียวในชุดวางบิล — เก็บรอบที่ M1 เริ่มเร็วสุด (กันซ้ำจาก sync เก่า) */
+/** คนเดียวในชุดวางบิล — เก็บรอบที่มี D1 / จบแล้วก่อน แล้วค่อยเลือกรอบที่ M1 เริ่มเร็วสุด */
 function dedupeBatchMembersByWorker(
   members: MobCycleBillingReview[],
 ): MobCycleBillingReview[] {
@@ -459,7 +466,18 @@ function dedupeBatchMembersByWorker(
     const wid = String(m.workerId || '').trim();
     if (!wid) continue;
     const prev = byWorker.get(wid);
-    if (!prev || m.tripAnchorStartDate < prev.tripAnchorStartDate) {
+    if (!prev) {
+      byWorker.set(wid, m);
+      continue;
+    }
+    const prevDone = !!prev.tripEndDate;
+    const currDone = !!m.tripEndDate;
+    if (currDone && !prevDone) {
+      byWorker.set(wid, m);
+      continue;
+    }
+    if (prevDone && !currDone) continue;
+    if (m.tripAnchorStartDate < prev.tripAnchorStartDate) {
       byWorker.set(wid, m);
     }
   }

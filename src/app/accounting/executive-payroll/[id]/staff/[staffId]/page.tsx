@@ -124,6 +124,7 @@ export default function ExecutivePayrollRunStaffLinePage({
   const [pitMode, setPitMode] = useState<OfficePayrollPitMode>('SYSTEM');
   const [pitManualPercent, setPitManualPercent] = useState('');
   const [pitManualAmountBaht, setPitManualAmountBaht] = useState('');
+  const [pitManualIncomeLabel, setPitManualIncomeLabel] = useState('');
 
   useEffect(() => {
     if (!line) {
@@ -134,6 +135,7 @@ export default function ExecutivePayrollRunStaffLinePage({
       setPitMode('SYSTEM');
       setPitManualPercent('');
       setPitManualAmountBaht('');
+      setPitManualIncomeLabel('');
       return;
     }
     const a = line.hrLineAdjustments?.allowanceItems?.length
@@ -156,6 +158,7 @@ export default function ExecutivePayrollRunStaffLinePage({
     setPitMode(pm);
     setPitManualPercent(pm === 'MANUAL_PERCENT' ? String(line.hrLineAdjustments?.pitManualPercent ?? '') : '');
     setPitManualAmountBaht(pm === 'MANUAL_AMOUNT' ? String(line.hrLineAdjustments?.pitManualAmountBaht ?? '') : '');
+    setPitManualIncomeLabel(line.hrLineAdjustments?.pitManualIncomeLabel?.trim() ?? '');
   }, [line]);
 
   const runBlockedForHrEditBool =
@@ -175,6 +178,13 @@ export default function ExecutivePayrollRunStaffLinePage({
       const deductionItems = deductionRows
         .filter((r) => r.label.trim() && Number(r.amount) > 0)
         .map((r) => ({ label: r.label.trim(), amount: Number(r.amount) }));
+      const usesManualPit = pitMode === 'MANUAL_PERCENT' || pitMode === 'MANUAL_AMOUNT';
+      if (usesManualPit && !pitManualIncomeLabel.trim()) {
+        throw new Error('ระบุชื่อรายการภาษีหัก ณ ที่จ่าย เช่น เบี้ยเลี้ยงประชุมประจำเดือน');
+      }
+      if (pitMode === 'MANUAL_PERCENT' && !(Number(pitManualPercent) > 0)) {
+        throw new Error('เลือกหรือกรอกอัตราหัก ณ ที่จ่ายมากกว่า 0%');
+      }
 
       const svc = new PayrollService(firestore);
       await svc.applyExecutiveLineHrAdjustments(runId, line.id, currentUser as User, {
@@ -185,6 +195,7 @@ export default function ExecutivePayrollRunStaffLinePage({
         pitMode,
         pitManualPercent: pitMode === 'MANUAL_PERCENT' ? Number(pitManualPercent) || 0 : null,
         pitManualAmountBaht: pitMode === 'MANUAL_AMOUNT' ? Number(pitManualAmountBaht) || 0 : null,
+        pitManualIncomeLabel: usesManualPit ? pitManualIncomeLabel.trim() : null,
       });
       toast({
         title: 'บันทึกการปรับยอดแล้ว',
@@ -214,6 +225,7 @@ export default function ExecutivePayrollRunStaffLinePage({
     pitMode,
     pitManualPercent,
     pitManualAmountBaht,
+    pitManualIncomeLabel,
     toast,
   ]);
 
@@ -498,7 +510,12 @@ export default function ExecutivePayrollRunStaffLinePage({
                 <Label className="font-semibold text-sm">ภาษีหัก ณ ที่จ่าย (ภงด.)</Label>
                 <Select
                   value={pitMode}
-                  onValueChange={(v) => setPitMode(v as OfficePayrollPitMode)}
+                  onValueChange={(v) => {
+                    setPitMode(v as OfficePayrollPitMode);
+                    if (v === 'SYSTEM') {
+                      setPitManualIncomeLabel('');
+                    }
+                  }}
                   disabled={!canSaveAdjustments}
                 >
                   <SelectTrigger className="max-w-md">
@@ -510,33 +527,63 @@ export default function ExecutivePayrollRunStaffLinePage({
                     <SelectItem value="MANUAL_AMOUNT">กำหนดเองเป็นจำนวนเงิน (บาท)</SelectItem>
                   </SelectContent>
                 </Select>
-                {pitMode === 'MANUAL_PERCENT' ? (
-                  <div className="flex items-center gap-2 max-w-xs">
-                    <Input
-                      type="number"
-                      min={0}
-                      max={100}
-                      step={0.01}
-                      placeholder="เช่น 10"
-                      value={pitManualPercent}
-                      onChange={(e) => setPitManualPercent(e.target.value)}
-                      disabled={!canSaveAdjustments}
-                    />
-                    <span className="text-sm text-muted-foreground">% ของ Gross</span>
-                  </div>
-                ) : null}
-                {pitMode === 'MANUAL_AMOUNT' ? (
-                  <div className="flex items-center gap-2 max-w-xs">
-                    <Input
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      placeholder="บาท"
-                      value={pitManualAmountBaht}
-                      onChange={(e) => setPitManualAmountBaht(e.target.value)}
-                      disabled={!canSaveAdjustments}
-                    />
-                    <span className="text-sm text-muted-foreground">บาท</span>
+                {pitMode !== 'SYSTEM' ? (
+                  <div className="grid gap-3 md:grid-cols-[1fr_220px]">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">ระบุว่าเป็นค่าอะไร</Label>
+                      <Input
+                        placeholder="เช่น เบี้ยเลี้ยงประชุมประจำเดือน"
+                        value={pitManualIncomeLabel}
+                        onChange={(e) => setPitManualIncomeLabel(e.target.value)}
+                        disabled={!canSaveAdjustments}
+                      />
+                    </div>
+                    {pitMode === 'MANUAL_PERCENT' ? (
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">อัตราการหัก</Label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={0.01}
+                            placeholder="เช่น 5, 10, 15"
+                            value={pitManualPercent}
+                            onChange={(e) => setPitManualPercent(e.target.value)}
+                            disabled={!canSaveAdjustments}
+                          />
+                          <span className="text-sm text-muted-foreground">%</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {['5', '10', '15'].map((p) => (
+                            <Button
+                              key={p}
+                              type="button"
+                              size="sm"
+                              variant={pitManualPercent === p ? 'default' : 'outline'}
+                              className="h-7 px-2 text-xs"
+                              disabled={!canSaveAdjustments}
+                              onClick={() => setPitManualPercent(p)}
+                            >
+                              {p}%
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">ยอดหัก</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          placeholder="บาท"
+                          value={pitManualAmountBaht}
+                          onChange={(e) => setPitManualAmountBaht(e.target.value)}
+                          disabled={!canSaveAdjustments}
+                        />
+                      </div>
+                    )}
                   </div>
                 ) : null}
               </div>

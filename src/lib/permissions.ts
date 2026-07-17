@@ -361,6 +361,7 @@ export function getStoreOfficerModulePermission(moduleKey: ModuleKey): ModulePer
 
 /**
  * สิทธิ์โมดูลสำหรับ `payroll_officer` — เน้น payroll + ทะเบียนลูกจ้าง (Master Data)
+ * + Manpower (waves/assignments/mobilization) ดู/สร้าง/แก้ได้ — สอดคล้อง firestore.rules `rs2()`
  * สอดคล้องเมนู HR → ทะเบียน และ matrix `worker` resource
  */
 export function getPayrollOfficerModulePermission(moduleKey: ModuleKey): ModulePermission {
@@ -396,6 +397,10 @@ export function getPayrollOfficerModulePermission(moduleKey: ModuleKey): ModuleP
   if (moduleKey === 'timesheets') {
     return { view: true, create: true, edit: true, delete: false, approve: false };
   }
+  /** การจัดการ Manpower — ดู/สร้าง/แก้ (ไม่ลบ) ให้เจ้าหน้าที่เงินเดือนใช้คู่กับลงเวลา/จ่ายค่าจ้าง */
+  if (moduleKey === 'waves' || moduleKey === 'assignments' || moduleKey === 'mobilization') {
+    return { ...OFFICER_ACCESS };
+  }
   if (moduleKey === 'hr_hub' || moduleKey === 'labor_cost_contract_terms') {
     return { ...READ_ONLY };
   }
@@ -408,9 +413,6 @@ export function getPayrollOfficerModulePermission(moduleKey: ModuleKey): ModuleP
     moduleKey === 'rate_conditions' ||
     moduleKey === 'profit_estimates' ||
     moduleKey === 'draft_invoices' ||
-    moduleKey === 'waves' ||
-    moduleKey === 'assignments' ||
-    moduleKey === 'mobilization' ||
     moduleKey === 'operations_petty_cash' ||
     moduleKey === 'vendors' ||
     moduleKey === 'purchases' ||

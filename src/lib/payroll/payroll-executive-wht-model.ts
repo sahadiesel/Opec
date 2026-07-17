@@ -79,6 +79,10 @@ export function buildPayrollExecutiveWhtPrintVm(
   input: Parameters<typeof buildPayrollOfficeWhtPrintVm>[0],
 ): PayrollWorkerWhtPrintVm {
   const issueYear = Number(input.issueDateYmd.slice(0, 4)) || new Date().getFullYear();
+  const pitMode = input.line.hrLineAdjustments?.pitMode ?? 'SYSTEM';
+  const manualIncomeLabel = (input.line.hrLineAdjustments?.pitManualIncomeLabel || '').trim();
+  const manualPercent = Number(input.line.hrLineAdjustments?.pitManualPercent);
+  const usesManualWht = pitMode === 'MANUAL_PERCENT' || pitMode === 'MANUAL_AMOUNT';
   const vm = buildPayrollOfficeWhtPrintVm({
     ...input,
     payslipPayrollTypeLabelOverride: input.payslipPayrollTypeLabelOverride ?? EXEC_PAYSLIP_LABEL,
@@ -87,7 +91,12 @@ export function buildPayrollExecutiveWhtPrintVm(
     ...vm,
     documentNo: buildPayrollExecutiveWhtDocumentNo(input.run.id, input.staff.staffCode, issueYear),
     subtitleTh: 'สำหรับเงินได้จากการจ้างงาน / เงินเดือนผู้บริหาร',
-    incomeTypeNameTh: 'เงินเดือน / ค่าจ้างผู้บริหาร',
-    withholdingTaxRateDisplayTh: 'ตามการคำนวณ Payroll (ผู้บริหาร)',
+    incomeTypeNameTh: usesManualWht && manualIncomeLabel ? manualIncomeLabel : 'เงินเดือน / ค่าจ้างผู้บริหาร',
+    withholdingTaxRateDisplayTh:
+      pitMode === 'MANUAL_PERCENT' && Number.isFinite(manualPercent)
+        ? `${manualPercent}%`
+        : usesManualWht
+          ? 'กำหนดเอง'
+          : 'ตามการคำนวณ Payroll (ผู้บริหาร)',
   };
 }

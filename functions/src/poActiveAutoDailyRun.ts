@@ -182,6 +182,15 @@ export async function syncTodayOnlyForMobilization(
       totals.skipped++;
       return;
     }
+    const curEvent = String(cur.eventType || '');
+    if (
+      curEvent === 'mobilization_day' ||
+      curEvent === 'demobilization_day' ||
+      (curEvent !== syncKind && curEvent !== 'work_day' && curEvent !== 'standby_day')
+    ) {
+      totals.skipped++;
+      return;
+    }
     await dRef.update(
       omitUndefined({
         ...basePayload,

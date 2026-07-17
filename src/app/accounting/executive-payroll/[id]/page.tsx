@@ -37,7 +37,7 @@ import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
 import { canPreviewOfficePayrollWht } from '@/lib/payroll/payroll-office-wht-permissions';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection, updateDoc, query, where, type DocumentData } from 'firebase/firestore';
+import { doc, collection, getDoc, updateDoc, query, where, type DocumentData } from 'firebase/firestore';
 import {
   BankAccount,
   OfficePayrollRun,
@@ -45,6 +45,7 @@ import {
   User as AppUser,
   PayrollRunStatus,
   ExecutivePayrollStaff,
+  OfficeStaff,
 } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import Link from 'next/link';
@@ -169,13 +170,51 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
     }
   }, [run?.payoutBankAccountId, run?.id]);
 
+  const payoutBankAccountId = run?.payoutBankAccountId ?? '';
   const payoutAccountLabel = useMemo(() => {
-    if (!run?.payoutBankAccountId) return null;
-    const b = activeBanks.find((x) => x.id === run.payoutBankAccountId);
+    if (!payoutBankAccountId) return null;
+    const b = activeBanks.find((x) => x.id === payoutBankAccountId);
     return b
       ? `${b.bankName} · ${b.accountName} [${b.accountCode}]`
-      : run.payoutBankAccountId;
-  }, [run?.payoutBankAccountId, activeBanks]);
+      : payoutBankAccountId;
+  }, [payoutBankAccountId, activeBanks]);
+
+  const validateExecutivePayoutIdentity = useCallback(async () => {
+    if (!firestore) return;
+    const missing: string[] = [];
+
+    for (const line of linesSorted) {
+      let exec =
+        (executiveRoster ?? []).find((x) => x.id === line.staffId) ??
+        (executiveRoster ?? []).find((x) => x.staffCode && line.id.includes(x.staffCode));
+
+      if (!exec) {
+        const exSnap = await getDoc(doc(firestore, 'executive_payroll_staff', line.staffId));
+        if (exSnap.exists()) exec = { id: exSnap.id, ...exSnap.data() } as ExecutivePayrollStaff;
+      }
+
+      let nationalId = (exec?.nationalId || '').trim();
+      const linkedId = (exec?.linkedOfficeStaffId || '').trim();
+      if (!nationalId && linkedId) {
+        const linkedSnap = await getDoc(doc(firestore, 'office_staff', linkedId));
+        if (linkedSnap.exists()) {
+          nationalId = ((linkedSnap.data() as OfficeStaff).nationalId || '').trim();
+        }
+      }
+
+      if (nationalId.replace(/\D/g, '').length !== 13) {
+        missing.push(line.staffName || exec?.fullName || line.staffId);
+      }
+    }
+
+    if (missing.length > 0) {
+      const sample = missing.slice(0, 5).join(', ');
+      const more = missing.length > 5 ? ` และอีก ${missing.length - 5} คน` : '';
+      throw new Error(
+        `ทำจ่ายไม่ได้: ต้องกรอกเลขบัตรประชาชน 13 หลักในทะเบียนผู้บริหาร/office_staff ให้ครบก่อน (${sample}${more})`,
+      );
+    }
+  }, [firestore, linesSorted, executiveRoster]);
 
   const persistPayoutBankChoice = useCallback(
     async (bankId: string) => {
@@ -206,6 +245,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
 
     try {
       if (newStatus === 'FINANCE_APPROVED') {
+        await validateExecutivePayoutIdentity();
         updateData.financeApprovedBy = currentUser.displayName;
         const bankForPayout = (payoutBankId || run.payoutBankAccountId || '').trim();
         if (!run.financeCashbookEntryId) {

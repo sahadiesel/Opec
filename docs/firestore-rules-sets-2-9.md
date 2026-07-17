@@ -64,7 +64,7 @@
 **DoD**
 
 - [x] แก้ `firestore.rules` ให้ create / update / แยกจาก delete ตาม matrix
-- [ ] UAT: `store_officer` ไม่อ่าน wave/mobilization; `sales_manager` แก้ wave ได้แต่ลบไม่ได้; `payroll_officer` อ่านอย่างเดียว; `accounting_manager` ลบได้; client เห็นเฉพาะ `customerId` ตัวเอง
+- [ ] UAT: `store_officer` ไม่อ่าน wave/mobilization; `sales_manager` แก้ wave ได้แต่ลบไม่ได้; `payroll_officer` ดู/สร้าง/แก้ Manpower ได้ (ไม่ลบ); `accounting_manager` ลบได้; client เห็นเฉพาะ `customerId` ตัวเอง
 
 ---
 

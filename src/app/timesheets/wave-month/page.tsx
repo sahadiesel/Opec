@@ -1777,6 +1777,8 @@ export default function WaveMonthTimesheetSummaryPage() {
         workMode: assignment.workMode ?? 'OFFSHORE',
         shiftType: 'DAY',
         workerNameSnapshot: nameSnap,
+        // แก้มือแล้ว — ห้ามให้ PO Active auto ทับกลับเป็น W (โดยเฉพาะหลังลง D1)
+        poActiveAutoDaily: false,
       };
 
       if (!baseTs) {

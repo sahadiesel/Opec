@@ -45,6 +45,7 @@ export type POLineLike = {
 
 export type DailyTimesheetLike = {
   status?: string;
+  eventType?: string;
   poActiveAutoDaily?: boolean;
 };
 

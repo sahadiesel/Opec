@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -132,32 +132,69 @@ export default function TripBillingPage() {
     return [...rows].sort((a, b) => b.tripAnchorStartDate.localeCompare(a.tripAnchorStartDate));
   }, [batchesRaw]);
 
-  const batches = localBatches.length > 0 ? localBatches : batchesFromFirestore;
+  /** localBatches = ผล sync ล่าสุดของ PO นี้เท่านั้น — ไม่บังข้อมูล Firestore ของ PO อื่น / ของเก่า */
+  const batches = useMemo(() => {
+    if (
+      localBatches.length > 0 &&
+      localBatches.every((b) => b.poId === selectedPoId)
+    ) {
+      return localBatches;
+    }
+    return batchesFromFirestore;
+  }, [localBatches, batchesFromFirestore, selectedPoId]);
 
   const selectedPo = purchaseOrders.find((p) => p.id === selectedPoId);
+  const autoSyncedPoRef = useRef<string>('');
+  const selectedPoIdRef = useRef(selectedPoId);
+  selectedPoIdRef.current = selectedPoId;
 
-  const handleSync = useCallback(async () => {
+  const handleSync = useCallback(async (opts?: { silent?: boolean }) => {
     if (!firestore || !currentUser || !selectedPo) return;
+    const poId = selectedPo.id;
     setSyncing(true);
     try {
       const res = await syncTripBillingForPo(firestore, selectedPo);
+      if (selectedPoIdRef.current !== poId) return;
       const { loadTripBillingBatchesForPo } = await import('@/lib/services/mob-cycle-billing-sync');
-      const fresh = await loadTripBillingBatchesForPo(firestore, selectedPo.id);
+      const fresh = await loadTripBillingBatchesForPo(firestore, poId);
+      if (selectedPoIdRef.current !== poId) return;
       setLocalBatches(fresh);
-      toast({
-        title: 'ซิงก์แล้ว',
-        description: `${res.reviews} รอบคน · ${res.batches} ชุดวางบิล (${billingModeLabel('TRIP')})`,
-      });
+      autoSyncedPoRef.current = poId;
+      if (!opts?.silent) {
+        toast({
+          title: 'ซิงก์แล้ว',
+          description: `${res.reviews} รอบคน · ${res.batches} ชุดวางบิล (${billingModeLabel('TRIP')})`,
+        });
+      }
     } catch (e: unknown) {
+      if (selectedPoIdRef.current !== poId) return;
       toast({
         variant: 'destructive',
         title: 'ซิงก์ไม่สำเร็จ',
         description: e instanceof Error ? e.message : String(e),
       });
     } finally {
-      setSyncing(false);
+      if (selectedPoIdRef.current === poId) setSyncing(false);
     }
   }, [firestore, currentUser, selectedPo, toast]);
+
+  /** เลือก PO แล้วซิงก์จาก timesheet ทันที — ไม่ต้องกดปุ่มเองหลังลง D1 */
+  useEffect(() => {
+    if (!selectedPoId || !selectedPo || !firestore || !currentUser || !canSee) {
+      autoSyncedPoRef.current = '';
+      return;
+    }
+    if (autoSyncedPoRef.current === selectedPoId) return;
+    autoSyncedPoRef.current = selectedPoId;
+    void handleSync({ silent: true });
+  }, [selectedPoId, selectedPo, firestore, currentUser, canSee, handleSync]);
+
+  const onSelectPo = useCallback((id: string) => {
+    if (id === selectedPoId) return;
+    autoSyncedPoRef.current = '';
+    setLocalBatches([]);
+    setSelectedPoId(id);
+  }, [selectedPoId]);
 
   const handleFinalizeStandbyOnly = async (batch: TripBillingBatch) => {
     if (!firestore || !currentUser) return;
@@ -323,11 +360,16 @@ export default function TripBillingPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">เลือก PO</CardTitle>
-            <CardDescription>ซิงก์ mobilization + timesheet → ชุดวางบิลอัตโนมัติ</CardDescription>
+            <CardDescription>
+              เลือก PO แล้วระบบซิงก์ M1/D1 จาก timesheet ให้อัตโนมัติ — กดซิงก์ซ้ำได้หลังแก้ลงเวลา
+            </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap items-end gap-3">
             <div className="min-w-[280px] flex-1">
-              <Select value={selectedPoId || undefined} onValueChange={setSelectedPoId}>
+              <Select
+                value={selectedPoId || undefined}
+                onValueChange={onSelectPo}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="เลือก Purchase Order…" />
                 </SelectTrigger>
@@ -342,7 +384,7 @@ export default function TripBillingPage() {
             </div>
             <Button
               disabled={!selectedPoId || syncing}
-              onClick={handleSync}
+              onClick={() => void handleSync()}
             >
               {syncing ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

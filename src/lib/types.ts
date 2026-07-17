@@ -2144,6 +2144,8 @@ export interface OfficePayrollLineHrAdjustments {
   pitMode?: OfficePayrollPitMode;
   pitManualPercent?: number | null;
   pitManualAmountBaht?: number | null;
+  /** ชื่อประเภทรายได้สำหรับใบหัก ณ ที่จ่าย เมื่อเลือกหักแบบกำหนดเอง */
+  pitManualIncomeLabel?: string | null;
 }
 
 export interface OfficePayrollRun {
