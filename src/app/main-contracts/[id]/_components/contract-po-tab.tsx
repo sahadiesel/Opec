@@ -13,11 +13,12 @@ interface ContractPoTabProps {
   contract: MainContract;
   contractId: string;
   customerPOs: PurchaseOrder[] | null;
-  canModify: boolean;
+  /** สิทธิ์สร้าง Customer PO (customer_pos.create) — ไม่ผูกกับสิทธิ์แก้สัญญา */
+  canCreatePo: boolean;
   onNavigatePO: (poId: string) => void;
 }
 
-export function ContractPoTab({ contract, contractId, customerPOs, canModify, onNavigatePO }: ContractPoTabProps) {
+export function ContractPoTab({ contract, contractId, customerPOs, canCreatePo, onNavigatePO }: ContractPoTabProps) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
@@ -25,7 +26,7 @@ export function ContractPoTab({ contract, contractId, customerPOs, canModify, on
           <CardTitle>Customer POs ที่อ้างอิงสัญญานี้</CardTitle>
           <CardDescription>รายการใบสั่งซื้อบริการกำลังคนภายใต้สัญญาฉบับนี้</CardDescription>
         </div>
-        {canModify && (
+        {canCreatePo && (
           <Button
             variant="outline"
             className="gap-2"

@@ -450,17 +450,12 @@ const ACCOUNTING_OFFICER_DOC_ACCESS: ModulePermission = {
   approve: false,
 };
 
-/** VC — commercial อ่าน+สร้าง (quotations / contracts / PO) */
-const ACCOUNTING_OFFICER_COMMERCIAL_READ_CREATE: ModulePermission = {
-  view: true,
-  create: true,
-  edit: false,
-  delete: false,
-  approve: false,
-};
-
 /**
  * สิทธิ์โมดูลสำหรับ `accounting_officer` — สอดคล้องเมทริกซ์ `/system-admin/menu-permissions`
+ *
+ * Commercial:
+ * - quotations / customer_pos: ดู + สร้าง + แก้ไข (สร้าง PO จากโควต้าสัญญา / แก้ใบเสนอราคา)
+ * - main_contracts: ดูอย่างเดียว (ไม่สร้าง/ไม่แก้สัญญา — ใช้โควต้าบนสัญญาเพื่อสร้าง PO ได้ผ่าน UI)
  */
 export function getAccountingOfficerModulePermission(moduleKey: ModuleKey): ModulePermission {
   if (moduleKey === 'overview_dashboard') {
@@ -473,8 +468,11 @@ export function getAccountingOfficerModulePermission(moduleKey: ModuleKey): Modu
   if (moduleKey === 'customers') {
     return { view: true, create: true, edit: true, delete: true, approve: false };
   }
-  if (moduleKey === 'quotations' || moduleKey === 'main_contracts' || moduleKey === 'customer_pos') {
-    return { ...ACCOUNTING_OFFICER_COMMERCIAL_READ_CREATE };
+  if (moduleKey === 'quotations' || moduleKey === 'customer_pos') {
+    return { view: true, create: true, edit: true, delete: false, approve: false };
+  }
+  if (moduleKey === 'main_contracts') {
+    return { ...READ_ONLY };
   }
 
   if (

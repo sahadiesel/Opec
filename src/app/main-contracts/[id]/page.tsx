@@ -32,7 +32,7 @@ import { MainContract, PositionRate, PurchaseOrder, Customer, Position, User, Co
 import Link from 'next/link';
 import { billingModeLabel } from '@/lib/commercial/resolve-billing-mode';
 import { useToast } from '@/hooks/use-toast';
-import { canView, canEdit } from '@/lib/permissions';
+import { canView, canEdit, canCreate } from '@/lib/permissions';
 import { isSystemAdmin, isHrManager, isOperationManager, isSalesManager, canEditMasterContractCostBaseline } from '@/lib/permission-core';
 import { userMatchesBusinessRoleKey } from '@/lib/role-key-normalizer';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
@@ -175,6 +175,11 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
 
   const isAuthorized = useMemo(() => !!currentUser && canView(currentUser, 'main_contracts'), [currentUser]);
   const canModify = useMemo(() => !!currentUser && canEdit(currentUser, 'main_contracts'), [currentUser]);
+  /** สร้าง PO จากโควต้าสัญญา — ใช้สิทธิ์ customer_pos ไม่ใช่ main_contracts.edit */
+  const canCreatePoFromContract = useMemo(
+    () => !!currentUser && canCreate(currentUser, 'customer_pos'),
+    [currentUser],
+  );
   const isSalesRole = useMemo(() => {
     if (!currentUser) return false;
     return (
@@ -1109,20 +1114,19 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
             ) : null}
           </div>
           <div className="flex gap-2">
-            {isActiveContract ? (
+            {isActiveContract && canModify ? (
               <Button
                 variant="outline"
-                disabled={!canModify || isCreatingRevision}
+                disabled={isCreatingRevision}
                 onClick={() => createPendingRevisionFromActive()}
               >
                 {isCreatingRevision ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                 สร้างฉบับแก้ไข (Pending)
               </Button>
-            ) : isPendingContract ? (
+            ) : isPendingContract && canModify ? (
               <>
                 <Button
                   variant="outline"
-                  disabled={!canModify}
                   onClick={() => {
                     if (isEditing) {
                       setEditedMC(contract);
@@ -1150,7 +1154,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                   </Button>
                 )}
               </>
-            ) : (
+            ) : !canModify && (isActiveContract || isPendingContract) ? null : (
               <Button variant="outline" disabled={isHistoricalLockedContract}>
                 เอกสารประวัติ (ล็อก)
               </Button>
@@ -1160,7 +1164,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
                 อนุมัติสัญญา (Approve)
               </Button>
             )}
-            {isEditing && isPendingContract && (
+            {isEditing && isPendingContract && canModify && (
               <Button className="gap-2" onClick={handleSaveMaster}>
                 <Save className="h-4 w-4" /> บันทึก
               </Button>
@@ -1860,7 +1864,7 @@ export default function MainContractDetailPage({ params }: { params: Promise<{ i
               contract={contract}
               contractId={id}
               customerPOs={customerPOs ?? null}
-              canModify={canModify}
+              canCreatePo={canCreatePoFromContract}
               onNavigatePO={(poId) =>
                 router.push(
                   `/purchase-orders/${poId}?returnTo=${encodeURIComponent(`/main-contracts/${id}?tab=pos`)}`,
