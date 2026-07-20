@@ -165,9 +165,29 @@ export function resolveBillingMatrixEventDayRate(
   return null;
 }
 
-/** อัตรา OT ต่อชม. จาก matrix — null = คำนวณจากราคารายวัน ÷ ชม.แพ็ก */
+/**
+ * อัตรา OT x1.5 ต่อชม. จากราคารายวัน — สูตรเดียวกับ rate sheet (`autoCalculateMatrixFields`)
+ * - แพ็ก 12 ชม.: วัน ÷ 14 × 1.5  (เช่น 2500 → 267.86)
+ * - แพ็ก 8 ชม.: วัน ÷ 8 × 1.5
+ */
+export function deriveBillingSellOtHourlyFromDayRate(
+  workingDayRate: number,
+  statedHours: 8 | 12,
+): number {
+  const day = Number(workingDayRate);
+  if (!Number.isFinite(day) || day <= 0) return 0;
+  const divisor = statedHours === 12 ? 14 : 8;
+  return Math.round((day / divisor) * 1.5 * 100) / 100;
+}
+
+/**
+ * อัตรา OT ต่อชม. จาก matrix (ค่าเต็ม x1.5 ตามช่อง OT / ชม. บน rate sheet)
+ * เรียงสัญญาหลักก่อน แล้วค่อย PO snapshot — null = ให้ผู้เรียก derive จากราคารายวัน
+ */
 export function resolveBillingMatrixOtHourlyRate(ctx: BillingSellRateContext): number | null {
-  const matrices = [ctx.poLine.rateMatrixSnapshot, ctx.contractRate?.rateMatrix].filter(Boolean) as PositionRateMatrix[];
+  const matrices = [ctx.contractRate?.rateMatrix, ctx.poLine.rateMatrixSnapshot].filter(
+    Boolean,
+  ) as PositionRateMatrix[];
   for (const matrix of matrices) {
     const side = sellMatrixSide(matrix, ctx.workMode);
     if (!side) continue;
@@ -180,6 +200,22 @@ export function resolveBillingMatrixOtHourlyRate(ctx: BillingSellRateContext): n
     }
   }
   return null;
+}
+
+/**
+ * อัตรา OT x1.5 ต่อชม. สำหรับวางบิล — matrix ถ้าสมเหตุสมผล ไม่งั้น derive จากราคารายวัน
+ * (กัน snapshot ผิด เช่น 1267.86 แทน 267.86)
+ */
+export function resolveBillingSellOtHourlyRate(
+  ctx: BillingSellRateContext,
+  statedHours: 8 | 12,
+): number {
+  const workingDay = resolveBillingSellWorkingDayRate(ctx);
+  const derived = deriveBillingSellOtHourlyFromDayRate(workingDay, statedHours);
+  const fromMatrix = resolveBillingMatrixOtHourlyRate(ctx);
+  if (fromMatrix == null || fromMatrix <= 0) return derived;
+  if (derived > 0 && fromMatrix > derived * 2.5) return derived;
+  return fromMatrix;
 }
 
 export function jobModeSellLabel(mode: JobMode): 'Onshore' | 'Offshore' {

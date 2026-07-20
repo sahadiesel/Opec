@@ -154,6 +154,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [standbyDateDraft, setStandbyDateDraft] = useState('');
+  const [readyToTravelDateDraft, setReadyToTravelDateDraft] = useState('');
   const [workingStartDateDraft, setWorkingStartDateDraft] = useState('');
   const [unassignDialogOpen, setUnassignDialogOpen] = useState(false);
   const [autoDailySyncing, setAutoDailySyncing] = useState(false);
@@ -273,12 +274,14 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   useEffect(() => {
     if (!assignment) return;
+    const ready = (assignment.mobReadyToTravelDate || '').trim();
+    setReadyToTravelDateDraft(ready || thailandTodayYmd());
     const standby = (assignment.mobStandbyDate || '').trim();
     setStandbyDateDraft(standby || thailandTodayYmd());
     const work = (assignment.mobWorkingStartDate || '').trim();
     const baseStandby = standby || thailandTodayYmd();
     setWorkingStartDateDraft(work || addDaysToYmd(baseStandby, 1));
-  }, [assignment?.id, assignment?.mobStandbyDate, assignment?.mobWorkingStartDate]);
+  }, [assignment?.id, assignment?.mobReadyToTravelDate, assignment?.mobStandbyDate, assignment?.mobWorkingStartDate]);
 
   useEffect(() => {
     if (!assignment) return;
@@ -315,6 +318,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         if (snap.exists()) {
           setAssignment({ id: snap.id, ...(snap.data() as object) } as Assignment);
         }
+        setReadyToTravelDateDraft(thailandTodayYmd());
         setStandbyDateDraft(thailandTodayYmd());
         setWorkingStartDateDraft(addDaysToYmd(thailandTodayYmd(), 1));
         setLocationLineIdDraft(assignment.poLineId || '');
@@ -354,14 +358,23 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
       return;
     }
+    const ymd = (readyToTravelDateDraft || '').trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+      toast({ variant: 'destructive', title: 'เลือกวันที่', description: 'กรุณาเลือกวันที่พร้อมเดินทาง' });
+      return;
+    }
     const now = Date.now();
     patchMobilization({
+      mobReadyToTravelDate: ymd,
       mobReadyToTravelAt: now,
       mobReadyToTravelByUserId: currentUser.id,
       mobilizationStatus: 'READY_TO_MOBILIZE',
       deploymentStatus: 'READY_TO_MOB',
     });
-    toast({ title: 'ยืนยันขั้นที่ 1 แล้ว', description: 'พร้อมเดินทาง — ถัดไปบันทึกวัน Standby' });
+    toast({
+      title: 'ยืนยันขั้นที่ 1 แล้ว',
+      description: `พร้อมเดินทาง ณ ${formatYmdLocalThaiBE(ymd)} — ถัดไปบันทึกวัน Standby`,
+    });
   };
 
   const workerTimesheetName =
@@ -468,6 +481,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       await updateDoc(mobRef, {
         mobReadyToTravelAt: deleteField(),
         mobReadyToTravelByUserId: deleteField(),
+        mobReadyToTravelDate: deleteField(),
         deploymentStatus: 'CONFIRMED',
         mobilizationStatus: 'PENDING',
         updatedAt: Date.now(),
@@ -1227,15 +1241,35 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                       <div className="flex flex-col gap-3 md:flex-row md:items-end md:flex-wrap">
                         <div className="space-y-2 flex-1 min-w-[200px]">
                           <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 1 · พร้อมเดินทาง</p>
+                          <DatePickerThaiBE
+                            className="h-11 max-w-xs"
+                            value={htmlDateValueToTimestampMs(readyToTravelDateDraft)}
+                            onChange={(ms) => setReadyToTravelDateDraft(timestampToHtmlDateValue(ms))}
+                            disabled={
+                              !canEditMobilization ||
+                              isMobUnassigned(assignment) ||
+                              clearanceSavingStep !== 0 ||
+                              isFinalClearanceStep1Done(assignment)
+                            }
+                          />
                           {isFinalClearanceStep1Done(assignment) ? (
                             <p className="text-sm">
-                              บันทึกแล้ว — {formatDateTimeThaiBE(assignment.mobReadyToTravelAt)}{' '}
+                              บันทึกแล้ว — วันที่{' '}
+                              {formatYmdLocalThaiBE(
+                                assignment.mobReadyToTravelDate ||
+                                  (assignment.mobReadyToTravelAt
+                                    ? timestampToHtmlDateValue(assignment.mobReadyToTravelAt)
+                                    : ''),
+                              )}{' '}
+                              · ยืนยันเมื่อ {formatDateTimeThaiBE(assignment.mobReadyToTravelAt)}{' '}
                               <span className="text-muted-foreground font-mono text-xs">
                                 ({assignment.mobReadyToTravelByUserId || '—'})
                               </span>
                             </p>
                           ) : (
-                            <p className="text-xs text-muted-foreground">ต้องผ่านความพร้อม (READY) ก่อนกดยืนยัน</p>
+                            <p className="text-xs text-muted-foreground">
+                              เลือกวันที่พร้อมเดินทาง แล้วกดยืนยัน — ต้องผ่านความพร้อม (READY) ก่อน
+                            </p>
                           )}
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
@@ -1248,7 +1282,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     isMobUnassigned(assignment) ||
                                     isFinalClearanceStep1Done(assignment) ||
                                     !step1Gate.ok ||
-                                    clearanceSavingStep !== 0
+                                    clearanceSavingStep !== 0 ||
+                                    !/^\d{4}-\d{2}-\d{2}$/.test((readyToTravelDateDraft || '').trim())
                                   }
                                   onClick={runFinalClearanceStep1}
                                   className="bg-green-600 hover:bg-green-700 font-bold"
@@ -1262,7 +1297,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                 ? 'ยืนยันขั้นนี้แล้ว — ปุ่มถูกปิดเพื่อไม่ให้กดซ้ำ'
                                 : !step1Gate.ok
                                   ? step1Gate.message
-                                  : 'ให้ตรวจเช็คความพร้อมตามเช็คลิสด้านบน เมื่อพร้อมแล้วให้กดยืนยัน — ระบบจะบันทึกเวลาไว้'}
+                                  : 'เลือกวันที่ด้านซ้าย แล้วกดยืนยันเมื่อความพร้อมครบ — ระบบจะบันทึกวันที่และเวลาที่ยืนยัน'}
                             </TooltipContent>
                           </Tooltip>
                           {isFinalClearanceStep1Done(assignment) &&

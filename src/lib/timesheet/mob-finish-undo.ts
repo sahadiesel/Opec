@@ -35,6 +35,7 @@ export function buildMobFinishUndoSnapshot(asgn: Assignment): MobFinishUndoSnaps
     mobWorkingStartedByUserId: asgn.mobWorkingStartedByUserId,
     mobReadyToTravelAt: asgn.mobReadyToTravelAt,
     mobReadyToTravelByUserId: asgn.mobReadyToTravelByUserId,
+    mobReadyToTravelDate: asgn.mobReadyToTravelDate,
     mobLocationPhase: asgn.mobLocationPhase,
     mobLocationKey: asgn.mobLocationKey,
     workLocation: asgn.workLocation,
@@ -54,6 +55,7 @@ export function buildMobRemobClearanceDeleteFields(deleteFieldSentinel: unknown)
   return {
     mobReadyToTravelAt: del,
     mobReadyToTravelByUserId: del,
+    mobReadyToTravelDate: del,
     mobStandbyDate: del,
     mobStandbyDayEventType: del,
     mobStep2Choice: del,
@@ -124,7 +126,7 @@ export function buildMobFinishUndoRestoreFields(
   const cycle = snapshot?.mobCycleNumber ?? fallbackCycle;
   const del = deleteFieldSentinel;
 
-  const optionalStringKeys = ['mobStandbyDate', 'poActiveStandbyAutoStartYmd', 'poActiveStandbyAutoEndYmd'] as const;
+  const optionalStringKeys = ['mobStandbyDate', 'mobReadyToTravelDate', 'poActiveStandbyAutoStartYmd', 'poActiveStandbyAutoEndYmd'] as const;
   const optionalNumberKeys = [
     'mobStandbyRecordedAt',
     'mobWorkingStartedAt',

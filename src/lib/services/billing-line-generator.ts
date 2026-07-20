@@ -28,7 +28,7 @@ import { isYmdWithinAssignmentMobTimesheetWindow } from '@/lib/constants/timeshe
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 import {
   resolveBillingMatrixEventDayRate,
-  resolveBillingMatrixOtHourlyRate,
+  resolveBillingSellOtHourlyRate,
   resolveBillingSellWorkingDayRate,
 } from '@/lib/commercial/position-rate-sell';
 import {
@@ -368,7 +368,9 @@ function workDayFromDayRateBilling(
 
   const statedHours = resolveStatedPackageHoursForBilling(poLine, workMode);
   const sellOtMult = sellOtMultiplierForBilling(poLine, mainContract);
-  const matrixOtHourly = resolveBillingMatrixOtHourlyRate(rateCtx);
+  /** อัตรา OT x1.5 เต็มต่อชม. (ช่อง OT / ชม. บน rate sheet) — ไม่ใช่ฐานชม.ก่อนคูณ */
+  const otHourlyFull = resolveBillingSellOtHourlyRate(rateCtx, statedHours);
+  if (otHourlyFull <= 0) return;
 
   const nh = Math.max(0, ts.normalHours || 0);
   const o15 = Math.max(0, ts.ot15Hours || 0);
@@ -382,8 +384,6 @@ function workDayFromDayRateBilling(
   const wid = ts.workerId;
   const pos = ts.positionId;
   const tid = [ts.id];
-  const hourlyFromDayRate = sellRate / statedHours;
-  const otHourlyBase = matrixOtHourly ?? hourlyFromDayRate;
 
   if (nh > 0) {
     let dayAmt = sellRate;
@@ -421,42 +421,23 @@ function workDayFromDayRateBilling(
     });
   };
 
-  if (matrixOtHourly != null) {
-    if (overflowNormal > 0) {
-      const overflowMult = sellOtMult / 1.5;
-      pushOtLine(
-        overflowOtEventType(sellOtMult),
-        overflowNormal,
-        overflowNormal * matrixOtHourly * overflowMult,
-      );
-    }
-    if (o15 > 0) {
-      pushOtLine('ot_1.5', o15, o15 * matrixOtHourly);
-    }
-    if (o20 > 0) {
-      pushOtLine('ot_2.0', o20, o20 * matrixOtHourly * (2 / 1.5));
-    }
-    if (o30 > 0) {
-      pushOtLine('ot_3.0', o30, o30 * matrixOtHourly * 2);
-    }
-    return;
-  }
-
+  // otHourlyFull = อัตรา x1.5 แล้ว — tier อื่นสเกลจาก 1.5; overflow ใช้ตัวคูณขายหลังกะ
   if (overflowNormal > 0) {
+    const overflowMult = sellOtMult / 1.5;
     pushOtLine(
       overflowOtEventType(sellOtMult),
       overflowNormal,
-      overflowNormal * otHourlyBase * sellOtMult,
+      overflowNormal * otHourlyFull * overflowMult,
     );
   }
   if (o15 > 0) {
-    pushOtLine('ot_1.5', o15, o15 * otHourlyBase * 1.5);
+    pushOtLine('ot_1.5', o15, o15 * otHourlyFull);
   }
   if (o20 > 0) {
-    pushOtLine('ot_2.0', o20, o20 * otHourlyBase * 2);
+    pushOtLine('ot_2.0', o20, o20 * otHourlyFull * (2 / 1.5));
   }
   if (o30 > 0) {
-    pushOtLine('ot_3.0', o30, o30 * otHourlyBase * 3);
+    pushOtLine('ot_3.0', o30, o30 * otHourlyFull * 2);
   }
 }
 

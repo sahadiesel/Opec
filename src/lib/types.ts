@@ -1185,6 +1185,7 @@ export interface MobFinishUndoSnapshot {
   mobWorkingStartedByUserId?: string;
   mobReadyToTravelAt?: number;
   mobReadyToTravelByUserId?: string;
+  mobReadyToTravelDate?: string;
   mobLocationPhase?: MobLocationPhase;
   /** ไซต์ก่อนจบงาน — คืนเมื่อยกเลิกจบงาน */
   mobLocationKey?: string;
@@ -1232,6 +1233,8 @@ export interface Assignment {
   /** Final clearance ขั้น 1 — ยืนยันพร้อมเดินทาง */
   mobReadyToTravelAt?: number;
   mobReadyToTravelByUserId?: string;
+  /** วันที่พร้อมเดินทางที่เลือก (YYYY-MM-DD, Asia/Bangkok) */
+  mobReadyToTravelDate?: string;
   /** Final clearance ขั้น 2 — วัน standby (YYYY-MM-DD, Asia/Bangkok) */
   mobStandbyDate?: string;
   /** ประเภทวันที่บันทึกขั้น 2 — standby_day (Pre-Mob/SB) หรือ mobilization_day (Mob/MO) */
