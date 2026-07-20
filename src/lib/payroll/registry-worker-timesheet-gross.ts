@@ -16,6 +16,10 @@ import {
   type WorkerGlobalLaborContext,
   workerGlobalLaborToPayrollRestSchedule,
 } from '@/lib/payroll/worker-global-labor-policy';
+import {
+  mobDayChargeKindToEventType,
+  resolveTimesheetPayrollCharge,
+} from '@/lib/ops/mob-day-charge';
 
 type GlobalCostMultiplierPolicy = {
   otAfterShift?: number;
@@ -99,26 +103,53 @@ export function computeRegistryWorkerTimesheetGross(
     workerGlobalLabor: WorkerGlobalLaborContext;
   },
 ): RegistryWorkerTimesheetGrossResult {
-  const payrollContractId = resolveEffectivePayrollContractId(ts, input.poContractById);
+  const payrollCharge = resolveTimesheetPayrollCharge(ts);
+  if (
+    payrollCharge.kind === 'M1' &&
+    payrollCharge.m1AmountOverride != null &&
+    payrollCharge.m1AmountOverride > 0
+  ) {
+    return {
+      gross: payrollCharge.m1AmountOverride,
+      usedPackageLaborCost: false,
+      usedPolicyFallback: true,
+      fromPositionModel: true,
+    };
+  }
+
+  const payTs: DailyTimesheet = {
+    ...ts,
+    eventType: mobDayChargeKindToEventType(payrollCharge.kind),
+    normalHours:
+      payrollCharge.kind === 'M1'
+        ? Number(ts.normalHours) || 0
+        : Math.max(0, Number(payrollCharge.hours ?? ts.normalHours ?? 8)),
+    ...(payrollCharge.kind === 'STANDBY'
+      ? { standbyUnits: Math.max(1, Number(ts.standbyUnits ?? 1)) }
+      : {}),
+    ...(payrollCharge.kind === 'M1' ? { mobUnits: Math.max(1, Number(ts.mobUnits ?? 1)) } : {}),
+  };
+
+  const payrollContractId = resolveEffectivePayrollContractId(payTs, input.poContractById);
   const mainContract = payrollContractId ? input.contractMap.get(payrollContractId) : undefined;
 
-  const positionId = (ts.positionId || input.linePosition?.id || '').trim();
+  const positionId = (payTs.positionId || input.linePosition?.id || '').trim();
   const contractPositionRate = mainContract?.positionRates?.find(
     (r) => r.positionId === positionId && r.active !== false
   );
-  const mode = timesheetToLaborWorkMode(ts, input.poWorkModeByPoId);
+  const mode = timesheetToLaborWorkMode(payTs, input.poWorkModeByPoId);
 
   let resolvedMatrixRate: number | null = null;
   if (contractPositionRate) {
-    if (ts.eventType === 'mobilization_day' && mode === 'offshore') {
+    if (payTs.eventType === 'mobilization_day' && mode === 'offshore') {
       const costRate = resolveMatrixCostRate(contractPositionRate, 'offshore_m1_per_trip');
       const sellRate = resolveMatrixSellRate(contractPositionRate, 'offshore_m1_per_trip');
       resolvedMatrixRate = (costRate !== null && costRate > 0) ? costRate : sellRate;
-    } else if (ts.eventType === 'demobilization_day' && mode === 'offshore') {
+    } else if (payTs.eventType === 'demobilization_day' && mode === 'offshore') {
       const costRate = resolveMatrixCostRate(contractPositionRate, 'offshore_d1_per_trip');
       const sellRate = resolveMatrixSellRate(contractPositionRate, 'offshore_d1_per_trip');
       resolvedMatrixRate = (costRate !== null && costRate > 0) ? costRate : sellRate;
-    } else if (ts.eventType === 'standby_day') {
+    } else if (payTs.eventType === 'standby_day') {
       const cat = mode === 'offshore' ? 'offshore_standby_day' : 'onshore_standby_day';
       const costRate = resolveMatrixCostRate(contractPositionRate, cat);
       const sellRate = resolveMatrixSellRate(contractPositionRate, cat);
@@ -128,12 +159,12 @@ export function computeRegistryWorkerTimesheetGross(
 
   if (resolvedMatrixRate !== null && resolvedMatrixRate > 0) {
     let units = 1;
-    if (ts.eventType === 'mobilization_day') {
-      units = Math.max(1, Number(ts.mobUnits ?? 1));
-    } else if (ts.eventType === 'demobilization_day') {
-      units = Math.max(1, Number(ts.demobUnits ?? 1));
-    } else if (ts.eventType === 'standby_day') {
-      units = Math.max(1, Number(ts.standbyUnits ?? 1));
+    if (payTs.eventType === 'mobilization_day') {
+      units = Math.max(1, Number(payTs.mobUnits ?? 1));
+    } else if (payTs.eventType === 'demobilization_day') {
+      units = Math.max(1, Number(payTs.demobUnits ?? 1));
+    } else if (payTs.eventType === 'standby_day') {
+      units = Math.max(1, Number(payTs.standbyUnits ?? 1));
     }
     const gross = Math.round(resolvedMatrixRate * units * 100) / 100;
     return {
@@ -148,7 +179,7 @@ export function computeRegistryWorkerTimesheetGross(
     worker: input.worker,
     linePosition: input.linePosition,
     poLine: input.poLine,
-    timesheet: ts,
+    timesheet: payTs,
     mainContract,
     poContractById: input.poContractById,
     poWorkModeByPoId: input.poWorkModeByPoId,
@@ -164,9 +195,9 @@ export function computeRegistryWorkerTimesheetGross(
     Number(policy.otAfterShift) ||
     1.5;
 
-  if (isPayrollCostStandbyPackageEvent(ts.eventType) && baseCost > 0) {
+  if (isPayrollCostStandbyPackageEvent(payTs.eventType) && baseCost > 0) {
     const gross = computeStandbyDayCostFromPackage({
-      timesheet: ts,
+      timesheet: payTs,
       costPackagePerDay: baseCost,
       statedHours,
       otAfterShiftMultiplier: otMult,
@@ -180,10 +211,10 @@ export function computeRegistryWorkerTimesheetGross(
     };
   }
 
-  const useWorkDayPackage = ts.eventType === 'work_day' && baseCost > 0;
+  const useWorkDayPackage = payTs.eventType === 'work_day' && baseCost > 0;
   if (useWorkDayPackage) {
     const pkg = computeWorkDayCostFromPackage({
-      timesheet: ts,
+      timesheet: payTs,
       costPackagePerDay: baseCost,
       statedHours,
       otAfterShiftMultiplier: otMult,
@@ -198,7 +229,7 @@ export function computeRegistryWorkerTimesheetGross(
     };
   }
 
-  const fallbackCost = resolvePolicyFallbackCost(ts, baseCost, policy);
+  const fallbackCost = resolvePolicyFallbackCost(payTs, baseCost, policy);
   if (fallbackCost > 0) {
     return {
       gross: fallbackCost,

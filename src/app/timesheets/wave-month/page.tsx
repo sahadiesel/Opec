@@ -1756,6 +1756,14 @@ export default function WaveMonthTimesheetSummaryPage() {
       const nHours = isUnpaid ? 0 : Math.min(24, Math.max(0, Number(editHours) || 0));
       const otHours = isWorkDay ? Math.min(24, Math.max(0, Number(editOtHours) || 0)) : 0;
 
+      const priorRemark = String(baseTs?.remark || '').trim();
+      const manualRemark = editRemark.trim();
+      const nextRemark = manualRemark
+        ? manualRemark
+        : priorRemark.startsWith('Auto —')
+          ? ''
+          : priorRemark;
+
       const payload: Partial<DailyTimesheet> = {
         ...(baseTs ? { ...baseTs, id: undefined } : {}),
         workerId,
@@ -1766,7 +1774,7 @@ export default function WaveMonthTimesheetSummaryPage() {
         ot15Hours: otHours,
         ot20Hours: 0,
         ot30Hours: 0,
-        remark: editRemark.trim() || undefined,
+        remark: nextRemark,
         waveId: wave.id,
         siteId: wave.id,
         purchaseOrderId: assignment.poId || wave.poId,
@@ -1775,9 +1783,9 @@ export default function WaveMonthTimesheetSummaryPage() {
         customerId: wave.customerId || '',
         positionId,
         workMode: assignment.workMode ?? 'OFFSHORE',
-        shiftType: 'DAY',
+        shiftType: editEvent === 'standby_day' ? 'STANDBY' : 'DAY',
         workerNameSnapshot: nameSnap,
-        // แก้มือแล้ว — ห้ามให้ PO Active auto ทับกลับเป็น W (โดยเฉพาะหลังลง D1)
+        // แก้มือแล้ว — ห้ามให้ PO Active auto ทับกลับเป็น W (โดยเฉพาะหลังลง D1 / แก้เป็น SB)
         poActiveAutoDaily: false,
       };
 

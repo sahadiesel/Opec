@@ -47,6 +47,7 @@ export type DailyTimesheetLike = {
   status?: string;
   eventType?: string;
   poActiveAutoDaily?: boolean;
+  remark?: string;
 };
 
 export function thailandTodayYmd(): string {

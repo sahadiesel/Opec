@@ -50,7 +50,7 @@ export type BusinessRoleKey =
 export type ReadinessStatus = 
   | 'READY'               // พร้อมปฏิบัติงาน
   | 'INCOMPLETE'          // ข้อมูลไม่ครบถ้วน
-  | 'MISSING_CERTIFICATE' // ขาดใบรับรองบังคับ
+  | 'MISSING_CERTIFICATE' // ใบเซอร์บังคับตามตำแหน่งยังไม่ครบ
   | 'MEDICAL_EXPIRED'     // ใบรับรองแพทย์หมดอายุ
   | 'DRUG_TEST_EXPIRED'   // ผลตรวจสารเสพติดหมดอายุ
   | 'DOCUMENT_EXPIRED'    // เอกสารระบุตัวตนหมดอายุ
@@ -1153,6 +1153,20 @@ export type MobLocationPhase =
   /** จบที่ไซต์นี้แล้ว — พร้อมเปิด mobCycleNumber ถัดไปหรือกลับคิว */
   | 'finished_location';
 
+/**
+ * ค่าคิดเงินวัน Pre-Mob / Mob แยกฝั่งวางบิลกับจ่ายลูกจ้าง
+ * — ใช้เฉพาะคน/งานที่บันทึกในหน้า Mobilization
+ */
+export type MobDayChargeKind = 'STANDBY' | 'WORKING' | 'M1';
+
+export interface MobDayChargeSpec {
+  kind: MobDayChargeKind;
+  /** ชม. เมื่อ kind = STANDBY หรือ WORKING (มาตรฐาน Pre-Mob = 8) */
+  hours?: number;
+  /** ทับจำนวนเงิน M1 จากตารางสัญญา (บาท) — ว่าง = ใช้ค่าสัญญา */
+  m1AmountOverride?: number;
+}
+
 /** ค่า mobilization ก่อนกดจบงานบน Wave Board — ใช้ยกเลิกจบงาน */
 export interface MobFinishUndoSnapshot {
   deploymentStatus?: DeploymentStatus;
@@ -1161,6 +1175,9 @@ export interface MobFinishUndoSnapshot {
   mobCycleId?: string;
   mobStandbyDate?: string;
   mobStandbyDayEventType?: 'standby_day' | 'mobilization_day';
+  mobStep2Choice?: 'PRE_MOB' | 'MOB';
+  mobStep2BillingCharge?: MobDayChargeSpec;
+  mobStep2PayrollCharge?: MobDayChargeSpec;
   mobStandbyRecordedAt?: number;
   mobStandbyRecordedByUserId?: string;
   mobWorkingStartDate?: string;
@@ -1169,6 +1186,9 @@ export interface MobFinishUndoSnapshot {
   mobReadyToTravelAt?: number;
   mobReadyToTravelByUserId?: string;
   mobLocationPhase?: MobLocationPhase;
+  /** ไซต์ก่อนจบงาน — คืนเมื่อยกเลิกจบงาน */
+  mobLocationKey?: string;
+  workLocation?: string;
   poActiveAutoWorkSuspended?: boolean;
   poActiveStandbyAutoStartYmd?: string;
   poActiveStandbyAutoEndYmd?: string;
@@ -1214,8 +1234,17 @@ export interface Assignment {
   mobReadyToTravelByUserId?: string;
   /** Final clearance ขั้น 2 — วัน standby (YYYY-MM-DD, Asia/Bangkok) */
   mobStandbyDate?: string;
-  /** ประเภทวันที่บันทึกขั้น 2 — standby_day (SB) หรือ mobilization_day (MO) */
+  /** ประเภทวันที่บันทึกขั้น 2 — standby_day (Pre-Mob/SB) หรือ mobilization_day (Mob/MO) */
   mobStandbyDayEventType?: 'standby_day' | 'mobilization_day';
+  /**
+   * ทางเลือกขั้น 2 จากปุ่ม Pre-mob/Mob
+   * PRE_MOB = ค่ามาตรฐาน standby 8 ชม. · MOB = ตาม M1 ในตารางสัญญา
+   */
+  mobStep2Choice?: 'PRE_MOB' | 'MOB';
+  /** ค่าวางบิลลูกค้าสำหรับวันขั้น 2 ของ assignment นี้เท่านั้น */
+  mobStep2BillingCharge?: MobDayChargeSpec;
+  /** ค่าจ่ายลูกจ้างสำหรับวันขั้น 2 ของ assignment นี้เท่านั้น */
+  mobStep2PayrollCharge?: MobDayChargeSpec;
   mobStandbyRecordedAt?: number;
   mobStandbyRecordedByUserId?: string;
   /** Final clearance ขั้น 3 — วันเริ่มนับ working / auto รายวัน */
@@ -1376,6 +1405,16 @@ export interface DailyTimesheet {
   unpaidLeaveUnits?: number;
   quantityOverride?: number;
   remark?: string;
+  /**
+   * ค่าคิดเงินแยกฝั่งจากวัน Pre-Mob/Mob (Final clearance) —
+   * ถ้ามี ให้ใช้แทน eventType หลักตอนวางบิล / จ่ายเงินเดือน
+   */
+  mobBillingChargeKind?: MobDayChargeKind;
+  mobBillingChargeHours?: number;
+  mobBillingM1AmountOverride?: number;
+  mobPayrollChargeKind?: MobDayChargeKind;
+  mobPayrollChargeHours?: number;
+  mobPayrollM1AmountOverride?: number;
   /** เฟส 4 — แถวที่สร้าง/ซิงค์อัตโนมัติจาก PO workflow (ให้ job อัปเดตได้; แถวที่ไม่มี flag นี้ถือว่าแก้มือ) */
   poActiveAutoDaily?: boolean;
   /** Denormalized จาก mobilization — แยกช่วงรอบ/ไซต์ (เฟส 0+) */

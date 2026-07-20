@@ -6,6 +6,7 @@
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -22,10 +23,12 @@ import { assertPayrollPermission } from '@/lib/permissions';
 import { isPoActiveBundleAutoDailyDisabled, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import {
   buildPoActiveAutoDailyRowPayload,
+  buildPoActiveAutoDemobRowPayload,
   buildPoActiveAutoStandbyRowPayload,
   computePoActiveAutoDailyRange,
   eachYmdInRange,
   isAssignmentEligibleForPoActiveAutoDaily,
+  isAssignmentInPoActiveSbToggleMode,
   PO_ACTIVE_STANDBY_STOP_AUTO_DAYS,
   poActiveDailyTimesheetDocId,
   resolvePoActiveAutoDailySyncKind,
@@ -217,13 +220,26 @@ export async function syncPoActiveAutoDailyForAssignment(
       }
       // อย่าทับ M1/D1 ที่แก้มือแล้วแต่ยังค้าง flag auto (กัน D1 หายแล้ว trip billing รอค้าง)
       const curEvent = String(cur.eventType || '');
-      if (
-        curEvent === 'mobilization_day' ||
-        curEvent === 'demobilization_day' ||
-        (curEvent !== kind && curEvent !== 'work_day' && curEvent !== 'standby_day')
-      ) {
+      if (curEvent === 'mobilization_day' || curEvent === 'demobilization_day') {
         skipped++;
         continue;
+      }
+      /**
+       * ห้ามแปลงประเภทวันข้ามกันแบบกว้าง ๆ:
+       * - อนุญาต W→SB (ช่วงหยุด standby / SB ก่อนเริ่มงาน)
+       * - SB→W ได้เฉพาะแถวที่ระบบสร้างจาก «หยุดแบบ standby» เท่านั้น
+       *   (กัน SB ที่แก้มือในตารางรายเดือน แล้ววันถัดไป heal/scheduler ทับกลับเป็น W)
+       */
+      if (curEvent !== kind) {
+        const allowWorkToStandby = curEvent === 'work_day' && kind === 'standby_day';
+        const allowAutoStandbyRevertToWork =
+          curEvent === 'standby_day' &&
+          kind === 'work_day' &&
+          String(cur.remark || '').includes('standby stop');
+        if (!allowWorkToStandby && !allowAutoStandbyRevertToWork) {
+          skipped++;
+          continue;
+        }
       }
       batch.update(
         dRef,
@@ -440,4 +456,333 @@ export async function applyPoActiveStandbyStopWindow(
   await batch.commit();
 
   return { startYmd, endYmd, rowsWritten };
+}
+
+export type PoActiveStopTodayEvent = 'work_day' | 'standby_day' | 'demobilization_day';
+
+async function loadPoActiveAssignmentWriteContext(db: Firestore, assignmentId: string) {
+  const mobRef = doc(db, 'mobilizations', assignmentId);
+  const mobSnap = await getDoc(mobRef);
+  if (!mobSnap.exists()) throw new Error('ไม่พบ mobilization');
+  const assignment = { id: mobSnap.id, ...(mobSnap.data() as object) } as Assignment;
+
+  if (!isAssignmentEligibleForPoActiveAutoDaily(assignment)) {
+    throw new Error('เฉพาะรายที่ ACTIVE และผูก PO/Wave ครบเท่านั้น');
+  }
+
+  const poSnap = await getDoc(doc(db, 'purchase_orders', assignment.poId));
+  if (!poSnap.exists()) throw new Error('ไม่พบ PO');
+  const po = { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder;
+
+  const lineSnap = await getDoc(doc(db, 'purchase_orders', assignment.poId, 'po_lines', assignment.poLineId));
+  if (!lineSnap.exists()) throw new Error('ไม่พบ PO line');
+  const line = { id: lineSnap.id, ...(lineSnap.data() as object) } as POLine;
+
+  let workerName = (assignment.workerName || '').trim();
+  if (!workerName) {
+    const wSnap = await getDoc(doc(db, 'workers', assignment.workerId));
+    if (wSnap.exists()) {
+      const w = wSnap.data() as Worker;
+      workerName = `${w.firstName || ''} ${w.lastName || ''}`.trim();
+    }
+  }
+  if (!workerName) workerName = assignment.workerId;
+
+  const laborTerms = await loadLaborCostTermsForPo(db, po.id);
+  const bundleId = resolvePoActiveBundleKeyForPo(po);
+  const today = thailandTodayYmd();
+  const laborCostContractTermId = pickLaborCostTermIdForDate(laborTerms, today);
+
+  return {
+    mobRef,
+    assignment,
+    po,
+    line,
+    workerName,
+    bundleId,
+    laborCostContractTermId,
+    today,
+  };
+}
+
+function buildPayloadForStopTodayEvent(
+  eventType: PoActiveStopTodayEvent,
+  params: Parameters<typeof buildPoActiveAutoDailyRowPayload>[0],
+): Partial<DailyTimesheet> {
+  if (eventType === 'standby_day') return buildPoActiveAutoStandbyRowPayload(params);
+  if (eventType === 'demobilization_day') return buildPoActiveAutoDemobRowPayload(params);
+  return buildPoActiveAutoDailyRowPayload(params);
+}
+
+/** ตั้งประเภทวันวันนี้ (W / SB / D1) บนแถว auto — ใช้ตอนหยุดข้อ 1–3 */
+export async function upsertPoActiveStopTodayEvent(
+  db: Firestore,
+  assignmentId: string,
+  user: User,
+  eventType: PoActiveStopTodayEvent,
+): Promise<string> {
+  assertPayrollPermission(user, 'timesheet', 'edit');
+  const ctx = await loadPoActiveAssignmentWriteContext(db, assignmentId);
+  const { assignment, po, line, workerName, bundleId, laborCostContractTermId, today } = ctx;
+
+  const id = poActiveDailyTimesheetDocId(assignment.workerId, assignment.id, today);
+  const dRef = doc(db, 'daily_timesheets', id);
+  const existing = await getDoc(dRef);
+  const now = Date.now();
+  const basePayload = buildPayloadForStopTodayEvent(eventType, {
+    assignment,
+    po,
+    line,
+    date: today,
+    workerNameSnapshot: workerName,
+    poActiveBundleId: bundleId,
+    laborCostContractTermId,
+  });
+
+  if (existing.exists()) {
+    const cur = existing.data() as DailyTimesheet;
+    if (isTimesheetFinanciallyImmutable(cur.status)) {
+      throw new Error('วันนี้ถูกล็อกบัญชีแล้ว — แก้ประเภทวันไม่ได้');
+    }
+    await updateDoc(
+      dRef,
+      omitUndefined({
+        ...basePayload,
+        updatedAt: now,
+        officeEnteredBy: user.displayName,
+        officeEnteredAt: now,
+      } as Record<string, unknown>) as DocumentData,
+    );
+  } else {
+    const parsed = DailyTimesheetSchema.parse({
+      ...basePayload,
+      id,
+      createdAt: now,
+      updatedAt: now,
+      officeEnteredBy: user.displayName,
+      officeEnteredAt: now,
+    });
+    const batch = writeBatch(db);
+    batch.set(dRef, omitUndefined({ ...parsed } as Record<string, unknown>) as DocumentData);
+    await batch.commit();
+  }
+
+  return today;
+}
+
+/**
+ * ข้อ 4 — สลับ SB ↔ W โดยไม่กลับ Waiting MOB
+ * SB: เติม SB อัตโนมัติจนสิ้นสุดมอบหมาย/PO · W: เคลียร์โหมด SB แล้วลง work_day วันนี้
+ */
+export async function togglePoActiveSbWStopMode(
+  db: Firestore,
+  assignmentId: string,
+  user: User,
+): Promise<{ mode: 'sb' | 'w'; startYmd?: string; endYmd?: string }> {
+  assertPayrollPermission(user, 'timesheet', 'edit');
+  const ctx = await loadPoActiveAssignmentWriteContext(db, assignmentId);
+  const { mobRef, assignment, po, line, workerName, bundleId, laborCostContractTermId, today } = ctx;
+  const now = Date.now();
+
+  if (isAssignmentInPoActiveSbToggleMode(assignment, today)) {
+    const id = poActiveDailyTimesheetDocId(assignment.workerId, assignment.id, today);
+    const dRef = doc(db, 'daily_timesheets', id);
+    const existing = await getDoc(dRef);
+    const workPayload = buildPoActiveAutoDailyRowPayload({
+      assignment,
+      po,
+      line,
+      date: today,
+      workerNameSnapshot: workerName,
+      poActiveBundleId: bundleId,
+      laborCostContractTermId,
+    });
+    const batch = writeBatch(db);
+    if (existing.exists()) {
+      const cur = existing.data() as DailyTimesheet;
+      if (!isTimesheetFinanciallyImmutable(cur.status) && cur.poActiveAutoDaily === true) {
+        batch.update(
+          dRef,
+          omitUndefined({
+            ...workPayload,
+            updatedAt: now,
+            officeEnteredBy: user.displayName,
+            officeEnteredAt: now,
+          } as Record<string, unknown>) as DocumentData,
+        );
+      }
+    } else {
+      const parsed = DailyTimesheetSchema.parse({
+        ...workPayload,
+        id,
+        createdAt: now,
+        updatedAt: now,
+        officeEnteredBy: user.displayName,
+        officeEnteredAt: now,
+      });
+      batch.set(dRef, omitUndefined({ ...parsed } as Record<string, unknown>) as DocumentData);
+    }
+    batch.update(mobRef, {
+      poActiveAutoWorkSuspended: deleteField(),
+      poActiveStandbyAutoStartYmd: deleteField(),
+      poActiveStandbyAutoEndYmd: deleteField(),
+      updatedAt: now,
+      updatedBy: user.id,
+    } as DocumentData);
+    await batch.commit();
+    return { mode: 'w' };
+  }
+
+  const range = computePoActiveAutoDailyRange(assignment, po);
+  if (!range) throw new Error('ไม่สามารถคำนวณช่วงลงเวลาอัตโนมัติได้');
+
+  const startYmd = today;
+  const assignEnd = ((assignment.endDate || '') as string).trim().slice(0, 10);
+  const poEnd = msToYmdFromPoEnd(po.endDate);
+  let endYmd = range.end;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(assignEnd) && assignEnd > endYmd) endYmd = assignEnd;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(poEnd) && poEnd > endYmd) endYmd = poEnd;
+  if (endYmd < startYmd) endYmd = addDaysToYmd(startYmd, 365);
+
+  // reuse standby window writer for open-ended SB until remob finish (1-3)
+  const r = await applyPoActiveStandbyStopWindowOpenEnded(db, assignmentId, user, startYmd, endYmd);
+  return { mode: 'sb', startYmd: r.startYmd, endYmd: r.endYmd };
+}
+
+function msToYmdFromPoEnd(raw: unknown): string {
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+    return new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Asia/Bangkok',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(raw));
+  }
+  const s = String(raw || '').trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+}
+
+/** เหมือน applyPoActiveStandbyStopWindow แต่กำหนดช่วง SB เอง (โหมดสลับข้อ 4) */
+async function applyPoActiveStandbyStopWindowOpenEnded(
+  db: Firestore,
+  assignmentId: string,
+  user: User,
+  startYmd: string,
+  endYmd: string,
+): Promise<{ startYmd: string; endYmd: string; rowsWritten: number }> {
+  assertPayrollPermission(user, 'timesheet', 'edit');
+
+  const mobRef = doc(db, 'mobilizations', assignmentId);
+  const mobSnap = await getDoc(mobRef);
+  if (!mobSnap.exists()) throw new Error('ไม่พบ mobilization');
+  const assignment = { id: mobSnap.id, ...(mobSnap.data() as object) } as Assignment;
+
+  if (!isAssignmentEligibleForPoActiveAutoDaily(assignment)) {
+    throw new Error('เฉพาะรายที่ ACTIVE และผูก PO/Wave ครบเท่านั้น');
+  }
+
+  const floor = ((assignment.mobWorkingStartDate || assignment.startDate || '') as string).trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(floor) && startYmd < floor) {
+    throw new Error(`วันเริ่มช่วง SB ต้องไม่ก่อนวันเริ่มทำงาน / มอบหมาย (${floor})`);
+  }
+
+  const poSnap = await getDoc(doc(db, 'purchase_orders', assignment.poId));
+  if (!poSnap.exists()) throw new Error('ไม่พบ PO');
+  const po = { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder;
+
+  const lineSnap = await getDoc(doc(db, 'purchase_orders', assignment.poId, 'po_lines', assignment.poLineId));
+  if (!lineSnap.exists()) throw new Error('ไม่พบ PO line');
+  const line = { id: lineSnap.id, ...(lineSnap.data() as object) } as POLine;
+
+  const range = computePoActiveAutoDailyRange(assignment, po);
+  if (!range) throw new Error('ไม่สามารถคำนวณช่วงลงเวลาอัตโนมัติได้');
+
+  let workerName = (assignment.workerName || '').trim();
+  if (!workerName) {
+    const wSnap = await getDoc(doc(db, 'workers', assignment.workerId));
+    if (wSnap.exists()) {
+      const w = wSnap.data() as Worker;
+      workerName = `${w.firstName || ''} ${w.lastName || ''}`.trim();
+    }
+  }
+  if (!workerName) workerName = assignment.workerId;
+
+  const bundleId = resolvePoActiveBundleKeyForPo(po);
+  const laborTerms = await loadLaborCostTermsForPo(db, po.id);
+  const tsCol = collection(db, 'daily_timesheets');
+  let rowsWritten = 0;
+  let batch = writeBatch(db);
+  let batchCount = 0;
+  const now = Date.now();
+
+  const flush = async () => {
+    if (batchCount === 0) return;
+    await batch.commit();
+    batch = writeBatch(db);
+    batchCount = 0;
+  };
+
+  // เขียนอย่างน้อยวันนี้ + เติม SB ไปข้างหน้าไม่เกินวันนี้ (auto จะเติมวันถัดไปเอง)
+  const writeThrough = startYmd <= thailandTodayYmd() ? thailandTodayYmd() : startYmd;
+  for (const date of eachYmdInRange(startYmd, writeThrough < endYmd ? writeThrough : endYmd)) {
+    if (date < range.start || date > range.end) continue;
+
+    const id = poActiveDailyTimesheetDocId(assignment.workerId, assignment.id, date);
+    const dRef = doc(tsCol, id);
+    const existing = await getDoc(dRef);
+
+    const laborCostContractTermId = pickLaborCostTermIdForDate(laborTerms, date);
+    const basePayload = buildPoActiveAutoStandbyRowPayload({
+      assignment,
+      po,
+      line,
+      date,
+      workerNameSnapshot: workerName,
+      poActiveBundleId: bundleId,
+      laborCostContractTermId,
+    });
+
+    if (existing.exists()) {
+      const cur = existing.data() as DailyTimesheet;
+      if (isTimesheetFinanciallyImmutable(cur.status)) continue;
+      if (cur.poActiveAutoDaily !== true) continue;
+      batch.update(
+        dRef,
+        omitUndefined({
+          ...basePayload,
+          updatedAt: now,
+          officeEnteredBy: user.displayName,
+          officeEnteredAt: now,
+        } as Record<string, unknown>) as DocumentData,
+      );
+      rowsWritten++;
+    } else {
+      const parsed = DailyTimesheetSchema.parse({
+        ...basePayload,
+        id,
+        createdAt: now,
+        updatedAt: now,
+        officeEnteredBy: user.displayName,
+        officeEnteredAt: now,
+      });
+      batch.set(dRef, omitUndefined({ ...parsed } as Record<string, unknown>) as DocumentData);
+      rowsWritten++;
+    }
+
+    batchCount++;
+    if (batchCount >= 400) await flush();
+  }
+
+  await flush();
+
+  batch.update(mobRef, {
+    poActiveAutoWorkSuspended: true,
+    poActiveStandbyAutoStartYmd: startYmd,
+    poActiveStandbyAutoEndYmd: endYmd,
+    updatedAt: now,
+    updatedBy: user.id,
+  } as DocumentData);
+  await batch.commit();
+
+  return { startYmd, endYmd, rowsWritten: Math.max(rowsWritten, 1) };
 }

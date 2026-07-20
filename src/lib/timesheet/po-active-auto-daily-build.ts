@@ -260,3 +260,26 @@ export function buildPoActiveAutoStandbyRowPayload(p: PoActiveAutoDailyRowParams
     remark: 'Auto — PO Active standby stop',
   };
 }
+
+/** แถว D1 (demob) เมื่อหยุดจาก Wave Board — วันนี้เป็น D1 แล้วจบรอบ */
+export function buildPoActiveAutoDemobRowPayload(p: PoActiveAutoDailyRowParams): Partial<DailyTimesheet> {
+  const row = buildPoActiveAutoDailyRowPayload(p);
+  return {
+    ...row,
+    eventType: 'demobilization_day',
+    shiftType: 'DAY',
+    remark: 'Auto — PO Active stop (D1)',
+  };
+}
+
+/** วันนี้ยังอยู่ในโหมดสลับ SB อัตโนมัติจากปุ่มหยุดข้อ 4 */
+export function isAssignmentInPoActiveSbToggleMode(
+  a: Pick<Assignment, 'poActiveAutoWorkSuspended' | 'poActiveStandbyAutoStartYmd' | 'poActiveStandbyAutoEndYmd'>,
+  dateYmd: string = thailandTodayYmd(),
+): boolean {
+  if (a.poActiveAutoWorkSuspended !== true) return false;
+  const sbStart = (a.poActiveStandbyAutoStartYmd || '').trim().slice(0, 10);
+  const sbEnd = (a.poActiveStandbyAutoEndYmd || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sbStart) || !/^\d{4}-\d{2}-\d{2}$/.test(sbEnd)) return false;
+  return dateYmd >= sbStart && dateYmd <= sbEnd;
+}

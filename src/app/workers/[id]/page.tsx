@@ -587,6 +587,18 @@ function WorkerDetailContent({ id }: { id: string }) {
     }
   };
 
+  const drugTestsSyncKey = useMemo(
+    () =>
+      (drugTests || [])
+        .map(
+          (t) =>
+            `${t.id}:${t.substanceKey || ''}:${t.result || ''}:${Number(t.testDate || 0)}`,
+        )
+        .sort()
+        .join('|'),
+    [drugTests],
+  );
+
   useEffect(() => {
     if (worker && certs && medicals && drugTests) {
       calculateAndStoreReadiness();
@@ -596,7 +608,7 @@ function WorkerDetailContent({ id }: { id: string }) {
     worker?.id,
     certs?.length,
     medicals?.length,
-    drugTests?.length,
+    drugTestsSyncKey,
     workerDocs?.length,
     requirementSkips?.length,
     workerDocCatalog?.length,

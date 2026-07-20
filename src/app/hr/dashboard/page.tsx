@@ -336,7 +336,7 @@ export default function HRDashboardPage() {
                   <Link href="/workers">ทะเบียนลูกจ้าง</Link>
                 </Button>
                 <Button variant="outline" size="sm" asChild className="font-semibold border-amber-200">
-                  <Link href="/timesheets/wave-board">คีย์ลงเวลา (Wave)</Link>
+                  <Link href="/timesheets">ลงเวลารายวัน</Link>
                 </Button>
                 <Button variant="outline" size="sm" asChild className="font-semibold border-amber-200">
                   <Link href="/timesheets/wave-month">สรุปลงเวลารายเดือน (Wave)</Link>
@@ -386,7 +386,7 @@ export default function HRDashboardPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <StatCard title="ลูกจ้างทั้งหมด" value={stats.total} sub="Total Workers" icon={Users} colorClass="border-l-blue-600" />
           <StatCard title="พร้อมใช้งาน" value={stats.ready} sub="Ready Workers" icon={CheckCircle2} colorClass="border-l-green-600" />
-          <StatCard title="ขาดใบรับรอง" value={stats.missingCert} sub="Missing Certs" icon={AlertTriangle} colorClass="border-l-orange-500" />
+          <StatCard title="เซอร์ไม่ครบ" value={stats.missingCert} sub="Incomplete Certs" icon={AlertTriangle} colorClass="border-l-orange-500" />
           <StatCard title="ตรวจสุขภาพหมดอายุ" value={stats.medExpired} sub="Expired Medical" icon={Stethoscope} colorClass="border-l-red-600" />
           <StatCard title="เอกสารหมดอายุ" value={stats.docExpired} sub="Expired Documents" icon={FileText} colorClass="border-l-rose-600" />
           <StatCard title="ใกล้หมดอายุ" value={stats.expiringSoon} sub="Expiry Warnings" icon={AlertTriangle} colorClass="border-l-orange-500" />

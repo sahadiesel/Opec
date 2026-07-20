@@ -740,8 +740,8 @@ export function WorkerCredentialsTab({
                 <TableCell className="font-mono text-xs align-top text-muted-foreground">—</TableCell>
                 <TableCell className="align-top text-muted-foreground">—</TableCell>
                 <TableCell className="align-top">
-                  <Badge variant="secondary" className="text-[10px] uppercase">
-                    ยังไม่มี
+                  <Badge variant="secondary" className="text-[10px] uppercase" title="ยังไม่ได้บันทึกใบเซอร์รายการนี้">
+                    ยังไม่ครบ
                   </Badge>
                 </TableCell>
                 <TableCell className="text-center align-top text-muted-foreground">—</TableCell>

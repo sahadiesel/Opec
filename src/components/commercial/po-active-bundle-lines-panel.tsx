@@ -430,6 +430,7 @@ export function PoActiveBundleLinesPanel({
   const [isDeletingLine, setIsDeletingLine] = useState(false);
   const [isResyncingRates, setIsResyncingRates] = useState(false);
 
+  const showPoColumn = bundlePos.length > 1;
   const primaryContractId = bundlePos[0]?.contractId ?? '';
   const contractRatesQuery = useMemoFirebase(
     () =>
@@ -455,9 +456,15 @@ export function PoActiveBundleLinesPanel({
   }, [allPositions]);
 
   useEffect(() => {
+    if (bundlePos.length === 1) {
+      setSelectedPoForAdd(bundlePos[0] ?? null);
+    }
+  }, [bundlePos]);
+
+  useEffect(() => {
     if (!isAddOpen) return;
     const first = bundlePos[0];
-    setSelectedPoForAdd(first ?? null);
+    setSelectedPoForAdd((prev) => prev ?? first ?? null);
     setNewLine({
       quantity: 1,
       status: 'active',
@@ -752,23 +759,25 @@ export function PoActiveBundleLinesPanel({
           </div>
           {canEditPo && bundlePos.length > 0 && (
             <div className="flex flex-wrap gap-2 items-center">
-              <Select
-                value={selectedPoForAdd?.id ?? ''}
-                onValueChange={(id) =>
-                  setSelectedPoForAdd(bundlePos.find((p) => p.id === id) ?? null)
-                }
-              >
-                <SelectTrigger className="h-9 w-[220px]">
-                  <SelectValue placeholder="เลือก PO ที่จะเพิ่มบรรทัด" />
-                </SelectTrigger>
-                <SelectContent>
-                  {bundlePos.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.poCode}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {showPoColumn && (
+                <Select
+                  value={selectedPoForAdd?.id ?? ''}
+                  onValueChange={(id) =>
+                    setSelectedPoForAdd(bundlePos.find((p) => p.id === id) ?? null)
+                  }
+                >
+                  <SelectTrigger className="h-9 w-[220px]">
+                    <SelectValue placeholder="เลือก PO ที่จะเพิ่มบรรทัด" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {bundlePos.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.poCode}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
               <Button
                 type="button"
                 className="gap-2 h-9 font-semibold"
@@ -809,8 +818,8 @@ export function PoActiveBundleLinesPanel({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="pl-6">PO</TableHead>
-              <TableHead>ตำแหน่ง</TableHead>
+              {showPoColumn && <TableHead className="pl-6">PO</TableHead>}
+              <TableHead className={showPoColumn ? undefined : 'pl-6'}>ตำแหน่ง</TableHead>
               <TableHead className="hidden lg:table-cell">ช่วงวันที่</TableHead>
               <TableHead className="hidden md:table-cell">สถานที่</TableHead>
               <TableHead className="text-center">สถานะ</TableHead>
@@ -824,8 +833,13 @@ export function PoActiveBundleLinesPanel({
           <TableBody>
             {sortedLines.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={10} className="text-center py-14 text-muted-foreground text-sm">
-                  ยังไม่มีบรรทัด — เลือก PO แล้วกด «เพิ่มบรรทัด»
+                <TableCell
+                  colSpan={showPoColumn ? 10 : 9}
+                  className="text-center py-14 text-muted-foreground text-sm"
+                >
+                  {showPoColumn
+                    ? 'ยังไม่มีบรรทัด — เลือก PO แล้วกด «เพิ่มบรรทัด»'
+                    : 'ยังไม่มีบรรทัด — กด «เพิ่มบรรทัด» เพื่อเริ่มต้น'}
                 </TableCell>
               </TableRow>
             ) : (
@@ -843,15 +857,18 @@ export function PoActiveBundleLinesPanel({
                 const vacant =
                   line.status === 'active' ? Math.max(0, line.quantity - assignedCount) : 0;
                 const q = encodeURIComponent(line.poId);
-                const assignHref = `/assignments?poId=${q}&poLineId=${encodeURIComponent(line.id)}&openDialog=1`;
                 const rosterHref = `/assignments?poId=${q}&poLineId=${encodeURIComponent(line.id)}`;
 
                 return (
                   <TableRow key={`${line.poId}-${line.id}`}>
-                    <TableCell className="pl-6 font-mono text-xs font-semibold text-primary">
-                      {po?.poCode ?? line.poId}
+                    {showPoColumn && (
+                      <TableCell className="pl-6 font-mono text-xs font-semibold text-primary">
+                        {po?.poCode ?? line.poId}
+                      </TableCell>
+                    )}
+                    <TableCell className={`font-medium max-w-[160px] ${showPoColumn ? '' : 'pl-6'}`}>
+                      {label}
                     </TableCell>
-                    <TableCell className="font-medium max-w-[160px]">{label}</TableCell>
                     <TableCell className="hidden lg:table-cell text-xs text-muted-foreground whitespace-nowrap">
                       <span className="inline-flex items-center gap-1">
                         <Calendar className="h-3 w-3 shrink-0" />
@@ -939,11 +956,6 @@ export function PoActiveBundleLinesPanel({
                           >
                             <Trash2 className="h-4 w-4" aria-hidden />
                             <span className="sr-only">ลบ</span>
-                          </Button>
-                        )}
-                        {line.status === 'active' && vacant > 0 && (
-                          <Button size="sm" variant="secondary" className="h-8 text-xs font-semibold" asChild>
-                            <Link href={assignHref}>Assign</Link>
                           </Button>
                         )}
                         <Button

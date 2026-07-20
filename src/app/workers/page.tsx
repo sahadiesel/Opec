@@ -385,7 +385,7 @@ export default function WorkersPage() {
   const getReadinessBadge = (status: ReadinessStatus) => {
     switch (status) {
       case 'READY': return <Badge className="bg-green-600 text-white"><CheckCircle2 className="h-3 w-3 mr-1" /> READY</Badge>;
-      case 'MISSING_CERTIFICATE': return <Badge variant="outline" className="border-amber-500 text-amber-700 bg-amber-50"><ShieldAlert className="h-3 w-3 mr-1" /> NO CERT</Badge>;
+      case 'MISSING_CERTIFICATE': return <Badge variant="outline" className="border-amber-500 text-amber-700 bg-amber-50" title="ใบเซอร์บังคับตามตำแหน่งยังไม่ครบ"><ShieldAlert className="h-3 w-3 mr-1" /> เซอร์ไม่ครบ</Badge>;
       case 'MEDICAL_EXPIRED': return <Badge variant="destructive"><AlertCircle className="h-3 w-3 mr-1" /> MED EXPIRED</Badge>;
       case 'DRUG_TEST_EXPIRED': return <Badge variant="outline" className="border-orange-500 text-orange-700 bg-orange-50"><AlertCircle className="h-3 w-3 mr-1" /> DRUG EXPIRED</Badge>;
       case 'DOCUMENT_EXPIRED': return <Badge variant="outline" className="border-rose-500 text-rose-700 bg-rose-50"><FileQuestion className="h-3 w-3 mr-1" /> DOC EXPIRED</Badge>;

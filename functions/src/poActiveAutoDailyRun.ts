@@ -183,13 +183,21 @@ export async function syncTodayOnlyForMobilization(
       return;
     }
     const curEvent = String(cur.eventType || '');
-    if (
-      curEvent === 'mobilization_day' ||
-      curEvent === 'demobilization_day' ||
-      (curEvent !== syncKind && curEvent !== 'work_day' && curEvent !== 'standby_day')
-    ) {
+    if (curEvent === 'mobilization_day' || curEvent === 'demobilization_day') {
       totals.skipped++;
       return;
+    }
+    /** ห้ามทับ SB ที่แก้มือกลับเป็น W — เหลือเฉพาะแถว auto «standby stop» ที่จบช่วงแล้ว */
+    if (curEvent !== syncKind) {
+      const allowWorkToStandby = curEvent === 'work_day' && syncKind === 'standby_day';
+      const allowAutoStandbyRevertToWork =
+        curEvent === 'standby_day' &&
+        syncKind === 'work_day' &&
+        String(cur.remark || '').includes('standby stop');
+      if (!allowWorkToStandby && !allowAutoStandbyRevertToWork) {
+        totals.skipped++;
+        return;
+      }
     }
     await dRef.update(
       omitUndefined({

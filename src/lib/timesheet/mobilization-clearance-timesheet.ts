@@ -6,6 +6,7 @@ import { deleteDoc, doc, getDoc, type Firestore } from 'firebase/firestore';
 import type {
   Assignment,
   DailyTimesheet,
+  MobDayChargeSpec,
   POLine,
   PurchaseOrder,
   RateConditionEventType,
@@ -18,6 +19,7 @@ import { resolvePoActiveBundleKeyForPo, resolveWorkModeForPoContext } from '@/li
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { eachYmdInRange, normalHoursFromPoLine } from '@/lib/timesheet/po-active-auto-daily-build';
 import { addDaysToYmd, shouldAutoFillPrefixWorkDaysBeforeStandby } from '@/lib/ops/mobilization-final-clearance';
+import { buildTimesheetFieldsFromMobCharges } from '@/lib/ops/mob-day-charge';
 
 const CLEARANCE_REMARK_SNIPPET = 'Final clearance';
 
@@ -118,10 +120,23 @@ export async function upsertMobClearanceDailyTimesheet(
     /** หน้า Mobilization Final clearance — งวด PO+เดือนล็อกแล้วยังต้องบันทึกได้ */
     bypassPoMonthLock?: boolean;
     remarkOverride?: string;
+    /** ค่าวางบิล / จ่ายลูกจ้าง สำหรับวัน Pre-Mob หรือ Mob */
+    billingCharge?: MobDayChargeSpec;
+    payrollCharge?: MobDayChargeSpec;
   },
 ): Promise<{ created: number; updated: number; skipped: number }> {
-  const { assignment: a, po, line, workerDisplayName, kind, dateYmd, bypassPoMonthLock, remarkOverride } =
-    args;
+  const {
+    assignment: a,
+    po,
+    line,
+    workerDisplayName,
+    kind,
+    dateYmd,
+    bypassPoMonthLock,
+    remarkOverride,
+    billingCharge,
+    payrollCharge,
+  } = args;
 
   if (!bypassPoMonthLock) {
     const gate = await isPoMonthTimesheetEditingBlocked(db, po.id, dateYmd);
@@ -134,13 +149,22 @@ export async function upsertMobClearanceDailyTimesheet(
   const docId = service.getTimesheetId(a.workerId, a.id, dateYmd);
   const existingSnap = await getDoc(doc(db, 'daily_timesheets', docId));
 
-  const eventType: RateConditionEventType =
+  let eventType: RateConditionEventType =
     kind === 'standby_day'
       ? 'standby_day'
       : kind === 'mobilization_day'
         ? 'mobilization_day'
         : 'work_day';
-  const normalHours = kind === 'work_day' ? normalHoursFromPoLine(line) : 0;
+  let normalHours = kind === 'work_day' ? normalHoursFromPoLine(line) : 0;
+  let chargeFields: Partial<DailyTimesheet> = {};
+
+  if (billingCharge && payrollCharge && kind !== 'work_day') {
+    const built = buildTimesheetFieldsFromMobCharges(billingCharge, payrollCharge);
+    eventType = built.eventType;
+    normalHours = built.normalHours;
+    const { eventType: _e, normalHours: _n, ...rest } = built;
+    chargeFields = rest;
+  }
 
   if (existingSnap.exists()) {
     const cur = { id: existingSnap.id, ...(existingSnap.data() as object) } as DailyTimesheet;
@@ -157,16 +181,19 @@ export async function upsertMobClearanceDailyTimesheet(
     }
   }
 
-  const payload = buildBasePayload(
-    a,
-    po,
-    line,
-    workerDisplayName.trim() || 'Unknown',
-    dateYmd,
-    eventType,
-    normalHours,
-    remarkOverride,
-  );
+  const payload = {
+    ...buildBasePayload(
+      a,
+      po,
+      line,
+      workerDisplayName.trim() || 'Unknown',
+      dateYmd,
+      eventType,
+      normalHours,
+      remarkOverride,
+    ),
+    ...chargeFields,
+  };
 
   return service.bulkUpsertTimesheets([payload], user);
 }

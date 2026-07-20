@@ -17,7 +17,6 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Trash2,
-  Save,
   ArrowLeft,
   FileText,
   Building2,
@@ -28,7 +27,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
-import { doc, collection, query, where, updateDoc, getDocs, writeBatch, deleteField } from 'firebase/firestore';
+import { doc, collection, query, where, updateDoc, getDocs, writeBatch } from 'firebase/firestore';
 import { 
   PurchaseOrder, 
   POLine, 
@@ -39,7 +38,6 @@ import {
   Assignment, 
   Quotation,
   Wave,
-  JobMode,
   ContractBillingMode,
 } from '@/lib/types';
 import Link from 'next/link';
@@ -129,15 +127,9 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   );
   const fulfillmentTotals = useMemo(() => aggregateActiveLineTotals(fulfillmentRows), [fulfillmentRows]);
 
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedPO, setEditedPO] = useState<Partial<PurchaseOrder>>({});
-
   const [isApprovingPo, setIsApprovingPo] = useState(false);
   const [isClosingPo, setIsClosingPo] = useState(false);
   const [isDeletingPoDoc, setIsDeletingPoDoc] = useState(false);
-  useEffect(() => {
-    if (po) setEditedPO({ ...po, poWorkMode: po.poWorkMode ?? 'OFFSHORE' });
-  }, [po]);
 
   const isContractBasedPO = (po?.poType || 'contract') === 'contract';
 
@@ -146,71 +138,6 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     if (contract?.billingMode === 'TRIP' || contract?.billingMode === 'MONTHLY') return contract.billingMode;
     return 'MONTHLY';
   }, [po?.billingMode, contract?.billingMode]);
-
-  const handleSaveMaster = async () => {
-    if (!canEditPo) {
-      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข Customer PO' });
-      return;
-    }
-    if (!poRef || !currentUser || !po || !firestore) return;
-    const billingModeValue = editedPO.billingMode;
-    const prevWorkMode = po.poWorkMode ?? 'OFFSHORE';
-    const nextWorkMode = editedPO.poWorkMode ?? 'OFFSHORE';
-    const workModeChanged = prevWorkMode !== nextWorkMode;
-    const payload: Record<string, unknown> = {
-      ...editedPO,
-      updatedAt: Date.now(),
-    };
-    if (billingModeValue === 'TRIP' || billingModeValue === 'MONTHLY') {
-      payload.billingMode = billingModeValue;
-    } else {
-      payload.billingMode = deleteField();
-    }
-    await updateDoc(poRef, payload);
-    setIsEditing(false);
-
-    writeAuditLog(firestore, currentUser, {
-      actionType: 'UPDATE',
-      entityType: 'PurchaseOrder',
-      entityId: id,
-      entityLabel: po.poCode,
-      changedFields: Object.keys(editedPO),
-      sourceModule: 'commercial',
-      purchaseOrderId: id,
-      afterSummary: workModeChanged
-        ? `Updated PO header — work mode ${prevWorkMode} → ${nextWorkMode}`
-        : 'Updated purchase order header details',
-    });
-
-    let rateSyncMsg = '';
-    if (workModeChanged && po.contractId) {
-      try {
-        const positionsById = new Map((allPositions ?? []).map((p) => [p.id, p]));
-        const { updated } = await resyncPoLineRateSnapshotsForPo(
-          firestore,
-          { id: po.id, contractId: po.contractId, poWorkMode: nextWorkMode },
-          positionsById,
-        );
-        if (updated > 0) {
-          rateSyncMsg = ` — อัปเดตราคา ${updated} บรรทัดตามโหมด ${nextWorkMode === 'ONSHORE' ? 'Onshore' : 'Offshore'}`;
-        }
-      } catch (e) {
-        console.warn(e);
-        rateSyncMsg = ' — ซิงก์ราคาบรรทัดไม่สำเร็จ (ลองกด «ซิงก์ราคาจากสัญญา»)';
-      }
-    }
-
-    try {
-      await rebuildAllPoActiveBundlesForCustomer(firestore, po.customerId);
-    } catch (e) {
-      console.warn(e);
-    }
-
-    toast({
-      title: 'บันทึกสำเร็จ',
-      description: `ข้อมูล Customer PO ถูกอัปเดตแล้ว${rateSyncMsg}`,
-    });
-  };
 
   const handleApprovePO = async () => {
     if (!canApprovePo) {
@@ -405,117 +332,49 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" asChild>
-              <Link href={backHref}><ArrowLeft className="h-5 w-5" /></Link>
-            </Button>
-            <div className="flex-1">
-              <div className="flex items-center gap-3">
-                <h1 className="text-3xl font-bold tracking-tight">{po.title}</h1>
-                <Badge variant="outline" className="font-mono text-primary border-primary/20">{po.poCode}</Badge>
-                <Badge variant={po.status === 'active' ? 'default' : 'secondary'}>{po.status.toUpperCase()}</Badge>
-                {isContractBasedPO && (
-                  <Badge variant="outline" className="text-[10px] font-semibold">
-                    PO Active: {(po.poWorkMode ?? 'OFFSHORE') === 'ONSHORE' ? 'Onshore' : 'Offshore'}
-                  </Badge>
-                )}
-              </div>
-              <div className="text-muted-foreground flex flex-wrap items-center gap-4 mt-1 text-sm">
-                <span className="flex items-center gap-1 font-medium"><Building2 className="h-3.5 w-3.5" /> {customer?.name || '...'}</span>
-                {isContractBasedPO ? (
-                  <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                    <span className="flex items-center gap-1">
-                      <FileText className="h-3.5 w-3.5" /> สัญญา: {contract?.contractNumber || '—'}
-                    </span>
-                    {displayServiceAgreementNo ? (
-                      <span className="font-mono text-muted-foreground">SA No.: {displayServiceAgreementNo}</span>
-                    ) : null}
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1 text-xs">
-                    <FileText className="h-3.5 w-3.5" /> ใบเสนอราคา: {quotation?.quotationNo || po.quotationId || '—'}
-                    {quotation && (
-                      <Badge variant="outline" className="text-[10px] ml-1">{quotation.status}</Badge>
-                    )}
-                  </span>
-                )}
-                {po.customerPONumber && (
-                  <span className="flex items-center gap-1 text-xs"><FileText className="h-3.5 w-3.5" /> Customer PO: {po.customerPONumber}</span>
-                )}
-                {po.customerPoIssueDate != null && Number(po.customerPoIssueDate) > 0 && (
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Calendar className="h-3.5 w-3.5" /> วันที่ออก PO ลูกค้า: {formatDateThaiBE(po.customerPoIssueDate)}
-                  </span>
-                )}
-              </div>
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" asChild>
+            <Link href={backHref}><ArrowLeft className="h-5 w-5" /></Link>
+          </Button>
+          <div className="flex-1">
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-bold tracking-tight">{po.title}</h1>
+              <Badge variant="outline" className="font-mono text-primary border-primary/20">{po.poCode}</Badge>
+              <Badge variant={po.status === 'active' ? 'default' : 'secondary'}>{po.status.toUpperCase()}</Badge>
+              {isContractBasedPO && (
+                <Badge variant="outline" className="text-[10px] font-semibold">
+                  PO Active: {(po.poWorkMode ?? 'OFFSHORE') === 'ONSHORE' ? 'Onshore' : 'Offshore'}
+                </Badge>
+              )}
             </div>
-          </div>
-          <div className="flex flex-wrap gap-2 justify-end">
-            {po.status === 'pending' && canApprovePo && (
-              <Button
-                className="gap-2 bg-emerald-600 hover:bg-emerald-700 h-10"
-                disabled={isApprovingPo}
-                onClick={() => void handleApprovePO()}
-              >
-                {isApprovingPo ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                อนุมัติ PO (Active)
-              </Button>
-            )}
-            {po.status === 'pending' && isAdminUser && (
-              <Button
-                variant="destructive"
-                className="h-10"
-                disabled={isDeletingPoDoc}
-                onClick={() => void handleDeleteEntirePO()}
-              >
-                {isDeletingPoDoc ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                ลบ PO (Pending)
-              </Button>
-            )}
-            <Button
-              variant="outline"
-              onClick={() => {
-                if (!canEditPo) return;
-                setEditedPO(po ? { ...po, poWorkMode: po.poWorkMode ?? 'OFFSHORE' } : {});
-                setIsEditing(!isEditing);
-              }}
-              disabled={!canEditPo}
-            >
-              {isEditing ? 'ยกเลิก' : 'แก้ไขข้อมูล'}
-            </Button>
-            {isEditing && canEditPo && (
-              <Button className="gap-2 bg-primary font-bold shadow-md h-10 px-6" onClick={handleSaveMaster}>
-                <Save className="h-4 w-4" /> บันทึกการเปลี่ยนแปลง
-              </Button>
-            )}
-            {isContractBasedPO && po.status === 'active' && canEditPo && (
-              <Button
-                variant="outline"
-                className="h-10 border-amber-600 text-amber-900"
-                disabled={isClosingPo || fulfillmentTotals.assigned > 0}
-                title={
-                  fulfillmentTotals.assigned > 0
-                    ? `ยังมี ${fulfillmentTotals.assigned} รายมอบหมายนับในบรรทัด PO — ปิด Mobilization ก่อน`
-                    : undefined
-                }
-                onClick={() => void handleClosePo()}
-              >
-                {isClosingPo ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                ปิด PO (ไม่สร้าง Wave เพิ่ม)
-              </Button>
-            )}
-            {!isContractBasedPO && po.status === 'active' && canEditPo && (
-              <Button
-                variant="outline"
-                className="h-10 border-amber-600 text-amber-900"
-                disabled={isClosingPo}
-                onClick={() => void handleClosePo()}
-              >
-                {isClosingPo ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                ปิด PO (งานจากใบเสนอราคา)
-              </Button>
-            )}
+            <div className="text-muted-foreground flex flex-wrap items-center gap-4 mt-1 text-sm">
+              <span className="flex items-center gap-1 font-medium"><Building2 className="h-3.5 w-3.5" /> {customer?.name || '...'}</span>
+              {isContractBasedPO ? (
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  <span className="flex items-center gap-1">
+                    <FileText className="h-3.5 w-3.5" /> สัญญา: {contract?.contractNumber || '—'}
+                  </span>
+                  {displayServiceAgreementNo ? (
+                    <span className="font-mono text-muted-foreground">SA No.: {displayServiceAgreementNo}</span>
+                  ) : null}
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-xs">
+                  <FileText className="h-3.5 w-3.5" /> ใบเสนอราคา: {quotation?.quotationNo || po.quotationId || '—'}
+                  {quotation && (
+                    <Badge variant="outline" className="text-[10px] ml-1">{quotation.status}</Badge>
+                  )}
+                </span>
+              )}
+              {po.customerPONumber && (
+                <span className="flex items-center gap-1 text-xs"><FileText className="h-3.5 w-3.5" /> Customer PO: {po.customerPONumber}</span>
+              )}
+              {po.customerPoIssueDate != null && Number(po.customerPoIssueDate) > 0 && (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Calendar className="h-3.5 w-3.5" /> วันที่ออก PO ลูกค้า: {formatDateThaiBE(po.customerPoIssueDate)}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -579,65 +438,58 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
             <Card>
               <CardHeader><CardTitle>รายละเอียด Customer PO (Header Info)</CardTitle></CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="space-y-2 min-w-0">
                     <Label className="font-bold">หัวข้อ / ชื่อโครงการ</Label>
-                    <Input disabled={!isEditing} value={isEditing ? (editedPO.title || '') : (po.title || '')} onChange={e => setEditedPO({...editedPO, title: e.target.value})} />
+                    <Input disabled value={po.title || ''} />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-2 min-w-0">
                     <Label className="font-bold">เลขที่ Customer PO (PO Code)</Label>
-                    <Input disabled={!isEditing} value={isEditing ? (editedPO.poCode || '') : (po.poCode || '')} onChange={e => setEditedPO({...editedPO, poCode: e.target.value})} />
+                    <Input disabled value={po.poCode || ''} />
                   </div>
                   {isContractBasedPO && (
-                    <div className="space-y-2 md:col-span-2">
-                      <Label className="font-bold">Service agreement No. (จากสัญญา / snapshot บน PO)</Label>
+                    <div className="space-y-2 min-w-0">
+                      <Label className="font-bold truncate" title="Service agreement No. (จากสัญญา / snapshot บน PO)">
+                        Service agreement No.
+                      </Label>
                       <Input
                         disabled
                         className="bg-muted font-mono"
                         value={displayServiceAgreementNo || '—'}
+                        title="ค่าที่บันทึกบน PO ตอนสร้าง; ถ้า PO เก่าไม่มี snapshot จะแสดงจากสัญญาปัจจุบันเมื่อมี"
                       />
-                      <p className="text-[11px] text-muted-foreground">
-                        ค่าที่บันทึกบน PO ตอนสร้าง; ถ้า PO เก่าไม่มี snapshot จะแสดงจากสัญญาปัจจุบันเมื่อมี
-                      </p>
                     </div>
                   )}
-                  <div className="space-y-2">
-                    <Label className="font-bold">เลขที่เอกสาร PO ของลูกค้า (External Ref)</Label>
+                  <div className="space-y-2 min-w-0">
+                    <Label className="font-bold truncate" title="เลขที่เอกสาร PO ของลูกค้า (External Ref)">
+                      เลขที่เอกสาร PO ของลูกค้า
+                    </Label>
                     <Input
-                      disabled={!isEditing}
-                      value={isEditing ? (editedPO.customerPONumber || '') : (po.customerPONumber || '')}
-                      onChange={e => setEditedPO({...editedPO, customerPONumber: e.target.value})}
+                      disabled
+                      value={po.customerPONumber || ''}
                       placeholder="เช่น PO-CLIENT-2026-00123"
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-2 min-w-0">
                     <Label className="font-bold">วันที่ออก PO ของลูกค้า</Label>
-                    {!isEditing && (po.customerPoIssueDate == null || Number(po.customerPoIssueDate) <= 0) ? (
+                    {po.customerPoIssueDate == null || Number(po.customerPoIssueDate) <= 0 ? (
                       <p className="text-sm text-muted-foreground py-2 border rounded-md px-3 bg-muted/30">ยังไม่ระบุ</p>
                     ) : (
                       <DatePickerThaiBE
-                        disabled={!isEditing}
-                        value={
-                          isEditing
-                            ? (editedPO.customerPoIssueDate ?? po.customerPoIssueDate ?? Date.now())
-                            : (po.customerPoIssueDate as number)
-                        }
-                        onChange={(ms) => setEditedPO({ ...editedPO, customerPoIssueDate: ms })}
+                        disabled
+                        value={po.customerPoIssueDate as number}
+                        onChange={() => {}}
                       />
                     )}
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-2 min-w-0">
                     <Label className="font-bold">ชื่อโครงการเฉพาะทาง (Project Name)</Label>
-                    <Input disabled={!isEditing} value={isEditing ? (editedPO.projectName || '') : (po.projectName || '')} onChange={e => setEditedPO({...editedPO, projectName: e.target.value})} />
+                    <Input disabled value={po.projectName || ''} />
                   </div>
                   {isContractBasedPO && (
-                    <div className="space-y-2 md:col-span-2">
+                    <div className="space-y-2 min-w-0">
                       <Label className="font-bold">โหมดงาน PO (Onshore / Offshore)</Label>
-                      <Select
-                        disabled={!isEditing}
-                        value={(isEditing ? editedPO.poWorkMode : po.poWorkMode) ?? 'OFFSHORE'}
-                        onValueChange={(v) => setEditedPO({ ...editedPO, poWorkMode: v as JobMode })}
-                      >
+                      <Select disabled value={po.poWorkMode ?? 'OFFSHORE'}>
                         <SelectTrigger className="h-10">
                           <SelectValue />
                         </SelectTrigger>
@@ -646,28 +498,12 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                           <SelectItem value="ONSHORE">Onshore</SelectItem>
                         </SelectContent>
                       </Select>
-                      <p className="text-[11px] text-muted-foreground">
-                        ใช้จัดกลุ่มเอกสาร PO Active ต่อลูกค้า — แยกจาก Onshore/Offshore
-                      </p>
                     </div>
                   )}
                   {isContractBasedPO && (
-                    <div className="space-y-2 md:col-span-2">
+                    <div className="space-y-2 min-w-0">
                       <Label className="font-bold">โหมดวางบิล (Billing Mode)</Label>
-                      <Select
-                        disabled={!isEditing}
-                        value={
-                          isEditing
-                            ? (editedPO.billingMode ?? '__inherit__')
-                            : (po.billingMode ?? '__inherit__')
-                        }
-                        onValueChange={(v) =>
-                          setEditedPO({
-                            ...editedPO,
-                            billingMode: v === '__inherit__' ? undefined : (v as ContractBillingMode),
-                          })
-                        }
-                      >
+                      <Select disabled value={po.billingMode ?? '__inherit__'}>
                         <SelectTrigger className="h-10">
                           <SelectValue placeholder="ใช้ตามสัญญาหลัก" />
                         </SelectTrigger>
@@ -679,44 +515,44 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                           <SelectItem value="TRIP">TRIP — รอบ M1→D1</SelectItem>
                         </SelectContent>
                       </Select>
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-[11px] text-muted-foreground truncate" title={`ที่ใช้จริง: ${billingModeLabel(effectiveBillingMode)}`}>
                         ที่ใช้จริง: <strong>{billingModeLabel(effectiveBillingMode)}</strong>
                         {effectiveBillingMode === 'TRIP' && (
                           <>
                             {' · '}
                             <Link href="/accounting/trip-billing" className="text-primary underline">
-                              ทำใบแจ้งหนี้แบบ Trip
+                              Trip
                             </Link>
                           </>
                         )}
                       </p>
                     </div>
                   )}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label className="font-bold">วันที่เริ่มงานตาม PO</Label>
-                      <DatePickerThaiBE
-                        disabled={!isEditing}
-                        value={isEditing ? (editedPO.startDate ?? po.startDate) : po.startDate}
-                        onChange={(ms) => setEditedPO({ ...editedPO, startDate: ms })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label className="font-bold">วันที่สิ้นสุดงานตาม PO</Label>
-                      <DatePickerThaiBE
-                        disabled={!isEditing}
-                        value={isEditing ? (editedPO.endDate ?? po.endDate) : po.endDate}
-                        onChange={(ms) => setEditedPO({ ...editedPO, endDate: ms })}
-                      />
-                    </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="space-y-2 min-w-0">
+                    <Label className="font-bold">วันที่เริ่มงานตาม PO</Label>
+                    <DatePickerThaiBE
+                      disabled
+                      value={po.startDate}
+                      onChange={() => {}}
+                    />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-2 min-w-0">
+                    <Label className="font-bold">วันที่สิ้นสุดงานตาม PO</Label>
+                    <DatePickerThaiBE
+                      disabled
+                      value={po.endDate}
+                      onChange={() => {}}
+                    />
+                  </div>
+                  <div className="space-y-2 min-w-0 sm:col-span-2">
                     <Label className="font-bold">สถานะใบสั่งซื้อ</Label>
-                    <Select disabled={!isEditing} onValueChange={v => setEditedPO({...editedPO, status: v as PurchaseOrder['status']})} value={isEditing ? (editedPO.status || 'pending') : (po.status || 'pending')}>
+                    <Select disabled value={po.status || 'pending'}>
                       <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="pending">Pending</SelectItem>
-                        {(po.status === 'active' || (isEditing && editedPO.status === 'active')) && (
+                        {po.status === 'active' && (
                           <SelectItem value="active">Active</SelectItem>
                         )}
                         <SelectItem value="closed">Closed</SelectItem>
@@ -729,7 +565,57 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold">หมายเหตุ</Label>
-                  <Textarea disabled={!isEditing} value={isEditing ? (editedPO.notes || '') : (po.notes || '')} onChange={e => setEditedPO({...editedPO, notes: e.target.value})} />
+                  <Textarea disabled value={po.notes || ''} />
+                </div>
+                <div className="flex flex-wrap gap-2 justify-end pt-2 border-t">
+                  {po.status === 'pending' && canApprovePo && (
+                    <Button
+                      className="gap-2 bg-emerald-600 hover:bg-emerald-700 h-10"
+                      disabled={isApprovingPo}
+                      onClick={() => void handleApprovePO()}
+                    >
+                      {isApprovingPo ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                      อนุมัติ PO (Active)
+                    </Button>
+                  )}
+                  {po.status === 'pending' && isAdminUser && (
+                    <Button
+                      variant="destructive"
+                      className="h-10"
+                      disabled={isDeletingPoDoc}
+                      onClick={() => void handleDeleteEntirePO()}
+                    >
+                      {isDeletingPoDoc ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      ลบ PO (Pending)
+                    </Button>
+                  )}
+                  {isContractBasedPO && po.status === 'active' && canEditPo && (
+                    <Button
+                      variant="outline"
+                      className="h-10 border-amber-600 text-amber-900"
+                      disabled={isClosingPo || fulfillmentTotals.assigned > 0}
+                      title={
+                        fulfillmentTotals.assigned > 0
+                          ? `ยังมี ${fulfillmentTotals.assigned} รายมอบหมายนับในบรรทัด PO — ปิด Mobilization ก่อน`
+                          : undefined
+                      }
+                      onClick={() => void handleClosePo()}
+                    >
+                      {isClosingPo ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      ปิด PO (ไม่สร้าง Wave เพิ่ม)
+                    </Button>
+                  )}
+                  {!isContractBasedPO && po.status === 'active' && canEditPo && (
+                    <Button
+                      variant="outline"
+                      className="h-10 border-amber-600 text-amber-900"
+                      disabled={isClosingPo}
+                      onClick={() => void handleClosePo()}
+                    >
+                      {isClosingPo ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      ปิด PO (งานจากใบเสนอราคา)
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>

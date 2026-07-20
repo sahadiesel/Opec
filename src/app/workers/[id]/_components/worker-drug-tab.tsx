@@ -174,7 +174,9 @@ export function WorkerDrugTab({ workerId, firestore, drugTests, drugTestsQuery, 
       const payload: Record<string, unknown> = {
         substanceKey: substance.id,
         substanceLabelSnapshot: substance.label,
-        testDate: drugFormResult === 'none' || !drugFormDate.trim() ? null : new Date(drugFormDate).getTime(),
+        testDate: drugFormResult === 'none' || !drugFormDate.trim()
+          ? null
+          : (htmlDateValueToTimestampMs(drugFormDate) ?? null),
         testLocationType: drugFormLocType,
         testLocationOther: drugFormLocType === 'OTHER' ? drugFormLocOther.trim() : '',
         result: drugFormResult,

@@ -37,6 +37,10 @@ import {
 } from '@/lib/payroll/timesheet-labor-base-cost';
 import type { StatedPackageHours } from '@/lib/commercial/package-hourly-rate';
 import { resolveSellRestDay, type SellRestDayResolution } from '@/lib/commercial/sell-rest-day';
+import {
+  mobDayChargeKindToEventType,
+  resolveTimesheetBillingCharge,
+} from '@/lib/ops/mob-day-charge';
 
 export interface GeneratedBillingLine {
   description: string;
@@ -540,6 +544,24 @@ function billingNonWorkDayFromPoAndContract(
 ) {
   if (isUnpaidLeaveEvent(ts.eventType)) return;
 
+  const billingCharge = resolveTimesheetBillingCharge(ts);
+  if (
+    billingCharge.kind === 'M1' &&
+    billingCharge.m1AmountOverride != null &&
+    billingCharge.m1AmountOverride > 0
+  ) {
+    const amt = billingCharge.m1AmountOverride;
+    pushAcc(map, accKey(ts.positionId, 'mobilization_day', amt), {
+      workerId: ts.workerId,
+      positionId: ts.positionId,
+      eventType: 'mobilization_day',
+      timesheetIds: [ts.id],
+      amount: amt,
+      quantity: 1,
+    });
+    return;
+  }
+
   const rateCtx = { poLine, workMode, contractRate };
   const matrixDayRate = resolveBillingMatrixEventDayRate(
     rateCtx,
@@ -924,17 +946,30 @@ export async function generateBillingLines(
       continue;
     }
 
-    if (ts.eventType === 'work_day') {
+    const billingCharge = resolveTimesheetBillingCharge(ts);
+    const effectiveEvent = mobDayChargeKindToEventType(billingCharge.kind);
+    const projected: DailyTimesheet = {
+      ...ts,
+      eventType: effectiveEvent,
+      normalHours:
+        billingCharge.kind === 'M1'
+          ? Number(ts.normalHours) || 0
+          : Math.max(0, Number(billingCharge.hours ?? ts.normalHours ?? 8)),
+      ...(billingCharge.kind === 'STANDBY' ? { standbyUnits: Math.max(1, Number(ts.standbyUnits ?? 1)) } : {}),
+      ...(billingCharge.kind === 'M1' ? { mobUnits: Math.max(1, Number(ts.mobUnits ?? 1)) } : {}),
+    };
+
+    if (projected.eventType === 'work_day') {
       if (resolveBillingSellWorkingDayRate({ poLine, workMode, contractRate }) <= 0) {
         warnings.push(`ข้าม work_day ${ts.date} — ราคาขายใน PO line เป็น 0`);
         continue;
       }
-      workDayFromDayRateBilling(ts, poLine, mainContract, accMap, workMode, contractRate);
+      workDayFromDayRateBilling(projected, poLine, mainContract, accMap, workMode, contractRate);
       continue;
     }
 
     billingNonWorkDayFromPoAndContract(
-      ts,
+      projected,
       poLine,
       mainContract,
       accMap,

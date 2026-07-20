@@ -32,7 +32,9 @@ export function displayLocation(t: WorkerDrugTest): string {
 /** ผลล่าสุดต่อ substanceKey (เรียง testDate) */
 export function getLatestDrugTestBySubstance(tests: WorkerDrugTest[]): Map<string, WorkerDrugTest> {
   const map = new Map<string, WorkerDrugTest>();
-  const sorted = [...tests].sort((a, b) => Number(b.testDate || 0) - Number(a.testDate || 0));
+  const sorted = [...tests].sort(
+    (a, b) => coerceTestDateMs(b.testDate) - coerceTestDateMs(a.testDate),
+  );
   for (const t of sorted) {
     const key = t.substanceKey || '_legacy';
     if (!map.has(key)) map.set(key, t);
@@ -171,8 +173,9 @@ export function computeDrugTestRowValidityStatus(
   referenceYmd: string = thailandTodayYmd(),
 ): DrugTestRowValidityStatus {
   if (test.result !== 'negative') return 'n/a';
-  if (test.testDate == null || test.testDate <= 0) return 'n/a';
-  const testYmd = timestampToBangkokYmd(test.testDate);
+  const testMs = coerceTestDateMs(test.testDate);
+  if (testMs <= 0) return 'n/a';
+  const testYmd = timestampToBangkokYmd(testMs);
   if (!testYmd) return 'n/a';
   const days = calendarDaysBetweenYmd(testYmd, referenceYmd);
   if (days == null || days < 0) return 'expired';
@@ -186,6 +189,24 @@ export function drugTestRowValidityLabelTh(status: DrugTestRowValidityStatus): s
   return '—';
 }
 
+function normalizeDrugLabel(label: string): string {
+  return label
+    .trim()
+    .toLowerCase()
+    .replace(/[-–—_/]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+function coerceTestDateMs(raw: unknown): number {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (raw && typeof raw === 'object' && typeof (raw as { toMillis?: () => number }).toMillis === 'function') {
+    const ms = (raw as { toMillis: () => number }).toMillis();
+    return Number.isFinite(ms) ? ms : 0;
+  }
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /** จับคู่ผลตรวจล่าสุดกับรายการในแผงปัจจุบัน (id ก่อน แล้ว fallback ชื่อ snapshot) */
 export function resolveLatestPanelDrugTest(
   substance: DrugTestPanelSubstance,
@@ -195,22 +216,26 @@ export function resolveLatestPanelDrugTest(
   const byId = latestByKey.get(substance.id);
   if (byId) return byId;
 
-  const labelNorm = substance.label.trim().toLowerCase();
+  const labelNorm = normalizeDrugLabel(substance.label || '');
   if (!labelNorm) return undefined;
 
   const candidates = tests.filter((t) => {
     if (!t.substanceKey) return false;
-    const snap = (t.substanceLabelSnapshot || '').trim().toLowerCase();
+    const snap = normalizeDrugLabel(t.substanceLabelSnapshot || '');
     return snap === labelNorm;
   });
   if (candidates.length === 0) return undefined;
 
-  return [...candidates].sort((a, b) => Number(b.testDate || 0) - Number(a.testDate || 0))[0];
+  return [...candidates].sort(
+    (a, b) => coerceTestDateMs(b.testDate) - coerceTestDateMs(a.testDate),
+  )[0];
 }
 
 /**
- * ความพร้อม mob ตามแผงปัจจุบัน — ทุกรายการในแผงต้อง negative + valid ณ วันอ้างอิง
- * (ไม่นับสาร/ชุดที่ถูกถอดออกจากแผงแล้ว)
+ * ความพร้อม mob ตามแผงปัจจุบัน
+ * 1) ครบทุกแถวในแผง = negative + valid หรือ
+ * 2) มีอย่างน้อยหนึ่งผล Valid ในแผง (เช่น ชุดตรวจรวม 7-in-1) และไม่มี positive — ตรวจใหม่ผ่านแล้วให้ mob ได้
+ * 3) fallback เมื่อแผงเปลี่ยน id/ชื่อ: ผลล่าสุด overall เป็น Valid และไม่มี positive ในชุดล่าสุดต่อสาร
  */
 export function computeCurrentPanelDrugMobReady(
   panelSubstances: DrugTestPanelSubstance[],
@@ -218,12 +243,41 @@ export function computeCurrentPanelDrugMobReady(
   referenceYmd: string = thailandTodayYmd(),
 ): boolean {
   if (panelSubstances.length === 0) return true;
+
+  let anyPositiveOnPanel = false;
+  let allStrictOk = true;
+  let anyValidOnPanel = false;
+
   for (const s of panelSubstances) {
     const row = resolveLatestPanelDrugTest(s, tests);
-    if (!row || row.result !== 'negative') return false;
-    if (computeDrugTestRowValidityStatus(row, referenceYmd) !== 'valid') return false;
+    if (row?.result === 'positive') anyPositiveOnPanel = true;
+    const ok =
+      !!row &&
+      row.result === 'negative' &&
+      computeDrugTestRowValidityStatus(row, referenceYmd) === 'valid';
+    if (ok) anyValidOnPanel = true;
+    else allStrictOk = false;
   }
-  return true;
+
+  if (anyPositiveOnPanel) return false;
+  if (allStrictOk) return true;
+  // ตรวจใหม่ Valid อย่างน้อยหนึ่งแถวที่จับคู่แผง → อนุญาต mob (ชุดรวมครอบคลุมแถวอื่นที่หมดอายุ/ยังไม่ครบ)
+  if (anyValidOnPanel) return true;
+
+  const latestOverall = getLatestDrugTestRecord(tests);
+  if (
+    latestOverall &&
+    latestOverall.result === 'negative' &&
+    computeDrugTestRowValidityStatus(latestOverall, referenceYmd) === 'valid'
+  ) {
+    const latestByKey = getLatestDrugTestBySubstance(tests);
+    for (const row of latestByKey.values()) {
+      if (row.result === 'positive') return false;
+    }
+    return true;
+  }
+
+  return false;
 }
 
 /** @deprecated ใช้ computeCurrentPanelDrugMobReady — คงชื่อเดิมให้ call site เดิม */
@@ -237,7 +291,7 @@ export function computeDrugPanelMobDrugOk(
 }
 
 export const MOB_DRUG_TEST_GATE_MESSAGE_TH =
-  'ผลตรวจสารเสพติดหมดอายุหรือยังไม่ครบแผง — ตรวจใหม่ให้สถานะ valid ก่อนยืนยันเดินทาง / mob / เริ่มงาน';
+  'ผลตรวจสารเสพติดยังไม่ Valid — ตรวจใหม่ให้ NEGATIVE และอยู่ในช่วง 10 วัน แล้วจึง mob ได้';
 
 export function resolveMobReferenceDateYmd(
   assignment: Pick<Assignment, 'mobStandbyDate' | 'mobilizationDate' | 'assignedDate' | 'startDate'>,
@@ -262,7 +316,7 @@ export function resolveDrugTestValidityReferenceYmd(_mobReferenceDateYmd?: strin
   return thailandTodayYmd();
 }
 
-/** Pass = ครบทุกรายการในแผงปัจจุบัน negative + valid ภายใน DRUG_TEST_VALIDITY_DAYS วันหลังวันตรวจ */
+/** Pass = มีผล Valid ในแผง (หรือชุดล่าสุด Valid) — ตรวจใหม่ผ่านแล้วให้ mob ได้; positive = fail */
 export function computeMobDrugTestChecklistStatus(
   panelSubstances: DrugTestPanelSubstance[],
   tests: WorkerDrugTest[],
@@ -276,6 +330,10 @@ export function computeMobDrugTestChecklistStatus(
   for (const s of panelSubstances) {
     const row = resolveLatestPanelDrugTest(s, tests);
     if (row?.result === 'positive') return 'fail';
+  }
+  const latestByKey = getLatestDrugTestBySubstance(tests);
+  for (const row of latestByKey.values()) {
+    if (row.result === 'positive') return 'fail';
   }
   return 'missing';
 }

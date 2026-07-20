@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { CalendarDays, Save, Loader2, Zap, Lock, Pause, Pencil, Undo2, Sparkles, ArrowLeft, ListFilter } from 'lucide-react';
+import { CalendarDays, Save, Loader2, Zap, Lock, Pause, Pencil, Undo2, Sparkles, ListFilter } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -87,11 +87,14 @@ import { buildMobCycleDocId } from '@/lib/ops/mob-cycle-ids';
 import {
   buildMobFinishUndoRestoreFields,
   buildMobFinishUndoSnapshot,
+  buildMobRemobClearanceDeleteFields,
   inferMobDatesFromTimesheets,
 } from '@/lib/timesheet/mob-finish-undo';
 import {
-  applyPoActiveStandbyStopWindow,
+  upsertPoActiveStopTodayEvent,
+  togglePoActiveSbWStopMode,
   syncPoActiveAutoDailyForAssignment,
+  type PoActiveStopTodayEvent,
 } from '@/lib/timesheet/po-active-auto-daily-sync';
 import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import {
@@ -103,7 +106,7 @@ import {
 import {
   computePoActiveAutoDailyRange,
   isAssignmentEligibleForPoActiveAutoDaily,
-  PO_ACTIVE_STANDBY_STOP_AUTO_DAYS,
+  isAssignmentInPoActiveSbToggleMode,
   poActiveDailyTimesheetDocId,
 } from '@/lib/timesheet/po-active-auto-daily-build';
 
@@ -290,17 +293,12 @@ export function PoDailyBoardCard({
     null | {
       mode: 'finish' | 'revise';
       assignment: Assignment;
-      /** เฉพาะหยุดแบบจบงานจาก wizard — มีผลวันนี้ = เคลียร์วันนี้ไม่เป็น W */
+      /** วันสิ้นสุด + ประเภทวันนี้ตอนหยุดข้อ 1–3 */
+      todayEventType?: PoActiveStopTodayEvent;
       finishTiming?: 'today' | 'tomorrow';
     }
   >(null);
-  const [stopFlow, setStopFlow] = useState<
-    null | {
-      assignment: Assignment;
-      step: 'mode' | 'timing';
-      stopMode?: 'finish_job' | 'standby_break';
-    }
-  >(null);
+  const [stopFlow, setStopFlow] = useState<null | { assignment: Assignment }>(null);
   const [cancelFinishTarget, setCancelFinishTarget] = useState<Assignment | null>(null);
   const [finishJobDateYmd, setFinishJobDateYmd] = useState('');
   const [finishAfterCounts, setFinishAfterCounts] = useState<{
@@ -313,6 +311,7 @@ export function PoDailyBoardCard({
     finishYmd: string;
     mode: 'finish' | 'revise';
     finishTiming?: 'today' | 'tomorrow';
+    todayEventType?: PoActiveStopTodayEvent;
     deletable: number;
     locked: number;
   } | null>(null);
@@ -429,6 +428,10 @@ export function PoDailyBoardCard({
       return;
     }
     const bangkokToday = thailandTodayYmd();
+    if (finishJobModal.todayEventType) {
+      setFinishJobDateYmd(bangkokToday);
+      return;
+    }
     if (finishJobModal.finishTiming === 'today') {
       setFinishJobDateYmd(addDaysToYmd(bangkokToday, -1));
       return;
@@ -1023,6 +1026,8 @@ export function PoDailyBoardCard({
 
         const isUnpaid = ts.eventType === 'unpaid_leave';
         const isWorkDay = ts.eventType === 'work_day';
+        const priorRemark = String(ts.remark || '').trim();
+        const nextRemark = priorRemark.startsWith('Auto —') ? '' : priorRemark;
         payloads.push({
           ...ts,
           normalHours: isUnpaid ? 0 : (ts.normalHours ?? 0),
@@ -1040,8 +1045,9 @@ export function PoDailyBoardCard({
           customerId: poRow.customerId || '',
           positionId,
           workMode: asgn.workMode ?? 'OFFSHORE',
-          shiftType: 'DAY',
+          shiftType: ts.eventType === 'standby_day' ? 'STANDBY' : 'DAY',
           status: 'DRAFT',
+          remark: nextRemark,
           poActiveAutoDaily: false,
         });
       }
@@ -1103,6 +1109,7 @@ export function PoDailyBoardCard({
         finishYmd,
         mode: finishJobModal.mode,
         finishTiming: finishJobModal.finishTiming,
+        todayEventType: finishJobModal.todayEventType,
         deletable: counts.deletable,
         locked: counts.locked,
       });
@@ -1113,6 +1120,7 @@ export function PoDailyBoardCard({
       finishYmd,
       mode: finishJobModal.mode,
       finishTiming: finishJobModal.finishTiming,
+      todayEventType: finishJobModal.todayEventType,
     });
   };
 
@@ -1121,12 +1129,17 @@ export function PoDailyBoardCard({
     finishYmd: string;
     mode: 'finish' | 'revise';
     finishTiming?: 'today' | 'tomorrow';
+    todayEventType?: PoActiveStopTodayEvent;
   }) => {
     if (!firestore || !currentUser?.id) return;
-    const { asgn, finishYmd, mode, finishTiming } = params;
+    const { asgn, finishYmd, mode, finishTiming, todayEventType } = params;
     const now = Date.now();
     setDemobSubmitting(true);
     try {
+      if (mode === 'finish' && todayEventType) {
+        await upsertPoActiveStopTodayEvent(firestore, asgn.id, currentUser, todayEventType);
+      }
+
       const mobRef = doc(firestore, 'mobilizations', asgn.id);
       const batch = writeBatch(firestore);
       if (mode === 'revise') {
@@ -1150,8 +1163,7 @@ export function PoDailyBoardCard({
           mobLocationEndDate: finishYmd,
           mobLocationEndedAt: now,
           mobLocationEndedByUserId: currentUser.id,
-          mobReadyToTravelAt: deleteField(),
-          mobReadyToTravelByUserId: deleteField(),
+          ...buildMobRemobClearanceDeleteFields(deleteField()),
           poActiveAutoWorkSuspended: deleteField(),
           poActiveStandbyAutoStartYmd: deleteField(),
           poActiveStandbyAutoEndYmd: deleteField(),
@@ -1159,7 +1171,7 @@ export function PoDailyBoardCard({
           updatedBy: currentUser.id,
         });
 
-        if (finishTiming === 'today') {
+        if (finishTiming === 'today' && !todayEventType) {
           const ty = thailandTodayYmd();
           const tid = poActiveDailyTimesheetDocId(asgn.workerId, asgn.id, ty);
           const tsRef = doc(firestore, 'daily_timesheets', tid);
@@ -1233,6 +1245,7 @@ export function PoDailyBoardCard({
       finishYmd: finishPurgeConfirm.finishYmd,
       mode: finishPurgeConfirm.mode,
       finishTiming: finishPurgeConfirm.finishTiming,
+      todayEventType: finishPurgeConfirm.todayEventType,
     });
   };
 
@@ -1294,8 +1307,58 @@ export function PoDailyBoardCard({
     }
   };
 
-  const runStandbyStopFlow = useCallback(
-    async (asgn: Assignment, timing: 'today' | 'tomorrow') => {
+  const runStopFinishChoice = useCallback(
+    async (asgn: Assignment, todayEventType: PoActiveStopTodayEvent) => {
+      if (!firestore || !canEditTimesheets || !currentUser?.id) {
+        toast({ variant: 'destructive', title: 'ไม่พร้อม', description: 'ไม่มีสิทธิ์หรือไม่ได้เชื่อมต่อ' });
+        return;
+      }
+      if (anyMonthLocked) {
+        toast({ variant: 'destructive', title: 'งวดล็อกแล้ว', description: 'ปลดล็อกงวดก่อนบันทึก' });
+        return;
+      }
+      const finishYmd = thailandTodayYmd();
+      const issue = finishJobDateIssue(asgn, finishYmd);
+      if (issue) {
+        toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: issue });
+        return;
+      }
+      setStandbySubmitting(true);
+      try {
+        setStopFlow(null);
+        const counts = await countTimesheetsAfterMobFinishDate(firestore, asgn.id, finishYmd);
+        if (counts.deletable > 0) {
+          setFinishPurgeConfirm({
+            assignment: asgn,
+            finishYmd,
+            mode: 'finish',
+            todayEventType,
+            deletable: counts.deletable,
+            locked: counts.locked,
+          });
+          return;
+        }
+        await executeMobFinishJob({
+          asgn,
+          finishYmd,
+          mode: 'finish',
+          todayEventType,
+        });
+      } catch (e: unknown) {
+        toast({
+          variant: 'destructive',
+          title: 'บันทึกไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setStandbySubmitting(false);
+      }
+    },
+    [firestore, canEditTimesheets, anyMonthLocked, currentUser, toast],
+  );
+
+  const runStopToggleSbW = useCallback(
+    async (asgn: Assignment) => {
       if (!firestore || !canEditTimesheets) {
         toast({ variant: 'destructive', title: 'ไม่พร้อม', description: 'ไม่มีสิทธิ์หรือไม่ได้เชื่อมต่อ' });
         return;
@@ -1306,11 +1369,14 @@ export function PoDailyBoardCard({
       }
       setStandbySubmitting(true);
       try {
-        const r = await applyPoActiveStandbyStopWindow(firestore, asgn.id, currentUser, timing);
+        const r = await togglePoActiveSbWStopMode(firestore, asgn.id, currentUser);
         setStopFlow(null);
         toast({
-          title: 'หยุดแบบ standby แล้ว',
-          description: `SB อัตโนมัติ ${PO_ACTIVE_STANDBY_STOP_AUTO_DAYS} วัน (${formatYmdLocalThaiBE(r.startYmd)} – ${formatYmdLocalThaiBE(r.endYmd)}) · หลังช่วงนี้ระบบกลับลง W อัตโนมัติตามปกติ · แก้มือได้ทุกวัน`,
+          title: r.mode === 'sb' ? 'สลับเป็น SB อัตโนมัติแล้ว' : 'สลับกลับเป็น W อัตโนมัติแล้ว',
+          description:
+            r.mode === 'sb'
+              ? `ยัง ACTIVE — ระบบลง SB อัตโนมัติจนกว่าจะกดหยุดเลือกข้อ 1–3 เพื่อกลับ Waiting MOB${r.endYmd ? ` · ถึง ${formatYmdLocalThaiBE(r.endYmd)}` : ''}`
+              : 'ยัง ACTIVE — ระบบลง W อัตโนมัติตามปกติ · กดหยุดข้อ 4 อีกครั้งเพื่อสลับเป็น SB',
         });
         await loadRoster();
       } catch (e: unknown) {
@@ -1824,7 +1890,7 @@ export function PoDailyBoardCard({
                                 standbySubmitting ||
                                 anyMonthLocked
                               }
-                              onClick={() => setStopFlow({ assignment: asgn, step: 'mode' })}
+                              onClick={() => setStopFlow({ assignment: asgn })}
                             >
                               <Pause className="h-3.5 w-3.5 shrink-0" />
                               หยุด
@@ -2021,119 +2087,79 @@ export function PoDailyBoardCard({
       >
         <AlertDialogContent className="max-w-md">
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              {stopFlow?.step === 'mode' ? 'เลือกประเภทการหยุด' : 'เลือกวันที่เริ่มมีผล (Bangkok)'}
-            </AlertDialogTitle>
+            <AlertDialogTitle>เลือกประเภทการหยุด</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="text-sm text-muted-foreground space-y-3">
                 <p>
                   พนักงาน{' '}
                   <span className="font-medium text-foreground">{stopFlowWorkerName}</span>
                 </p>
-                {stopFlow?.step === 'mode' ? (
-                  <div className="flex flex-col gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
-                      disabled={standbySubmitting}
-                      onClick={() =>
-                        stopFlow &&
-                        setStopFlow({ assignment: stopFlow.assignment, step: 'timing', stopMode: 'finish_job' })
-                      }
-                    >
-                      <span className="block font-semibold text-foreground">1. หยุดแบบจบงาน</span>
-                      <span className="mt-1 block text-xs leading-snug">
-                        เหมือนฟังก์ชันจบงานเดิม · ส่งกลับ Waiting MOB · แก้ไขวันสิ้นสุดได้ภายหลัง
-                      </span>
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
-                      disabled={standbySubmitting}
-                      onClick={() =>
-                        stopFlow &&
-                        setStopFlow({ assignment: stopFlow.assignment, step: 'timing', stopMode: 'standby_break' })
-                      }
-                    >
-                      <span className="block font-semibold text-foreground">2. หยุดแบบ standby</span>
-                      <span className="mt-1 block text-xs leading-snug">
-                        ยัง ACTIVE — ระบบเติม SB อัตโนมัติ {PO_ACTIVE_STANDBY_STOP_AUTO_DAYS} วัน แล้วหยุดซิงก์ W จนเริ่มงานใหม่ที่
-                        Mobilization · ทุกวันแก้มือได้
-                      </span>
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
-                      disabled={standbySubmitting || !stopFlow?.stopMode}
-                      onClick={() => {
-                        if (!stopFlow?.stopMode) return;
-                        if (stopFlow.stopMode === 'finish_job') {
-                          setFinishJobModal({
-                            mode: 'finish',
-                            assignment: stopFlow.assignment,
-                            finishTiming: 'today',
-                          });
-                          setStopFlow(null);
-                        } else {
-                          void runStandbyStopFlow(stopFlow.assignment, 'today');
-                        }
-                      }}
-                    >
-                      <span className="block font-semibold text-foreground">1. มีผลวันนี้</span>
-                      <span className="mt-1 block text-xs leading-snug">
-                        จบงาน: วันนี้ไม่เป็น W (เคลียร์แถว auto) · Standby: วันนี้เป็น SB ในช่วงอัตโนมัติ
-                      </span>
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
-                      disabled={standbySubmitting || !stopFlow?.stopMode}
-                      onClick={() => {
-                        if (!stopFlow?.stopMode) return;
-                        if (stopFlow.stopMode === 'finish_job') {
-                          setFinishJobModal({
-                            mode: 'finish',
-                            assignment: stopFlow.assignment,
-                            finishTiming: 'tomorrow',
-                          });
-                          setStopFlow(null);
-                        } else {
-                          void runStandbyStopFlow(stopFlow.assignment, 'tomorrow');
-                        }
-                      }}
-                    >
-                      <span className="block font-semibold text-foreground">2. มีผลวันถัดไป</span>
-                      <span className="mt-1 block text-xs leading-snug">
-                        จบงาน: วันนี้ยังนับ W ได้ · Standby: เริ่ม SB พรุ่งนี้
-                      </span>
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="gap-1 text-muted-foreground"
-                      disabled={standbySubmitting || !stopFlow}
-                      onClick={() =>
-                        stopFlow && setStopFlow({ assignment: stopFlow.assignment, step: 'mode' })
-                      }
-                    >
-                      <ArrowLeft className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                      กลับ
-                    </Button>
-                  </div>
-                )}
+                <div className="flex flex-col gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
+                    disabled={standbySubmitting || demobSubmitting}
+                    onClick={() =>
+                      stopFlow && void runStopFinishChoice(stopFlow.assignment, 'work_day')
+                    }
+                  >
+                    <span className="block font-semibold text-foreground">1. วันนี้เป็น W พรุ่งนี้ไม่บันทึก</span>
+                    <span className="mt-1 block text-xs leading-snug">
+                      วันนี้ = Work · หยุดซิงก์หลังวันนี้ · กลับ Waiting MOB
+                    </span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
+                    disabled={standbySubmitting || demobSubmitting}
+                    onClick={() =>
+                      stopFlow && void runStopFinishChoice(stopFlow.assignment, 'demobilization_day')
+                    }
+                  >
+                    <span className="block font-semibold text-foreground">2. วันนี้เป็น D1 พรุ่งนี้ไม่บันทึก</span>
+                    <span className="mt-1 block text-xs leading-snug">
+                      วันนี้ = Demob (D1) · หยุดซิงก์หลังวันนี้ · กลับ Waiting MOB
+                    </span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
+                    disabled={standbySubmitting || demobSubmitting}
+                    onClick={() =>
+                      stopFlow && void runStopFinishChoice(stopFlow.assignment, 'standby_day')
+                    }
+                  >
+                    <span className="block font-semibold text-foreground">3. วันนี้เป็น SB พรุ่งนี้ไม่บันทึก</span>
+                    <span className="mt-1 block text-xs leading-snug">
+                      วันนี้ = Standby · หยุดซิงก์หลังวันนี้ · กลับ Waiting MOB
+                    </span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
+                    disabled={standbySubmitting || demobSubmitting}
+                    onClick={() => stopFlow && void runStopToggleSbW(stopFlow.assignment)}
+                  >
+                    <span className="block font-semibold text-foreground">
+                      4. ยังไม่หยุด — สลับ SB / W แบบออโต้
+                      {stopFlow && isAssignmentInPoActiveSbToggleMode(stopFlow.assignment)
+                        ? ' (ตอนนี้ SB → กดแล้วกลับ W)'
+                        : ' (ตอนนี้ W → กดแล้วเป็น SB)'}
+                    </span>
+                    <span className="mt-1 block text-xs leading-snug">
+                      ไม่กลับ Waiting MOB · สลับ SB↔W อัตโนมัติจนกว่าจะเลือกข้อ 1–3
+                    </span>
+                  </Button>
+                </div>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={standbySubmitting}>ปิด</AlertDialogCancel>
+            <AlertDialogCancel disabled={standbySubmitting || demobSubmitting}>ปิด</AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

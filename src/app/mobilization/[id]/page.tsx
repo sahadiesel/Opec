@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useEffect, useMemo, useRef } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -59,6 +59,8 @@ import {
   MainContract,
   POLine,
   DrugTestPanelSubstance,
+  MobDayChargeKind,
+  MobDayChargeSpec,
 } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -86,8 +88,24 @@ import {
   mobStandbyMobDayChoiceLabel,
   mobStandbyMobDayStatusCode,
   thailandTodayYmd,
-  type MobStandbyMobDayChoice,
 } from '@/lib/ops/mobilization-final-clearance';
+import type { MobStep2Choice } from '@/lib/ops/mob-day-charge';
+import {
+  defaultMobDayCharges,
+  formatMobDayChargeSummary,
+  mobDayChargeKindLabel,
+  mobStep2ChoiceLabel,
+  mobStep2ChoiceToLegacyEventType,
+  normalizeMobDayChargeSpec,
+} from '@/lib/ops/mob-day-charge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { isPoTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import {
@@ -117,6 +135,10 @@ import {
   resolveMobReferenceDateYmd,
 } from '@/lib/drug-test-panel';
 import { formatPoLineSiteOptionLabel } from '@/lib/ops/po-line-display';
+import {
+  assignmentHasStaleFinalClearanceWhileAwaitingRemob,
+  buildMobRemobClearanceDeleteFields,
+} from '@/lib/timesheet/mob-finish-undo';
 
 export default function MobilizationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -141,6 +163,14 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   const [step2CascadeOpen, setStep2CascadeOpen] = useState(false);
   const [step1RevertOpen, setStep1RevertOpen] = useState(false);
   const [standbyMobPickOpen, setStandbyMobPickOpen] = useState(false);
+  const [preMobConfigOpen, setPreMobConfigOpen] = useState(false);
+  const [step2ChoiceDraft, setStep2ChoiceDraft] = useState<MobStep2Choice>('PRE_MOB');
+  const [billingChargeDraft, setBillingChargeDraft] = useState<MobDayChargeSpec>(() =>
+    defaultMobDayCharges('PRE_MOB').billing,
+  );
+  const [payrollChargeDraft, setPayrollChargeDraft] = useState<MobDayChargeSpec>(() =>
+    defaultMobDayCharges('PRE_MOB').payroll,
+  );
   const [locationLineIdDraft, setLocationLineIdDraft] = useState<string>('');
   const [locationCustomDraft, setLocationCustomDraft] = useState('');
   const [locationSaving, setLocationSaving] = useState(false);
@@ -192,14 +222,12 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   }, [assignment]);
 
   const mobDrugOk = useMemo(() => {
-    if (isFinalClearanceStep3Done(assignment ?? ({} as Assignment))) return true;
     return computeDrugPanelMobDrugOk(panelSubstances, workerDrugTests || [], mobReferenceYmd);
-  }, [assignment, panelSubstances, workerDrugTests, mobReferenceYmd]);
+  }, [panelSubstances, workerDrugTests, mobReferenceYmd]);
 
   const drugTestChecklistStatus = useMemo((): ChecklistItemStatus => {
-    if (isFinalClearanceStep3Done(assignment ?? ({} as Assignment))) return 'pass';
     return computeMobDrugTestChecklistStatus(panelSubstances, workerDrugTests || [], mobReferenceYmd);
-  }, [assignment, panelSubstances, workerDrugTests, mobReferenceYmd]);
+  }, [panelSubstances, workerDrugTests, mobReferenceYmd]);
 
   const posRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'positions', assignment.positionId) : null), [firestore, assignment?.positionId]);
   const { data: position } = useDoc<Position>(posRef as any);
@@ -268,6 +296,44 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     setLocationLineIdDraft(assignment.poLineId || '');
     setLocationCustomDraft('');
   }, [assignment?.id, assignment?.mobLocationKey, assignment?.poLineId]);
+
+  /** Waiting MOB หลังจบงานแต่ยังมีค่า Final clearance / ไซต์รอบเก่าค้าง — เคลียร์ให้เริ่มรอบใหม่ */
+  const remobStaleHealKeyRef = useRef<string>('');
+  useEffect(() => {
+    if (!firestore || !assignment || !canEditMobilization) return;
+    if (!assignmentHasStaleFinalClearanceWhileAwaitingRemob(assignment)) return;
+    const healKey = `${assignment.id}:${assignment.mobCycleNumber ?? 1}:${assignment.mobLocationEndDate ?? ''}`;
+    if (remobStaleHealKeyRef.current === healKey) return;
+    remobStaleHealKeyRef.current = healKey;
+    const now = Date.now();
+    void updateDoc(doc(firestore, 'mobilizations', assignment.id), {
+      ...buildMobRemobClearanceDeleteFields(deleteField()),
+      updatedAt: now,
+    })
+      .then(async () => {
+        const snap = await getDoc(doc(firestore, 'mobilizations', assignment.id));
+        if (snap.exists()) {
+          setAssignment({ id: snap.id, ...(snap.data() as object) } as Assignment);
+        }
+        setStandbyDateDraft(thailandTodayYmd());
+        setWorkingStartDateDraft(addDaysToYmd(thailandTodayYmd(), 1));
+        setLocationLineIdDraft(assignment.poLineId || '');
+        setLocationCustomDraft('');
+        setClearanceEditMode(0);
+        toast({
+          title: 'เริ่มรอบ Mobilization ใหม่',
+          description: 'เคลียร์ค่า Final clearance / ไซต์รอบเก่าแล้ว — เลือกสถานที่และวัน Pre-Mob/Mob ใหม่',
+        });
+      })
+      .catch((e: unknown) => {
+        remobStaleHealKeyRef.current = '';
+        toast({
+          variant: 'destructive',
+          title: 'เคลียร์ค่ารอบเก่าไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      });
+  }, [firestore, assignment, canEditMobilization, toast]);
 
   const patchMobilization = (patch: Record<string, unknown>) => {
     if (!firestore || !canEditMobilization) return;
@@ -418,11 +484,32 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     }
   };
 
-  const runFinalClearanceStep2 = async (dayKind: MobStandbyMobDayChoice) => {
+  const openPreMobChargeConfig = (choice: MobStep2Choice) => {
+    setStandbyMobPickOpen(false);
+    setStep2ChoiceDraft(choice);
+    const defaults = defaultMobDayCharges(choice);
+    const existingBilling =
+      assignment?.mobStep2Choice === choice && assignment.mobStep2BillingCharge
+        ? normalizeMobDayChargeSpec(assignment.mobStep2BillingCharge)
+        : defaults.billing;
+    const existingPayroll =
+      assignment?.mobStep2Choice === choice && assignment.mobStep2PayrollCharge
+        ? normalizeMobDayChargeSpec(assignment.mobStep2PayrollCharge)
+        : defaults.payroll;
+    setBillingChargeDraft(existingBilling);
+    setPayrollChargeDraft(existingPayroll);
+    setPreMobConfigOpen(true);
+  };
+
+  const runFinalClearanceStep2 = async (
+    choice: MobStep2Choice,
+    billingCharge: MobDayChargeSpec,
+    payrollCharge: MobDayChargeSpec,
+  ) => {
     if (!firestore || !assignment || !currentUser?.id || !po) return;
     const ymd = (standbyDateDraft || '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
-      toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวัน Standby / Mob (รูปแบบ yyyy-mm-dd)' });
+      toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวัน Pre-Mob / Mob (รูปแบบ yyyy-mm-dd)' });
       return;
     }
     const editing = clearanceEditMode === 2;
@@ -452,10 +539,14 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'ต้องมีสิทธิ์แก้ไข Timesheets เพื่อบันทึกลงตารางรายวัน' });
       return;
     }
+    const dayKind = mobStep2ChoiceToLegacyEventType(choice);
+    const billing = normalizeMobDayChargeSpec(billingCharge);
+    const payroll = normalizeMobDayChargeSpec(payrollCharge);
+    setPreMobConfigOpen(false);
     setStandbyMobPickOpen(false);
     setClearanceSavingStep(2);
     const statusCode = mobStandbyMobDayStatusCode(dayKind)!;
-    const kindLabel = mobStandbyMobDayChoiceLabel(dayKind);
+    const kindLabel = mobStep2ChoiceLabel(choice);
     try {
       const prevStandby = (assignment.mobStandbyDate || '').trim();
       if (editing && prevStandby && /^\d{4}-\d{2}-\d{2}$/.test(prevStandby) && prevStandby !== ymd) {
@@ -472,11 +563,20 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         kind: dayKind,
         dateYmd: ymd,
         bypassPoMonthLock: true,
+        billingCharge: billing,
+        payrollCharge: payroll,
+        remarkOverride:
+          choice === 'PRE_MOB'
+            ? `Mob — Final clearance · Pre-Mob · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`
+            : `Mob — Final clearance · Mob · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
       });
       const now = Date.now();
       patchMobilization({
         mobStandbyDate: ymd,
         mobStandbyDayEventType: dayKind,
+        mobStep2Choice: choice,
+        mobStep2BillingCharge: billing,
+        mobStep2PayrollCharge: payroll,
         mobStandbyRecordedAt: now,
         mobStandbyRecordedByUserId: currentUser.id,
         mobilizationStatus: 'MOBILIZING',
@@ -486,7 +586,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       setClearanceEditMode(0);
       toast({
         title: editing ? `แก้ไขวัน ${kindLabel} แล้ว` : `บันทึก ${kindLabel} (${statusCode}) แล้ว`,
-        description: `วันที่ ${ymd} — ลง timesheet เป็น ${statusCode} · ถัดไปเริ่มวันทำงาน`,
+        description: `วันที่ ${ymd} · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -915,13 +1015,17 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           <TableCell className="font-medium text-sm">
                             ผลตรวจสารเสพติด (Drug test)
                             <span className="block text-[10px] font-normal text-muted-foreground">
-                              ครบทุกชุดในแผงปัจจุบัน negative · valid ภายใน 10 วันหลังวันตรวจ
+                              ผลตรวจใหม่ต้อง NEGATIVE และ Valid ภายใน 10 วันหลังวันตรวจ — ตรวจซ้ำผ่านแล้วสามารถ mob ได้
                             </span>
                           </TableCell>
                           <TableCell className="text-left capitalize text-xs">
-                            {isFinalClearanceStep3Done(assignment)
-                              ? 'pass (mob แล้ว — ไม่บังคับซ้ำ)'
-                              : drugTestChecklistStatus}
+                            {drugTestChecklistStatus === 'pass'
+                              ? 'pass'
+                              : drugTestChecklistStatus === 'fail'
+                                ? 'fail'
+                                : drugTestChecklistStatus === 'missing'
+                                  ? 'missing (หมดอายุหรือยังไม่ครบ — ต้องตรวจซ้ำก่อนลง)'
+                                  : drugTestChecklistStatus}
                           </TableCell>
                           <TableCell className="text-right p-2">
                             <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="เปิดทะเบียน — สารเสพติด">
@@ -974,8 +1078,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           <strong>ยืนยันพร้อมเดินทาง</strong> — บันทึกเวลาและผู้ยืนยัน (<span className="font-mono">READY_TO_MOB</span>)
                         </li>
                         <li>
-                          <strong>วัน Standby / Mob</strong> — เลือกวันที่ แล้วกด Standby/Mob → เลือกประเภทวัน (
-                          <span className="font-mono">SB</span> หรือ <span className="font-mono">MO</span>) →{' '}
+                          <strong>วัน Pre-Mob / Mob</strong> — เลือกวันที่ แล้วกด Pre-mob/Mob → เลือกประเภท (
+                          Pre-Mob หรือ Mob) → กำหนดค่าวางบิลและจ่ายลูกจ้าง →{' '}
                           <span className="font-mono">MOBILIZING</span>
                         </li>
                         <li>
@@ -1184,7 +1288,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
                       <div className="flex flex-col gap-3 md:flex-row md:items-end md:flex-wrap">
                         <div className="space-y-2 flex-1 min-w-[220px]">
-                          <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 2 · วัน Standby / Mob</p>
+                          <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 2 · วัน Pre-Mob / Mob</p>
                           {assignment.poLineId && !primaryPoLine ? (
                             <p className="text-xs text-amber-800 dark:text-amber-200">กำลังโหลดบรรทัด PO…</p>
                           ) : null}
@@ -1200,12 +1304,23 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                             }
                           />
                           {isFinalClearanceStep2Done(assignment) ? (
-                            <p className="text-sm">
-                              บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobStandbyDate)} ·{' '}
-                              {mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ?? 'SB'} (
-                              {mobStandbyMobDayChoiceLabel(assignment.mobStandbyDayEventType ?? 'standby_day')}) ·{' '}
-                              {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
-                            </p>
+                            <div className="space-y-1 text-sm">
+                              <p>
+                                บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobStandbyDate)} ·{' '}
+                                {assignment.mobStep2Choice
+                                  ? mobStep2ChoiceLabel(assignment.mobStep2Choice)
+                                  : mobStandbyMobDayChoiceLabel(assignment.mobStandbyDayEventType ?? 'standby_day')}{' '}
+                                ({mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ?? 'SB'}) ·{' '}
+                                {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
+                              </p>
+                              {assignment.mobStep2BillingCharge || assignment.mobStep2PayrollCharge ? (
+                                <p className="text-xs text-muted-foreground">
+                                  วางบิล {formatMobDayChargeSummary(assignment.mobStep2BillingCharge)} · จ่ายลูกจ้าง{' '}
+                                  {formatMobDayChargeSummary(assignment.mobStep2PayrollCharge)}
+                                  <span className="text-muted-foreground/80"> — ใช้เฉพาะคนนี้ในงานนี้</span>
+                                </p>
+                              ) : null}
+                            </div>
                           ) : null}
                         </div>
                         <div className="flex flex-wrap items-end gap-2">
@@ -1240,18 +1355,18 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                   ) : (
                                     <Truck className="h-4 w-4 mr-2" />
                                   )}
-                                  {clearanceEditMode === 2 ? 'Standby/Mob (แก้ไข)' : 'Standby/Mob'}
+                                  {clearanceEditMode === 2 ? 'Pre-mob/Mob (แก้ไข)' : 'Pre-mob/Mob'}
                                 </Button>
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
                               {clearanceEditMode === 2
-                                ? 'เลือก Standby (SB) หรือ Mobilization (MO) แล้วบันทึกใหม่'
+                                ? 'เลือก Pre-Mob หรือ Mob แล้วกำหนดค่าวางบิล/จ่ายลูกจ้างก่อนบันทึกใหม่'
                                 : isFinalClearanceStep2Done(assignment)
                                   ? 'บันทึกแล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่หรือประเภท'
                                   : !step2SaveGate.ok
                                     ? step2SaveGate.message
-                                    : 'เลือกวันที่ แล้วกด — ระบบจะถามว่าใช้วันนี้เป็น Standby (SB) หรือ Mobilization (MO)'}
+                                    : 'เลือกวันที่ แล้วกด — ถาม Pre-Mob หรือ Mob จากนั้นกำหนดค่าวางบิลและจ่ายลูกจ้าง'}
                             </TooltipContent>
                           </Tooltip>
                           {isFinalClearanceStep2Done(assignment) && clearanceEditMode !== 2 ? (
@@ -1621,7 +1736,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       <AlertDialog open={standbyMobPickOpen} onOpenChange={setStandbyMobPickOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Standby / วันเดินทาง</AlertDialogTitle>
+            <AlertDialogTitle>Pre-Mob / Mob</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-muted-foreground">
                 <p>
@@ -1629,11 +1744,10 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                   <strong className="text-foreground">
                     {standbyDateDraft ? formatYmdLocalThaiBE(standbyDateDraft) : '—'}
                   </strong>{' '}
-                  เป็นวัน Standby หรือ วันเดินทาง?
+                  เป็นวัน Pre-Mob หรือ Mob?
                 </p>
                 <p className="text-xs">
-                  Standby บันทึกเป็น <span className="font-mono font-semibold">SB</span> · วันเดินทาง บันทึกเป็น{' '}
-                  <span className="font-mono font-semibold">MO</span> ใน timesheet รายวัน
+                  หลังเลือก จะกำหนดค่าวางบิลลูกค้าและจ่ายลูกจ้างได้ (ค่ามาตรฐาน: Pre-Mob = SB 8 ชม. · Mob = M1 ตามสัญญา)
                 </p>
               </div>
             </AlertDialogDescription>
@@ -1645,24 +1759,133 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
               disabled={clearanceSavingStep === 2}
               onClick={(e) => {
                 e.preventDefault();
-                void runFinalClearanceStep2('standby_day');
+                openPreMobChargeConfig('PRE_MOB');
               }}
             >
-              Standby (SB)
+              Pre-Mob
             </AlertDialogAction>
             <AlertDialogAction
               className="bg-blue-600 hover:bg-blue-700"
               disabled={clearanceSavingStep === 2}
               onClick={(e) => {
                 e.preventDefault();
-                void runFinalClearanceStep2('mobilization_day');
+                openPreMobChargeConfig('MOB');
               }}
             >
-              วันเดินทาง (MO)
+              Mob
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={preMobConfigOpen}
+        onOpenChange={(open) => {
+          if (!open && clearanceSavingStep !== 2) setPreMobConfigOpen(false);
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              กำหนดค่า {mobStep2ChoiceLabel(step2ChoiceDraft)} — วางบิล / จ่ายลูกจ้าง
+            </DialogTitle>
+            <DialogDescription>
+              ใช้เฉพาะคนนี้ในงานนี้ · ค่าเริ่มต้น{' '}
+              {step2ChoiceDraft === 'PRE_MOB' ? 'Standby 8 ชม. ทั้งสองฝั่ง' : 'M1 ตามตารางสัญญาทั้งสองฝั่ง'} — แก้ได้
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-5 text-sm">
+            {(['billing', 'payroll'] as const).map((side) => {
+              const draft = side === 'billing' ? billingChargeDraft : payrollChargeDraft;
+              const setDraft = side === 'billing' ? setBillingChargeDraft : setPayrollChargeDraft;
+              const title = side === 'billing' ? 'วางบิลลูกค้า' : 'จ่ายลูกจ้าง (payroll)';
+              return (
+                <div key={side} className="space-y-3 rounded-md border p-3">
+                  <p className="font-semibold">{title}</p>
+                  <div className="space-y-2">
+                    <Label>รูปแบบ</Label>
+                    <Select
+                      value={draft.kind}
+                      onValueChange={(v) => {
+                        const kind = v as MobDayChargeKind;
+                        if (kind === 'M1') setDraft({ kind: 'M1', m1AmountOverride: draft.m1AmountOverride });
+                        else setDraft({ kind, hours: draft.hours && draft.hours > 0 ? draft.hours : 8 });
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="STANDBY">{mobDayChargeKindLabel('STANDBY')}</SelectItem>
+                        <SelectItem value="WORKING">{mobDayChargeKindLabel('WORKING')}</SelectItem>
+                        <SelectItem value="M1">{mobDayChargeKindLabel('M1')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {draft.kind === 'STANDBY' || draft.kind === 'WORKING' ? (
+                    <div className="space-y-2">
+                      <Label>จำนวนชั่วโมง</Label>
+                      <Input
+                        type="number"
+                        min={0.5}
+                        max={24}
+                        step={0.5}
+                        value={draft.hours ?? 8}
+                        onChange={(e) =>
+                          setDraft({
+                            kind: draft.kind,
+                            hours: Number(e.target.value) || 0,
+                          })
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label>จำนวนเงิน M1 (บาท) — ว่าง = ตามตารางสัญญา</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        placeholder="ใช้ค่าสัญญา"
+                        value={draft.m1AmountOverride ?? ''}
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          if (!raw) {
+                            setDraft({ kind: 'M1' });
+                            return;
+                          }
+                          setDraft({ kind: 'M1', m1AmountOverride: Number(raw) });
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={clearanceSavingStep === 2}
+              onClick={() => setPreMobConfigOpen(false)}
+            >
+              ยกเลิก
+            </Button>
+            <Button
+              type="button"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              disabled={clearanceSavingStep === 2}
+              onClick={() =>
+                void runFinalClearanceStep2(step2ChoiceDraft, billingChargeDraft, payrollChargeDraft)
+              }
+            >
+              {clearanceSavingStep === 2 ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+              บันทึก {mobStep2ChoiceLabel(step2ChoiceDraft)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={step1RevertOpen} onOpenChange={setStep1RevertOpen}>
         <AlertDialogContent>
