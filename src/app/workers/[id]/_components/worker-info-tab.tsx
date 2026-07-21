@@ -117,6 +117,9 @@ export function WorkerInfoTab({
 
   const readinessOnHold = worker.readinessManualHold === true;
   const readinessComplianceOk = worker.readinessStatus === 'READY';
+  /** ยังผูกงานอยู่ — ห้ามสลับเป็นไม่พร้อมจนกว่าจะ Unassign (เปิดกลับเป็นพร้อมได้) */
+  const assignedNow = displayJobStatus === 'ASSIGNED' || displayJobStatus === 'ON_SITE';
+  const readinessToggleBlockedByAssignment = assignedNow && !readinessOnHold;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -136,8 +139,14 @@ export function WorkerInfoTab({
                   </span>
                   <Switch
                     checked={!readinessOnHold}
-                    disabled={!canEditWorkerReadiness}
-                    title={canEditWorkerReadiness ? undefined : 'ไม่มีสิทธิ์แก้ไขสถานะพร้อม'}
+                    disabled={!canEditWorkerReadiness || readinessToggleBlockedByAssignment}
+                    title={
+                      !canEditWorkerReadiness
+                        ? 'ไม่มีสิทธิ์แก้ไขสถานะพร้อม'
+                        : readinessToggleBlockedByAssignment
+                          ? 'ยังถูกมอบหมายงานอยู่ (ASSIGNED/ON_SITE) — ต้อง Unassign ก่อนจึงตั้งเป็นไม่พร้อมได้'
+                          : undefined
+                    }
                     aria-label="สลับสถานะพร้อมปฏิบัติงาน"
                     onCheckedChange={(on) => onReadinessManualHoldChange?.(!on)}
                   />
@@ -148,7 +157,9 @@ export function WorkerInfoTab({
                   </span>
                 </div>
                 <p className="text-[10px] text-muted-foreground max-w-[280px] sm:text-right leading-snug">
-                  ปิดสวิตช์เมื่อพักงานหรือมีเหตุชั่วคราว — ระบบจะไม่ให้เลือกในการมอบหมายจนกว่าจะเปิดใหม่ (ไม่เปลี่ยนผลตรวจเอกสาร)
+                  {readinessToggleBlockedByAssignment
+                    ? 'คนงานยังถูกมอบหมายงานอยู่ — ต้อง Unassign ออกจากงานก่อนจึงตั้งเป็นไม่พร้อมได้'
+                    : 'ปิดสวิตช์เมื่อพักงานหรือมีเหตุชั่วคราว — ระบบจะไม่ให้เลือกในการมอบหมายจนกว่าจะเปิดใหม่ (ไม่เปลี่ยนผลตรวจเอกสาร)'}
                 </p>
               </div>
             </div>

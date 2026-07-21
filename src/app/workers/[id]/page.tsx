@@ -63,6 +63,7 @@ import {
   DRUG_TEST_PANEL_DOC_PATH,
 } from '@/lib/drug-test-panel';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
+import { effectiveWorkerJobStatus } from '@/lib/ops/worker-effective-job-status';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -239,25 +240,41 @@ function WorkerDetailContent({ id }: { id: string }) {
   }, [workerTimesheetsAll]);
 
   const workLogRows = useMemo(() => {
-    const grouped = new Map<string, { assignmentId: string; projectName: string; startDate: string; endDate: string; totalHours: number }>();
+    const grouped = new Map<
+      string,
+      {
+        assignmentId: string;
+        projectName: string;
+        startDate: string;
+        endDate: string;
+        normalHours: number;
+        otHours: number;
+        standbyHours: number;
+        totalHours: number;
+      }
+    >();
     workerTimesheets.forEach((ts) => {
       const key = ts.assignmentId || ts.id;
-      const hours = Number(ts.normalHours || 0)
-        + Number(ts.ot15Hours || 0)
-        + Number(ts.ot20Hours || 0)
-        + Number(ts.ot30Hours || 0)
-        + Number(ts.holidayHours || 0);
+      const baseHours = Number(ts.normalHours || 0) + Number(ts.holidayHours || 0);
+      const otHours = Number(ts.ot15Hours || 0) + Number(ts.ot20Hours || 0) + Number(ts.ot30Hours || 0);
+      const isStandby = ts.eventType === 'standby_day' || ts.shiftType === 'STANDBY';
       const row = grouped.get(key) || {
         assignmentId: ts.assignmentId || '-',
         projectName: ts.remark || '-',
         startDate: ts.date,
         endDate: ts.date,
+        normalHours: 0,
+        otHours: 0,
+        standbyHours: 0,
         totalHours: 0,
       };
       row.projectName = ts.remark || row.projectName || '-';
       row.startDate = row.startDate < ts.date ? row.startDate : ts.date;
       row.endDate = row.endDate > ts.date ? row.endDate : ts.date;
-      row.totalHours += hours;
+      if (isStandby) row.standbyHours += baseHours;
+      else row.normalHours += baseHours;
+      row.otHours += otHours;
+      row.totalHours += baseHours + otHours;
       grouped.set(key, row);
     });
     return [...grouped.values()].sort((a, b) => b.totalHours - a.totalHours);
@@ -398,6 +415,17 @@ function WorkerDetailContent({ id }: { id: string }) {
         description: 'เฉพาะผู้มีสิทธิ์แก้ทะเบียนคนงาน (Payroll/HR) เท่านั้น',
       });
       return;
+    }
+    if (hold && worker) {
+      const job = effectiveWorkerJobStatus(worker, workerMobilizations ?? []);
+      if (job === 'ASSIGNED' || job === 'ON_SITE') {
+        toast({
+          variant: 'destructive',
+          title: 'ตั้งเป็นไม่พร้อมไม่ได้',
+          description: `คนงานยังถูกมอบหมายงานอยู่ (${job}) — ต้อง Unassign ออกจากงานก่อนจึงตั้งเป็นไม่พร้อมได้`,
+        });
+        return;
+      }
     }
     updateDocumentNonBlocking(workerRef, {
       readinessManualHold: hold,
@@ -653,7 +681,7 @@ function WorkerDetailContent({ id }: { id: string }) {
   }
 
   const workerProfileTabTriggerClassName =
-    'inline-flex shrink-0 gap-1.5 px-2.5 py-2 text-center justify-center text-[11px] sm:text-sm whitespace-nowrap sm:whitespace-normal leading-snug min-h-9 sm:min-h-10 [&_svg]:shrink-0';
+    'flex h-auto min-h-10 w-full flex-col gap-1 px-1.5 py-2 text-center justify-center text-[10px] sm:flex-row sm:gap-1.5 sm:px-2 sm:text-xs md:text-sm whitespace-normal leading-snug [&_svg]:h-3.5 [&_svg]:w-3.5 [&_svg]:shrink-0 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=active]:font-semibold';
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -715,7 +743,7 @@ function WorkerDetailContent({ id }: { id: string }) {
           onValueChange={(v) => setActiveTab((v as WorkerProfileTab) || 'info')}
           className="w-full"
         >
-          <TabsList className="flex w-full min-h-10 flex-row flex-nowrap items-center justify-start gap-1 overflow-x-auto overflow-y-hidden p-1 sm:p-1.5 bg-muted/50 rounded-md [scrollbar-width:thin]">
+          <TabsList className="grid h-auto w-full grid-cols-4 gap-1 p-1 sm:grid-cols-8 sm:p-1.5 bg-muted/60 rounded-md">
             <TabsTrigger value="info" className={workerProfileTabTriggerClassName}>
               <User className="h-4 w-4" /> ข้อมูลประวัติ (Info)
             </TabsTrigger>
@@ -726,10 +754,10 @@ function WorkerDetailContent({ id }: { id: string }) {
               <FileText className="h-4 w-4" /> เอกสาร/ใบเซอร์
             </TabsTrigger>
             <TabsTrigger value="medical" className={workerProfileTabTriggerClassName}>
-              <Stethoscope className="h-4 w-4" /> ตรวจร่างกาย (Medical)
+              <Stethoscope className="h-4 w-4" /> ตรวจร่างกาย
             </TabsTrigger>
             <TabsTrigger value="drug" className={workerProfileTabTriggerClassName}>
-              <AlertCircle className="h-4 w-4" /> สารเสพติด (Drug Test)
+              <AlertCircle className="h-4 w-4" /> สารเสพติด
             </TabsTrigger>
             <TabsTrigger value="worklog" className={workerProfileTabTriggerClassName}>
               <History className="h-4 w-4" /> ประวัติชั่วโมงงาน

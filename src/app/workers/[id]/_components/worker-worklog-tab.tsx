@@ -11,6 +11,9 @@ interface WorkLogRow {
   projectName: string;
   startDate: string;
   endDate: string;
+  normalHours: number;
+  otHours: number;
+  standbyHours: number;
   totalHours: number;
 }
 
@@ -32,31 +35,47 @@ export function WorkerWorklogTab({ workLogRows, totalWorkedHours }: WorkerWorklo
         <Badge className="bg-primary text-white">รวม {totalWorkedHours.toLocaleString()} ชั่วโมง</Badge>
       </CardHeader>
       <CardContent className="p-0">
-        <Table>
+        <Table className="w-full table-fixed">
           <TableHeader className="bg-muted/50">
             <TableRow>
               <TableHead className="pl-6 font-bold">Assignment</TableHead>
-              <TableHead className="font-bold">วันที่เริ่ม</TableHead>
-              <TableHead className="font-bold">วันที่สิ้นสุด</TableHead>
+              <TableHead className="text-center font-bold">วันที่เริ่ม</TableHead>
+              <TableHead className="text-center font-bold">วันที่สิ้นสุด</TableHead>
+              <TableHead className="text-center font-bold">ชั่วโมงปกติ</TableHead>
+              <TableHead className="text-center font-bold">โอที</TableHead>
+              <TableHead className="text-center font-bold">สแตนบาย</TableHead>
               <TableHead className="text-right pr-6 font-bold">ชั่วโมงรวม</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {workLogRows.map((row) => (
               <TableRow key={`${row.assignmentId}-${row.startDate}-${row.endDate}`}>
-                <TableCell className="pl-6 font-mono text-xs">{row.assignmentId || '-'}</TableCell>
-                <TableCell className="text-xs">
+                <TableCell className="pl-6 font-mono text-xs truncate" title={row.assignmentId || '-'}>
+                  {row.assignmentId || '-'}
+                </TableCell>
+                <TableCell className="text-center text-xs">
                   {row.startDate ? formatYmdLocalThaiBE(row.startDate) : '-'}
                 </TableCell>
-                <TableCell className="text-xs">
+                <TableCell className="text-center text-xs">
                   {row.endDate ? formatYmdLocalThaiBE(row.endDate) : '-'}
                 </TableCell>
-                <TableCell className="text-right pr-6 font-bold text-primary">{Number(row.totalHours || 0).toLocaleString()} ชม.</TableCell>
+                <TableCell className="text-center text-xs">
+                  {Number(row.normalHours || 0).toLocaleString()} ชม.
+                </TableCell>
+                <TableCell className="text-center text-xs">
+                  {Number(row.otHours || 0).toLocaleString()} ชม.
+                </TableCell>
+                <TableCell className="text-center text-xs">
+                  {Number(row.standbyHours || 0).toLocaleString()} ชม.
+                </TableCell>
+                <TableCell className="text-right pr-6 font-bold text-primary">
+                  {Number(row.totalHours || 0).toLocaleString()} ชม.
+                </TableCell>
               </TableRow>
             ))}
             {workLogRows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} className="py-20 text-center text-muted-foreground italic">ยังไม่มีประวัติการลงเวลา</TableCell>
+                <TableCell colSpan={7} className="py-20 text-center text-muted-foreground italic">ยังไม่มีประวัติการลงเวลา</TableCell>
               </TableRow>
             )}
           </TableBody>

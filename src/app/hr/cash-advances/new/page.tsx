@@ -29,6 +29,7 @@ import type { CashAdvanceRequest, OfficeStaff, User, Worker } from '@/lib/types'
 import { useToast } from '@/hooks/use-toast';
 import { filterActiveWorkersForSelection } from '@/lib/hr/worker-active';
 import { filterActiveOfficeStaffForSelection } from '@/lib/hr/office-staff-active';
+import { cn } from '@/lib/utils';
 
 function workerPickLabel(w: Worker): string {
   return `${w.firstName ?? ''} ${w.lastName ?? ''}`.trim() + ` — ${w.workerCode ?? ''}`;

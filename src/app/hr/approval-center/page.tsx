@@ -280,22 +280,23 @@ export default function HrApprovalCenterPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-emerald-500/25">
-            <CardHeader>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Wallet className="h-5 w-5 text-emerald-700" />
-                  อนุมัติการเบิกเงิน (เบิกล่วงหน้า)
-                </CardTitle>
-                <ApprovalSectionPendingBadge
-                  count={cashAdvancePendingCount}
-                  loading={loadingCashAdvance}
-                  kindLabel="เบิกล่วงหน้า"
-                />
-              </div>
-              <CardDescription>
-                คิวผู้จัดการอนุมัติหลัง Payroll ตรวจแล้ว — เมื่ออนุมัติและจ่ายแล้ว ระบบจะ<strong className="text-foreground">หักยอดเบิกจากสลิปเงินเดือน</strong>อัตโนมัติเมื่อสร้าง Payroll
-                Batch งวดถัดไป (ลูกจ้าง)
+          <Card className="relative flex h-full flex-col overflow-hidden rounded-xl border border-emerald-500/25 bg-card shadow-sm ring-1 ring-black/[0.03] transition-shadow hover:shadow-md dark:ring-white/[0.06]">
+            <CardHeader className="relative pb-3 pr-28 pt-6 sm:pr-36">
+              <ApprovalSectionPendingBadge
+                count={cashAdvancePendingCount}
+                loading={loadingCashAdvance}
+                kindLabel="เบิกล่วงหน้า"
+              />
+              <CardTitle className="flex items-start gap-2.5 pr-0 text-lg leading-snug">
+                <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-800 dark:text-emerald-300">
+                  <Wallet className="h-5 w-5" />
+                </span>
+                <span>อนุมัติการเบิกเงิน (เบิกล่วงหน้า)</span>
+              </CardTitle>
+              <CardDescription className="text-sm leading-relaxed">
+                คิวผู้จัดการอนุมัติหลัง Payroll ตรวจแล้ว — เมื่ออนุมัติและจ่ายแล้ว ระบบจะ
+                <strong className="text-foreground">หักยอดเบิกจากสลิปเงินเดือน</strong>
+                อัตโนมัติเมื่อสร้าง Payroll Batch งวดถัดไป (ลูกจ้าง)
               </CardDescription>
             </CardHeader>
             <CardContent className="mt-auto flex flex-wrap gap-2 pb-6 pt-0">

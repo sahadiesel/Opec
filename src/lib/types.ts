@@ -1180,6 +1180,11 @@ export interface MobFinishUndoSnapshot {
   mobStep2PayrollCharge?: MobDayChargeSpec;
   mobStandbyRecordedAt?: number;
   mobStandbyRecordedByUserId?: string;
+  mobMobSkipped?: boolean;
+  mobPreMobDate?: string;
+  mobPreMobSkipped?: boolean;
+  mobPreMobRecordedAt?: number;
+  mobPreMobRecordedByUserId?: string;
   mobWorkingStartDate?: string;
   mobWorkingStartedAt?: number;
   mobWorkingStartedByUserId?: string;
@@ -1235,18 +1240,28 @@ export interface Assignment {
   mobReadyToTravelByUserId?: string;
   /** วันที่พร้อมเดินทางที่เลือก (YYYY-MM-DD, Asia/Bangkok) */
   mobReadyToTravelDate?: string;
-  /** Final clearance ขั้น 2 — วัน standby (YYYY-MM-DD, Asia/Bangkok) */
+  /**
+   * Final clearance — วัน Pre-Mob (SB 8 ชม.) แยกจากวัน Mob
+   * ว่าง + `mobPreMobSkipped` = ข้าม Pre-Mob
+   */
+  mobPreMobDate?: string;
+  mobPreMobSkipped?: boolean;
+  mobPreMobRecordedAt?: number;
+  mobPreMobRecordedByUserId?: string;
+  /** Final clearance — วัน Mob / Standby เดิม (YYYY-MM-DD) — ใช้เป็นฐานก่อนวันเริ่มงาน */
   mobStandbyDate?: string;
-  /** ประเภทวันที่บันทึกขั้น 2 — standby_day (Pre-Mob/SB) หรือ mobilization_day (Mob/MO) */
+  /** ข้าม Mob — ไม่มีวัน M1 · ตารางเวลาเริ่มที่วันทำงานเลย */
+  mobMobSkipped?: boolean;
+  /** ประเภทวันที่บันทึก Mob/Standby — standby_day (legacy Pre-Mob) หรือ mobilization_day (Mob) */
   mobStandbyDayEventType?: 'standby_day' | 'mobilization_day';
   /**
-   * ทางเลือกขั้น 2 จากปุ่ม Pre-mob/Mob
-   * PRE_MOB = ค่ามาตรฐาน standby 8 ชม. · MOB = ตาม M1 ในตารางสัญญา
+   * ทางเลือกขั้น Pre-Mob/Mob
+   * PRE_MOB = SB 8 ชม. · MOB = M1 ตามตารางสัญญา
    */
   mobStep2Choice?: 'PRE_MOB' | 'MOB';
-  /** ค่าวางบิลลูกค้าสำหรับวันขั้น 2 ของ assignment นี้เท่านั้น */
+  /** ค่าวางบิลลูกค้าสำหรับวัน Mob ของ assignment นี้เท่านั้น */
   mobStep2BillingCharge?: MobDayChargeSpec;
-  /** ค่าจ่ายลูกจ้างสำหรับวันขั้น 2 ของ assignment นี้เท่านั้น */
+  /** ค่าจ่ายลูกจ้างสำหรับวัน Mob ของ assignment นี้เท่านั้น */
   mobStep2PayrollCharge?: MobDayChargeSpec;
   mobStandbyRecordedAt?: number;
   mobStandbyRecordedByUserId?: string;

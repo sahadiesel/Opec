@@ -967,10 +967,9 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
           </div>
         )}
 
-        {(canAct && invoice.status === 'DRAFT') ||
-        (canAdminVoid && (invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER')) ? (
+        {invoice.status === 'DRAFT' && (canAct || canAdminVoid) ? (
           <div className="print:hidden flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
-            {canAct && invoice.status === 'DRAFT' && (
+            {canAct && (
               <Button
                 className="gap-2 shrink-0"
                 onClick={() => void handleSendToCustomer()}
@@ -982,7 +981,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   : 'ส่งให้ลูกค้าตรวจสอบ (Portal)'}
               </Button>
             )}
-            {canAdminVoid && (invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER') && (
+            {canAdminVoid && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button type="button" variant="destructive" className="gap-2 shrink-0" disabled={voidBusy}>
@@ -1023,11 +1022,43 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   {invoice.sentToCustomerByName ? ` · โดย ${invoice.sentToCustomerByName}` : ''}
                 </span>
               )}
-              {canAct && (
-                <Button className="mt-3 gap-2" variant="default" onClick={() => void handleManagerConfirm()} disabled={actionBusy}>
-                  {actionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  ยืนยันยอดเรียกเก็บ (ฝั่ง OPEC)
-                </Button>
+              {(canAct || canAdminVoid) && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {canAct && (
+                    <Button className="gap-2" variant="default" onClick={() => void handleManagerConfirm()} disabled={actionBusy}>
+                      {actionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                      ยืนยันยอดเรียกเก็บ (ฝั่ง OPEC)
+                    </Button>
+                  )}
+                  {canAdminVoid && (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button type="button" variant="destructive" className="gap-2" disabled={voidBusy}>
+                          {voidBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
+                          ยกเลิกใบนี้ (VOID)
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>ยกเลิกใบแจ้งหนี้นี้?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            เฉพาะผู้ดูแลระบบ — ใช้เมื่อรายการหรือการคำนวณไม่ถูกต้อง สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO
+                            ได้อีกครั้ง (ไม่ลบประวัติเอกสาร) · ใบที่ลูกค้า/ฝ่ายยืนยันแล้ว (ISSUED) ยกเลิกไม่ได้
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>ไม่</AlertDialogCancel>
+                          <AlertDialogAction
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            onClick={() => void handleVoid()}
+                          >
+                            ยืนยันยกเลิก
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  )}
+                </div>
               )}
             </AlertDescription>
           </Alert>

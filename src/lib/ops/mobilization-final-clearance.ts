@@ -1,4 +1,4 @@
-import type { Assignment, RateConditionEventType } from '@/lib/types';
+import type { Assignment, ChecklistItemStatus, RateConditionEventType } from '@/lib/types';
 
 export type MobStandbyMobDayChoice = Extract<RateConditionEventType, 'standby_day' | 'mobilization_day'>;
 
@@ -43,6 +43,27 @@ export function addDaysToYmd(ymd: string, deltaDays: number): string {
   return `${yy}-${mm}-${dd}`;
 }
 
+function checklistPass(status: ChecklistItemStatus | string | undefined | null): boolean {
+  return status === 'pass';
+}
+
+/**
+ * ขั้น 1 (แสดงผล) — พร้อมเดินทางเมื่อ checklist 1–4 ผ่าน:
+ * พาส/บัตร · แพทย์ · ใบเซอร์ · ผลตรวจสารเสพติด
+ */
+export function isTravelReadyDisplay(
+  a: Pick<Assignment, 'readinessSummary'>,
+  drugOk: boolean,
+): boolean {
+  const s = a.readinessSummary;
+  return (
+    checklistPass(s?.passportValid) &&
+    checklistPass(s?.medicalValid) &&
+    checklistPass(s?.certificatesComplete) &&
+    drugOk
+  );
+}
+
 /** ขั้น 1 เสร็จเมื่อมี timestamp หรือสถานะเดิมผ่านขั้นนี้แล้ว (ข้อมูลเก่าก่อนเฟส 3) */
 export function isFinalClearanceStep1Done(
   a: Pick<Assignment, 'mobReadyToTravelAt' | 'deploymentStatus'>,
@@ -52,12 +73,69 @@ export function isFinalClearanceStep1Done(
   return ds === 'READY_TO_MOB' || ds === 'MOBILIZING' || ds === 'ACTIVE';
 }
 
-export function isFinalClearanceStep2Done(
-  a: Pick<Assignment, 'mobStandbyRecordedAt' | 'deploymentStatus'>,
+/** ขั้น Pre-Mob เสร็จ — มีวันที่ SB หรือข้าม หรือ legacy step2 */
+export function isFinalClearancePreMobDone(
+  a: Pick<
+    Assignment,
+    | 'mobPreMobDate'
+    | 'mobPreMobSkipped'
+    | 'mobPreMobRecordedAt'
+    | 'mobStep2Choice'
+    | 'mobStandbyRecordedAt'
+    | 'mobStandbyDayEventType'
+  >,
 ): boolean {
-  if (typeof a.mobStandbyRecordedAt === 'number' && a.mobStandbyRecordedAt > 0) return true;
-  const ds = a.deploymentStatus;
-  return ds === 'MOBILIZING' || ds === 'ACTIVE';
+  if (a.mobPreMobSkipped === true) return true;
+  if ((a.mobPreMobDate || '').trim().length >= 10) return true;
+  if (typeof a.mobPreMobRecordedAt === 'number' && a.mobPreMobRecordedAt > 0) return true;
+  // legacy: บันทึก Pre-Mob/Mob รวมขั้นเดียวแล้ว
+  if (typeof a.mobStandbyRecordedAt === 'number' && a.mobStandbyRecordedAt > 0) {
+    if (a.mobStep2Choice === 'PRE_MOB' || a.mobStep2Choice === 'MOB') return true;
+    if (a.mobStandbyDayEventType === 'standby_day' || a.mobStandbyDayEventType === 'mobilization_day') {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** ขั้น Mob เสร็จ — มีวัน M1 / ข้าม Mob (หรือ legacy ที่ถือว่าจบขั้น Standby/Mob แล้ว) */
+export function isFinalClearanceMobDone(
+  a: Pick<
+    Assignment,
+    | 'mobStandbyRecordedAt'
+    | 'mobStandbyDayEventType'
+    | 'mobStep2Choice'
+    | 'mobPreMobDate'
+    | 'mobMobSkipped'
+    | 'deploymentStatus'
+  >,
+): boolean {
+  if (a.deploymentStatus === 'ACTIVE') return true;
+  if (a.mobMobSkipped === true) return true;
+  if (!(typeof a.mobStandbyRecordedAt === 'number' && a.mobStandbyRecordedAt > 0)) return false;
+  if (a.mobStandbyDayEventType === 'mobilization_day' || a.mobStep2Choice === 'MOB') return true;
+  // legacy PRE_MOB เป็นขั้นเดียวก่อนแยก Pre-Mob/Mob — ถือว่าจบขั้น Mob เพื่อเริ่มงานได้
+  if (a.mobStep2Choice === 'PRE_MOB' && !(a.mobPreMobDate || '').trim()) return true;
+  if (a.mobStandbyDayEventType === 'standby_day' && !(a.mobPreMobDate || '').trim()) return true;
+  return false;
+}
+
+/**
+ * ขั้น Standby/Mob เดิม (ก่อนเริ่มงาน) — ใช้กับ gate เริ่มวันทำงาน
+ * = มีวัน Mob แล้ว (หรือ legacy ที่จบขั้น 2 แล้ว)
+ */
+export function isFinalClearanceStep2Done(
+  a: Pick<
+    Assignment,
+    | 'mobStandbyRecordedAt'
+    | 'deploymentStatus'
+    | 'mobStandbyDayEventType'
+    | 'mobStep2Choice'
+    | 'mobPreMobDate'
+    | 'mobMobSkipped'
+  >,
+): boolean {
+  return isFinalClearanceMobDone(a);
 }
 
 export function isFinalClearanceStep3Done(
@@ -82,7 +160,7 @@ export function isMobUnassigned(a: Pick<Assignment, 'unassignedAt'>): boolean {
   return typeof a.unassignedAt === 'number' && a.unassignedAt > 0;
 }
 
-/** เฟส 1 PO workflow — ต้องระบุไซต์ก่อนขั้นที่ 1 */
+/** เฟส 1 PO workflow — ต้องระบุไซต์ก่อนขั้นถัดไป */
 export function assignmentHasMobLocationForPhase1(a: Assignment): boolean {
   if (a.mobWorkflowVersion !== 'po_active_v2') return true;
   const key = (a.mobLocationKey || '').trim();
@@ -92,7 +170,7 @@ export function assignmentHasMobLocationForPhase1(a: Assignment): boolean {
 
 export type FinalClearanceGate = { ok: true } | { ok: false; message: string };
 
-/** เฟส 3: ปุ่ม 1→2→3 ห้ามข้าม — ผลตรวจสารเสพติดต้อง valid ทุกครั้งก่อนลง (หมดอายุต้องตรวจซ้ำ) */
+/** เฟส 3: ปุ่มตามลำดับ — ผลตรวจสารเสพติดต้อง valid ทุกครั้งก่อนลง */
 export function canRunFinalClearanceStep(
   a: Assignment,
   step: 1 | 2 | 3,
@@ -106,7 +184,7 @@ export function canRunFinalClearanceStep(
     if (!assignmentHasMobLocationForPhase1(a)) {
       return {
         ok: false,
-        message: 'เลือกสถานที่ปฏิบัติงาน (ไซต์) ก่อนยืนยันพร้อมเดินทาง — ใช้การ์ด «สถานที่ปฏิบัติงาน» ด้านบน',
+        message: 'เลือกสถานที่ปฏิบัติงาน (ไซต์) ก่อน — ใช้ขั้นที่ 2 ใน Final Clearance',
       };
     }
     if (options && !options.readinessOk) {
@@ -121,10 +199,13 @@ export function canRunFinalClearanceStep(
     return { ok: true };
   }
   if (step === 2) {
-    if (!isFinalClearanceStep1Done(a)) {
-      return { ok: false, message: 'ต้องยืนยัน «พร้อมเดินทาง» (ขั้นที่ 1) ก่อนบันทึกวัน Standby' };
+    if (!assignmentHasMobLocationForPhase1(a)) {
+      return { ok: false, message: 'ต้องบันทึกสถานที่ (ขั้นที่ 2) ก่อน' };
     }
-    if (isFinalClearanceStep2Done(a)) return { ok: false, message: 'บันทึก Standby แล้ว' };
+    if (options && !options.readinessOk) {
+      return { ok: false, message: 'ยังไม่พร้อมเดินทาง — ตรวจ checklist 1–4 ให้ผ่านก่อน' };
+    }
+    if (isFinalClearanceStep2Done(a)) return { ok: false, message: 'บันทึก Mob แล้ว' };
     if (options?.drugOk === false) {
       return {
         ok: false,
@@ -134,7 +215,7 @@ export function canRunFinalClearanceStep(
     return { ok: true };
   }
   if (!isFinalClearanceStep2Done(a)) {
-    return { ok: false, message: 'ต้องบันทึกวัน Standby (ขั้นที่ 2) ก่อนเริ่มวันทำงาน' };
+    return { ok: false, message: 'ต้องบันทึกวัน Mob (ขั้นที่ 4) ก่อนเริ่มวันทำงาน' };
   }
   if (isFinalClearanceStep3Done(a)) return { ok: false, message: 'เริ่มวันทำงานแล้ว' };
   if (options?.drugOk === false) {
@@ -160,19 +241,54 @@ export function shouldAutoFillPrefixWorkDaysBeforeStandby(
   return false;
 }
 
-/** บันทึก Standby (ครั้งแรกหรือแก้ไข) */
-export function canSaveFinalClearanceStandby(
+/** บันทึก Pre-Mob (SB) หรือข้าม */
+export function canSaveFinalClearancePreMob(
   a: Assignment,
-  opts?: { editingExisting: boolean; drugOk?: boolean; drugMessage?: string },
+  opts?: { editingExisting?: boolean; drugOk?: boolean; drugMessage?: string; travelReady?: boolean },
 ): FinalClearanceGate {
   if (isMobUnassigned(a)) {
     return { ok: false, message: 'รายการนี้ Unassign แล้ว — ไม่สามารถดำเนินการ Final clearance ต่อได้' };
   }
-  if (!isFinalClearanceStep1Done(a)) {
-    return { ok: false, message: 'ต้องยืนยัน «พร้อมเดินทาง» (ขั้นที่ 1) ก่อนบันทึกวัน Standby' };
+  if (!assignmentHasMobLocationForPhase1(a)) {
+    return { ok: false, message: 'ต้องบันทึกสถานที่ (ขั้นที่ 2) ก่อน' };
   }
-  if (isFinalClearanceStep2Done(a) && !opts?.editingExisting) {
-    return { ok: false, message: 'บันทึก Standby แล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่' };
+  if (opts?.travelReady === false) {
+    return { ok: false, message: 'ยังไม่พร้อมเดินทาง — ตรวจ checklist 1–4 ให้ผ่านก่อน' };
+  }
+  if (isFinalClearancePreMobDone(a) && !opts?.editingExisting) {
+    return { ok: false, message: 'บันทึก / ข้าม Pre-Mob แล้ว' };
+  }
+  if (isFinalClearanceMobDone(a) && !opts?.editingExisting) {
+    return { ok: false, message: 'บันทึก Mob แล้ว — ไม่สามารถแก้ Pre-Mob ได้' };
+  }
+  if (opts?.drugOk === false) {
+    return {
+      ok: false,
+      message: opts.drugMessage || 'ผลตรวจสารเสพติดหมดอายุหรือยังไม่ครบ — ตรวจใหม่ก่อน',
+    };
+  }
+  return { ok: true };
+}
+
+/** บันทึก Mob (M1) */
+export function canSaveFinalClearanceMob(
+  a: Assignment,
+  opts?: { editingExisting?: boolean; drugOk?: boolean; drugMessage?: string; travelReady?: boolean },
+): FinalClearanceGate {
+  if (isMobUnassigned(a)) {
+    return { ok: false, message: 'รายการนี้ Unassign แล้ว — ไม่สามารถดำเนินการ Final clearance ต่อได้' };
+  }
+  if (!assignmentHasMobLocationForPhase1(a)) {
+    return { ok: false, message: 'ต้องบันทึกสถานที่ (ขั้นที่ 2) ก่อน' };
+  }
+  if (opts?.travelReady === false) {
+    return { ok: false, message: 'ยังไม่พร้อมเดินทาง — ตรวจ checklist 1–4 ให้ผ่านก่อน' };
+  }
+  if (!isFinalClearancePreMobDone(a)) {
+    return { ok: false, message: 'ต้องบันทึก Pre-Mob หรือกด «ไม่มี Pre-Mob» ก่อน' };
+  }
+  if (isFinalClearanceMobDone(a) && !opts?.editingExisting) {
+    return { ok: false, message: 'บันทึก Mob แล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่' };
   }
   if (opts?.drugOk === false) {
     return {
@@ -181,6 +297,14 @@ export function canSaveFinalClearanceStandby(
     };
   }
   return { ok: true };
+}
+
+/** บันทึก Standby/Mob (ครั้งแรกหรือแก้ไข) — ใช้กับ Mob เป็นหลัก */
+export function canSaveFinalClearanceStandby(
+  a: Assignment,
+  opts?: { editingExisting: boolean; drugOk?: boolean; drugMessage?: string; travelReady?: boolean },
+): FinalClearanceGate {
+  return canSaveFinalClearanceMob(a, opts);
 }
 
 /** เริ่มวันทำงาน (ครั้งแรกหรือแก้ไข) */
@@ -192,7 +316,7 @@ export function canSaveFinalClearanceWorkStart(
     return { ok: false, message: 'รายการนี้ Unassign แล้ว — ไม่สามารถดำเนินการ Final clearance ต่อได้' };
   }
   if (!isFinalClearanceStep2Done(a)) {
-    return { ok: false, message: 'ต้องบันทึกวัน Standby (ขั้นที่ 2) ก่อนเริ่มวันทำงาน' };
+    return { ok: false, message: 'ต้องบันทึกวัน Mob (ขั้นที่ 4) ก่อนเริ่มวันทำงาน' };
   }
   if (isFinalClearanceStep3Done(a) && !opts?.editingExisting) {
     return { ok: false, message: 'เริ่มวันทำงานแล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่' };
@@ -206,7 +330,7 @@ export function canSaveFinalClearanceWorkStart(
   return { ok: true };
 }
 
-/** ย้อนขั้น 1 ได้เมื่อยังไม่บันทึก Standby */
+/** ย้อนขั้น 1 ได้เมื่อยังไม่บันทึก Standby/Mob */
 export function canRevertFinalClearanceStep1(a: Assignment): FinalClearanceGate {
   if (isMobUnassigned(a)) {
     return { ok: false, message: 'รายการนี้ Unassign แล้ว' };
@@ -214,10 +338,10 @@ export function canRevertFinalClearanceStep1(a: Assignment): FinalClearanceGate 
   if (!isFinalClearanceStep1Done(a)) {
     return { ok: false, message: 'ยังไม่ได้ยืนยันขั้นที่ 1' };
   }
-  if (isFinalClearanceStep2Done(a)) {
+  if (isFinalClearanceStep2Done(a) || isFinalClearancePreMobDone(a)) {
     return {
       ok: false,
-      message: 'แก้ขั้นที่ 1 ไม่ได้เมื่อบันทึก Standby แล้ว — ให้ใช้ปุ่มแก้ไขขั้นที่ 2 (ระบบจะย้อนขั้นที่ 3 ถ้ามี)',
+      message: 'แก้ขั้นพร้อมเดินทางไม่ได้เมื่อบันทึก Pre-Mob/Mob แล้ว',
     };
   }
   return { ok: true };

@@ -14,8 +14,7 @@ import {
   Calendar, 
   AlertCircle, 
   Clock, 
-  CheckCircle2, 
-  Truck, 
+  Truck,
   XCircle,
   ClipboardCheck,
   Info,
@@ -32,6 +31,7 @@ import {
   Building2,
   UserX,
   Pencil,
+  Printer,
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, getDoc, updateDoc, deleteField } from 'firebase/firestore';
@@ -77,14 +77,18 @@ import {
 } from '@/lib/timesheet/mobilization-clearance-timesheet';
 import {
   addDaysToYmd,
-  canRevertFinalClearanceStep1,
+  assignmentHasMobLocationForPhase1,
   canRunFinalClearanceStep,
-  canSaveFinalClearanceStandby,
+  canSaveFinalClearanceMob,
+  canSaveFinalClearancePreMob,
   canSaveFinalClearanceWorkStart,
+  isFinalClearanceMobDone,
+  isFinalClearancePreMobDone,
   isFinalClearanceStep1Done,
   isFinalClearanceStep2Done,
   isFinalClearanceStep3Done,
   isMobUnassigned,
+  isTravelReadyDisplay,
   mobStandbyMobDayChoiceLabel,
   mobStandbyMobDayStatusCode,
   thailandTodayYmd,
@@ -107,6 +111,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { isPoTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
+import { isPdfAttachment } from '@/lib/storage/worker-credential-attachment';
 import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import {
   AlertDialog,
@@ -134,7 +139,6 @@ import {
   MOB_DRUG_TEST_GATE_MESSAGE_TH,
   resolveMobReferenceDateYmd,
 } from '@/lib/drug-test-panel';
-import { formatPoLineSiteOptionLabel } from '@/lib/ops/po-line-display';
 import {
   assignmentHasStaleFinalClearanceWhileAwaitingRemob,
   buildMobRemobClearanceDeleteFields,
@@ -154,27 +158,27 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [standbyDateDraft, setStandbyDateDraft] = useState('');
-  const [readyToTravelDateDraft, setReadyToTravelDateDraft] = useState('');
+  const [preMobDateDraft, setPreMobDateDraft] = useState('');
   const [workingStartDateDraft, setWorkingStartDateDraft] = useState('');
   const [unassignDialogOpen, setUnassignDialogOpen] = useState(false);
   const [autoDailySyncing, setAutoDailySyncing] = useState(false);
   const [clearanceSavingStep, setClearanceSavingStep] = useState<0 | 2 | 3>(0);
-  /** แก้ไขวันที่หลังบันทึกแล้ว — 2 = Standby, 3 = เริ่มงาน */
+  /** แก้ไขวันที่หลังบันทึกแล้ว — 2 = Mob, 3 = เริ่มงาน */
   const [clearanceEditMode, setClearanceEditMode] = useState<0 | 2 | 3>(0);
   const [step2CascadeOpen, setStep2CascadeOpen] = useState(false);
-  const [step1RevertOpen, setStep1RevertOpen] = useState(false);
-  const [standbyMobPickOpen, setStandbyMobPickOpen] = useState(false);
   const [preMobConfigOpen, setPreMobConfigOpen] = useState(false);
-  const [step2ChoiceDraft, setStep2ChoiceDraft] = useState<MobStep2Choice>('PRE_MOB');
+  const [step2ChoiceDraft, setStep2ChoiceDraft] = useState<MobStep2Choice>('MOB');
   const [billingChargeDraft, setBillingChargeDraft] = useState<MobDayChargeSpec>(() =>
-    defaultMobDayCharges('PRE_MOB').billing,
+    defaultMobDayCharges('MOB').billing,
   );
   const [payrollChargeDraft, setPayrollChargeDraft] = useState<MobDayChargeSpec>(() =>
-    defaultMobDayCharges('PRE_MOB').payroll,
+    defaultMobDayCharges('MOB').payroll,
   );
-  const [locationLineIdDraft, setLocationLineIdDraft] = useState<string>('');
   const [locationCustomDraft, setLocationCustomDraft] = useState('');
   const [locationSaving, setLocationSaving] = useState(false);
+  const [locationEditing, setLocationEditing] = useState(false);
+  const [viewingCert, setViewingCert] = useState<WorkerCertificate | null>(null);
+  const certPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
 
   // Standardized fetch from 'mobilizations' top-level collection
   useEffect(() => {
@@ -251,18 +255,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   );
   const { data: poLines } = useCollection<POLine>(poLinesQuery as any);
 
-  const positionsQuery = useMemoFirebase(
-    () => (firestore && poLines?.length ? collection(firestore, 'positions') : null),
-    [firestore, poLines?.length],
-  );
-  const { data: allPositions } = useCollection<Position>(positionsQuery as any);
-
-  const positionById = useMemo(() => {
-    const m = new Map<string, Position>();
-    for (const p of allPositions ?? []) m.set(p.id, p);
-    return m;
-  }, [allPositions]);
-
   const primaryPoLine = useMemo(() => {
     const lid = (assignment?.poLineId || '').trim();
     if (!lid || !poLines?.length) return undefined;
@@ -274,31 +266,45 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   useEffect(() => {
     if (!assignment) return;
-    const ready = (assignment.mobReadyToTravelDate || '').trim();
-    setReadyToTravelDateDraft(ready || thailandTodayYmd());
+    const preMob = (assignment.mobPreMobDate || '').trim();
+    setPreMobDateDraft(preMob || thailandTodayYmd());
     const standby = (assignment.mobStandbyDate || '').trim();
     setStandbyDateDraft(standby || thailandTodayYmd());
     const work = (assignment.mobWorkingStartDate || '').trim();
     const baseStandby = standby || thailandTodayYmd();
     setWorkingStartDateDraft(work || addDaysToYmd(baseStandby, 1));
-  }, [assignment?.id, assignment?.mobReadyToTravelDate, assignment?.mobStandbyDate, assignment?.mobWorkingStartDate]);
+  }, [assignment?.id, assignment?.mobPreMobDate, assignment?.mobStandbyDate, assignment?.mobWorkingStartDate]);
 
   useEffect(() => {
     if (!assignment) return;
-    const key = (assignment.mobLocationKey || '').trim();
-    if (key.startsWith('poLine:')) {
-      setLocationLineIdDraft(key.slice('poLine:'.length));
-      setLocationCustomDraft('');
-      return;
-    }
-    if (key.startsWith('custom:')) {
-      setLocationLineIdDraft('');
-      setLocationCustomDraft(key.slice('custom:'.length));
-      return;
-    }
-    setLocationLineIdDraft(assignment.poLineId || '');
-    setLocationCustomDraft('');
-  }, [assignment?.id, assignment?.mobLocationKey, assignment?.poLineId]);
+    setLocationCustomDraft((assignment.workLocation || '').trim());
+  }, [assignment?.id, assignment?.workLocation]);
+
+  /** เมื่อสถานที่บันทึกแล้วและ checklist 1–4 ผ่านทีหลัง — stamp READY_TO_MOB อัตโนมัติ */
+  useEffect(() => {
+    if (!firestore || !assignment || !currentUser?.id || !canEditMobilization) return;
+    if (isMobUnassigned(assignment)) return;
+    if (!assignmentHasMobLocationForPhase1(assignment)) return;
+    if (!isTravelReadyDisplay(assignment, mobDrugOk)) return;
+    if (isFinalClearanceStep1Done(assignment)) return;
+    if (isFinalClearanceMobDone(assignment)) return;
+    const now = Date.now();
+    const today = thailandTodayYmd();
+    void updateDoc(doc(firestore, 'mobilizations', assignment.id), {
+      mobReadyToTravelDate: today,
+      mobReadyToTravelAt: now,
+      mobReadyToTravelByUserId: currentUser.id,
+      mobilizationStatus: 'READY_TO_MOBILIZE',
+      deploymentStatus: 'READY_TO_MOB',
+      updatedAt: now,
+    }).catch((e) => console.warn('[mob] auto READY_TO_MOB stamp', e));
+  }, [
+    firestore,
+    assignment,
+    currentUser?.id,
+    canEditMobilization,
+    mobDrugOk,
+  ]);
 
   /** Waiting MOB หลังจบงานแต่ยังมีค่า Final clearance / ไซต์รอบเก่าค้าง — เคลียร์ให้เริ่มรอบใหม่ */
   const remobStaleHealKeyRef = useRef<string>('');
@@ -318,15 +324,14 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         if (snap.exists()) {
           setAssignment({ id: snap.id, ...(snap.data() as object) } as Assignment);
         }
-        setReadyToTravelDateDraft(thailandTodayYmd());
+        setPreMobDateDraft(thailandTodayYmd());
         setStandbyDateDraft(thailandTodayYmd());
         setWorkingStartDateDraft(addDaysToYmd(thailandTodayYmd(), 1));
-        setLocationLineIdDraft(assignment.poLineId || '');
         setLocationCustomDraft('');
         setClearanceEditMode(0);
         toast({
           title: 'เริ่มรอบ Mobilization ใหม่',
-          description: 'เคลียร์ค่า Final clearance / ไซต์รอบเก่าแล้ว — เลือกสถานที่และวัน Pre-Mob/Mob ใหม่',
+          description: 'เคลียร์ค่า Final clearance / ไซต์รอบเก่าแล้ว — ระบุสถานที่และวัน Pre-Mob/Mob ใหม่',
         });
       })
       .catch((e: unknown) => {
@@ -347,50 +352,31 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     setAssignment((prev) => (prev ? ({ ...prev, ...next } as Assignment) : null));
   };
 
-  const runFinalClearanceStep1 = () => {
-    if (!assignment || !currentUser?.id) return;
-    const gate = canRunFinalClearanceStep(assignment, 1, {
-      readinessOk: assignment.readinessStatus === 'ready',
-      drugOk: mobDrugOk,
-      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
-    });
-    if (!gate.ok) {
-      toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
-      return;
-    }
-    const ymd = (readyToTravelDateDraft || '').trim().slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
-      toast({ variant: 'destructive', title: 'เลือกวันที่', description: 'กรุณาเลือกวันที่พร้อมเดินทาง' });
-      return;
-    }
-    const now = Date.now();
-    patchMobilization({
-      mobReadyToTravelDate: ymd,
-      mobReadyToTravelAt: now,
-      mobReadyToTravelByUserId: currentUser.id,
-      mobilizationStatus: 'READY_TO_MOBILIZE',
-      deploymentStatus: 'READY_TO_MOB',
-    });
-    toast({
-      title: 'ยืนยันขั้นที่ 1 แล้ว',
-      description: `พร้อมเดินทาง ณ ${formatYmdLocalThaiBE(ymd)} — ถัดไปบันทึกวัน Standby`,
-    });
-  };
-
   const workerTimesheetName =
     worker?.firstName || worker?.lastName
       ? `${worker?.firstName || ''} ${worker?.lastName || ''}`.trim()
       : (assignment?.workerName || '').trim();
 
-  const step2SaveGate = useMemo(() => {
+  const travelReady = useMemo(
+    () => (assignment ? isTravelReadyDisplay(assignment, mobDrugOk) : false),
+    [assignment, mobDrugOk],
+  );
+
+  const preMobSaveGate = useMemo(() => {
     if (!assignment) return { ok: false as const, message: '' };
-    const drugOpts = { drugOk: mobDrugOk, drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH };
-    if (clearanceEditMode === 2) return canSaveFinalClearanceStandby(assignment, { editingExisting: true, ...drugOpts });
-    return canRunFinalClearanceStep(assignment, 2, {
-      readinessOk: true,
-      ...drugOpts,
+    return canSaveFinalClearancePreMob(assignment, {
+      drugOk: mobDrugOk,
+      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+      travelReady,
     });
-  }, [assignment, clearanceEditMode, mobDrugOk]);
+  }, [assignment, mobDrugOk, travelReady]);
+
+  const mobSaveGate = useMemo(() => {
+    if (!assignment) return { ok: false as const, message: '' };
+    const drugOpts = { drugOk: mobDrugOk, drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH, travelReady };
+    if (clearanceEditMode === 2) return canSaveFinalClearanceMob(assignment, { editingExisting: true, ...drugOpts });
+    return canSaveFinalClearanceMob(assignment, drugOpts);
+  }, [assignment, clearanceEditMode, mobDrugOk, travelReady]);
 
   const step3SaveGate = useMemo(() => {
     if (!assignment) return { ok: false as const, message: '' };
@@ -450,7 +436,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       setStep2CascadeOpen(false);
       toast({
         title: 'ย้อนขั้นเริ่มงานแล้ว',
-        description: 'แก้วัน Standby ได้ — บันทึกขั้นที่ 3 ใหม่หลังแก้เสร็จ',
+        description: 'แก้วัน Mob ได้ — บันทึกขั้นที่ 5 ใหม่หลังแก้เสร็จ',
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -468,38 +454,162 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     );
   };
 
-  const runRevertFinalClearanceStep1 = async () => {
-    if (!firestore || !assignment || !canEditMobilization) return;
-    const gate = canRevertFinalClearanceStep1(assignment);
-    if (!gate.ok) {
-      toast({ variant: 'destructive', title: 'แก้ขั้นที่ 1 ไม่ได้', description: gate.message });
-      setStep1RevertOpen(false);
+  const runSavePreMob = async () => {
+    if (!firestore || !assignment || !currentUser?.id || !po) return;
+    const ymd = (preMobDateDraft || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+      toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวัน Pre-Mob (รูปแบบ yyyy-mm-dd)' });
       return;
     }
+    const gate = canSaveFinalClearancePreMob(assignment, {
+      drugOk: mobDrugOk,
+      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+      travelReady,
+    });
+    if (!gate.ok) {
+      toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
+      return;
+    }
+    let line = primaryPoLine;
+    if (!line && assignment.poId && assignment.poLineId) {
+      const snap = await getDoc(doc(firestore, 'purchase_orders', assignment.poId, 'po_lines', assignment.poLineId));
+      if (snap.exists()) line = { id: snap.id, ...(snap.data() as object) } as POLine;
+    }
+    if (!line?.id) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่พบบรรทัด PO',
+        description: 'ต้องมี poLineId และข้อมูลบรรทัด PO เพื่อบันทึก timesheet',
+      });
+      return;
+    }
+    if (!canEditTimesheets) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'ต้องมีสิทธิ์แก้ไข Timesheets เพื่อบันทึกลงตารางรายวัน' });
+      return;
+    }
+    const defaults = defaultMobDayCharges('PRE_MOB');
+    const billing = normalizeMobDayChargeSpec(defaults.billing);
+    const payroll = normalizeMobDayChargeSpec(defaults.payroll);
+    setClearanceSavingStep(2);
     try {
+      await upsertMobClearanceDailyTimesheet(firestore, currentUser as AppUser, {
+        assignment,
+        po,
+        line,
+        workerDisplayName: workerTimesheetName || assignment.workerId,
+        kind: 'standby_day',
+        dateYmd: ymd,
+        bypassPoMonthLock: true,
+        billingCharge: billing,
+        payrollCharge: payroll,
+        remarkOverride: `Mob — Final clearance · Pre-Mob · SB 8 ชม. · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
+      });
+      const now = Date.now();
+      patchMobilization({
+        mobPreMobDate: ymd,
+        mobPreMobRecordedAt: now,
+        mobPreMobRecordedByUserId: currentUser.id,
+        mobPreMobSkipped: false,
+        mobStep2Choice: 'PRE_MOB',
+      });
+      toast({
+        title: 'บันทึก Pre-Mob แล้ว',
+        description: `วันที่ ${ymd} · SB 8 ชม. (วางบิล / จ่ายลูกจ้าง)`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast({ variant: 'destructive', title: 'บันทึก Pre-Mob ไม่สำเร็จ', description: msg });
+    } finally {
+      setClearanceSavingStep(0);
+    }
+  };
+
+  const runSkipPreMob = async () => {
+    if (!firestore || !assignment || !currentUser?.id || !canEditMobilization) return;
+    const gate = canSaveFinalClearancePreMob(assignment, {
+      drugOk: mobDrugOk,
+      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+      travelReady,
+    });
+    if (!gate.ok) {
+      toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
+      return;
+    }
+    setClearanceSavingStep(2);
+    try {
+      const now = Date.now();
       const mobRef = doc(firestore, 'mobilizations', id);
       await updateDoc(mobRef, {
-        mobReadyToTravelAt: deleteField(),
-        mobReadyToTravelByUserId: deleteField(),
-        mobReadyToTravelDate: deleteField(),
-        deploymentStatus: 'CONFIRMED',
-        mobilizationStatus: 'PENDING',
-        updatedAt: Date.now(),
+        mobPreMobSkipped: true,
+        mobPreMobRecordedAt: now,
+        mobPreMobRecordedByUserId: currentUser.id,
+        mobPreMobDate: deleteField(),
+        updatedAt: now,
       });
       const snap = await getDoc(mobRef);
       if (snap.exists()) {
         setAssignment({ id: snap.id, ...(snap.data() as object) } as Assignment);
       }
-      setStep1RevertOpen(false);
-      toast({ title: 'ย้อนขั้นที่ 1 แล้ว', description: 'กด «คอนเฟิร์มพร้อมเดินทาง» ใหม่เมื่อพร้อม' });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast({ variant: 'destructive', title: 'ย้อนขั้นไม่สำเร็จ', description: msg });
+      toast({
+        title: 'ข้าม Pre-Mob แล้ว',
+        description: 'ไม่มีวัน Pre-Mob — ไปขั้น Mob ได้',
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast({ variant: 'destructive', title: 'ข้าม Pre-Mob ไม่สำเร็จ', description: msg });
+    } finally {
+      setClearanceSavingStep(0);
+    }
+  };
+
+  /** ไม่มี Mob — ไม่บันทึกวัน M1 · ตารางเวลาจะเริ่มที่วันทำงานเลย */
+  const runSkipMob = async () => {
+    if (!firestore || !assignment || !currentUser?.id || !canEditMobilization) return;
+    const gate = canSaveFinalClearanceMob(assignment, {
+      drugOk: mobDrugOk,
+      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+      travelReady,
+    });
+    if (!gate.ok) {
+      toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
+      return;
+    }
+    setClearanceSavingStep(2);
+    try {
+      const now = Date.now();
+      const mobRef = doc(firestore, 'mobilizations', id);
+      await updateDoc(mobRef, {
+        mobMobSkipped: true,
+        mobStandbyRecordedAt: now,
+        mobStandbyRecordedByUserId: currentUser.id,
+        mobStandbyDate: deleteField(),
+        mobStandbyDayEventType: deleteField(),
+        mobStep2Choice: deleteField(),
+        mobStep2BillingCharge: deleteField(),
+        mobStep2PayrollCharge: deleteField(),
+        updatedAt: now,
+      });
+      const snap = await getDoc(mobRef);
+      if (snap.exists()) {
+        setAssignment({ id: snap.id, ...(snap.data() as object) } as Assignment);
+      }
+      toast({
+        title: 'ข้าม Mob แล้ว',
+        description: 'ไม่มีวัน M1 — ไปขั้น Start working day ได้เลย · ตารางเวลาจะเริ่มที่วันทำงาน',
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast({ variant: 'destructive', title: 'ข้าม Mob ไม่สำเร็จ', description: msg });
+    } finally {
+      setClearanceSavingStep(0);
     }
   };
 
   const openPreMobChargeConfig = (choice: MobStep2Choice) => {
-    setStandbyMobPickOpen(false);
+    if (choice === 'PRE_MOB') {
+      void runSavePreMob();
+      return;
+    }
     setStep2ChoiceDraft(choice);
     const defaults = defaultMobDayCharges(choice);
     const existingBilling =
@@ -523,14 +633,15 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     if (!firestore || !assignment || !currentUser?.id || !po) return;
     const ymd = (standbyDateDraft || '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
-      toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวัน Pre-Mob / Mob (รูปแบบ yyyy-mm-dd)' });
+      toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวัน Mob (รูปแบบ yyyy-mm-dd)' });
       return;
     }
     const editing = clearanceEditMode === 2;
-    const gate = canSaveFinalClearanceStandby(assignment, {
+    const gate = canSaveFinalClearanceMob(assignment, {
       editingExisting: editing,
       drugOk: mobDrugOk,
       drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+      travelReady,
     });
     if (!gate.ok) {
       toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
@@ -553,14 +664,15 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'ต้องมีสิทธิ์แก้ไข Timesheets เพื่อบันทึกลงตารางรายวัน' });
       return;
     }
-    const dayKind = mobStep2ChoiceToLegacyEventType(choice);
+    /** Mob = ตามค่าที่เลือก (มาตรฐาน M1) — Pre-Mob บันทึกแยกผ่าน runSavePreMob */
+    const dayKind = mobStep2ChoiceToLegacyEventType(choice === 'PRE_MOB' ? 'MOB' : choice);
+    const mobChoice: MobStep2Choice = 'MOB';
     const billing = normalizeMobDayChargeSpec(billingCharge);
     const payroll = normalizeMobDayChargeSpec(payrollCharge);
     setPreMobConfigOpen(false);
-    setStandbyMobPickOpen(false);
     setClearanceSavingStep(2);
     const statusCode = mobStandbyMobDayStatusCode(dayKind)!;
-    const kindLabel = mobStep2ChoiceLabel(choice);
+    const kindLabel = mobStep2ChoiceLabel(mobChoice);
     try {
       const prevStandby = (assignment.mobStandbyDate || '').trim();
       if (editing && prevStandby && /^\d{4}-\d{2}-\d{2}$/.test(prevStandby) && prevStandby !== ymd) {
@@ -579,16 +691,13 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         bypassPoMonthLock: true,
         billingCharge: billing,
         payrollCharge: payroll,
-        remarkOverride:
-          choice === 'PRE_MOB'
-            ? `Mob — Final clearance · Pre-Mob · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`
-            : `Mob — Final clearance · Mob · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
+        remarkOverride: `Mob — Final clearance · Mob · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
       });
       const now = Date.now();
       patchMobilization({
         mobStandbyDate: ymd,
         mobStandbyDayEventType: dayKind,
-        mobStep2Choice: choice,
+        mobStep2Choice: mobChoice,
         mobStep2BillingCharge: billing,
         mobStep2PayrollCharge: payroll,
         mobStandbyRecordedAt: now,
@@ -612,21 +721,23 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   const runFinalClearanceStep3 = async () => {
     if (!firestore || !assignment || !currentUser?.id || !po) return;
+    const mobSkipped = assignment.mobMobSkipped === true;
     const standbyYmd = (assignment.mobStandbyDate || '').trim();
+    const hasStandby = /^\d{4}-\d{2}-\d{2}$/.test(standbyYmd);
     const workYmd = (workingStartDateDraft || '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(workYmd)) {
       toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวันเริ่มทำงาน' });
       return;
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(standbyYmd)) {
-      toast({ variant: 'destructive', title: 'ยังไม่มีวัน Standby', description: 'บันทึกขั้นที่ 2 ก่อน' });
+    if (!hasStandby && !mobSkipped) {
+      toast({ variant: 'destructive', title: 'ยังไม่มีวัน Mob', description: 'บันทึกขั้นที่ 4 หรือกด «ไม่มี Mob» ก่อน' });
       return;
     }
-    if (workYmd <= standbyYmd) {
+    if (hasStandby && workYmd <= standbyYmd) {
       toast({
         variant: 'destructive',
         title: 'วันเริ่มงานไม่ถูกต้อง',
-        description: 'ต้องเลือกวันที่หลังวัน Standby — ช่วงว่างจะถูกบันทึกเป็น Standby อัตโนมัติ',
+        description: 'ต้องเลือกวันที่หลังวัน Mob — ช่วงว่างจะถูกบันทึกเป็น Standby อัตโนมัติ',
       });
       return;
     }
@@ -662,38 +773,61 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       if (editing) {
         const oldW = (assignment.mobWorkingStartDate || '').trim();
         if (/^\d{4}-\d{2}-\d{2}$/.test(oldW)) {
-          const monthStart = `${standbyYmd.slice(0, 7)}-01`;
-          const beforeStandby = addDaysToYmd(standbyYmd, -1);
-          if (monthStart <= beforeStandby) {
+          if (hasStandby) {
+            const monthStart = `${standbyYmd.slice(0, 7)}-01`;
+            const beforeStandby = addDaysToYmd(standbyYmd, -1);
+            if (monthStart <= beforeStandby) {
+              await deleteDraftMobFinalClearanceTimesheetsInRange(
+                firestore,
+                assignment.workerId,
+                assignment.id,
+                monthStart,
+                beforeStandby,
+              );
+            }
+            const afterStandby = addDaysToYmd(standbyYmd, 1);
+            if (afterStandby <= oldW) {
+              await deleteDraftMobFinalClearanceTimesheetsInRange(
+                firestore,
+                assignment.workerId,
+                assignment.id,
+                afterStandby,
+                oldW,
+              );
+            }
+          } else {
             await deleteDraftMobFinalClearanceTimesheetsInRange(
               firestore,
               assignment.workerId,
               assignment.id,
-              monthStart,
-              beforeStandby,
-            );
-          }
-          const afterStandby = addDaysToYmd(standbyYmd, 1);
-          if (afterStandby <= oldW) {
-            await deleteDraftMobFinalClearanceTimesheetsInRange(
-              firestore,
-              assignment.workerId,
-              assignment.id,
-              afterStandby,
+              oldW,
               oldW,
             );
           }
         }
       }
 
-      await applyMobFinalClearanceWorkStartFill(firestore, currentUser as AppUser, {
-        assignment,
-        po,
-        line,
-        workerDisplayName: workerTimesheetName || assignment.workerId,
-        standbyYmd,
-        workYmd,
-      });
+      if (hasStandby) {
+        await applyMobFinalClearanceWorkStartFill(firestore, currentUser as AppUser, {
+          assignment,
+          po,
+          line,
+          workerDisplayName: workerTimesheetName || assignment.workerId,
+          standbyYmd,
+          workYmd,
+        });
+      } else {
+        // ไม่มี Mob — บันทึกเฉพาะวันทำงานวันแรก ไม่เติมช่วง Standby
+        await upsertMobClearanceDailyTimesheet(firestore, currentUser as AppUser, {
+          assignment,
+          po,
+          line,
+          workerDisplayName: workerTimesheetName || assignment.workerId,
+          kind: 'work_day',
+          dateYmd: workYmd,
+          bypassPoMonthLock: true,
+        });
+      }
 
       const now = Date.now();
       patchMobilization({
@@ -737,54 +871,46 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   const saveMobLocation = async () => {
     if (!firestore || !assignment || !currentUser?.id || !canEditMobilization) return;
-    if (assignment.mobWorkflowVersion !== 'po_active_v2') {
+    if (isFinalClearanceMobDone(assignment)) {
       toast({
         variant: 'destructive',
-        title: 'ไม่จำเป็นต้องบันทึกแยก',
-        description: 'การเลือกไซต์แบบบังคับใช้กับ mobilization รุ่น PO Active (po_active_v2) เท่านั้น',
+        title: 'แก้สถานที่ไม่ได้',
+        description: 'บันทึก Mob แล้ว — ไม่สามารถเปลี่ยนสถานที่ปฏิบัติงานได้',
       });
       return;
     }
     const custom = locationCustomDraft.trim();
-    if (custom) {
-      setLocationSaving(true);
-      try {
-        patchMobilization({
-          mobLocationKey: `custom:${custom.slice(0, 200)}`,
-          workLocation: custom.slice(0, 500),
-          workLocationUpdatedAt: Date.now(),
-          workLocationUpdatedByUserId: currentUser.id,
-          mobLocationPhase: 'location_selected',
-        });
-        toast({ title: 'บันทึกสถานที่แล้ว', description: custom });
-      } finally {
-        setLocationSaving(false);
-      }
+    if (!custom) {
+      toast({ variant: 'destructive', title: 'ระบุสถานที่', description: 'กรอกข้อความสถานที่ปฏิบัติงานก่อนบันทึก' });
       return;
     }
-    const lid = (locationLineIdDraft || '').trim();
-    if (!lid) {
-      toast({ variant: 'destructive', title: 'เลือกบรรทัด PO หรือระบุข้อความสถานที่', description: 'ต้องมีอย่างใดอย่างหนึ่ง' });
-      return;
-    }
-    const line = poLines?.find((l) => l.id === lid);
-    const lineIdx = poLines?.findIndex((l) => l.id === lid) ?? -1;
-    const label = line
-      ? formatPoLineSiteOptionLabel(line, {
-          position: positionById.get(line.positionId),
-          lineIndex: lineIdx >= 0 ? lineIdx : undefined,
-        })
-      : lid;
     setLocationSaving(true);
     try {
-      patchMobilization({
-        mobLocationKey: `poLine:${lid}`,
-        workLocation: label.slice(0, 500),
-        workLocationUpdatedAt: Date.now(),
+      const now = Date.now();
+      const patch: Record<string, unknown> = {
+        mobLocationKey: `custom:${custom.slice(0, 200)}`,
+        workLocation: custom.slice(0, 500),
+        workLocationUpdatedAt: now,
         workLocationUpdatedByUserId: currentUser.id,
         mobLocationPhase: 'location_selected',
+      };
+      if (isTravelReadyDisplay(assignment, mobDrugOk) && !isFinalClearanceStep1Done(assignment)) {
+        const today = thailandTodayYmd();
+        patch.mobReadyToTravelDate = today;
+        patch.mobReadyToTravelAt = now;
+        patch.mobReadyToTravelByUserId = currentUser.id;
+        patch.mobilizationStatus = 'READY_TO_MOBILIZE';
+        patch.deploymentStatus = 'READY_TO_MOB';
+      }
+      patchMobilization(patch);
+      setLocationEditing(false);
+      toast({
+        title: 'บันทึกสถานที่แล้ว',
+        description:
+          isTravelReadyDisplay(assignment, mobDrugOk) && !isFinalClearanceStep1Done(assignment)
+            ? `${custom} · พร้อมเดินทาง (READY_TO_MOB)`
+            : custom,
       });
-      toast({ title: 'บันทึกสถานที่แล้ว', description: label });
     } finally {
       setLocationSaving(false);
     }
@@ -843,17 +969,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     }
   };
 
-  const step1Gate = useMemo(
-    () =>
-      assignment
-        ? canRunFinalClearanceStep(assignment, 1, {
-            readinessOk: assignment.readinessStatus === 'ready',
-            drugOk: mobDrugOk,
-            drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
-          })
-        : { ok: false as const, message: '' },
-    [assignment, mobDrugOk],
-  );
   if (userLoading || !currentUser) return null;
   if (!canViewMobilization) {
     return (
@@ -923,7 +1038,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="w-full space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" onClick={() => router.push('/mobilization')}>
@@ -958,8 +1073,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
           </Alert>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,48rem)_minmax(0,1fr)] gap-6">
+          <div className="space-y-6">
             <Tabs defaultValue="overview" className="w-full">
               <TabsList className="grid grid-cols-5 w-full h-auto p-1 bg-muted/50">
                 <TabsTrigger value="overview" className="gap-2 py-2 text-xs">ภาพรวมความพร้อม</TabsTrigger>
@@ -1079,142 +1194,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                 </Card>
 
                 <TooltipProvider delayDuration={300}>
-                  <Card className="border-blue-200 bg-blue-50/80 text-blue-950">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-base flex items-center gap-2">
-                        <Info className="h-4 w-4 shrink-0" />
-                        Final clearance — ลำดับเดียว (เฟส 3 · PO workflow)
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="text-sm space-y-2 pt-0">
-                      <ol className="list-decimal pl-4 space-y-1.5">
-                        <li>
-                          <strong>ยืนยันพร้อมเดินทาง</strong> — บันทึกเวลาและผู้ยืนยัน (<span className="font-mono">READY_TO_MOB</span>)
-                        </li>
-                        <li>
-                          <strong>วัน Pre-Mob / Mob</strong> — เลือกวันที่ แล้วกด Pre-mob/Mob → เลือกประเภท (
-                          Pre-Mob หรือ Mob) → กำหนดค่าวางบิลและจ่ายลูกจ้าง →{' '}
-                          <span className="font-mono">MOBILIZING</span>
-                        </li>
-                        <li>
-                          <strong>เริ่มวันทำงาน</strong> — ค่าเริ่มต้น = วันรุ่งขึ้นหลัง Standby →{' '}
-                          <span className="font-mono">ACTIVE</span> (เฟสถัดไป: auto รายวัน / timesheet)
-                        </li>
-                      </ol>
-                      <p className="text-xs text-blue-900/90">
-                        ห้ามข้ามขั้น — ถ้ากดเมื่อยังไม่ครบขั้นก่อนหน้า ระบบจะแจ้งเตือนและไม่บันทึก · ขั้น 2–3 จะเขียนลง{' '}
-                        <span className="font-mono">daily_timesheets</span> ทันที (ไม่เขียนลงงวด PO+เดือนที่ล็อกแล้ว)
-                      </p>
-                    </CardContent>
-                  </Card>
-
-                  {assignment.mobWorkflowVersion === 'po_active_v2' ? (
-                    <Card className="border-violet-200/80 bg-violet-50/40 dark:bg-violet-950/20">
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-base flex items-center gap-2">
-                          <MapPin className="h-4 w-4 shrink-0" /> สถานที่ปฏิบัติงาน (ไซต์)
-                        </CardTitle>
-                        <CardDescription>
-                          ต้องบันทึกก่อนกด «ยืนยันพร้อมเดินทาง» — เลือกจากบรรทัด PO หรือพิมพ์สถานที่เอง (การมอบหมายยังผูกบรรทัด PO เดิม — ใช้ระบุไซต์เท่านั้น)
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="grid gap-3 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <Label className="text-xs font-semibold text-muted-foreground">จากบรรทัด PO</Label>
-                            <Select
-                              value={locationLineIdDraft || '_line_placeholder_'}
-                              onValueChange={(v) => {
-                                if (v === '_line_placeholder_') return;
-                                setLocationLineIdDraft(v);
-                              }}
-                              disabled={
-                                !canEditMobilization || isMobUnassigned(assignment) || isFinalClearanceStep1Done(assignment)
-                              }
-                            >
-                              <SelectTrigger className="h-11">
-                                <SelectValue placeholder="เลือกบรรทัด PO" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="_line_placeholder_" disabled>
-                                  — เลือกบรรทัด —
-                                </SelectItem>
-                                {(poLines ?? []).map((ln, idx) => (
-                                  <SelectItem key={ln.id} value={ln.id}>
-                                    {formatPoLineSiteOptionLabel(ln, {
-                                      position: positionById.get(ln.positionId),
-                                      lineIndex: idx,
-                                    })}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            {locationCustomDraft.trim() ? (
-                              <p className="text-[11px] text-muted-foreground leading-snug">
-                                มีข้อความสถานที่ด้านขวา — กด «บันทึก» จะใช้ข้อความนั้นแทนบรรทัด PO ที่เลือก
-                              </p>
-                            ) : null}
-                          </div>
-                          <div className="space-y-2">
-                            <Label className="text-xs font-semibold text-muted-foreground">
-                              หรือระบุข้อความสถานที่ (ถ้ากรอกช่องนี้ จะใช้แทนการเลือกบรรทัด)
-                            </Label>
-                            <div className="flex gap-2">
-                              <Input
-                                className="h-11 flex-1 min-w-0"
-                                value={locationCustomDraft}
-                                onChange={(e) => setLocationCustomDraft(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.preventDefault();
-                                    void saveMobLocation();
-                                  }
-                                }}
-                                placeholder="เช่น Rig A / ฐานส่งตัว"
-                                disabled={
-                                  !canEditMobilization ||
-                                  isMobUnassigned(assignment) ||
-                                  isFinalClearanceStep1Done(assignment)
-                                }
-                              />
-                              <Button
-                                type="button"
-                                className="h-11 shrink-0"
-                                disabled={
-                                  !canEditMobilization ||
-                                  isMobUnassigned(assignment) ||
-                                  isFinalClearanceStep1Done(assignment) ||
-                                  locationSaving ||
-                                  (!locationCustomDraft.trim() && !locationLineIdDraft.trim())
-                                }
-                                onClick={() => void saveMobLocation()}
-                              >
-                                {locationSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'บันทึก'}
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          {(assignment.workLocation || '').trim() ? (
-                            <span className="text-xs text-muted-foreground">
-                              ปัจจุบัน: <strong>{assignment.workLocation}</strong>
-                            </span>
-                          ) : (
-                            <span className="text-xs text-amber-800 dark:text-amber-200">
-                              ยังไม่บันทึกสถานที่ — ขั้นที่ 1 จะไม่ให้กด
-                            </span>
-                          )}
-                          {(assignment.mobLocationKey || '').trim() &&
-                          !(assignment.workLocation || '').trim() ? (
-                            <span className="text-xs text-muted-foreground break-all">
-                              ({assignment.mobLocationKey})
-                            </span>
-                          ) : null}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ) : null}
-
                   <Card className="border-primary/20 bg-primary/5">
                     <CardHeader>
                       <CardTitle className="text-lg flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -1233,209 +1212,386 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           <AlertTriangle className="h-4 w-4 text-amber-800" />
                           <AlertTitle className="text-amber-950 dark:text-amber-100">โหมดแก้ไขวันที่</AlertTitle>
                           <AlertDescription className="text-xs text-amber-950/90 dark:text-amber-50/90">
-                            แก้ขั้นที่ {clearanceEditMode} — บันทึกใหม่เมื่อแก้เสร็จ หรือกด «ยกเลิกการแก้ไข»
+                            แก้ขั้นที่ {clearanceEditMode === 2 ? 4 : 5} — บันทึกใหม่เมื่อแก้เสร็จ หรือกด «ยกเลิกการแก้ไข»
                           </AlertDescription>
                         </Alert>
                       ) : null}
 
-                      <div className="flex flex-col gap-3 md:flex-row md:items-end md:flex-wrap">
-                        <div className="space-y-2 flex-1 min-w-[200px]">
-                          <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 1 · พร้อมเดินทาง</p>
-                          <DatePickerThaiBE
-                            className="h-11 max-w-xs"
-                            value={htmlDateValueToTimestampMs(readyToTravelDateDraft)}
-                            onChange={(ms) => setReadyToTravelDateDraft(timestampToHtmlDateValue(ms))}
-                            disabled={
-                              !canEditMobilization ||
-                              isMobUnassigned(assignment) ||
-                              clearanceSavingStep !== 0 ||
-                              isFinalClearanceStep1Done(assignment)
-                            }
-                          />
-                          {isFinalClearanceStep1Done(assignment) ? (
-                            <p className="text-sm">
-                              บันทึกแล้ว — วันที่{' '}
-                              {formatYmdLocalThaiBE(
-                                assignment.mobReadyToTravelDate ||
-                                  (assignment.mobReadyToTravelAt
-                                    ? timestampToHtmlDateValue(assignment.mobReadyToTravelAt)
-                                    : ''),
-                              )}{' '}
-                              · ยืนยันเมื่อ {formatDateTimeThaiBE(assignment.mobReadyToTravelAt)}{' '}
-                              <span className="text-muted-foreground font-mono text-xs">
-                                ({assignment.mobReadyToTravelByUserId || '—'})
-                              </span>
-                            </p>
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 1 · สถานะความพร้อมเดินทาง</p>
+                          {travelReady ? (
+                            <Badge className="bg-green-600 hover:bg-green-600 text-white">พร้อมเดินทาง</Badge>
                           ) : (
-                            <p className="text-xs text-muted-foreground">
-                              เลือกวันที่พร้อมเดินทาง แล้วกดยืนยัน — ต้องผ่านความพร้อม (READY) ก่อน
-                            </p>
+                            <Badge
+                              variant="outline"
+                              className="border-amber-500 bg-amber-50 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100"
+                            >
+                              ยังไม่พร้อมเดินทาง
+                            </Badge>
                           )}
                         </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex">
-                                <Button
-                                  disabled={
-                                    !canEditMobilization ||
-                                    isMobUnassigned(assignment) ||
-                                    isFinalClearanceStep1Done(assignment) ||
-                                    !step1Gate.ok ||
-                                    clearanceSavingStep !== 0 ||
-                                    !/^\d{4}-\d{2}-\d{2}$/.test((readyToTravelDateDraft || '').trim())
-                                  }
-                                  onClick={runFinalClearanceStep1}
-                                  className="bg-green-600 hover:bg-green-700 font-bold"
-                                >
-                                  <CheckCircle2 className="h-4 w-4 mr-2" /> คอนเฟิร์มพร้อมเดินทาง
-                                </Button>
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
-                              {isFinalClearanceStep1Done(assignment)
-                                ? 'ยืนยันขั้นนี้แล้ว — ปุ่มถูกปิดเพื่อไม่ให้กดซ้ำ'
-                                : !step1Gate.ok
-                                  ? step1Gate.message
-                                  : 'เลือกวันที่ด้านซ้าย แล้วกดยืนยันเมื่อความพร้อมครบ — ระบบจะบันทึกวันที่และเวลาที่ยืนยัน'}
-                            </TooltipContent>
-                          </Tooltip>
-                          {isFinalClearanceStep1Done(assignment) &&
-                          !isFinalClearanceStep2Done(assignment) &&
-                          canRevertFinalClearanceStep1(assignment).ok ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={
-                                !canEditMobilization || isMobUnassigned(assignment) || clearanceSavingStep !== 0
-                              }
-                              onClick={() => setStep1RevertOpen(true)}
-                            >
-                              <Pencil className="h-4 w-4 mr-1" />
-                              แก้ไข
-                            </Button>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          ต้องผ่าน checklist 1–4: พาส/บัตร · แพทย์ · ใบเซอร์ · สารเสพติด
+                          {!travelReady ? (
+                            <span className="block mt-1 text-amber-800 dark:text-amber-200">
+                              {[
+                                assignment.readinessSummary?.passportValid !== 'pass' ? 'พาส/บัตร' : null,
+                                assignment.readinessSummary?.medicalValid !== 'pass' ? 'แพทย์' : null,
+                                assignment.readinessSummary?.certificatesComplete !== 'pass' ? 'ใบเซอร์' : null,
+                                !mobDrugOk ? 'สารเสพติด' : null,
+                              ]
+                                .filter(Boolean)
+                                .join(' · ') || 'ตรวจ checklist'}
+                              {' '}ยังไม่ผ่าน
+                            </span>
+                          ) : isFinalClearanceStep1Done(assignment) ? (
+                            <span className="block mt-1">
+                              stamp READY_TO_MOB แล้ว
+                              {assignment.mobReadyToTravelAt
+                                ? ` · ${formatDateTimeThaiBE(assignment.mobReadyToTravelAt)}`
+                                : ''}
+                            </span>
                           ) : null}
-                        </div>
+                        </p>
                       </div>
 
                       <Separator />
 
-                      <div className="flex flex-col gap-3 md:flex-row md:items-end md:flex-wrap">
-                        <div className="space-y-2 flex-1 min-w-[220px]">
-                          <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 2 · วัน Pre-Mob / Mob</p>
-                          {assignment.poLineId && !primaryPoLine ? (
-                            <p className="text-xs text-amber-800 dark:text-amber-200">กำลังโหลดบรรทัด PO…</p>
-                          ) : null}
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 2 · กรุณาระบุสถานที่ที่จะ MOB งานนี้</p>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <Input
+                            className="h-11 flex-1 min-w-0"
+                            value={locationCustomDraft}
+                            onChange={(e) => setLocationCustomDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                void saveMobLocation();
+                              }
+                            }}
+                            placeholder="เช่น Rig A / ฐานส่งตัว"
+                            disabled={
+                              !locationEditing ||
+                              !canEditMobilization ||
+                              isMobUnassigned(assignment) ||
+                              isFinalClearanceMobDone(assignment) ||
+                              locationSaving
+                            }
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-11 w-36 shrink-0"
+                            disabled={
+                              locationEditing ||
+                              !canEditMobilization ||
+                              isMobUnassigned(assignment) ||
+                              isFinalClearanceMobDone(assignment) ||
+                              locationSaving
+                            }
+                            onClick={() => setLocationEditing(true)}
+                          >
+                            <Pencil className="h-4 w-4 mr-1" />
+                            แก้ไข
+                          </Button>
+                          <Button
+                            type="button"
+                            className="h-11 w-36 shrink-0"
+                            disabled={
+                              !locationEditing ||
+                              !canEditMobilization ||
+                              isMobUnassigned(assignment) ||
+                              isFinalClearanceMobDone(assignment) ||
+                              locationSaving ||
+                              !locationCustomDraft.trim()
+                            }
+                            onClick={() => void saveMobLocation()}
+                          >
+                            {locationSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'บันทึก'}
+                          </Button>
+                        </div>
+                        {(assignment.workLocation || '').trim() ? (
+                          <p className="text-xs text-muted-foreground">
+                            ปัจจุบัน: <strong>{assignment.workLocation}</strong>
+                          </p>
+                        ) : (
+                          <p className="text-xs text-amber-800 dark:text-amber-200">
+                            ยังไม่บันทึกสถานที่ — ต้องบันทึกก่อน Pre-Mob / Mob
+                          </p>
+                        )}
+                      </div>
+
+                      <Separator />
+
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 3 · เลือกวัน PRE-MOB</p>
+                        {assignment.poLineId && !primaryPoLine ? (
+                          <p className="text-xs text-amber-800 dark:text-amber-200">กำลังโหลดบรรทัด PO…</p>
+                        ) : null}
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                           <DatePickerThaiBE
-                            className="h-11 max-w-xs"
-                            value={htmlDateValueToTimestampMs(standbyDateDraft)}
-                            onChange={(ms) => setStandbyDateDraft(timestampToHtmlDateValue(ms))}
+                            className="h-11 flex-1 min-w-0"
+                            value={htmlDateValueToTimestampMs(preMobDateDraft)}
+                            onChange={(ms) => {
+                              const v = timestampToHtmlDateValue(ms);
+                              setPreMobDateDraft(v);
+                              if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+                                // Mob = Pre-Mob + 1 · Start work day = Mob + 1 (ปรับเองภายหลังได้)
+                                if (!isFinalClearanceMobDone(assignment)) {
+                                  setStandbyDateDraft(addDaysToYmd(v, 1));
+                                }
+                                if (!isFinalClearanceStep3Done(assignment)) {
+                                  setWorkingStartDateDraft(addDaysToYmd(v, 2));
+                                }
+                              }
+                            }}
                             disabled={
                               !canEditMobilization ||
                               isMobUnassigned(assignment) ||
                               clearanceSavingStep !== 0 ||
-                              (isFinalClearanceStep2Done(assignment) && clearanceEditMode !== 2)
+                              isFinalClearancePreMobDone(assignment) ||
+                              isFinalClearanceMobDone(assignment)
                             }
                           />
-                          {isFinalClearanceStep2Done(assignment) ? (
-                            <div className="space-y-1 text-sm">
-                              <p>
-                                บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobStandbyDate)} ·{' '}
-                                {assignment.mobStep2Choice
-                                  ? mobStep2ChoiceLabel(assignment.mobStep2Choice)
-                                  : mobStandbyMobDayChoiceLabel(assignment.mobStandbyDayEventType ?? 'standby_day')}{' '}
-                                ({mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ?? 'SB'}) ·{' '}
-                                {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
-                              </p>
-                              {assignment.mobStep2BillingCharge || assignment.mobStep2PayrollCharge ? (
-                                <p className="text-xs text-muted-foreground">
-                                  วางบิล {formatMobDayChargeSummary(assignment.mobStep2BillingCharge)} · จ่ายลูกจ้าง{' '}
-                                  {formatMobDayChargeSummary(assignment.mobStep2PayrollCharge)}
-                                  <span className="text-muted-foreground/80"> — ใช้เฉพาะคนนี้ในงานนี้</span>
-                                </p>
-                              ) : null}
-                            </div>
-                          ) : null}
-                        </div>
-                        <div className="flex flex-wrap items-end gap-2">
-                          <div
-                            className="h-11 min-w-[4.5rem] px-3 flex flex-col items-center justify-center rounded-md border-2 border-amber-400 bg-amber-50 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100 dark:border-amber-500"
-                            title="รหัสประเภทวันที่บันทึกใน timesheet"
-                          >
-                            <span className="text-[10px] font-medium leading-none text-muted-foreground">ประเภท</span>
-                            <span className="text-lg font-bold tracking-widest leading-tight">
-                              {mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ??
-                                (isFinalClearanceStep2Done(assignment) ? 'SB' : '—')}
-                            </span>
-                          </div>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <span className="inline-flex">
+                              <span className="inline-flex shrink-0">
                                 <Button
                                   variant="outline"
-                                  className="border-blue-600 text-blue-700 h-11"
+                                  className="border-amber-600 text-amber-800 h-11 w-36"
                                   disabled={
                                     !canEditMobilization ||
                                     isMobUnassigned(assignment) ||
                                     clearanceSavingStep !== 0 ||
                                     !primaryPoLine ||
-                                    (isFinalClearanceStep2Done(assignment) && clearanceEditMode !== 2) ||
-                                    !step2SaveGate.ok
+                                    isFinalClearancePreMobDone(assignment) ||
+                                    !preMobSaveGate.ok
                                   }
-                                  onClick={() => setStandbyMobPickOpen(true)}
+                                  onClick={() => openPreMobChargeConfig('PRE_MOB')}
                                 >
                                   {clearanceSavingStep === 2 ? (
                                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                                   ) : (
                                     <Truck className="h-4 w-4 mr-2" />
                                   )}
-                                  {clearanceEditMode === 2 ? 'Pre-mob/Mob (แก้ไข)' : 'Pre-mob/Mob'}
+                                  Pre-Mob
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
+                              {isFinalClearancePreMobDone(assignment)
+                                ? 'บันทึก / ข้าม Pre-Mob แล้ว'
+                                : !preMobSaveGate.ok
+                                  ? preMobSaveGate.message
+                                  : 'บันทึก SB 8 ชม. ในตารางรายวันทันที'}
+                            </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex shrink-0">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="h-11 w-36"
+                                  disabled={
+                                    !canEditMobilization ||
+                                    isMobUnassigned(assignment) ||
+                                    clearanceSavingStep !== 0 ||
+                                    isFinalClearancePreMobDone(assignment) ||
+                                    !preMobSaveGate.ok
+                                  }
+                                  onClick={() => void runSkipPreMob()}
+                                >
+                                  ไม่มี Pre-Mob
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
+                              {isFinalClearancePreMobDone(assignment)
+                                ? 'บันทึก / ข้าม Pre-Mob แล้ว'
+                                : !preMobSaveGate.ok
+                                  ? preMobSaveGate.message
+                                  : 'ข้ามวัน Pre-Mob — ไปขั้น Mob ได้เลย'}
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
+                        {isFinalClearancePreMobDone(assignment) ? (
+                          <p className="text-sm">
+                            {assignment.mobPreMobSkipped ? (
+                              <>ข้าม Pre-Mob แล้ว · {formatDateTimeThaiBE(assignment.mobPreMobRecordedAt)}</>
+                            ) : (
+                              <>
+                                บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobPreMobDate)} · SB 8 ชม. ·{' '}
+                                {formatDateTimeThaiBE(assignment.mobPreMobRecordedAt)}
+                              </>
+                            )}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Pre-Mob = SB 8 ชม. · หรือกด «ไม่มี Pre-Mob» หากไม่ต้องการวัน Standby ·
+                            เลือกวันแล้วระบบตั้งวัน Mob = +1 และวันเริ่มงาน = +2 ให้อัตโนมัติ
+                          </p>
+                        )}
+                      </div>
+
+                      <Separator />
+
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 4 · Mob</p>
+                        {assignment.poLineId && !primaryPoLine ? (
+                          <p className="text-xs text-amber-800 dark:text-amber-200">กำลังโหลดบรรทัด PO…</p>
+                        ) : null}
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <DatePickerThaiBE
+                            className="h-11 flex-1 min-w-0"
+                            value={htmlDateValueToTimestampMs(standbyDateDraft)}
+                            onChange={(ms) => {
+                              const v = timestampToHtmlDateValue(ms);
+                              setStandbyDateDraft(v);
+                              if (/^\d{4}-\d{2}-\d{2}$/.test(v) && !isFinalClearanceStep3Done(assignment)) {
+                                // Start work day = Mob + 1 (ปรับเองภายหลังได้)
+                                setWorkingStartDateDraft(addDaysToYmd(v, 1));
+                              }
+                            }}
+                            disabled={
+                              !canEditMobilization ||
+                              isMobUnassigned(assignment) ||
+                              clearanceSavingStep !== 0 ||
+                              (isFinalClearanceMobDone(assignment) && clearanceEditMode !== 2)
+                            }
+                          />
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex shrink-0">
+                                <Button
+                                  variant="outline"
+                                  className="border-blue-600 text-blue-700 h-11 w-36"
+                                  disabled={
+                                    !canEditMobilization ||
+                                    isMobUnassigned(assignment) ||
+                                    clearanceSavingStep !== 0 ||
+                                    !primaryPoLine ||
+                                    (isFinalClearanceMobDone(assignment) && clearanceEditMode !== 2) ||
+                                    !mobSaveGate.ok
+                                  }
+                                  onClick={() => openPreMobChargeConfig('MOB')}
+                                >
+                                  {clearanceSavingStep === 2 ? (
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  ) : (
+                                    <Truck className="h-4 w-4 mr-2" />
+                                  )}
+                                  {clearanceEditMode === 2 ? 'Mob (แก้ไข)' : 'Mob'}
                                 </Button>
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
                               {clearanceEditMode === 2
-                                ? 'เลือก Pre-Mob หรือ Mob แล้วกำหนดค่าวางบิล/จ่ายลูกจ้างก่อนบันทึกใหม่'
-                                : isFinalClearanceStep2Done(assignment)
-                                  ? 'บันทึกแล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่หรือประเภท'
-                                  : !step2SaveGate.ok
-                                    ? step2SaveGate.message
-                                    : 'เลือกวันที่ แล้วกด — ถาม Pre-Mob หรือ Mob จากนั้นกำหนดค่าวางบิลและจ่ายลูกจ้าง'}
+                                ? 'แก้ค่าวางบิล/จ่ายลูกจ้างแล้วบันทึกวัน Mob ใหม่'
+                                : isFinalClearanceMobDone(assignment)
+                                  ? 'บันทึกแล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่'
+                                  : !mobSaveGate.ok
+                                    ? mobSaveGate.message
+                                    : 'เปิดหน้าต่างกำหนดค่า M1 แล้วบันทึก · ต้องทำ Pre-Mob หรือข้ามก่อน'}
                             </TooltipContent>
                           </Tooltip>
-                          {isFinalClearanceStep2Done(assignment) && clearanceEditMode !== 2 ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={
-                                !canEditMobilization || isMobUnassigned(assignment) || clearanceSavingStep !== 0
-                              }
-                              onClick={beginEditStandby}
-                            >
-                              <Pencil className="h-4 w-4 mr-1" />
-                              แก้ไขวันที่
-                            </Button>
-                          ) : null}
-                          {clearanceEditMode === 2 ? (
-                            <Button type="button" variant="ghost" size="sm" onClick={cancelClearanceEdit}>
-                              ยกเลิกการแก้ไข
-                            </Button>
-                          ) : null}
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex shrink-0">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="h-11 w-36"
+                                  disabled={
+                                    !canEditMobilization ||
+                                    isMobUnassigned(assignment) ||
+                                    clearanceSavingStep !== 0 ||
+                                    isFinalClearanceMobDone(assignment) ||
+                                    !mobSaveGate.ok
+                                  }
+                                  onClick={() => void runSkipMob()}
+                                >
+                                  ไม่มี Mob
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
+                              {isFinalClearanceMobDone(assignment)
+                                ? 'บันทึก / ข้าม Mob แล้ว'
+                                : !mobSaveGate.ok
+                                  ? mobSaveGate.message
+                                  : 'ข้ามวัน Mob — ไม่บันทึกวัน M1 · ตารางเวลาเริ่มที่วันทำงานเลย'}
+                            </TooltipContent>
+                          </Tooltip>
                         </div>
+                        {isFinalClearanceMobDone(assignment) ? (
+                          <div className="space-y-1 text-sm">
+                            {assignment.mobMobSkipped ? (
+                              <p>
+                                ข้าม Mob แล้ว — ไม่มีวัน M1 · ตารางเวลาเริ่มที่วันทำงานเลย ·{' '}
+                                {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
+                              </p>
+                            ) : (
+                              <p>
+                                บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobStandbyDate)} ·{' '}
+                                {assignment.mobStep2Choice
+                                  ? mobStep2ChoiceLabel(assignment.mobStep2Choice)
+                                  : mobStandbyMobDayChoiceLabel(assignment.mobStandbyDayEventType ?? 'mobilization_day')}{' '}
+                                ({mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ?? 'MO'}) ·{' '}
+                                {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
+                              </p>
+                            )}
+                            {assignment.mobStep2BillingCharge || assignment.mobStep2PayrollCharge ? (
+                              <p className="text-xs text-muted-foreground">
+                                วางบิล {formatMobDayChargeSummary(assignment.mobStep2BillingCharge)} · จ่ายลูกจ้าง{' '}
+                                {formatMobDayChargeSummary(assignment.mobStep2PayrollCharge)}
+                                <span className="text-muted-foreground/80"> — ใช้เฉพาะคนนี้ในงานนี้</span>
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            Mob = วัน M1 (MO) · หรือกด «ไม่มี Mob» หากไม่ต้องการวันเดินทาง — ตารางเวลาจะเริ่มที่วันทำงานเลย
+                          </p>
+                        )}
+                        {(isFinalClearanceMobDone(assignment) && !assignment.mobMobSkipped && clearanceEditMode !== 2) ||
+                        clearanceEditMode === 2 ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {isFinalClearanceMobDone(assignment) && !assignment.mobMobSkipped && clearanceEditMode !== 2 ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={
+                                  !canEditMobilization || isMobUnassigned(assignment) || clearanceSavingStep !== 0
+                                }
+                                onClick={beginEditStandby}
+                              >
+                                <Pencil className="h-4 w-4 mr-1" />
+                                แก้ไขวันที่
+                              </Button>
+                            ) : null}
+                            {clearanceEditMode === 2 ? (
+                              <Button type="button" variant="ghost" size="sm" onClick={cancelClearanceEdit}>
+                                ยกเลิกการแก้ไข
+                              </Button>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
 
                       <Separator />
 
-                      <div className="flex flex-col gap-3 md:flex-row md:items-end md:flex-wrap">
-                        <div className="space-y-2 flex-1 min-w-[220px]">
-                          <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 3 · เริ่มวันทำงาน</p>
-                          {assignment.poLineId && !primaryPoLine ? (
-                            <p className="text-xs text-amber-800 dark:text-amber-200">กำลังโหลดบรรทัด PO…</p>
-                          ) : null}
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 5 · Start working day</p>
+                        {assignment.poLineId && !primaryPoLine ? (
+                          <p className="text-xs text-amber-800 dark:text-amber-200">กำลังโหลดบรรทัด PO…</p>
+                        ) : null}
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                           <DatePickerThaiBE
-                            className="h-11 max-w-xs"
+                            className="h-11 flex-1 min-w-0"
                             value={htmlDateValueToTimestampMs(workingStartDateDraft)}
                             onChange={(ms) => setWorkingStartDateDraft(timestampToHtmlDateValue(ms))}
                             disabled={
@@ -1446,19 +1602,11 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                               (isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3)
                             }
                           />
-                          {isFinalClearanceStep3Done(assignment) ? (
-                            <p className="text-sm">
-                              เริ่มแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobWorkingStartDate)} ·{' '}
-                              {formatDateTimeThaiBE(assignment.mobWorkingStartedAt)}
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <span className="inline-flex">
+                              <span className="inline-flex shrink-0">
                                 <Button
-                                  className="bg-blue-900 hover:bg-blue-950"
+                                  className="bg-blue-900 hover:bg-blue-950 h-11 w-[18.5rem]"
                                   disabled={
                                     !canEditMobilization ||
                                     isMobUnassigned(assignment) ||
@@ -1481,34 +1629,44 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
                               {clearanceEditMode === 3
-                                ? 'บันทึกใหม่ — ช่วงระหว่างวัน Standby กับวันเริ่มงานจะเป็น Standby อัตโนมัติ · ต่อเนื่องต้นเดือน (ถ้ามี)'
+                                ? 'บันทึกใหม่ — ช่วงระหว่างวัน Mob กับวันเริ่มงานจะเป็น Standby อัตโนมัติ · ต่อเนื่องต้นเดือน (ถ้ามี)'
                                 : isFinalClearanceStep3Done(assignment)
                                   ? 'เริ่มวันทำงานแล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่'
                                   : !step3SaveGate.ok
                                     ? step3SaveGate.message
-                                    : 'วันเริ่มงานต้องหลังวัน Standby — ระบบจะเติมวัน Standby ในช่วงว่างอัตโนมัติ · ถ้าต่อจากเดือนก่อนจะเติมวันทำงานต้นเดือนจนถึงก่อนวัน Standby'}
+                                    : 'วันเริ่มงานต้องหลังวัน Mob — ระบบจะเติมวัน Standby ในช่วงว่างอัตโนมัติ · ถ้าต่อจากเดือนก่อนจะเติมวันทำงานต้นเดือนจนถึงก่อนวัน Mob'}
                             </TooltipContent>
                           </Tooltip>
-                          {isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3 ? (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={
-                                !canEditMobilization || isMobUnassigned(assignment) || clearanceSavingStep !== 0
-                              }
-                              onClick={beginEditWorkStart}
-                            >
-                              <Pencil className="h-4 w-4 mr-1" />
-                              แก้ไขวันที่
-                            </Button>
-                          ) : null}
-                          {clearanceEditMode === 3 ? (
-                            <Button type="button" variant="ghost" size="sm" onClick={cancelClearanceEdit}>
-                              ยกเลิกการแก้ไข
-                            </Button>
-                          ) : null}
                         </div>
+                        {isFinalClearanceStep3Done(assignment) ? (
+                          <p className="text-sm">
+                            เริ่มแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobWorkingStartDate)} ·{' '}
+                            {formatDateTimeThaiBE(assignment.mobWorkingStartedAt)}
+                          </p>
+                        ) : null}
+                        {(isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3) || clearanceEditMode === 3 ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3 ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={
+                                  !canEditMobilization || isMobUnassigned(assignment) || clearanceSavingStep !== 0
+                                }
+                                onClick={beginEditWorkStart}
+                              >
+                                <Pencil className="h-4 w-4 mr-1" />
+                                แก้ไขวันที่
+                              </Button>
+                            ) : null}
+                            {clearanceEditMode === 3 ? (
+                              <Button type="button" variant="ghost" size="sm" onClick={cancelClearanceEdit}>
+                                ยกเลิกการแก้ไข
+                              </Button>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
 
                       <Separator />
@@ -1524,6 +1682,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                         </div>
                         <Button
                           variant="destructive"
+                          className="h-11 w-[18.5rem] shrink-0"
                           disabled={!canEditMobilization || isMobUnassigned(assignment)}
                           onClick={() => setUnassignDialogOpen(true)}
                         >
@@ -1534,89 +1693,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                     </CardContent>
                   </Card>
                 </TooltipProvider>
-
-                {assignment.poId && assignment.waveId && (
-                  <Card className="border-green-200 bg-green-50/50">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-base text-green-900">ขั้นตอนถัดไป: ลงเวลา</CardTitle>
-                      <CardDescription>
-                        {isPoTimesheetScopeId(assignment.waveId)
-                          ? 'โหมด PO (ไม่มี Wave จริง) — เปิด Wave Board ด้วยขอบเขต PO + synthetic wave'
-                          : 'PO / Wave ของคนนี้ถูกผูกไว้แล้ว — เปิด Wave Board จากลิงก์นี้ได้ทันที'}
-                        {assignment.deploymentStatus === 'ACTIVE' && (
-                          <span className="block mt-1 text-green-800 font-medium">
-                            สถานะ deployment = ACTIVE แล้ว — เหมาะสมสำหรับลงเวลาต่อเนื่อง
-                          </span>
-                        )}
-                        {assignment.deploymentStatus &&
-                          assignment.deploymentStatus !== 'ACTIVE' && (
-                            <span className="block mt-1 text-amber-900/90 text-xs">
-                              แนะนำให้ทำขั้น 3 «เริ่มวันทำงาน» ให้ครบก่อนลงเวลา
-                            </span>
-                          )}
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="flex flex-wrap gap-2">
-                      <Button className="bg-green-700 hover:bg-green-800" asChild>
-                        <Link
-                          href={`/timesheets/wave-board?poId=${encodeURIComponent(assignment.poId)}&waveId=${encodeURIComponent(assignment.waveId)}`}
-                        >
-                          {isPoTimesheetScopeId(assignment.waveId)
-                            ? 'ไป Wave Board (ขอบเขต PO)'
-                            : 'ไปลงเวลา Wave Board (PO / Wave นี้)'}
-                        </Link>
-                      </Button>
-                      <Button variant="outline" asChild>
-                        <Link href="/timesheets">ดูศูนย์ลงเวลา</Link>
-                      </Button>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {assignment.poId && assignment.waveId && (
-                  <Card className="border-amber-200/80 bg-amber-50/40">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-base text-amber-950">สร้างรายวันอัตโนมัติ (เฟส 4 · PO Active)</CardTitle>
-                      <CardDescription>
-                        สร้าง/อัปเดต <span className="font-mono">daily_timesheets</span> แบบ <span className="font-mono">work_day</span> ตั้งแต่วันเริ่มทำงานจนถึงวันนี้ (
-                        Bangkok) หรือจบงาน — ไม่ทับแถวที่ปิดการเงินแล้วหรือแถวที่ไม่ใช่ auto (
-                        <span className="font-mono">poActiveAutoDaily</span>)
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="flex flex-wrap items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={
-                          !canEditTimesheets ||
-                          !firestore ||
-                          autoDailySyncing ||
-                          assignment.deploymentStatus !== 'ACTIVE' ||
-                          isMobUnassigned(assignment)
-                        }
-                        onClick={runPoActiveAutoDailySync}
-                      >
-                        {autoDailySyncing ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            กำลังซิงค์…
-                          </>
-                        ) : (
-                          <>
-                            <Calendar className="h-4 w-4 mr-2" />
-                            ซิงค์รายวันอัตโนมัติ
-                          </>
-                        )}
-                      </Button>
-                      {assignment.deploymentStatus !== 'ACTIVE' ? (
-                        <span className="text-xs text-muted-foreground">ใช้ได้เมื่อสถานะ deployment = ACTIVE</span>
-                      ) : null}
-                      {!canEditTimesheets ? (
-                        <span className="text-xs text-muted-foreground">ต้องมีสิทธิ์แก้ไข Timesheets</span>
-                      ) : null}
-                    </CardContent>
-                  </Card>
-                )}
               </TabsContent>
 
               <TabsContent value="docs" className="mt-6 space-y-6">
@@ -1624,20 +1700,37 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                   <CardHeader><CardTitle className="text-base">ใบรับรองและเอกสารที่เกี่ยวข้อง (Compliance Proofs)</CardTitle></CardHeader>
                   <CardContent>
                     <div className="space-y-4">
-                      {workerCerts?.map(cert => (
-                        <div key={cert.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/30 transition-colors">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2 bg-blue-100 rounded text-blue-700"><FileText className="h-4 w-4" /></div>
-                            <div>
-                              <p className="text-sm font-bold">{cert.certificateName}</p>
-                              <p className="text-[10px] text-muted-foreground">หมดอายุ: {formatDateThaiBE(cert.expiryDate)}</p>
+                      {workerCerts?.length ? (
+                        workerCerts.map((cert) => (
+                          <button
+                            key={cert.id}
+                            type="button"
+                            className="flex w-full items-center justify-between rounded-lg border p-3 text-left transition-colors hover:bg-muted/30"
+                            onClick={() => setViewingCert(cert)}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="rounded bg-blue-100 p-2 text-blue-700">
+                                <FileText className="h-4 w-4" />
+                              </div>
+                              <div>
+                                <p className="text-sm font-bold">{cert.certificateName}</p>
+                                <p className="text-[10px] text-muted-foreground">
+                                  หมดอายุ: {formatDateThaiBE(cert.expiryDate)}
+                                  {cert.attachment?.downloadUrl ? ' · กดเพื่อดูเอกสาร' : ' · ยังไม่มีไฟล์แนบ'}
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                          <Badge variant={cert.status === 'valid' ? 'outline' : 'destructive'} className={cert.status === 'valid' ? 'text-green-600 border-green-200' : ''}>
-                            {cert.status.toUpperCase()}
-                          </Badge>
-                        </div>
-                      ))}
+                            <Badge
+                              variant={cert.status === 'valid' ? 'outline' : 'destructive'}
+                              className={cert.status === 'valid' ? 'text-green-600 border-green-200' : ''}
+                            >
+                              {cert.status.toUpperCase()}
+                            </Badge>
+                          </button>
+                        ))
+                      ) : (
+                        <p className="text-sm text-muted-foreground">ยังไม่มีใบรับรองในทะเบียน</p>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -1764,54 +1857,228 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                 </div>
               </CardContent>
             </Card>
+
+            <Card className="border-blue-200 bg-blue-50/80 text-blue-950">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Info className="h-4 w-4 shrink-0" />
+                  Final clearance — 5 ขั้น (เฟส 3 · PO workflow)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm space-y-2 pt-0">
+                <ol className="list-decimal pl-4 space-y-1.5">
+                  <li>
+                    <strong>พร้อมเดินทาง</strong> — แสดงผลจาก checklist 1–4 (พาส/บัตร · แพทย์ · ใบเซอร์ · สารเสพติด)
+                  </li>
+                  <li>
+                    <strong>สถานที่</strong> — ระบุไซต์ปฏิบัติงาน · ถ้าพร้อมเดินทางจะ stamp{' '}
+                    <span className="font-mono">READY_TO_MOB</span> อัตโนมัติ
+                  </li>
+                  <li>
+                    <strong>Pre-Mob</strong> — SB 8 ชม. หรือกด «ไม่มี Pre-Mob»
+                  </li>
+                  <li>
+                    <strong>Mob</strong> — วัน M1 (แก้ค่าวางบิล/จ่ายได้) →{' '}
+                    <span className="font-mono">MOBILIZING</span> · หรือกด «ไม่มี Mob» — ตารางเวลาเริ่มที่วันทำงานเลย
+                  </li>
+                  <li>
+                    <strong>Start working day</strong> — ค่าเริ่มต้น = วันรุ่งขึ้นหลัง Mob →{' '}
+                    <span className="font-mono">ACTIVE</span>
+                  </li>
+                </ol>
+                <p className="text-xs text-blue-900/90">
+                  ห้ามข้ามขั้น — ถ้ากดเมื่อยังไม่ครบขั้นก่อนหน้า ระบบจะแจ้งเตือนและไม่บันทึก · ขั้น 3–5 จะเขียนลง{' '}
+                  <span className="font-mono">daily_timesheets</span> ทันที (ไม่เขียนลงงวด PO+เดือนที่ล็อกแล้ว)
+                </p>
+              </CardContent>
+            </Card>
+
+            {assignment.poId && assignment.waveId && (
+              <Card className="border-green-200 bg-green-50/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base text-green-900">ขั้นตอนถัดไป: ลงเวลา</CardTitle>
+                  <CardDescription>
+                    {isPoTimesheetScopeId(assignment.waveId)
+                      ? 'โหมด PO (ไม่มี Wave จริง) — เปิด Wave Board ด้วยขอบเขต PO + synthetic wave'
+                      : 'PO / Wave ของคนนี้ถูกผูกไว้แล้ว — เปิด Wave Board จากลิงก์นี้ได้ทันที'}
+                    {assignment.deploymentStatus === 'ACTIVE' && (
+                      <span className="block mt-1 text-green-800 font-medium">
+                        สถานะ deployment = ACTIVE แล้ว — เหมาะสมสำหรับลงเวลาต่อเนื่อง
+                      </span>
+                    )}
+                    {assignment.deploymentStatus &&
+                      assignment.deploymentStatus !== 'ACTIVE' && (
+                        <span className="block mt-1 text-amber-900/90 text-xs">
+                          แนะนำให้ทำขั้น 5 «Start working day» ให้ครบก่อนลงเวลา
+                        </span>
+                      )}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-wrap gap-2">
+                  <Button className="bg-green-700 hover:bg-green-800" asChild>
+                    <Link
+                      href={`/timesheets/wave-board?poId=${encodeURIComponent(assignment.poId)}&waveId=${encodeURIComponent(assignment.waveId)}`}
+                    >
+                      {isPoTimesheetScopeId(assignment.waveId)
+                        ? 'ไป Wave Board (ขอบเขต PO)'
+                        : 'ไปลงเวลา Wave Board (PO / Wave นี้)'}
+                    </Link>
+                  </Button>
+                  <Button variant="outline" asChild>
+                    <Link href="/timesheets">ดูศูนย์ลงเวลา</Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {assignment.poId && assignment.waveId && (
+              <Card className="border-amber-200/80 bg-amber-50/40">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base text-amber-950">สร้างรายวันอัตโนมัติ (เฟส 4 · PO Active)</CardTitle>
+                  <CardDescription>
+                    สร้าง/อัปเดต <span className="font-mono">daily_timesheets</span> แบบ <span className="font-mono">work_day</span> ตั้งแต่วันเริ่มทำงานจนถึงวันนี้ (
+                    Bangkok) หรือจบงาน — ไม่ทับแถวที่ปิดการเงินแล้วหรือแถวที่ไม่ใช่ auto (
+                    <span className="font-mono">poActiveAutoDaily</span>)
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={
+                      !canEditTimesheets ||
+                      !firestore ||
+                      autoDailySyncing ||
+                      assignment.deploymentStatus !== 'ACTIVE' ||
+                      isMobUnassigned(assignment)
+                    }
+                    onClick={runPoActiveAutoDailySync}
+                  >
+                    {autoDailySyncing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        กำลังซิงค์…
+                      </>
+                    ) : (
+                      <>
+                        <Calendar className="h-4 w-4 mr-2" />
+                        ซิงค์รายวันอัตโนมัติ
+                      </>
+                    )}
+                  </Button>
+                  {assignment.deploymentStatus !== 'ACTIVE' ? (
+                    <span className="text-xs text-muted-foreground">ใช้ได้เมื่อสถานะ deployment = ACTIVE</span>
+                  ) : null}
+                  {!canEditTimesheets ? (
+                    <span className="text-xs text-muted-foreground">ต้องมีสิทธิ์แก้ไข Timesheets</span>
+                  ) : null}
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
       </div>
 
-      <AlertDialog open={standbyMobPickOpen} onOpenChange={setStandbyMobPickOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Pre-Mob / Mob</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2 text-sm text-muted-foreground">
-                <p>
-                  จะใช้วันที่{' '}
-                  <strong className="text-foreground">
-                    {standbyDateDraft ? formatYmdLocalThaiBE(standbyDateDraft) : '—'}
-                  </strong>{' '}
-                  เป็นวัน Pre-Mob หรือ Mob?
-                </p>
-                <p className="text-xs">
-                  หลังเลือก จะกำหนดค่าวางบิลลูกค้าและจ่ายลูกจ้างได้ (ค่ามาตรฐาน: Pre-Mob = SB 8 ชม. · Mob = M1 ตามสัญญา)
-                </p>
+
+      <Dialog
+        open={!!viewingCert}
+        onOpenChange={(open) => {
+          if (!open) setViewingCert(null);
+        }}
+      >
+        <DialogContent className="!flex max-h-[90vh] max-w-4xl flex-col gap-3 overflow-hidden">
+          <DialogHeader className="pr-8">
+            <DialogTitle>{viewingCert?.certificateName || 'เอกสารใบรับรอง'}</DialogTitle>
+            <DialogDescription>
+              {viewingCert
+                ? `หมดอายุ: ${formatDateThaiBE(viewingCert.expiryDate)}${
+                    viewingCert.certificateNo ? ` · เลขที่ ${viewingCert.certificateNo}` : ''
+                  }`
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="min-h-0 flex-1 overflow-auto rounded-md border bg-muted/20">
+            {viewingCert?.attachment?.downloadUrl ? (
+              isPdfAttachment(viewingCert.attachment) ? (
+                <iframe
+                  ref={certPreviewIframeRef}
+                  src={viewingCert.attachment.downloadUrl}
+                  title={viewingCert.certificateName}
+                  className="h-[min(70vh,720px)] w-full border-0"
+                />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={viewingCert.attachment.downloadUrl}
+                  alt={viewingCert.certificateName}
+                  className="mx-auto max-h-[min(70vh,720px)] w-auto max-w-full object-contain p-2"
+                />
+              )
+            ) : (
+              <div className="flex h-48 items-center justify-center px-4 text-center text-sm text-muted-foreground">
+                ยังไม่มีไฟล์แนบสำหรับใบรับรองนี้ — ไปอัปโหลดที่ทะเบียนคนงาน
               </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
-            <AlertDialogCancel disabled={clearanceSavingStep === 2}>ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-amber-600 hover:bg-amber-700"
-              disabled={clearanceSavingStep === 2}
-              onClick={(e) => {
-                e.preventDefault();
-                openPreMobChargeConfig('PRE_MOB');
+            )}
+          </div>
+
+          <DialogFooter className="sm:justify-between">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!viewingCert?.attachment?.downloadUrl}
+              onClick={() => {
+                const url = viewingCert?.attachment?.downloadUrl;
+                if (!url || !viewingCert) return;
+                const title = viewingCert.certificateName || 'certificate';
+                const isPdf = isPdfAttachment(viewingCert.attachment);
+                if (isPdf) {
+                  const frame = certPreviewIframeRef.current;
+                  try {
+                    frame?.contentWindow?.focus();
+                    frame?.contentWindow?.print();
+                    return;
+                  } catch {
+                    /* cross-origin — fall through */
+                  }
+                  const w = window.open(url, '_blank', 'noopener,noreferrer');
+                  if (!w) {
+                    toast({
+                      variant: 'destructive',
+                      title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+                      description: 'อนุญาต pop-up แล้วลองอีกครั้ง หรือเปิดเอกสารแล้วกด Ctrl+P',
+                    });
+                  }
+                  return;
+                }
+                const w = window.open('', '_blank', 'noopener,noreferrer');
+                if (!w) {
+                  toast({
+                    variant: 'destructive',
+                    title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+                    description: 'อนุญาต pop-up แล้วลองอีกครั้ง',
+                  });
+                  return;
+                }
+                w.document.write(
+                  `<!DOCTYPE html><html><head><title>${title.replace(/[<>&"]/g, '')}</title>` +
+                    '<style>html,body{margin:0;padding:0}img{display:block;max-width:100%;height:auto;margin:0 auto}' +
+                    '@media print{html,body{margin:0}}</style></head><body>' +
+                    `<img src="${url}" alt="" onload="window.focus();window.print()" />` +
+                    '</body></html>',
+                );
+                w.document.close();
               }}
             >
-              Pre-Mob
-            </AlertDialogAction>
-            <AlertDialogAction
-              className="bg-blue-600 hover:bg-blue-700"
-              disabled={clearanceSavingStep === 2}
-              onClick={(e) => {
-                e.preventDefault();
-                openPreMobChargeConfig('MOB');
-              }}
-            >
-              Mob
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+              <Printer className="mr-2 h-4 w-4" />
+              พิมพ์
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setViewingCert(null)}>
+              ปิด
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={preMobConfigOpen}
@@ -1826,7 +2093,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
             </DialogTitle>
             <DialogDescription>
               ใช้เฉพาะคนนี้ในงานนี้ · ค่าเริ่มต้น{' '}
-              {step2ChoiceDraft === 'PRE_MOB' ? 'Standby 8 ชม. ทั้งสองฝั่ง' : 'M1 ตามตารางสัญญาทั้งสองฝั่ง'} — แก้ได้
+              M1 ตามตารางสัญญาทั้งสองฝั่ง — แก้ได้
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-5 text-sm">
@@ -1922,35 +2189,14 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={step1RevertOpen} onOpenChange={setStep1RevertOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>ย้อนยืนยันขั้นที่ 1?</AlertDialogTitle>
-            <AlertDialogDescription>
-              ระบบจะลบเวลาที่บันทึก «พร้อมเดินทาง» และคืนสถานะเป็นก่อนยืนยัน — ใช้เมื่อกดผิดเท่านั้น (ต้องยังไม่บันทึก Standby)
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                void runRevertFinalClearanceStep1();
-              }}
-            >
-              ยืนยันย้อน
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <AlertDialog open={step2CascadeOpen} onOpenChange={setStep2CascadeOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>แก้ไขวัน Standby หลังเริ่มงานแล้ว?</AlertDialogTitle>
+            <AlertDialogTitle>แก้ไขวัน Mob หลังเริ่มงานแล้ว?</AlertDialogTitle>
             <AlertDialogDescription>
-              ระบบจะย้อนขั้นที่ 3 (วันเริ่มทำงาน) และลบรายวันที่สร้างจาก Mob ในช่วงหลังวัน Standbyจนถึงวันเริ่มงานเดิม (เฉพาะแถว Draft ที่มาจาก Final
-              clearance) — จากนั้นให้บันทึก Standby และขั้นที่ 3 ใหม่
+              ระบบจะย้อนขั้นที่ 5 (วันเริ่มทำงาน) และลบรายวันที่สร้างจาก Mob ในช่วงหลังวัน Mob จนถึงวันเริ่มงานเดิม (เฉพาะแถว Draft ที่มาจาก Final
+              clearance) — จากนั้นให้บันทึก Mob และขั้นที่ 5 ใหม่
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1961,7 +2207,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                 void confirmStep2CascadeAndEdit();
               }}
             >
-              ยืนยัน ย้อนขั้นที่ 3 และแก้ Standby
+              ยืนยัน ย้อนขั้นที่ 5 และแก้ Mob
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

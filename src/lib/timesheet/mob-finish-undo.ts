@@ -36,6 +36,11 @@ export function buildMobFinishUndoSnapshot(asgn: Assignment): MobFinishUndoSnaps
     mobReadyToTravelAt: asgn.mobReadyToTravelAt,
     mobReadyToTravelByUserId: asgn.mobReadyToTravelByUserId,
     mobReadyToTravelDate: asgn.mobReadyToTravelDate,
+    mobPreMobDate: asgn.mobPreMobDate,
+    mobPreMobSkipped: asgn.mobPreMobSkipped === true ? true : undefined,
+    mobPreMobRecordedAt: asgn.mobPreMobRecordedAt,
+    mobPreMobRecordedByUserId: asgn.mobPreMobRecordedByUserId,
+    mobMobSkipped: asgn.mobMobSkipped === true ? true : undefined,
     mobLocationPhase: asgn.mobLocationPhase,
     mobLocationKey: asgn.mobLocationKey,
     workLocation: asgn.workLocation,
@@ -56,6 +61,11 @@ export function buildMobRemobClearanceDeleteFields(deleteFieldSentinel: unknown)
     mobReadyToTravelAt: del,
     mobReadyToTravelByUserId: del,
     mobReadyToTravelDate: del,
+    mobPreMobDate: del,
+    mobPreMobSkipped: del,
+    mobPreMobRecordedAt: del,
+    mobPreMobRecordedByUserId: del,
+    mobMobSkipped: del,
     mobStandbyDate: del,
     mobStandbyDayEventType: del,
     mobStep2Choice: del,
@@ -126,16 +136,24 @@ export function buildMobFinishUndoRestoreFields(
   const cycle = snapshot?.mobCycleNumber ?? fallbackCycle;
   const del = deleteFieldSentinel;
 
-  const optionalStringKeys = ['mobStandbyDate', 'mobReadyToTravelDate', 'poActiveStandbyAutoStartYmd', 'poActiveStandbyAutoEndYmd'] as const;
+  const optionalStringKeys = [
+    'mobStandbyDate',
+    'mobReadyToTravelDate',
+    'mobPreMobDate',
+    'poActiveStandbyAutoStartYmd',
+    'poActiveStandbyAutoEndYmd',
+  ] as const;
   const optionalNumberKeys = [
     'mobStandbyRecordedAt',
     'mobWorkingStartedAt',
     'mobReadyToTravelAt',
+    'mobPreMobRecordedAt',
   ] as const;
   const optionalStringIdKeys = [
     'mobStandbyRecordedByUserId',
     'mobWorkingStartedByUserId',
     'mobReadyToTravelByUserId',
+    'mobPreMobRecordedByUserId',
   ] as const;
 
   const out: Record<string, unknown> = {
@@ -180,6 +198,8 @@ export function buildMobFinishUndoRestoreFields(
   out.mobStep2Choice = step2 === 'PRE_MOB' || step2 === 'MOB' ? step2 : del;
   out.mobStep2BillingCharge = snapshot?.mobStep2BillingCharge ?? del;
   out.mobStep2PayrollCharge = snapshot?.mobStep2PayrollCharge ?? del;
+  out.mobPreMobSkipped = snapshot?.mobPreMobSkipped === true ? true : del;
+  out.mobMobSkipped = snapshot?.mobMobSkipped === true ? true : del;
 
   out.poActiveAutoWorkSuspended =
     snapshot?.poActiveAutoWorkSuspended === true ? true : del;
