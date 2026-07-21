@@ -10,11 +10,8 @@ import type { CashAdvanceRequest, CashAdvanceStatus } from '@/lib/types';
 /** คีย์ใน `PayrollBatchLine.deductionsBreakdown` — หักคืนเบิกล่วงหน้า */
 export const CASH_ADVANCE_PAYROLL_DEDUCTION_KEY = 'cash_advance_recovery';
 
-/**
- * คำขอเบิกที่ผู้จัดการอนุมัติแล้ว (รอจ่ายหรือจ่ายแล้ว) และยังไม่ผูกหักใน payroll batch
- */
+/** คำขอที่ฝ่ายบัญชีทำจ่ายแล้วและยังไม่ผูกหักใน payroll batch */
 export const CASH_ADVANCE_STATUSES_ELIGIBLE_FOR_SALARY_RECOVERY: CashAdvanceStatus[] = [
-  'PENDING_PAYMENT',
   'PAID_PETTY_CASH',
   'PAID_OTHER',
 ];
@@ -42,6 +39,11 @@ export async function fetchWorkerCashAdvancesPendingSalaryRecovery(
     if (r.subjectType !== 'worker') continue;
     if (!eligible.has(r.status)) continue;
     if (r.payrollRecoveryBatchId) continue;
+    // กันข้อมูลเก่า/สถานะผิดพลาด — หักจากสลิปได้เฉพาะรายการที่ทำจ่ายจริงแล้ว
+    const paid =
+      (typeof r.paidAt === 'number' && r.paidAt > 0) ||
+      !!(r.cashbookEntryId || r.pettyCashEntryId || r.paymentBankAccountId || r.pettyCashBankAccountId);
+    if (!paid) continue;
     const amt = Math.max(0, Number(r.amountBaht) || 0);
     if (amt <= 0) continue;
     advances.push({ id: r.id, requestNo: r.requestNo || r.id, amountBaht: amt });

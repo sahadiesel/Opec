@@ -3,7 +3,14 @@
 import { useMemo } from 'react';
 import { collection, limit, query, where } from 'firebase/firestore';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import type { AccountsPayable, OfficePayrollRun, PayrollBatch, PurchaseVendorBill, User } from '@/lib/types';
+import type {
+  AccountsPayable,
+  CashAdvanceRequest,
+  OfficePayrollRun,
+  PayrollBatch,
+  PurchaseVendorBill,
+  User,
+} from '@/lib/types';
 import { canSeeAccountingPillarUi } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 
@@ -54,20 +61,42 @@ export function useAccountingSidebarAlerts(user: User | null | undefined) {
     );
   }, [firestore, enabled]);
 
+  const cashAdvanceQ = useMemoFirebase(() => {
+    if (!firestore || !enabled) return null;
+    return query(
+      collection(firestore, 'cash_advance_requests'),
+      where('status', '==', 'PENDING_PAYMENT'),
+      limit(1),
+    );
+  }, [firestore, enabled]);
+
   const { data: workerPending } = useCollection<PayrollBatch>(workerPayrollQ as any);
   const { data: officePending } = useCollection<OfficePayrollRun>(officePayrollQ as any);
   const { data: apPending } = useCollection<AccountsPayable>(apQ as any);
   const { data: vendorBillsPending } = useCollection<PurchaseVendorBill>(vendorBillQ as any);
+  const { data: cashAdvancesPending } = useCollection<CashAdvanceRequest>(cashAdvanceQ as any);
+
+  const officePayrollAlert = (officePending?.length ?? 0) > 0;
+  const workerPayrollAlert = (workerPending?.length ?? 0) > 0;
+  const cashAdvanceAlert = (cashAdvancesPending?.length ?? 0) > 0;
+  const vendorBillAlert = (vendorBillsPending?.length ?? 0) > 0;
 
   const payrollAlert =
-    (workerPending?.length ?? 0) > 0 || (officePending?.length ?? 0) > 0;
+    officePayrollAlert || workerPayrollAlert || cashAdvanceAlert || vendorBillAlert;
 
   const apAlert = useMemo(() => {
     const apItems = apPending ?? [];
     const hasApOutstanding = apItems.some((item) => (Number(item.outstandingAmount) || 0) > 0.005);
-    const hasVendorBillQueue = (vendorBillsPending?.length ?? 0) > 0;
-    return hasApOutstanding || hasVendorBillQueue;
-  }, [apPending, vendorBillsPending]);
+    return hasApOutstanding || vendorBillAlert;
+  }, [apPending, vendorBillAlert]);
 
-  return { payrollAlert, apAlert, enabled };
+  return {
+    payrollAlert,
+    apAlert,
+    officePayrollAlert,
+    workerPayrollAlert,
+    cashAdvanceAlert,
+    vendorBillAlert,
+    enabled,
+  };
 }

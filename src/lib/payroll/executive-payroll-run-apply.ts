@@ -22,8 +22,22 @@ import { executivePayrollLineDocumentId } from '@/lib/payroll/executive-payroll-
 
 export function isExecutivePayrollStaffEligible(s: ExecutivePayrollStaff): boolean {
   if (s.status !== 'ACTIVE') return false;
-  if (s.excludeFromPayrollRuns) return false;
+  if (s.excludeFromPayrollRuns) {
+    const allowedRates = [5, 10, 15, 20, 25, 30, 35];
+    return (
+      !!s.nonPayrollIncomeType &&
+      allowedRates.includes(Number(s.nonPayrollWhtPercent)) &&
+      (s.nonPayrollIncomeType !== 'OTHER' || !!s.nonPayrollIncomeOtherLabel?.trim()) &&
+      (Number(s.monthlySalary) || 0) > 0
+    );
+  }
   return true;
+}
+
+export function executiveNonPayrollIncomeLabel(s: ExecutivePayrollStaff): string {
+  if (s.nonPayrollIncomeType === 'MEETING_ALLOWANCE') return 'เบี้ยประชุมประจำเดือน';
+  if (s.nonPayrollIncomeType === 'DIVIDEND') return 'เงินปันผล';
+  return s.nonPayrollIncomeOtherLabel?.trim() || 'รายได้อื่น ๆ';
 }
 
 async function deleteAllLinesForExecutiveRun(firestore: Firestore, runId: string): Promise<void> {
@@ -88,7 +102,10 @@ export async function applyExecutivePayrollRunLines(
     const lineId = executivePayrollLineDocumentId(staff.staffCode, runId);
     const lineDoc = doc(linesCol, lineId);
 
-    const baseSalary = staff.monthlySalary || 0;
+    const isNonPayrollIncome = !!staff.excludeFromPayrollRuns;
+    const payoutAmount = Number(staff.monthlySalary) || 0;
+    const incomeLabel = isNonPayrollIncome ? executiveNonPayrollIncomeLabel(staff) : '';
+    const baseSalary = isNonPayrollIncome ? 0 : payoutAmount;
     const allowance = 0;
     const bonus = 0;
     const d8 = computeOfficePayrollLineD8({
@@ -99,6 +116,14 @@ export async function applyExecutivePayrollRunLines(
       bonus,
       overtimeAmount: 0,
       otherIncome: 0,
+      ...(isNonPayrollIncome
+        ? {
+            hrAllowanceItems: [{ label: incomeLabel, amount: payoutAmount }],
+            deductSocialSecurity: false,
+            pitMode: 'MANUAL_PERCENT' as const,
+            pitManualPercent: Number(staff.nonPayrollWhtPercent),
+          }
+        : {}),
     });
 
     const newLine: OfficePayrollLine = {
@@ -119,6 +144,20 @@ export async function applyExecutivePayrollRunLines(
       grossPay: d8.grossPay,
       netPay: d8.netPay,
       d8Snapshot: d8.snapshot,
+      ...(isNonPayrollIncome
+        ? {
+            hrLineAdjustments: {
+              allowanceItems: [{ label: incomeLabel, amount: payoutAmount }],
+              deductionItems: [],
+              deductSocialSecurity: false,
+              pitMode: 'MANUAL_PERCENT' as const,
+              pitManualPercent: Number(staff.nonPayrollWhtPercent),
+              pitManualAmountBaht: null,
+              pitManualIncomeLabel: incomeLabel,
+              pitManualIncomeType: staff.nonPayrollIncomeType ?? null,
+            },
+          }
+        : {}),
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -126,7 +165,7 @@ export async function applyExecutivePayrollRunLines(
     batch.set(lineDoc, newLine);
     totalGross += d8.grossPay;
     totalNet += d8.netPay;
-    totalAllowances += allowance + bonus;
+    totalAllowances += allowance + bonus + (isNonPayrollIncome ? payoutAmount : 0);
     totalDeductions += d8.deductions;
   }
 

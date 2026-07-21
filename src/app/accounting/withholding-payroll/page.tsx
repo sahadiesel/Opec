@@ -27,9 +27,10 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { useFirestore, useCollection, useMemoFirebase, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { Users, ExternalLink, Loader2, Search, Building2, Printer, Banknote, Paperclip } from 'lucide-react';
+import { Users, ExternalLink, Loader2, Search, Building2, Printer, Banknote, Paperclip, Briefcase } from 'lucide-react';
 import type {
   User,
   PayrollBatch,
@@ -40,6 +41,7 @@ import type {
   WhtTaxPaymentProofAttachment,
   Worker,
   OfficeStaff,
+  ExecutivePayrollStaff,
 } from '@/lib/types';
 import {
   resolveWorkerNationalId,
@@ -69,8 +71,10 @@ import {
   workerWageStatusLabel,
 } from '@/lib/payroll/payroll-wht-tax-payment-model';
 import {
+  markExecutivePayrollWhtTaxPaidWithoutCashbook,
   markOfficePayrollWhtTaxPaidWithoutCashbook,
   markWorkerPayrollWhtTaxPaidWithoutCashbook,
+  recordExecutivePayrollWhtTaxPayment,
   recordOfficePayrollWhtTaxPayment,
   recordWorkerPayrollWhtTaxPayment,
 } from '@/lib/services/payroll-wht-tax-payment-service';
@@ -79,6 +83,9 @@ import { uploadPayrollWhtTaxPaymentProof } from '@/lib/storage/payroll-wht-tax-p
 type WorkerWhtRow = { batch: PayrollBatch; line: PayrollBatchLine; pit: number; paid: number; paymentYmd: string };
 
 type OfficeWhtRow = { run: OfficePayrollRun; line: OfficePayrollLine; tax: number; paid: number; paymentYmd: string };
+
+/** ผู้บริหาร — โครงบรรทัดเดียวกับงวดออฟฟิศ (executive_payroll_runs ใช้สคีมาเดียวกัน) */
+type ExecutiveWhtRow = OfficeWhtRow;
 
 function fmtBaht(n: number): string {
   return `฿${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -188,8 +195,6 @@ function isOfficeRowPayable(row: OfficeWhtRow): boolean {
   return isOfficePayrollWagePaid(row.run, row.line) && !isOfficePayrollWhtTaxPaid(row.line);
 }
 
-type PayWhtTaxSection = 'worker' | 'office';
-
 /** YYYY-MM สำหรับกรองเดือน — อิงวันที่จ่าย ถ้าไม่มีใช้ช่วงงวด/งวดออฟฟิศ */
 function workerRowYm(r: WorkerWhtRow): string | null {
   if (r.paymentYmd && /^\d{4}-\d{2}-\d{2}$/.test(r.paymentYmd)) return r.paymentYmd.slice(0, 7);
@@ -232,8 +237,10 @@ function ymLabelTh(ym: string): string {
 function buildWithholdingPayrollPrintRows(
   workers: WorkerWhtRow[],
   offices: OfficeWhtRow[],
+  executives: ExecutiveWhtRow[],
   nationalIdByWorkerId?: ReadonlyMap<string, string>,
   nationalIdByOfficeStaffId?: ReadonlyMap<string, string>,
+  nationalIdByExecutiveStaffId?: ReadonlyMap<string, string>,
 ): WithholdingPayrollListPrintRow[] {
   const rows: WithholdingPayrollListPrintRow[] = [];
   for (const { batch, line, pit, paid, paymentYmd } of workers) {
@@ -245,7 +252,7 @@ function buildWithholdingPayrollPrintRows(
       batchLabel: batch.id,
       earnerName: line.workerNameSnapshot || '—',
       earnerId: resolveWorkerNationalId(line, nationalIdByWorkerId),
-      paymentDate: paymentYmd,
+      paymentDate: formatYmdLocalThaiBE(paymentYmd),
       paidLabel: fmtBaht(paid),
       amountLabel: fmtBaht(pit),
     });
@@ -259,7 +266,21 @@ function buildWithholdingPayrollPrintRows(
       batchLabel: run.payrollRunNo || run.id,
       earnerName: line.staffName || '—',
       earnerId: resolveStaffNationalId(line.staffId, nationalIdByOfficeStaffId),
-      paymentDate: paymentYmd,
+      paymentDate: formatYmdLocalThaiBE(paymentYmd),
+      paidLabel: fmtBaht(paid),
+      amountLabel: fmtBaht(tax),
+    });
+  }
+  for (const { run, line, tax, paid, paymentYmd } of executives) {
+    const wagePaid = isOfficePayrollWagePaid(run, line);
+    rows.push({
+      section: 'ผู้บริหาร',
+      wageStatus: officeWageStatusLabel(run.status),
+      taxStatus: whtTaxStatusLabel(wagePaid, isOfficePayrollWhtTaxPaid(line)),
+      batchLabel: run.payrollRunNo || run.id,
+      earnerName: line.staffName || '—',
+      earnerId: resolveStaffNationalId(line.staffId, nationalIdByExecutiveStaffId),
+      paymentDate: formatYmdLocalThaiBE(paymentYmd),
       paidLabel: fmtBaht(paid),
       amountLabel: fmtBaht(tax),
     });
@@ -292,13 +313,18 @@ export default function AccountingWithholdingPayrollHubPage() {
   const [printBusy, setPrintBusy] = useState(false);
   const [workerRows, setWorkerRows] = useState<WorkerWhtRow[]>([]);
   const [officeRows, setOfficeRows] = useState<OfficeWhtRow[]>([]);
+  const [executiveRows, setExecutiveRows] = useState<ExecutiveWhtRow[]>([]);
   const [loadingWorkerLines, setLoadingWorkerLines] = useState(false);
   const [loadingOfficeLines, setLoadingOfficeLines] = useState(false);
+  const [loadingExecutiveLines, setLoadingExecutiveLines] = useState(false);
   const [workerLinesErr, setWorkerLinesErr] = useState<string | null>(null);
   const [officeLinesErr, setOfficeLinesErr] = useState<string | null>(null);
+  const [executiveLinesErr, setExecutiveLinesErr] = useState<string | null>(null);
   const [selectedWorkerKeys, setSelectedWorkerKeys] = useState<Set<string>>(() => new Set());
   const [selectedOfficeKeys, setSelectedOfficeKeys] = useState<Set<string>>(() => new Set());
-  const [payTaxSection, setPayTaxSection] = useState<PayWhtTaxSection | null>(null);
+  const [selectedExecutiveKeys, setSelectedExecutiveKeys] = useState<Set<string>>(() => new Set());
+  /** จ่ายภาษีรวมทั้ง 3 ส่วน (ลูกจ้าง + ออฟฟิศ + ผู้บริหาร) ในกล่องเดียว */
+  const [payTaxOpen, setPayTaxOpen] = useState(false);
   const [payTaxBankId, setPayTaxBankId] = useState('');
   const [payTaxDate, setPayTaxDate] = useState(() => new Date().toISOString().slice(0, 10));
   /** true = บันทึกสถานะจ่ายแล้วเท่านั้น (ไม่ตัดบัญชี / ไม่ลง cashbook) */
@@ -306,8 +332,7 @@ export default function AccountingWithholdingPayrollHubPage() {
   const [payTaxBusy, setPayTaxBusy] = useState(false);
   const [payTaxAttachments, setPayTaxAttachments] = useState<WhtTaxPaymentProofAttachment[]>([]);
   const [attachProofBusy, setAttachProofBusy] = useState(false);
-  const [workerSessionProofAttachments, setWorkerSessionProofAttachments] = useState<WhtTaxPaymentProofAttachment[]>([]);
-  const [officeSessionProofAttachments, setOfficeSessionProofAttachments] = useState<WhtTaxPaymentProofAttachment[]>([]);
+  const [sessionProofAttachments, setSessionProofAttachments] = useState<WhtTaxPaymentProofAttachment[]>([]);
 
   const canPayWhtTax = useMemo(() => canExecuteBankCashbookPayments(currentUser), [currentUser]);
   /** บันทึกสถานะจ่ายแล้วโดยไม่ตัดบัญชี — เฉพาะ Admin */
@@ -340,8 +365,18 @@ export default function AccountingWithholdingPayrollHubPage() {
     return query(collection(firestore, 'office_payroll_runs'), orderBy('updatedAt', 'desc'), limit(80));
   }, [firestore]);
 
+  const executiveRunsQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return query(collection(firestore, 'executive_payroll_runs'), orderBy('updatedAt', 'desc'), limit(80));
+  }, [firestore]);
+
   const { data: batches, isLoading: loadingBatches, error: batchesErr } = useCollection<PayrollBatch>(batchesQuery as any);
   const { data: officeRuns, isLoading: loadingRuns, error: runsErr } = useCollection<OfficePayrollRun>(officeRunsQuery as any);
+  const {
+    data: executiveRuns,
+    isLoading: loadingExecutiveRuns,
+    error: executiveRunsErr,
+  } = useCollection<OfficePayrollRun>(executiveRunsQuery as any);
 
   const workersQuery = useMemoFirebase(() => {
     if (!firestore) return null;
@@ -353,8 +388,14 @@ export default function AccountingWithholdingPayrollHubPage() {
     return collection(firestore, 'office_staff');
   }, [firestore]);
 
+  const executiveStaffQuery = useMemoFirebase(() => {
+    if (!firestore) return null;
+    return collection(firestore, 'executive_payroll_staff');
+  }, [firestore]);
+
   const { data: workerRegistry } = useCollection<Worker>(workersQuery as any);
   const { data: officeStaffRegistry } = useCollection<OfficeStaff>(officeStaffQuery as any);
+  const { data: executiveStaffRegistry } = useCollection<ExecutivePayrollStaff>(executiveStaffQuery as any);
 
   const nationalIdByWorkerId = useMemo(() => {
     const map = new Map<string, string>();
@@ -373,6 +414,18 @@ export default function AccountingWithholdingPayrollHubPage() {
     }
     return map;
   }, [officeStaffRegistry]);
+
+  const nationalIdByExecutiveStaffId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const staff of executiveStaffRegistry ?? []) {
+      let id = staff.nationalId?.trim();
+      if (!id && staff.linkedOfficeStaffId) {
+        id = nationalIdByOfficeStaffId.get(staff.linkedOfficeStaffId)?.trim();
+      }
+      if (id) map.set(staff.id, id);
+    }
+    return map;
+  }, [executiveStaffRegistry, nationalIdByOfficeStaffId]);
 
   useEffect(() => {
     if (!firestore || batches === undefined) return;
@@ -452,6 +505,45 @@ export default function AccountingWithholdingPayrollHubPage() {
     };
   }, [firestore, officeRuns]);
 
+  useEffect(() => {
+    if (!firestore || executiveRuns === undefined) return;
+    let cancelled = false;
+    setLoadingExecutiveLines(true);
+    setExecutiveLinesErr(null);
+    void (async () => {
+      try {
+        const rows: ExecutiveWhtRow[] = [];
+        const list = executiveRuns ?? [];
+        for (const run of list) {
+          if (cancelled) return;
+          const snap = await getDocs(collection(firestore, 'executive_payroll_runs', run.id, 'lines'));
+          snap.forEach((d) => {
+            const line = { id: d.id, ...d.data() } as OfficePayrollLine;
+            const tax = officePayrollLineTaxAmount(line);
+            if (tax <= 0.005) return;
+            const payYmd = resolveOfficePayrollWhtPaymentDateYmd(run);
+            rows.push({
+              run,
+              line,
+              tax,
+              paid: officePayrollLinePaidAmount(line),
+              paymentYmd: payYmd && /^\d{4}-\d{2}-\d{2}$/.test(payYmd) ? payYmd : '—',
+            });
+          });
+        }
+        rows.sort((a, b) => (b.run.updatedAt ?? 0) - (a.run.updatedAt ?? 0));
+        if (!cancelled) setExecutiveRows(rows);
+      } catch (e) {
+        if (!cancelled) setExecutiveLinesErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setLoadingExecutiveLines(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, executiveRuns]);
+
   const monthOptions = useMemo(() => {
     const set = new Set<string>();
     for (const r of workerRows) {
@@ -462,8 +554,12 @@ export default function AccountingWithholdingPayrollHubPage() {
       const ym = officeRowYm(r);
       if (ym) set.add(ym);
     }
+    for (const r of executiveRows) {
+      const ym = officeRowYm(r);
+      if (ym) set.add(ym);
+    }
     return Array.from(set).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
-  }, [workerRows, officeRows]);
+  }, [workerRows, officeRows, executiveRows]);
 
   const workerRowsBySearch = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -509,6 +605,30 @@ export default function AccountingWithholdingPayrollHubPage() {
     });
   }, [officeRows, q, nationalIdByOfficeStaffId]);
 
+  const executiveRowsBySearch = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    if (!t) return executiveRows;
+    return executiveRows.filter(({ run, line, paymentYmd }) => {
+      const name = (line.staffName || '').toLowerCase();
+      const rn = (run.payrollRunNo || '').toLowerCase();
+      const rid = run.id.toLowerCase();
+      const lid = line.id.toLowerCase();
+      const sid = line.staffId.toLowerCase();
+      const nid = (nationalIdByExecutiveStaffId.get(line.staffId) || '').toLowerCase();
+      const ym = (run.payrollMonth || '').toLowerCase();
+      return (
+        name.includes(t) ||
+        rn.includes(t) ||
+        rid.includes(t) ||
+        lid.includes(t) ||
+        sid.includes(t) ||
+        nid.includes(t) ||
+        ym.includes(t) ||
+        paymentYmd.includes(t)
+      );
+    });
+  }, [executiveRows, q, nationalIdByExecutiveStaffId]);
+
   const filteredWorker = useMemo(() => {
     if (monthFilter === 'ALL') return workerRowsBySearch;
     return workerRowsBySearch.filter((r) => workerRowYm(r) === monthFilter);
@@ -519,6 +639,11 @@ export default function AccountingWithholdingPayrollHubPage() {
     return officeRowsBySearch.filter((r) => officeRowYm(r) === monthFilter);
   }, [officeRowsBySearch, monthFilter]);
 
+  const filteredExecutive = useMemo(() => {
+    if (monthFilter === 'ALL') return executiveRowsBySearch;
+    return executiveRowsBySearch.filter((r) => officeRowYm(r) === monthFilter);
+  }, [executiveRowsBySearch, monthFilter]);
+
   const payableWorkerRows = useMemo(
     () => filteredWorker.filter(isWorkerRowPayable),
     [filteredWorker],
@@ -526,6 +651,10 @@ export default function AccountingWithholdingPayrollHubPage() {
   const payableOfficeRows = useMemo(
     () => filteredOffice.filter(isOfficeRowPayable),
     [filteredOffice],
+  );
+  const payableExecutiveRows = useMemo(
+    () => filteredExecutive.filter(isOfficeRowPayable),
+    [filteredExecutive],
   );
 
   const payableWorkerKeySig = useMemo(
@@ -535,6 +664,10 @@ export default function AccountingWithholdingPayrollHubPage() {
   const payableOfficeKeySig = useMemo(
     () => payableOfficeRows.map((r) => officeRowKey(r.run.id, r.line.id)).sort().join('|'),
     [payableOfficeRows],
+  );
+  const payableExecutiveKeySig = useMemo(
+    () => payableExecutiveRows.map((r) => officeRowKey(r.run.id, r.line.id)).sort().join('|'),
+    [payableExecutiveRows],
   );
 
   useEffect(() => {
@@ -547,6 +680,11 @@ export default function AccountingWithholdingPayrollHubPage() {
     setSelectedOfficeKeys(new Set(keys));
   }, [payableOfficeKeySig]);
 
+  useEffect(() => {
+    const keys = payableExecutiveKeySig ? payableExecutiveKeySig.split('|') : [];
+    setSelectedExecutiveKeys(new Set(keys));
+  }, [payableExecutiveKeySig]);
+
   const selectedWorkerPayRows = useMemo(
     () => payableWorkerRows.filter((r) => selectedWorkerKeys.has(workerRowKey(r.batch.id, r.line.id))),
     [payableWorkerRows, selectedWorkerKeys],
@@ -554,6 +692,10 @@ export default function AccountingWithholdingPayrollHubPage() {
   const selectedOfficePayRows = useMemo(
     () => payableOfficeRows.filter((r) => selectedOfficeKeys.has(officeRowKey(r.run.id, r.line.id))),
     [payableOfficeRows, selectedOfficeKeys],
+  );
+  const selectedExecutivePayRows = useMemo(
+    () => payableExecutiveRows.filter((r) => selectedExecutiveKeys.has(officeRowKey(r.run.id, r.line.id))),
+    [payableExecutiveRows, selectedExecutiveKeys],
   );
 
   const selectedWorkerTaxTotal = useMemo(
@@ -564,24 +706,36 @@ export default function AccountingWithholdingPayrollHubPage() {
     () => selectedOfficePayRows.reduce((sum, { tax }) => sum + tax, 0),
     [selectedOfficePayRows],
   );
+  const selectedExecutiveTaxTotal = useMemo(
+    () => selectedExecutivePayRows.reduce((sum, { tax }) => sum + tax, 0),
+    [selectedExecutivePayRows],
+  );
+
+  /** รวมรายการที่เลือกทั้ง 3 ส่วน — ใช้กับปุ่มจ่ายภาษีรวมด้านบน */
+  const selectedPayRowCount =
+    selectedWorkerPayRows.length + selectedOfficePayRows.length + selectedExecutivePayRows.length;
+  const payableRowCount =
+    payableWorkerRows.length + payableOfficeRows.length + payableExecutiveRows.length;
+  const selectedPayTaxTotal = selectedWorkerTaxTotal + selectedOfficeTaxTotal + selectedExecutiveTaxTotal;
 
   const workerDisplayedProofAttachments = useMemo(() => {
     const fromRows = workerRows.flatMap((r) => r.line.whtTaxPaymentProofAttachments ?? []);
-    return mergeUniqueProofAttachments(fromRows, workerSessionProofAttachments);
-  }, [workerRows, workerSessionProofAttachments]);
+    return mergeUniqueProofAttachments(fromRows, sessionProofAttachments);
+  }, [workerRows, sessionProofAttachments]);
 
   const officeDisplayedProofAttachments = useMemo(() => {
     const fromRows = officeRows.flatMap((r) => r.line.whtTaxPaymentProofAttachments ?? []);
-    return mergeUniqueProofAttachments(fromRows, officeSessionProofAttachments);
-  }, [officeRows, officeSessionProofAttachments]);
+    return mergeUniqueProofAttachments(fromRows, sessionProofAttachments);
+  }, [officeRows, sessionProofAttachments]);
 
-  const workerRemovableProofIds = useMemo(
-    () => new Set(workerSessionProofAttachments.map((a) => a.id)),
-    [workerSessionProofAttachments],
-  );
-  const officeRemovableProofIds = useMemo(
-    () => new Set(officeSessionProofAttachments.map((a) => a.id)),
-    [officeSessionProofAttachments],
+  const executiveDisplayedProofAttachments = useMemo(() => {
+    const fromRows = executiveRows.flatMap((r) => r.line.whtTaxPaymentProofAttachments ?? []);
+    return mergeUniqueProofAttachments(fromRows, sessionProofAttachments);
+  }, [executiveRows, sessionProofAttachments]);
+
+  const removableProofIds = useMemo(
+    () => new Set(sessionProofAttachments.map((a) => a.id)),
+    [sessionProofAttachments],
   );
 
   const workerTotalPit = useMemo(
@@ -592,9 +746,13 @@ export default function AccountingWithholdingPayrollHubPage() {
     () => filteredOffice.reduce((sum, { tax }) => sum + tax, 0),
     [filteredOffice],
   );
+  const executiveTotalTax = useMemo(
+    () => filteredExecutive.reduce((sum, { tax }) => sum + tax, 0),
+    [filteredExecutive],
+  );
 
-  /** ยอดหัก ภงด.1 รวมลูกจ้าง + พนักงานออฟฟิศ ตามรายการที่ค้นหา/กรองเดือนปัจจุบัน */
-  const grandTotalPit = workerTotalPit + officeTotalTax;
+  /** ยอดหักรวมลูกจ้าง + พนักงานออฟฟิศ + ผู้บริหาร ตามรายการที่ค้นหา/กรองเดือนปัจจุบัน */
+  const grandTotalPit = workerTotalPit + officeTotalTax + executiveTotalTax;
 
   const allWorkerTotalPit = useMemo(
     () => workerRows.reduce((sum, { pit }) => sum + pit, 0),
@@ -604,18 +762,25 @@ export default function AccountingWithholdingPayrollHubPage() {
     () => officeRows.reduce((sum, { tax }) => sum + tax, 0),
     [officeRows],
   );
-  const filteredRowCount = filteredWorker.length + filteredOffice.length;
-  const allRowCount = workerRows.length + officeRows.length;
+  const allExecutiveTotalTax = useMemo(
+    () => executiveRows.reduce((sum, { tax }) => sum + tax, 0),
+    [executiveRows],
+  );
+  const filteredRowCount = filteredWorker.length + filteredOffice.length + filteredExecutive.length;
+  const allRowCount = workerRows.length + officeRows.length + executiveRows.length;
 
   const runWithholdingPayrollListPrint = useCallback(
     async (scope: 'filtered' | 'all') => {
       const workers = scope === 'filtered' ? filteredWorker : workerRows;
       const offices = scope === 'filtered' ? filteredOffice : officeRows;
+      const executives = scope === 'filtered' ? filteredExecutive : executiveRows;
       const sourceRows = buildWithholdingPayrollPrintRows(
         workers,
         offices,
+        executives,
         nationalIdByWorkerId,
         nationalIdByOfficeStaffId,
+        nationalIdByExecutiveStaffId,
       );
 
       if (sourceRows.length === 0) {
@@ -625,7 +790,7 @@ export default function AccountingWithholdingPayrollHubPage() {
           description:
             scope === 'filtered'
               ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
-              : 'ยังไม่มีรายการหัก ภงด.1 ในระบบ',
+              : 'ยังไม่มีรายการหักภาษีของบุคลากรในระบบ',
         });
         return;
       }
@@ -635,6 +800,7 @@ export default function AccountingWithholdingPayrollHubPage() {
         const { rows, truncated } = capWithholdingPayrollListPrintRows(sourceRows);
         const workerTotal = workers.reduce((sum, { pit }) => sum + pit, 0);
         const officeTotal = offices.reduce((sum, { tax }) => sum + tax, 0);
+        const executiveTotal = executives.reduce((sum, { tax }) => sum + tax, 0);
         const generatedAt = new Date().toLocaleString('th-TH', {
           dateStyle: 'medium',
           timeStyle: 'short',
@@ -648,9 +814,10 @@ export default function AccountingWithholdingPayrollHubPage() {
           rows,
           scopeTitle,
           filterLines,
-          grandTotalLabel: fmtBaht(workerTotal + officeTotal),
+          grandTotalLabel: fmtBaht(workerTotal + officeTotal + executiveTotal),
           workerTotalLabel: fmtBaht(workerTotal),
           officeTotalLabel: fmtBaht(officeTotal),
+          executiveTotalLabel: fmtBaht(executiveTotal),
           generatedAt,
           printedBy: currentUser?.displayName,
           truncated,
@@ -679,10 +846,13 @@ export default function AccountingWithholdingPayrollHubPage() {
     [
       filteredWorker,
       filteredOffice,
+      filteredExecutive,
       workerRows,
       officeRows,
+      executiveRows,
       nationalIdByWorkerId,
       nationalIdByOfficeStaffId,
+      nationalIdByExecutiveStaffId,
       q,
       monthFilter,
       currentUser?.displayName,
@@ -690,68 +860,49 @@ export default function AccountingWithholdingPayrollHubPage() {
     ],
   );
 
-  const openPayTaxDialog = useCallback(
-    (section: PayWhtTaxSection) => {
-      if (section === 'worker') {
-        if (payableWorkerRows.length === 0) {
-          toast({
-            variant: 'destructive',
-            title: 'ไม่มีรายการที่พร้อมจ่ายภาษี',
-            description: 'ต้องจ่ายค่าจ้างแล้วและยังไม่ได้จ่ายภาษีหัก ณ ที่จ่าย',
-          });
-          return;
-        }
-        setSelectedWorkerKeys((prev) => {
-          const payableIds = new Set(payableWorkerRows.map((r) => workerRowKey(r.batch.id, r.line.id)));
-          const kept = [...prev].filter((id) => payableIds.has(id));
-          return kept.length > 0 ? new Set(kept) : new Set(payableIds);
-        });
-      } else {
-        if (payableOfficeRows.length === 0) {
-          toast({
-            variant: 'destructive',
-            title: 'ไม่มีรายการที่พร้อมจ่ายภาษี',
-            description: 'ต้องจ่ายเงินเดือนแล้วและยังไม่ได้จ่ายภาษีหัก ณ ที่จ่าย',
-          });
-          return;
-        }
-        setSelectedOfficeKeys((prev) => {
-          const payableIds = new Set(payableOfficeRows.map((r) => officeRowKey(r.run.id, r.line.id)));
-          const kept = [...prev].filter((id) => payableIds.has(id));
-          return kept.length > 0 ? new Set(kept) : new Set(payableIds);
-        });
-      }
-      setPayTaxSection(section);
-      setPayTaxStatusOnly(false);
-      setPayTaxBankId((prev) =>
-        prev && operatingBankOptions.some((b) => b.id === prev) ? prev : (operatingBankOptions[0]?.id ?? ''),
-      );
-      setPayTaxDate(new Date().toISOString().slice(0, 10));
-      setPayTaxAttachments(
-        section === 'worker' ? [...workerSessionProofAttachments] : [...officeSessionProofAttachments],
-      );
-    },
-    [payableWorkerRows, payableOfficeRows, operatingBankOptions, workerSessionProofAttachments, officeSessionProofAttachments, toast],
-  );
-
-  const syncSectionProofAttachments = useCallback(
-    (section: PayWhtTaxSection, attachments: WhtTaxPaymentProofAttachment[]) => {
-      if (section === 'worker') setWorkerSessionProofAttachments(attachments);
-      else setOfficeSessionProofAttachments(attachments);
-    },
-    [],
-  );
+  const openPayTaxDialog = useCallback(() => {
+    if (payableWorkerRows.length === 0 && payableOfficeRows.length === 0 && payableExecutiveRows.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีรายการที่พร้อมจ่ายภาษี',
+        description: 'ต้องจ่ายค่าจ้าง/เงินเดือนแล้วและยังไม่ได้จ่ายภาษีหัก ณ ที่จ่าย',
+      });
+      return;
+    }
+    setSelectedWorkerKeys((prev) => {
+      const payableIds = new Set(payableWorkerRows.map((r) => workerRowKey(r.batch.id, r.line.id)));
+      const kept = [...prev].filter((id) => payableIds.has(id));
+      return kept.length > 0 ? new Set(kept) : new Set(payableIds);
+    });
+    setSelectedOfficeKeys((prev) => {
+      const payableIds = new Set(payableOfficeRows.map((r) => officeRowKey(r.run.id, r.line.id)));
+      const kept = [...prev].filter((id) => payableIds.has(id));
+      return kept.length > 0 ? new Set(kept) : new Set(payableIds);
+    });
+    setSelectedExecutiveKeys((prev) => {
+      const payableIds = new Set(payableExecutiveRows.map((r) => officeRowKey(r.run.id, r.line.id)));
+      const kept = [...prev].filter((id) => payableIds.has(id));
+      return kept.length > 0 ? new Set(kept) : new Set(payableIds);
+    });
+    setPayTaxOpen(true);
+    setPayTaxStatusOnly(false);
+    setPayTaxBankId((prev) =>
+      prev && operatingBankOptions.some((b) => b.id === prev) ? prev : (operatingBankOptions[0]?.id ?? ''),
+    );
+    setPayTaxDate(new Date().toISOString().slice(0, 10));
+    setPayTaxAttachments([...sessionProofAttachments]);
+  }, [payableWorkerRows, payableOfficeRows, payableExecutiveRows, operatingBankOptions, sessionProofAttachments, toast]);
 
   const handleAttachPayTaxProof = useCallback(
     async (files: FileList | null) => {
-      if (!files?.length || !firebaseApp || !currentUser || !payTaxSection) return;
+      if (!files?.length || !firebaseApp || !currentUser) return;
       setAttachProofBusy(true);
       try {
         const uploaded: WhtTaxPaymentProofAttachment[] = [];
         for (const file of Array.from(files)) {
           const attachment = await uploadPayrollWhtTaxPaymentProof(
             firebaseApp,
-            payTaxSection,
+            'worker',
             currentUser.id,
             file,
             currentUser.displayName || currentUser.email || currentUser.id,
@@ -763,7 +914,7 @@ export default function AccountingWithholdingPayrollHubPage() {
           for (const a of uploaded) {
             if (!next.some((x) => x.id === a.id)) next.push(a);
           }
-          syncSectionProofAttachments(payTaxSection, next);
+          setSessionProofAttachments(next);
           return next;
         });
         toast({
@@ -781,42 +932,34 @@ export default function AccountingWithholdingPayrollHubPage() {
         if (payTaxProofInputRef.current) payTaxProofInputRef.current.value = '';
       }
     },
-    [firebaseApp, currentUser, payTaxSection, syncSectionProofAttachments, toast],
+    [firebaseApp, currentUser, toast],
   );
 
-  const handleRemovePayTaxProof = useCallback(
-    (attachmentId: string) => {
-      if (!payTaxSection) return;
-      setPayTaxAttachments((prev) => {
-        const next = prev.filter((a) => a.id !== attachmentId);
-        syncSectionProofAttachments(payTaxSection, next);
-        return next;
-      });
-    },
-    [payTaxSection, syncSectionProofAttachments],
-  );
+  const handleRemovePayTaxProof = useCallback((attachmentId: string) => {
+    setPayTaxAttachments((prev) => {
+      const next = prev.filter((a) => a.id !== attachmentId);
+      setSessionProofAttachments(next);
+      return next;
+    });
+  }, []);
 
-  const handleRemoveSectionProof = useCallback(
-    (section: PayWhtTaxSection, attachmentId: string) => {
-      if (section === 'worker') {
-        setWorkerSessionProofAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
-      } else {
-        setOfficeSessionProofAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
-      }
-      if (payTaxSection === section) {
-        setPayTaxAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
-      }
-    },
-    [payTaxSection],
-  );
+  const handleRemoveSessionProof = useCallback((attachmentId: string) => {
+    setSessionProofAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+    setPayTaxAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+  }, []);
 
   const handleConfirmPayWhtTax = useCallback(async () => {
-    if (!firestore || !currentUser || !payTaxSection) return;
+    if (!firestore || !currentUser || !payTaxOpen) return;
 
-    const targets =
-      payTaxSection === 'worker'
-        ? selectedWorkerPayRows
-        : selectedOfficePayRows;
+    const targets: Array<
+      | { kind: 'worker'; row: WorkerWhtRow }
+      | { kind: 'office'; row: OfficeWhtRow }
+      | { kind: 'executive'; row: ExecutiveWhtRow }
+    > = [
+      ...selectedWorkerPayRows.map((row) => ({ kind: 'worker' as const, row })),
+      ...selectedOfficePayRows.map((row) => ({ kind: 'office' as const, row })),
+      ...selectedExecutivePayRows.map((row) => ({ kind: 'executive' as const, row })),
+    ];
 
     if (targets.length === 0) {
       toast({
@@ -856,16 +999,18 @@ export default function AccountingWithholdingPayrollHubPage() {
     const errors: string[] = [];
     const paidWorkerKeys = new Set<string>();
     const paidOfficeKeys = new Set<string>();
+    const paidExecutiveKeys = new Set<string>();
     const workerLineUpdates = new Map<string, Partial<PayrollBatchLine>>();
     const officeLineUpdates = new Map<string, Partial<OfficePayrollLine>>();
+    const executiveLineUpdates = new Map<string, Partial<OfficePayrollLine>>();
 
     try {
-      for (const row of targets) {
+      for (const target of targets) {
         try {
-          if (payTaxSection === 'worker') {
-            const { batch, line, pit } = row as WorkerWhtRow;
+          const now = Date.now();
+          if (target.kind === 'worker') {
+            const { batch, line, pit } = target.row;
             const key = workerRowKey(batch.id, line.id);
-            const now = Date.now();
             if (payTaxStatusOnly) {
               await markWorkerPayrollWhtTaxPaidWithoutCashbook(firestore, currentUser as User, {
                 batch,
@@ -902,23 +1047,25 @@ export default function AccountingWithholdingPayrollHubPage() {
               });
             }
           } else {
-            const { run, line, tax } = row as OfficeWhtRow;
+            const { run, line, tax } = target.row;
             const key = officeRowKey(run.id, line.id);
-            const now = Date.now();
+            const paidKeys = target.kind === 'office' ? paidOfficeKeys : paidExecutiveKeys;
+            const lineUpdates = target.kind === 'office' ? officeLineUpdates : executiveLineUpdates;
             if (payTaxStatusOnly) {
-              await markOfficePayrollWhtTaxPaidWithoutCashbook(firestore, currentUser as User, {
-                run,
-                line,
-              });
-              paidOfficeKeys.add(key);
-              officeLineUpdates.set(key, {
+              if (target.kind === 'office') {
+                await markOfficePayrollWhtTaxPaidWithoutCashbook(firestore, currentUser as User, { run, line });
+              } else {
+                await markExecutivePayrollWhtTaxPaidWithoutCashbook(firestore, currentUser as User, { run, line });
+              }
+              paidKeys.add(key);
+              lineUpdates.set(key, {
                 whtTaxPaidAt: now,
                 whtTaxPaidWithoutCashbook: true,
                 whtTaxPaidByUid: currentUser.id,
                 whtTaxPaidByName: currentUser.displayName || currentUser.email || currentUser.id,
               });
             } else {
-              const result = await recordOfficePayrollWhtTaxPayment(firestore, currentUser as User, {
+              const payInput = {
                 run,
                 line,
                 taxAmount: tax,
@@ -926,13 +1073,17 @@ export default function AccountingWithholdingPayrollHubPage() {
                 entryDate: payTaxDate,
                 earnerName: line.staffName || line.staffId,
                 proofAttachments: payTaxAttachments,
-              });
-              paidOfficeKeys.add(key);
+              };
+              const result =
+                target.kind === 'office'
+                  ? await recordOfficePayrollWhtTaxPayment(firestore, currentUser as User, payInput)
+                  : await recordExecutivePayrollWhtTaxPayment(firestore, currentUser as User, payInput);
+              paidKeys.add(key);
               const mergedProofs = mergeUniqueProofAttachments(
                 line.whtTaxPaymentProofAttachments ?? [],
                 payTaxAttachments,
               );
-              officeLineUpdates.set(key, {
+              lineUpdates.set(key, {
                 whtTaxCashbookEntryId: result.cashbookEntryId,
                 whtTaxCashbookEntryNo: result.entryNo,
                 whtTaxPaidAt: now,
@@ -944,9 +1095,9 @@ export default function AccountingWithholdingPayrollHubPage() {
           success += 1;
         } catch (e) {
           const name =
-            payTaxSection === 'worker'
-              ? (row as WorkerWhtRow).line.workerNameSnapshot || (row as WorkerWhtRow).line.workerId
-              : (row as OfficeWhtRow).line.staffName || (row as OfficeWhtRow).line.staffId;
+            target.kind === 'worker'
+              ? target.row.line.workerNameSnapshot || target.row.line.workerId
+              : target.row.line.staffName || target.row.line.staffId;
           errors.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
@@ -983,6 +1134,22 @@ export default function AccountingWithholdingPayrollHubPage() {
         });
       }
 
+      if (paidExecutiveKeys.size > 0) {
+        setExecutiveRows((prev) =>
+          prev.map((row) => {
+            const key = officeRowKey(row.run.id, row.line.id);
+            const patch = executiveLineUpdates.get(key);
+            if (!patch) return row;
+            return { ...row, line: { ...row.line, ...patch } };
+          }),
+        );
+        setSelectedExecutiveKeys((prev) => {
+          const next = new Set(prev);
+          for (const key of paidExecutiveKeys) next.delete(key);
+          return next;
+        });
+      }
+
       if (errors.length === 0) {
         toast({
           title: payTaxStatusOnly
@@ -993,11 +1160,10 @@ export default function AccountingWithholdingPayrollHubPage() {
             : `จ่ายสำเร็จ ${success} รายการ · ตัดบัญชีและบันทึก cashbook เรียบร้อย`,
         });
         if (!payTaxStatusOnly) {
-          if (payTaxSection === 'worker') setWorkerSessionProofAttachments([]);
-          else setOfficeSessionProofAttachments([]);
+          setSessionProofAttachments([]);
           setPayTaxAttachments([]);
         }
-        setPayTaxSection(null);
+        setPayTaxOpen(false);
         setPayTaxStatusOnly(false);
       } else if (success > 0) {
         toast({
@@ -1018,13 +1184,14 @@ export default function AccountingWithholdingPayrollHubPage() {
   }, [
     firestore,
     currentUser,
-    payTaxSection,
+    payTaxOpen,
     payTaxBankId,
     payTaxDate,
     payTaxStatusOnly,
     canMarkWhtStatusOnly,
     selectedWorkerPayRows,
     selectedOfficePayRows,
+    selectedExecutivePayRows,
     payTaxAttachments,
     toast,
   ]);
@@ -1055,18 +1222,8 @@ export default function AccountingWithholdingPayrollHubPage() {
     );
   };
 
-  const payTaxDialogRows =
-    payTaxSection === 'worker'
-      ? selectedWorkerPayRows
-      : payTaxSection === 'office'
-        ? selectedOfficePayRows
-        : [];
-  const payTaxDialogTotal =
-    payTaxSection === 'worker'
-      ? selectedWorkerTaxTotal
-      : payTaxSection === 'office'
-        ? selectedOfficeTaxTotal
-        : 0;
+  const payTaxDialogRowCount = selectedPayRowCount;
+  const payTaxDialogTotal = selectedPayTaxTotal;
 
   if (isLoading || !currentUser) {
     return (
@@ -1089,15 +1246,15 @@ export default function AccountingWithholdingPayrollHubPage() {
     );
   }
 
-  const listLoadErr = batchesErr || runsErr;
+  const listLoadErr = batchesErr || runsErr || executiveRunsErr;
 
   return (
     <AppShell user={user} onLogout={() => {}}>
       <div className="w-full max-w-[min(100%,96rem)] mx-auto space-y-6 py-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">1. เอกสาร หัก ณ ที่จ่าย (พนักงาน)</h1>
+          <h1 className="text-2xl font-bold tracking-tight">1. เอกสาร หัก ณ ที่จ่าย (บุคลากร)</h1>
           <p className="text-muted-foreground mt-1">
-            รายการหนังสือรับรองหัก ณ ที่จ่าย (ภงด.1) จากงวดจ่ายลูกจ้างและงวดพนักงานออฟฟิศ — งวดผู้บริหารแยกอยู่เมนู 2 · คู่ค้า ภงด.53 อยู่เมนู 3
+            รายการหนังสือรับรองหัก ณ ที่จ่าย (ภ.ง.ด.1 / ภ.ง.ด.2) รวมลูกจ้าง พนักงานออฟฟิศ และผู้บริหาร — จ่ายภาษีรวมทั้ง 3 ส่วนได้จากปุ่มด้านบน · คู่ค้า ภงด.53 อยู่เมนู 2
           </p>
         </div>
 
@@ -1136,7 +1293,7 @@ export default function AccountingWithholdingPayrollHubPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-end gap-2 shrink-0">
                 <Button
                   type="button"
                   variant="outline"
@@ -1146,12 +1303,24 @@ export default function AccountingWithholdingPayrollHubPage() {
                   <Printer className="h-4 w-4 shrink-0" />
                   พิมพ์รายการ
                 </Button>
-                {!loadingBatches && !loadingRuns && !loadingWorkerLines && !loadingOfficeLines ? (
-                  <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-2 min-w-[11rem]">
-                    <p className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">
-                      รวมลูกจ้าง + ออฟฟิศ
+                {canPayWhtTax && payableRowCount > 0 ? (
+                  <Button
+                    type="button"
+                    className="h-10 shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white gap-2 px-4 whitespace-nowrap"
+                    onClick={openPayTaxDialog}
+                  >
+                    <Banknote className="h-4 w-4 shrink-0" />
+                    จ่ายภาษี ({selectedPayRowCount})
+                  </Button>
+                ) : null}
+                {!loadingBatches && !loadingRuns && !loadingExecutiveRuns && !loadingWorkerLines && !loadingOfficeLines && !loadingExecutiveLines ? (
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">
+                      รวมลูกจ้าง + ออฟฟิศ + ผู้บริหาร
                     </p>
-                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(grandTotalPit)}</p>
+                    <div className="flex h-10 min-w-[11rem] items-center justify-end rounded-md border border-primary/30 bg-primary/5 px-4">
+                      <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(grandTotalPit)}</p>
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -1162,9 +1331,9 @@ export default function AccountingWithholdingPayrollHubPage() {
         <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>พิมพ์รายการหัก ณ ที่จ่าย (พนักงาน)</DialogTitle>
+              <DialogTitle>พิมพ์รายการหัก ณ ที่จ่าย (บุคลากร)</DialogTitle>
               <DialogDescription>
-                รวมลูกจ้างและพนักงานออฟฟิศ — สูงสุด 500 รายการต่อครั้ง
+                รวมลูกจ้าง พนักงานออฟฟิศ และผู้บริหาร — สูงสุด 500 รายการต่อครั้ง
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 text-sm">
@@ -1182,7 +1351,7 @@ export default function AccountingWithholdingPayrollHubPage() {
                 <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredRowCount} รายการ</p>
               </div>
               <p className="text-xs text-muted-foreground">
-                ข้อมูลทั้งหมดในระบบ: {allRowCount} รายการ · รวม {fmtBaht(allWorkerTotalPit + allOfficeTotalTax)}
+                ข้อมูลทั้งหมดในระบบ: {allRowCount} รายการ · รวม {fmtBaht(allWorkerTotalPit + allOfficeTotalTax + allExecutiveTotalTax)}
               </p>
             </div>
             <DialogFooter className="flex-col sm:flex-row gap-2">
@@ -1228,20 +1397,10 @@ export default function AccountingWithholdingPayrollHubPage() {
                 </CardDescription>
               </div>
               {!loadingBatches && !loadingWorkerLines && !workerLinesErr ? (
-                <div className="flex flex-wrap items-stretch gap-2 shrink-0">
-                  {canPayWhtTax && payableWorkerRows.length > 0 ? (
-                    <Button
-                      type="button"
-                      className="h-auto bg-emerald-600 hover:bg-emerald-700 text-white gap-2 px-4"
-                      onClick={() => openPayTaxDialog('worker')}
-                    >
-                      <Banknote className="h-4 w-4 shrink-0" />
-                      จ่ายภาษี ({selectedWorkerPayRows.length})
-                    </Button>
-                  ) : null}
-                  <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-3 text-right shadow-sm sm:min-w-[180px]">
-                    <p className="text-xs font-medium text-muted-foreground">ยอดหักรวม (ในตาราง)</p>
-                    <p className="text-xl font-bold tabular-nums tracking-tight text-primary">{fmtBaht(workerTotalPit)}</p>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">ยอดหักรวม (ในตาราง)</p>
+                  <div className="flex h-10 items-center justify-end rounded-md border border-primary/25 bg-primary/5 px-4 shadow-sm sm:min-w-[180px]">
+                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(workerTotalPit)}</p>
                   </div>
                 </div>
               ) : null}
@@ -1250,8 +1409,8 @@ export default function AccountingWithholdingPayrollHubPage() {
           <CardContent>
             <ProofAttachmentZone
               attachments={workerDisplayedProofAttachments}
-              onRemove={canPayWhtTax ? (id) => handleRemoveSectionProof('worker', id) : undefined}
-              removableIds={canPayWhtTax ? workerRemovableProofIds : undefined}
+              onRemove={canPayWhtTax ? handleRemoveSessionProof : undefined}
+              removableIds={canPayWhtTax ? removableProofIds : undefined}
             />
             {workerLinesErr ? (
               <p className="text-sm text-destructive">{workerLinesErr}</p>
@@ -1353,7 +1512,7 @@ export default function AccountingWithholdingPayrollHubPage() {
                               {resolveWorkerNationalId(line, nationalIdByWorkerId)}
                             </div>
                           </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">{formatYmdLocalThaiBE(paymentYmd)}</TableCell>
                           <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>
                             {fmtBaht(paid)}
                           </TableCell>
@@ -1400,20 +1559,10 @@ export default function AccountingWithholdingPayrollHubPage() {
                 </CardDescription>
               </div>
               {!loadingRuns && !loadingOfficeLines && !officeLinesErr ? (
-                <div className="flex flex-wrap items-stretch gap-2 shrink-0">
-                  {canPayWhtTax && payableOfficeRows.length > 0 ? (
-                    <Button
-                      type="button"
-                      className="h-auto bg-emerald-600 hover:bg-emerald-700 text-white gap-2 px-4"
-                      onClick={() => openPayTaxDialog('office')}
-                    >
-                      <Banknote className="h-4 w-4 shrink-0" />
-                      จ่ายภาษี ({selectedOfficePayRows.length})
-                    </Button>
-                  ) : null}
-                  <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-3 text-right shadow-sm sm:min-w-[180px]">
-                    <p className="text-xs font-medium text-muted-foreground">ยอดหักรวม (ในตาราง)</p>
-                    <p className="text-xl font-bold tabular-nums tracking-tight text-primary">{fmtBaht(officeTotalTax)}</p>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">ยอดหักรวม (ในตาราง)</p>
+                  <div className="flex h-10 items-center justify-end rounded-md border border-primary/25 bg-primary/5 px-4 shadow-sm sm:min-w-[180px]">
+                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(officeTotalTax)}</p>
                   </div>
                 </div>
               ) : null}
@@ -1422,8 +1571,8 @@ export default function AccountingWithholdingPayrollHubPage() {
           <CardContent>
             <ProofAttachmentZone
               attachments={officeDisplayedProofAttachments}
-              onRemove={canPayWhtTax ? (id) => handleRemoveSectionProof('office', id) : undefined}
-              removableIds={canPayWhtTax ? officeRemovableProofIds : undefined}
+              onRemove={canPayWhtTax ? handleRemoveSessionProof : undefined}
+              removableIds={canPayWhtTax ? removableProofIds : undefined}
             />
             {officeLinesErr ? (
               <p className="text-sm text-destructive">{officeLinesErr}</p>
@@ -1526,7 +1675,7 @@ export default function AccountingWithholdingPayrollHubPage() {
                               {resolveStaffNationalId(line.staffId, nationalIdByOfficeStaffId)}
                             </div>
                           </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">{formatYmdLocalThaiBE(paymentYmd)}</TableCell>
                           <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>
                             {fmtBaht(paid)}
                           </TableCell>
@@ -1560,32 +1709,195 @@ export default function AccountingWithholdingPayrollHubPage() {
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 space-y-1.5">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Briefcase className="h-5 w-5 shrink-0 text-muted-foreground" />
+                  ผู้บริหาร / Executive payroll
+                </CardTitle>
+                <CardDescription>
+                  แสดงเฉพาะบรรทัดที่มียอดภาษีหักในงวดผู้บริหาร (ภ.ง.ด.1 / ภ.ง.ด.2) — เปิดเพื่อพิมพ์ใบหักเหมือนลูกจ้าง
+                </CardDescription>
+              </div>
+              {!loadingExecutiveRuns && !loadingExecutiveLines && !executiveLinesErr ? (
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">ยอดหักรวม (ในตาราง)</p>
+                  <div className="flex h-10 items-center justify-end rounded-md border border-primary/25 bg-primary/5 px-4 shadow-sm sm:min-w-[180px]">
+                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(executiveTotalTax)}</p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <ProofAttachmentZone
+              attachments={executiveDisplayedProofAttachments}
+              onRemove={canPayWhtTax ? handleRemoveSessionProof : undefined}
+              removableIds={canPayWhtTax ? removableProofIds : undefined}
+            />
+            {executiveLinesErr ? (
+              <p className="text-sm text-destructive">{executiveLinesErr}</p>
+            ) : loadingExecutiveRuns || loadingExecutiveLines ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : filteredExecutive.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-8 text-center">
+                {executiveRows.length === 0
+                  ? 'ยังไม่มีบรรทัดที่มียอดหักภาษีในงวดผู้บริหารล่าสุด'
+                  : 'ไม่พบรายการที่ตรงกับคำค้นหรือเดือนที่เลือก'}
+              </p>
+            ) : (
+              <div className="rounded-md border">
+                <Table className="table-fixed w-full">
+                  {WHT_PAYROLL_TABLE_COLGROUP(canPayWhtTax)}
+                  <TableHeader>
+                    <TableRow>
+                      {canPayWhtTax ? (
+                        <TableHead className="w-11 pl-3">
+                          <Checkbox
+                            checked={
+                              payableExecutiveRows.length > 0 &&
+                              payableExecutiveRows.every((r) =>
+                                selectedExecutiveKeys.has(officeRowKey(r.run.id, r.line.id)),
+                              )
+                            }
+                            onCheckedChange={(v) => {
+                              if (v === true) {
+                                setSelectedExecutiveKeys(
+                                  new Set(payableExecutiveRows.map((r) => officeRowKey(r.run.id, r.line.id))),
+                                );
+                              } else {
+                                setSelectedExecutiveKeys(new Set());
+                              }
+                            }}
+                            aria-label="เลือกทั้งหมดที่พร้อมจ่ายภาษี"
+                          />
+                        </TableHead>
+                      ) : null}
+                      <TableHead>งวด</TableHead>
+                      <TableHead>ผู้มีเงินได้</TableHead>
+                      <TableHead className="whitespace-nowrap">วันที่จ่าย</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-right')}>ยอดจ่าย</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-center')}>สถานะจ่ายค่าจ้าง</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-right')}>ยอดหัก</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-center')}>สถานะจ่ายภาษี</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-center')}> </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredExecutive.map(({ run, line, tax, paid, paymentYmd }) => {
+                      const wagePaid = isOfficePayrollWagePaid(run, line);
+                      const taxPaid = isOfficePayrollWhtTaxPaid(line);
+                      const wageLabel = officeWageStatusLabel(run.status);
+                      const rowKey = officeRowKey(run.id, line.id);
+                      const payable = isOfficeRowPayable({ run, line, tax, paid, paymentYmd });
+                      return (
+                        <TableRow key={rowKey}>
+                          {canPayWhtTax ? (
+                            <TableCell className="w-11 pl-3 align-middle">
+                              {taxPaid ? (
+                                <span className="text-muted-foreground text-xs" title="จ่ายภาษีแล้ว">
+                                  ✓
+                                </span>
+                              ) : payable ? (
+                                <Checkbox
+                                  checked={selectedExecutiveKeys.has(rowKey)}
+                                  onCheckedChange={(v) => {
+                                    const on = v === true;
+                                    setSelectedExecutiveKeys((prev) => {
+                                      const next = new Set(prev);
+                                      if (on) next.add(rowKey);
+                                      else next.delete(rowKey);
+                                      return next;
+                                    });
+                                  }}
+                                  aria-label={`เลือก ${line.staffName || line.staffId}`}
+                                />
+                              ) : (
+                                <span className="text-muted-foreground text-xs">—</span>
+                              )}
+                            </TableCell>
+                          ) : null}
+                          <TableCell className="text-xs">
+                            <div className="font-mono truncate" title={run.payrollRunNo || run.id}>
+                              {run.payrollRunNo || run.id}
+                            </div>
+                            <div className="truncate text-muted-foreground">{run.payrollMonth || '—'}</div>
+                          </TableCell>
+                          <TableCell className="max-w-0">
+                            <div className="truncate font-medium" title={line.staffName || '—'}>
+                              {line.staffName || '—'}
+                            </div>
+                            <div
+                              className="truncate text-xs text-muted-foreground font-mono"
+                              title={resolveStaffNationalId(line.staffId, nationalIdByExecutiveStaffId)}
+                            >
+                              {resolveStaffNationalId(line.staffId, nationalIdByExecutiveStaffId)}
+                            </div>
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">{formatYmdLocalThaiBE(paymentYmd)}</TableCell>
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>
+                            {fmtBaht(paid)}
+                          </TableCell>
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
+                            {renderWageStatusBadge(wageLabel, wagePaid)}
+                          </TableCell>
+                          <TableCell
+                            className={cn(WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm font-semibold text-primary')}
+                          >
+                            {fmtBaht(tax)}
+                          </TableCell>
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
+                            {renderTaxStatusBadge(wagePaid, taxPaid)}
+                          </TableCell>
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
+                            <Link
+                              href={`/accounting/withholding-payroll/executive/${encodeURIComponent(run.id)}/${encodeURIComponent(line.id)}`}
+                              className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
+                            >
+                              เปิด
+                              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                            </Link>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <Dialog
-          open={!!payTaxSection}
+          open={payTaxOpen}
           onOpenChange={(open) => {
             if (!open && !payTaxBusy) {
-              setPayTaxSection(null);
+              setPayTaxOpen(false);
               setPayTaxStatusOnly(false);
             }
           }}
         >
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>
-                จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1)
-                {payTaxSection === 'worker' ? ' — ลูกจ้าง' : payTaxSection === 'office' ? ' — พนักงานออฟฟิศ' : ''}
-              </DialogTitle>
+              <DialogTitle>จ่ายภาษีหัก ณ ที่จ่าย (บุคลากร) — รวมทั้ง 3 ส่วน</DialogTitle>
               <DialogDescription>
                 {payTaxStatusOnly
                   ? 'บันทึกสถานะ «จ่ายแล้ว» เท่านั้น — ไม่ตัดบัญชีธนาคารและไม่ลง cashbook'
                   : 'เลือกบัญชีธนาคารสำหรับตัดจ่ายภาษี — ระบบจะบันทึกรายการ cashbook แยกตามรายการที่เลือก'}
               </DialogDescription>
             </DialogHeader>
-            {payTaxSection ? (
+            {payTaxOpen ? (
               <div className="space-y-4 text-sm">
                 <div className="rounded-md border bg-muted/30 p-3 space-y-1">
                   <p className="font-medium">
-                    รายการที่เลือก {payTaxDialogRows.length} รายการ
+                    รายการที่เลือก {payTaxDialogRowCount} รายการ
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    ลูกจ้าง {selectedWorkerPayRows.length} · ออฟฟิศ {selectedOfficePayRows.length} · ผู้บริหาร {selectedExecutivePayRows.length}
                   </p>
                   <p className="text-muted-foreground">
                     ยอดภาษีหัก ณ ที่จ่ายรวม{' '}
@@ -1703,7 +2015,7 @@ export default function AccountingWithholdingPayrollHubPage() {
                 variant="outline"
                 disabled={payTaxBusy}
                 onClick={() => {
-                  setPayTaxSection(null);
+                  setPayTaxOpen(false);
                   setPayTaxStatusOnly(false);
                 }}
               >
@@ -1715,15 +2027,15 @@ export default function AccountingWithholdingPayrollHubPage() {
                 disabled={
                   payTaxBusy ||
                   attachProofBusy ||
-                  payTaxDialogRows.length === 0 ||
+                  payTaxDialogRowCount === 0 ||
                   (!payTaxStatusOnly && (!payTaxBankId || payTaxAttachments.length === 0))
                 }
                 onClick={() => void handleConfirmPayWhtTax()}
               >
                 {payTaxBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                 {payTaxStatusOnly
-                  ? `บันทึกสถานะจ่ายแล้ว (${payTaxDialogRows.length})`
-                  : `ยืนยันจ่ายภาษี (${payTaxDialogRows.length})`}
+                  ? `บันทึกสถานะจ่ายแล้ว (${payTaxDialogRowCount})`
+                  : `ยืนยันจ่ายภาษี (${payTaxDialogRowCount})`}
               </Button>
             </DialogFooter>
           </DialogContent>

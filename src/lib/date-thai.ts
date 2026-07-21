@@ -201,6 +201,17 @@ export function formatPayrollYearMonthThaiBE(ym: string | null | undefined, empt
   return `${monthTh} ${y + 543}`;
 }
 
+/** งวดเงินเดือน YYYY-MM → เดือน/ปี พ.ศ. ตัวเลข เช่น 07/2569 (ไม่มีวัน) */
+export function formatPayrollYearMonthMmYyyyThaiBE(ym: string | null | undefined, empty: string = '—'): string {
+  const s = (ym || '').trim();
+  const m = PAYROLL_YM.exec(s);
+  if (!m) return empty;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  if (!Number.isFinite(y) || mo < 1 || mo > 12) return empty;
+  return `${pad2(mo)}/${y + 543}`;
+}
+
 /** ช่วงงวด office payroll บนสลิป/เอกสาร — dd/mm/yyyy พ.ศ. และชื่อเดือนงวด */
 export function formatOfficePayrollRunPeriodLabelThaiBE(
   run: { payrollPeriodStart?: string; payrollPeriodEnd?: string; payrollMonth?: string },

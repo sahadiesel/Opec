@@ -136,6 +136,7 @@ export function buildWithholdingPayrollListPrintHtml(params: {
   grandTotalLabel: string;
   workerTotalLabel: string;
   officeTotalLabel: string;
+  executiveTotalLabel?: string;
   generatedAt: string;
   printedBy?: string;
   truncated?: boolean;
@@ -147,6 +148,7 @@ export function buildWithholdingPayrollListPrintHtml(params: {
     grandTotalLabel,
     workerTotalLabel,
     officeTotalLabel,
+    executiveTotalLabel,
     generatedAt,
     printedBy,
     truncated,
@@ -180,7 +182,7 @@ export function buildWithholdingPayrollListPrintHtml(params: {
 <style>${WPL_PRINT_STYLES}</style>
 <div class="sd-list-report wpl-wrap">
   ${buildWplHeader({
-    title: 'รายการหัก ณ ที่จ่าย (พนักงาน) — ภงด.1',
+    title: 'รายการหัก ณ ที่จ่าย (บุคลากร) — ภ.ง.ด.1 / ภ.ง.ด.2',
     scopeTitle,
     rowCount: rows.length,
     generatedAt,
@@ -189,10 +191,11 @@ export function buildWithholdingPayrollListPrintHtml(params: {
     scopeRightNote,
     filterBlock,
   })}
-  <div class="wpl-totals">
+  <div class="wpl-totals"${executiveTotalLabel != null ? ' style="grid-template-columns:repeat(4,minmax(0,1fr))"' : ''}>
     <div class="wpl-total-box">รวมทั้งหมด<strong>${escapeHtmlDoc(grandTotalLabel)}</strong></div>
     <div class="wpl-total-box">ลูกจ้าง<strong>${escapeHtmlDoc(workerTotalLabel)}</strong></div>
     <div class="wpl-total-box">ออฟฟิศ<strong>${escapeHtmlDoc(officeTotalLabel)}</strong></div>
+    ${executiveTotalLabel != null ? `<div class="wpl-total-box">ผู้บริหาร<strong>${escapeHtmlDoc(executiveTotalLabel)}</strong></div>` : ''}
   </div>
   <table class="wpl-table">
     <colgroup>
@@ -220,7 +223,7 @@ export function buildWithholdingPayrollListPrintHtml(params: {
     <tbody>${tableRows}</tbody>
   </table>
   ${truncateNote}
-  <p class="wpl-foot">OPEC OpsFlow — หัก ณ ที่จ่ายพนักงาน (ลูกจ้าง + ออฟฟิศ)</p>
+  <p class="wpl-foot">OPEC OpsFlow — หัก ณ ที่จ่ายบุคลากร (ลูกจ้าง + ออฟฟิศ + ผู้บริหาร)</p>
 </div>`;
 }
 
@@ -281,7 +284,7 @@ export function buildWithholdingExecutivePayrollListPrintHtml(params: {
 <style>${WPL_PRINT_STYLES}</style>
 <div class="sd-list-report wpl-wrap">
   ${buildWplHeader({
-    title: 'รายการหัก ณ ที่จ่าย (ผู้บริหาร) — ภงด.1',
+    title: 'รายการหัก ณ ที่จ่าย (ผู้บริหาร) — ภ.ง.ด.1 / ภ.ง.ด.2',
     scopeTitle,
     rowCount: rows.length,
     generatedAt,

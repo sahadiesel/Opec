@@ -24,9 +24,9 @@ import { Loader2 } from 'lucide-react';
 import {
   PayrollSsoListTable,
   PayrollSsoPayButton,
+  fmtSsoBaht,
   type PayrollSsoTableRow,
 } from '@/components/accounting/payroll-sso-list-table';
-import { fmtBaht } from '@/components/accounting/withholding-wht-pay-tax-ui';
 import {
   countSelectedPayable,
   payAmountForRow,
@@ -303,15 +303,17 @@ export function PayrollSsoSectionCard({
               <CardDescription>{description}</CardDescription>
             </div>
             {!loading && !error ? (
-              <div className="flex flex-wrap items-stretch gap-2 shrink-0">
+              <div className="flex flex-wrap items-end gap-2 shrink-0">
                 <PayrollSsoPayButton
                   canPay={canPay}
                   selectedCount={selectedPayCount}
                   onPay={openPayDialog}
                 />
-                <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-3 text-right shadow-sm sm:min-w-[180px]">
-                  <p className="text-xs font-medium text-muted-foreground">ยอด ปกส.+สมทบ รวม (ในตาราง)</p>
-                  <p className="text-xl font-bold tabular-nums tracking-tight text-primary">{totalSsoLabel}</p>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">ยอด ปกส.+สมทบ รวม (ในตาราง)</p>
+                  <div className="flex h-10 items-center justify-end rounded-md border border-primary/25 bg-primary/5 px-4 shadow-sm sm:min-w-[180px]">
+                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{totalSsoLabel}</p>
+                  </div>
                 </div>
               </div>
             ) : null}
@@ -350,7 +352,7 @@ export function PayrollSsoSectionCard({
               <p className="font-medium">รายการที่เลือก {payTargets.length} รายการ</p>
               <p className="text-muted-foreground">
                 ยอดรวม{' '}
-                <span className="font-semibold text-primary tabular-nums">{fmtBaht(payDialogTotal)}</span>
+                <span className="font-semibold text-primary tabular-nums">{fmtSsoBaht(payDialogTotal)}</span>
               </p>
             </div>
             <div className="space-y-2">

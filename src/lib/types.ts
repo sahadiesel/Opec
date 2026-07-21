@@ -654,6 +654,12 @@ export interface ExecutivePayrollStaff {
   salaryType?: OfficeStaff['salaryType'];
   /** ไม่นำเข้างวดคำนวณอัตโนมัติ */
   excludeFromPayrollRuns?: boolean;
+  /** ประเภทรายได้เมื่อไม่นำเข้าคำนวณเงินเดือนอัตโนมัติ */
+  nonPayrollIncomeType?: ExecutiveNonPayrollIncomeType;
+  /** รายละเอียดเมื่อเลือก OTHER */
+  nonPayrollIncomeOtherLabel?: string;
+  /** อัตราหัก ณ ที่จ่ายแบบคงที่ */
+  nonPayrollWhtPercent?: ExecutiveNonPayrollWhtPercent;
   status: 'ACTIVE' | 'INACTIVE';
   notes?: string;
   /** อ้างอิงทะเบียน office_staff เดิม (ถ้ามี) — ไม่บังคับ */
@@ -674,6 +680,9 @@ export interface ExecutivePayrollStaff {
   createdBy?: string;
   updatedBy?: string;
 }
+
+export type ExecutiveNonPayrollIncomeType = 'MEETING_ALLOWANCE' | 'DIVIDEND' | 'OTHER';
+export type ExecutiveNonPayrollWhtPercent = 5 | 10 | 15 | 20 | 25 | 30 | 35;
 
 /** Aliases for forms / imports (mirror OfficeStaff fields). */
 export type StaffStatus = OfficeStaff['status'];
@@ -2249,6 +2258,10 @@ export interface CashAdvanceRequest {
   managerApprovedByUid?: string;
   managerApprovedByName?: string;
   managerRejectReason?: string;
+  /** Snapshot บัญชีผู้รับ ณ ตอนผู้จัดการอนุมัติ — หน้ารอจ่าย fallback ไปทะเบียนปัจจุบันเมื่อข้อมูลเก่าไม่มี */
+  recipientBankNameSnapshot?: string;
+  recipientBankAccountNameSnapshot?: string;
+  recipientBankAccountNumberSnapshot?: string;
   paidAt?: number;
   paidByUid?: string;
   paidByName?: string;
@@ -2304,6 +2317,8 @@ export interface OfficePayrollLineHrAdjustments {
   pitManualAmountBaht?: number | null;
   /** ชื่อประเภทรายได้สำหรับใบหัก ณ ที่จ่าย เมื่อเลือกหักแบบกำหนดเอง */
   pitManualIncomeLabel?: string | null;
+  /** ประเภทรายได้ผู้บริหารนอกเงินเดือน — ใช้กำหนด ภ.ง.ด.1/ภ.ง.ด.2 และข้อความในหนังสือรับรอง */
+  pitManualIncomeType?: ExecutiveNonPayrollIncomeType | null;
 }
 
 export interface OfficePayrollRun {

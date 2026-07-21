@@ -555,7 +555,7 @@ export default function ExecutivePayrollRunStaffLinePage({
                           <span className="text-sm text-muted-foreground">%</span>
                         </div>
                         <div className="flex flex-wrap gap-1">
-                          {['5', '10', '15'].map((p) => (
+                          {['5', '10', '15', '20', '25', '30', '35'].map((p) => (
                             <Button
                               key={p}
                               type="button"

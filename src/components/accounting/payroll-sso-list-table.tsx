@@ -8,6 +8,7 @@ import { ExternalLink } from 'lucide-react';
 import Link from 'next/link';
 import { fmtBaht, renderWageStatusBadge } from '@/components/accounting/withholding-wht-pay-tax-ui';
 import { cn } from '@/lib/utils';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import {
   employerContribStatusLabel,
   ssoCombinedRemitAmount,
@@ -33,6 +34,12 @@ export type PayrollSsoTableRow = {
 };
 
 export type PayrollSsoPayKind = 'sso_remit' | 'employer_contrib';
+
+/** จำนวนประกันสังคมแสดงเป็นเงินบาทเต็มเสมอ ไม่มี .00 */
+export function fmtSsoBaht(amount: number): string {
+  const wholeBaht = Math.ceil(Math.max(0, Number(amount) || 0));
+  return `฿${wholeBaht.toLocaleString('th-TH', { maximumFractionDigits: 0 })}`;
+}
 
 export function renderEmployerContribStatusBadge(wagePaid: boolean, contribPaid: boolean, ssoRemitPaid: boolean) {
   const bothPaid = contribPaid && ssoRemitPaid;
@@ -187,7 +194,7 @@ export function PayrollSsoListTable({
                     {r.earnerId}
                   </div>
                 </TableCell>
-                <TableCell className="whitespace-nowrap text-sm">{r.paymentYmd}</TableCell>
+                <TableCell className="whitespace-nowrap text-sm">{formatYmdLocalThaiBE(r.paymentYmd)}</TableCell>
                 <TableCell className={cn(SSO_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>
                   {fmtBaht(r.paid)}
                 </TableCell>
@@ -197,12 +204,12 @@ export function PayrollSsoListTable({
                 <TableCell
                   className={cn(SSO_EQUAL_COL_CELL, 'text-right tabular-nums text-sm font-medium text-red-700')}
                 >
-                  {fmtBaht(r.sso)}
+                  {fmtSsoBaht(r.sso)}
                 </TableCell>
                 <TableCell
                   className={cn(SSO_EQUAL_COL_CELL, 'text-right tabular-nums text-sm font-semibold text-amber-900')}
                 >
-                  {fmtBaht(ssoCombinedRemitAmount(r.sso))}
+                  {fmtSsoBaht(ssoCombinedRemitAmount(r.sso))}
                 </TableCell>
                 <TableCell className={cn(SSO_EQUAL_COL_CELL, 'text-center')}>
                   {renderEmployerContribStatusBadge(r.wagePaid, r.employerContribPaid, r.ssoRemitPaid)}
@@ -239,7 +246,7 @@ export function PayrollSsoPayButton({
     <Button
       type="button"
       variant="secondary"
-      className="h-auto shrink-0 gap-2 px-4 py-3"
+      className="h-10 shrink-0 gap-2 px-4 whitespace-nowrap"
       disabled={selectedCount === 0}
       onClick={onPay}
     >

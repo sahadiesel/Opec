@@ -6,7 +6,7 @@ import type {
   PayrollBatchStatus,
   PayrollRunStatus,
 } from '@/lib/types';
-import { roundSocialSecurityBahtHalfUp } from '@/lib/payroll/d8/deductions-from-policy';
+import { roundSocialSecurityBahtUp } from '@/lib/payroll/d8/deductions-from-policy';
 import {
   isOfficePayrollWagePaid,
   isWorkerPayrollWagePaid,
@@ -33,13 +33,13 @@ export function isOfficeEmployerContribPaid(line: OfficePayrollLine): boolean {
 
 /** เงินสมทบฝั่งนายจ้าง — ปกติเท่ากับยอดหักประกันสังคมฝั่งลูกจ้าง */
 export function employerSsoContribAmount(employeeSsoAmount: number): number {
-  return roundSocialSecurityBahtHalfUp(Number(employeeSsoAmount) || 0);
+  return roundSocialSecurityBahtUp(Number(employeeSsoAmount) || 0);
 }
 
 /** ยอดนำส่งรวม ปกส.+สมทบ (ลูกจ้าง + นายจ้าง) — แสดงในตารางและสรุปยอด */
 export function ssoCombinedRemitAmount(employeeSsoAmount: number): number {
-  const employee = roundSocialSecurityBahtHalfUp(Number(employeeSsoAmount) || 0);
-  return roundSocialSecurityBahtHalfUp(employee * 2);
+  const employee = roundSocialSecurityBahtUp(Number(employeeSsoAmount) || 0);
+  return roundSocialSecurityBahtUp(employee * 2);
 }
 
 export function isWorkerSsoCombinedFullyPaid(line: PayrollBatchLine): boolean {
@@ -53,18 +53,18 @@ export function isOfficeSsoCombinedFullyPaid(line: OfficePayrollLine): boolean {
 /** ยอดที่ยังต้องตัดจ่าย (รองรับข้อมูลเก่าที่จ่ายแยก 2 รายการไปแล้วบางส่วน) */
 export function remainingWorkerSsoPaymentAmount(employeeSsoAmount: number, line: PayrollBatchLine): number {
   let sum = 0;
-  const employee = roundSocialSecurityBahtHalfUp(Number(employeeSsoAmount) || 0);
+  const employee = roundSocialSecurityBahtUp(Number(employeeSsoAmount) || 0);
   if (!isWorkerSsoRemitPaid(line)) sum += employee;
   if (!isWorkerEmployerContribPaid(line)) sum += employerSsoContribAmount(employee);
-  return roundSocialSecurityBahtHalfUp(sum);
+  return roundSocialSecurityBahtUp(sum);
 }
 
 export function remainingOfficeSsoPaymentAmount(employeeSsoAmount: number, line: OfficePayrollLine): number {
   let sum = 0;
-  const employee = roundSocialSecurityBahtHalfUp(Number(employeeSsoAmount) || 0);
+  const employee = roundSocialSecurityBahtUp(Number(employeeSsoAmount) || 0);
   if (!isOfficeSsoRemitPaid(line)) sum += employee;
   if (!isOfficeEmployerContribPaid(line)) sum += employerSsoContribAmount(employee);
-  return roundSocialSecurityBahtHalfUp(sum);
+  return roundSocialSecurityBahtUp(sum);
 }
 
 export function ssoRemitStatusLabel(wagePaid: boolean, remitPaid: boolean): string {

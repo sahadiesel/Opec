@@ -303,7 +303,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
           variant: 'destructive',
           title: 'ไม่มีรายชื่อสำหรับคำนวณ',
           description:
-            'เพิ่มผู้บริหารที่เมนู «รายชื่อผู้บริหาร» และตั้งสถานะ ACTIVE (ไม่เลือกข้ามงวด)',
+            'เพิ่มผู้บริหารสถานะ ACTIVE หรือกรอกข้อมูลรายได้นอกเงินเดือนให้ครบสำหรับผู้ที่ไม่นำเข้าคำนวณอัตโนมัติ',
         });
         return;
       }

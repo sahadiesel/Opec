@@ -45,7 +45,6 @@ import {
   Wallet,
   QrCode,
   ExternalLink,
-  Briefcase,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -154,32 +153,20 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
     ],
   },
   {
-    title: 'หัก ณ ที่จ่าย / ปกส.',
+    title: 'เอกสาร หัก ณ ที่จ่าย',
     icon: Percent,
     items: [
       {
         key: 'withholding_tax_items',
-        title: '1. เอกสาร หัก ณ ที่จ่าย (พนักงาน)',
+        title: '1. เอกสาร หัก ณ ที่จ่าย (บุคลากร)',
         href: '/accounting/withholding-payroll',
         icon: FileText,
       },
       {
-        key: 'executive_payroll',
-        title: '2. เอกสาร หัก ณ ที่จ่าย (ผู้บริหาร)',
-        href: '/accounting/withholding-payroll/executive',
-        icon: Briefcase,
-      },
-      {
         key: 'withholding_tax_items',
-        title: '3. เอกสาร หัก ณ ที่จ่าย (คู่ค้า)',
+        title: '2. เอกสาร หัก ณ ที่จ่าย (คู่ค้า)',
         href: '/accounting/withholding-vendor',
         icon: Building2,
-      },
-      {
-        key: 'withholding_tax_items',
-        title: '4. จ่ายประกันสังคม',
-        href: '/accounting/social-security-payroll',
-        icon: ShieldCheck,
       },
     ],
   },
@@ -193,7 +180,7 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
   },
 ];
 
-/** รายการเมนูใต้ «เงินเดือน (บัญชี)» — รองรับโฟลเดอร์ย่อย (เช่น เงินเดือนผู้บริหาร) */
+/** รายการเมนูใต้ «รายการรอทำจ่าย (บัญชี)» — รองรับโฟลเดอร์ย่อย (เช่น เงินเดือนผู้บริหาร) */
 type AccountingPayrollNavFolder = {
   kind: 'folder';
   folderKey: string;
@@ -213,16 +200,28 @@ const ACCOUNTING_PAYROLL_SUBSECTIONS: Array<{
   entries: AccountingPayrollNavEntry[];
 }> = [
   {
-    title: 'เงินเดือน (บัญชี)',
+    title: 'รายการรอทำจ่าย (บัญชี)',
     icon: Coins,
     entries: [
       { key: 'office_payroll', title: 'พนักงานออฟฟิศ (ตัดจ่าย)', href: '/accounting/office-payroll', icon: Users },
       { key: 'worker_payroll', title: 'ลูกจ้าง · ทำจ่าย (บัญชี)', href: '/accounting/worker-payroll', icon: Banknote },
       {
         key: 'cash_advances',
-        title: 'รออนุมัติจ่ายเบิกเงิน',
+        title: 'รอจ่ายเงินเบิกล่วงหน้า',
         href: '/accounting/cash-advances-payout',
         icon: Wallet,
+      },
+      {
+        key: 'ap_bills',
+        title: 'รายการรอจ่ายเจ้าหนี้',
+        href: '/accounting/vendor-bills-payout',
+        icon: Inbox,
+      },
+      {
+        key: 'withholding_tax_items',
+        title: 'จ่ายประกันสังคม',
+        href: '/accounting/social-security-payroll',
+        icon: ShieldCheck,
       },
       {
         kind: 'folder',
@@ -516,7 +515,34 @@ export function SidebarNav({
   const admin = isSystemAdmin(user);
   const fullMenuAccess = admin || isExecutiveViewer(user);
   const profile = profiles?.[0] ?? null;
-  const { payrollAlert, apAlert } = useAccountingSidebarAlerts(user);
+  const {
+    payrollAlert,
+    apAlert,
+    officePayrollAlert,
+    workerPayrollAlert,
+    cashAdvanceAlert,
+    vendorBillAlert,
+  } = useAccountingSidebarAlerts(user);
+
+  /** ไฟเตือนรายเมนูย่อยใต้ «รายการรอทำจ่าย (บัญชี)» — href → มีรายการรอจ่ายหรือไม่ */
+  const payoutQueueAlertByHref: Record<string, { active: boolean; title: string }> = {
+    '/accounting/office-payroll': {
+      active: officePayrollAlert,
+      title: 'มีงวดเงินเดือนพนักงานออฟฟิศรอบัญชีตัดจ่าย',
+    },
+    '/accounting/worker-payroll': {
+      active: workerPayrollAlert,
+      title: 'มีงวดค่าจ้างลูกจ้างรอบัญชีทำจ่าย',
+    },
+    '/accounting/cash-advances-payout': {
+      active: cashAdvanceAlert,
+      title: 'มีรายการเบิกเงินล่วงหน้ารอจ่าย',
+    },
+    '/accounting/vendor-bills-payout': {
+      active: vendorBillAlert,
+      title: 'มีใบรับวางบิลเจ้าหนี้รอจ่าย',
+    },
+  };
 
   return (
     <Sidebar variant="sidebar" collapsible="icon">
@@ -648,7 +674,7 @@ export function SidebarNav({
                                 <sub.icon className="h-4 w-4 text-muted-foreground" />
                                 <span className={cn(SIDEBAR_MAIN_ITEM_TEXT, 'truncate')}>{sub.title}</span>
                                 {payrollAlert ? (
-                                  <AccountingNavAlertDot title="มีงวดเงินเดือน/ค่าจ้างรอบัญชีจ่าย" />
+                                  <AccountingNavAlertDot title="มีรายการรอทำจ่าย (เงินเดือน / เบิกล่วงหน้า / เจ้าหนี้)" />
                                 ) : null}
                                 <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
                               </SidebarMenuButton>
@@ -704,6 +730,7 @@ export function SidebarNav({
                                   }
                                   const item = entry;
                                   const active = pathMatches(pathname, item.href);
+                                  const itemAlert = payoutQueueAlertByHref[item.href.split('#')[0].split('?')[0]];
                                   return (
                                     <SidebarMenuSubItem key={`${item.key}-${item.href}`}>
                                       <SidebarMenuSubButton asChild isActive={active} size="sm">
@@ -712,6 +739,9 @@ export function SidebarNav({
                                             className={`h-3.5 w-3.5 ${active ? 'text-primary' : 'text-muted-foreground'}`}
                                           />
                                           <span>{item.title}</span>
+                                          {itemAlert?.active ? (
+                                            <AccountingNavAlertDot title={itemAlert.title} />
+                                          ) : null}
                                         </Link>
                                       </SidebarMenuSubButton>
                                     </SidebarMenuSubItem>

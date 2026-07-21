@@ -109,7 +109,7 @@ function statusBadge(bill: Pick<PurchaseVendorBill, 'status' | 'vendorBillDocume
   }
 }
 
-export type PurchaseVendorBillsListMode = 'store' | 'accounting';
+export type PurchaseVendorBillsListMode = 'store' | 'accounting' | 'accounting-payout';
 
 export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsListMode }) {
   const router = useRouter();
@@ -147,7 +147,7 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
   const [deleteTarget, setDeleteTarget] = useState<PurchaseVendorBill | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [tab, setTab] = useState<'all' | 'DRAFT' | 'SUBMITTED' | 'PAID'>(() =>
-    mode === 'accounting' ? 'SUBMITTED' : 'DRAFT',
+    mode === 'store' ? 'DRAFT' : 'SUBMITTED',
   );
   const [billSearch, setBillSearch] = useState('');
   const [billMonth, setBillMonth] = useState<string>('all');
@@ -330,6 +330,7 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
   }
 
   const isStoreMode = mode === 'store';
+  const isPayoutMode = mode === 'accounting-payout';
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
@@ -338,12 +339,24 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
           <div>
             <h1 className="text-3xl font-bold text-primary flex items-center gap-2">
               <FileText className="h-8 w-8" />
-              {isStoreMode ? 'รับวางบิล (Vendor billing)' : 'รับวางบิลเจ้าหนี้ (ใบสั่งซื้อ)'}
+              {isStoreMode
+                ? 'รับวางบิล (Vendor billing)'
+                : isPayoutMode
+                  ? 'รายการรอจ่ายเจ้าหนี้'
+                  : 'รับวางบิลเจ้าหนี้ (ใบสั่งซื้อ)'}
             </h1>
             <p className="text-muted-foreground mt-1">
               {isStoreMode ? (
                 <>
                   บันทึกฉบับร่างได้ — เมื่อกดส่งบัญชี (มียืนยัน) ถึงจะไปคิว «รอจ่ายเงิน» / ฝ่ายบัญชี — ร่างคนละคิวกับรอจ่าย
+                </>
+              ) : isPayoutMode ? (
+                <>
+                  ใบรับวางบิลเจ้าหนี้ที่ส่งบัญชีแล้วและรอจ่ายเงิน — รายการเดียวกับหน้า{' '}
+                  <Link href="/ap-bills" className="font-medium text-foreground underline underline-offset-2">
+                    รับวางบิลเจ้าหนี้ (AP Bills)
+                  </Link>{' '}
+                  ทำจ่ายได้จากทั้งสองที่เหมือนกัน
                 </>
               ) : (
                 <>

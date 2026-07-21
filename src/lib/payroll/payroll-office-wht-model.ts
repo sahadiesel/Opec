@@ -248,6 +248,13 @@ export function validatePayrollOfficeWhtPrint(input: {
     ) {
       errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ระบุชื่อรายการหัก ณ ที่จ่ายแบบกำหนดเองก่อนพิมพ์เอกสาร');
     }
+    if (
+      reg === 'executive_payroll_staff' &&
+      pitMode === 'MANUAL_PERCENT' &&
+      ![5, 10, 15, 20, 25, 30, 35].includes(Number(line.hrLineAdjustments?.pitManualPercent))
+    ) {
+      errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: อัตราหักต้องเป็น 5, 10, 15, 20, 25, 30 หรือ 35%');
+    }
   }
 
   if (!paymentDateYmd || !/^\d{4}-\d{2}-\d{2}$/.test(paymentDateYmd)) {

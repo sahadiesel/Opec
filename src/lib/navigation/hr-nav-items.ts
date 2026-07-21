@@ -114,7 +114,7 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
     items: [
       {
         key: 'withholding_tax_items',
-        title: '1. หัก ณ ที่จ่าย (พนักงาน)',
+        title: '1. หัก ณ ที่จ่าย (บุคลากร)',
         href: '/accounting/withholding-payroll',
         icon: FileText,
         payrollLeadOnly: true,

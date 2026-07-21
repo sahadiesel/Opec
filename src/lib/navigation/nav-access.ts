@@ -192,6 +192,7 @@ const MODULE_PREFIXES: Array<[string, ModuleKey]> = [
   ['/accounting/office-payroll', 'office_payroll'],
   ['/accounting/worker-payroll', 'worker_payroll'],
   ['/accounting/cash-advances-payout', 'cash_advances'],
+  ['/accounting/vendor-bills-payout', 'ap_bills'],
   ['/office-payroll', 'office_payroll'],
   ['/payroll', 'worker_payroll'],
   ['/timesheets', 'timesheets'],
@@ -339,6 +340,7 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     ['/accounting/office-payroll', 'office_payroll'],
     ['/accounting/worker-payroll', 'worker_payroll'],
     ['/accounting/cash-advances-payout', 'cash_advances'],
+    ['/accounting/vendor-bills-payout', 'ap_bills'],
   ];
   accountingPathModules.sort((a, b) => b[0].length - a[0].length);
   for (const [pre, key] of accountingPathModules) {

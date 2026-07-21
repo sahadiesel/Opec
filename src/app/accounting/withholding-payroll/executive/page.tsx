@@ -37,6 +37,7 @@ import { useFirestore, useCollection, useMemoFirebase, useFirebaseApp } from '@/
 import { useAppUser } from '@/hooks/use-app-user';
 import { useToast } from '@/hooks/use-toast';
 import { ExternalLink, Loader2, Search, Briefcase, Printer, Banknote, Paperclip } from 'lucide-react';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import type {
   User,
   OfficePayrollRun,
@@ -141,7 +142,7 @@ function buildExecutivePrintRows(
       payrollMonth: run.payrollMonth || '—',
       earnerName: line.staffName || '—',
       earnerId: resolveStaffNationalId(line.staffId, nationalIdByStaffId),
-      paymentDate: paymentYmd,
+      paymentDate: formatYmdLocalThaiBE(paymentYmd),
       paidLabel: fmtBaht(paid),
       amountLabel: fmtBaht(tax),
     };
@@ -368,7 +369,7 @@ export default function AccountingWithholdingPayrollExecutivePage() {
           description:
             scope === 'filtered'
               ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
-              : 'ยังไม่มีรายการหัก ภงด.1 ผู้บริหารในระบบ',
+              : 'ยังไม่มีรายการหัก ภ.ง.ด.1 / ภ.ง.ด.2 ผู้บริหารในระบบ',
         });
         return;
       }
@@ -684,7 +685,7 @@ export default function AccountingWithholdingPayrollExecutivePage() {
             2. เอกสาร หัก ณ ที่จ่าย (ผู้บริหาร)
           </h1>
           <p className="text-muted-foreground mt-1">
-            รายการหนังสือรับรองหัก ณ ที่จ่าย (ภงด.1) จากงวดเงินเดือนผู้บริหารเท่านั้น — งวดลูกจ้าง/ออฟฟิศอยู่เมนู 1 · คู่ค้า ภงด.53 อยู่เมนู 3
+            รายการหนังสือรับรองหัก ณ ที่จ่าย ภ.ง.ด.1 (เงินเดือน/เบี้ยประชุม) และ ภ.ง.ด.2 (เงินปันผล) ของผู้บริหาร
           </p>
         </div>
 
@@ -726,7 +727,7 @@ export default function AccountingWithholdingPayrollExecutivePage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-end gap-2 shrink-0">
                 <Button
                   type="button"
                   variant="outline"
@@ -743,11 +744,11 @@ export default function AccountingWithholdingPayrollExecutivePage() {
                   พิมพ์รายการ
                 </Button>
                 {!loadingExecutiveRuns && !loadingExecutiveLines && !executiveLinesErr ? (
-                  <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-2 min-w-[11rem]">
-                    <p className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">
-                      ยอดหักรวม (ในตาราง)
-                    </p>
-                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(executiveTotalTax)}</p>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">ยอดหักรวม (ในตาราง)</p>
+                    <div className="flex h-10 min-w-[11rem] items-center justify-end rounded-md border border-primary/30 bg-primary/5 px-4">
+                      <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(executiveTotalTax)}</p>
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -822,20 +823,22 @@ export default function AccountingWithholdingPayrollExecutivePage() {
                 </CardDescription>
               </div>
               {!loadingExecutiveRuns && !loadingExecutiveLines && !executiveLinesErr ? (
-                <div className="flex flex-wrap items-stretch gap-2 shrink-0">
+                <div className="flex flex-wrap items-end gap-2 shrink-0">
                   {canPayWhtTax && payableRows.length > 0 ? (
                     <Button
                       type="button"
-                      className="h-auto bg-emerald-600 hover:bg-emerald-700 text-white gap-2 px-4"
+                      className="h-10 bg-emerald-600 hover:bg-emerald-700 text-white gap-2 px-4 whitespace-nowrap"
                       onClick={openPayTaxDialog}
                     >
                       <Banknote className="h-4 w-4 shrink-0" />
                       จ่ายภาษี ({selectedPayRows.length})
                     </Button>
                   ) : null}
-                  <div className="rounded-md border border-primary/25 bg-primary/5 px-4 py-3 text-right shadow-sm sm:min-w-[180px]">
-                    <p className="text-xs font-medium text-muted-foreground">ยอดหักรวม (ในตาราง)</p>
-                    <p className="text-xl font-bold tabular-nums tracking-tight text-primary">{fmtBaht(executiveTotalTax)}</p>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">ยอดหักรวม (ในตาราง)</p>
+                    <div className="flex h-10 items-center justify-end rounded-md border border-primary/25 bg-primary/5 px-4 shadow-sm sm:min-w-[180px]">
+                      <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(executiveTotalTax)}</p>
+                    </div>
                   </div>
                 </div>
               ) : null}
@@ -946,7 +949,7 @@ export default function AccountingWithholdingPayrollExecutivePage() {
                               {resolveStaffNationalId(line.staffId, nationalIdByExecutiveStaffId)}
                             </div>
                           </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{paymentYmd}</TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">{formatYmdLocalThaiBE(paymentYmd)}</TableCell>
                           <TableCell className="text-right tabular-nums text-sm">{fmtBaht(paid)}</TableCell>
                           <TableCell>{renderWageStatusBadge(wageLabel, wagePaid)}</TableCell>
                           <TableCell className="text-right tabular-nums text-sm font-semibold text-primary">
@@ -983,7 +986,7 @@ export default function AccountingWithholdingPayrollExecutivePage() {
         >
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) — ผู้บริหาร</DialogTitle>
+              <DialogTitle>จ่ายภาษีหัก ณ ที่จ่าย (ภ.ง.ด.1 / ภ.ง.ด.2) — ผู้บริหาร</DialogTitle>
               <DialogDescription>
                 {payTaxStatusOnly
                   ? 'บันทึกสถานะ «จ่ายแล้ว» เท่านั้น — ไม่ตัดบัญชีธนาคารและไม่ลง cashbook'

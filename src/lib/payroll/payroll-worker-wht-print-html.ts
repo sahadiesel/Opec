@@ -133,7 +133,7 @@ ${payee.bankName || payee.bankAccountLast4 ? `<div class="field">ธนาคา
 <div class="field">งวด Payroll: ${escapeHtml(vm.payrollPeriodLabel)}</div>
 <div class="field">เลขอ้างอิง batch: ${escapeHtml(vm.batchReference)}</div>
 <div class="field">ประเภทเงินได้: ☑ ${escapeHtml(vm.incomeTypeNameTh)}</div>
-<div class="field muted">รหัสภายในระบบ: ${escapeHtml(vm.incomeTypeCode)} · แบบหัก ณ ที่จ่าย: ภงด.1 · formTypeCode: ${escapeHtml(vm.formTypeCode)}</div>
+<div class="field muted">รหัสภายในระบบ: ${escapeHtml(vm.incomeTypeCode)} · แบบหัก ณ ที่จ่าย: ${vm.formTypeCode === 'PND2' ? 'ภ.ง.ด.2' : 'ภ.ง.ด.1'} · formTypeCode: ${escapeHtml(vm.formTypeCode)}</div>
 <div class="field">วิธีชำระเงิน: ${escapeHtml(paymentMethodTh(vm.paymentMethod))}</div>
 <div class="field">เลขที่อ้างอิงการชำระเงิน: ${escapeHtml(vm.paymentReferenceNo || '—')}</div>
 

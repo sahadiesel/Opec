@@ -22,7 +22,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { formatDateThaiBE } from '@/lib/date-thai';
+import { formatPayrollYearMonthMmYyyyThaiBE } from '@/lib/date-thai';
 import { ExecutivePayrollStaff, OfficePayrollRun, PayrollRunStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -413,7 +413,7 @@ export default function ExecutivePayrollPage() {
                       onClick={() => router.push(`/accounting/executive-payroll/${run.id}`)}
                     >
                       <TableCell className="py-4 font-bold text-primary font-mono">{run.payrollRunNo}</TableCell>
-                      <TableCell className="font-medium">{formatDateThaiBE(run.payrollMonth + '-01')}</TableCell>
+                      <TableCell className="font-medium">{formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth)}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{run.payrollPeriodStart} ถึง {run.payrollPeriodEnd}</TableCell>
                       <TableCell className="text-center font-bold">{run.staffCount} คน</TableCell>
                       <TableCell className="text-right font-black text-primary">

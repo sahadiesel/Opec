@@ -309,7 +309,7 @@ export function buildPayrollWhtElectronicDataFromVm(vm: PayrollWorkerWhtPrintVm)
     payeeAddress: payeeAddr,
     incomeTypeCode: vm.incomeTypeCode,
     incomeTypeName: vm.incomeTypeNameTh,
-    formTypeCode: 'PND1',
+    formTypeCode: vm.formTypeCode,
     withholdingTaxBase: vm.taxableIncomeAmount,
     withholdingTaxAmount: vm.withholdingTaxAmount,
     taxConditionCode: vm.taxCondition,

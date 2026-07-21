@@ -36,6 +36,7 @@ import {
   VENDOR_WHT_EQUAL_COL_CELL,
 } from '@/components/accounting/withholding-wht-pay-tax-ui';
 import { cn } from '@/lib/utils';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { useFirestore, useCollection, useMemoFirebase, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canSeeAccountingPillarUi, canExecuteBankCashbookPayments } from '@/lib/permissions';
@@ -137,7 +138,7 @@ function buildWithholdingVendorPrintRows(list: WithholdingCertificateDocument[])
       certificateNo: d.certificateNo?.trim() || '—',
       vendorName: d.payee?.displayName?.trim() || '—',
       vendorTaxId: d.payee?.taxId?.trim() || '',
-      paymentDate: d.paymentDate || '—',
+      paymentDate: formatYmdLocalThaiBE(d.paymentDate),
       paidLabel: fmtBaht(vendorWhtPaidAmount(d)),
       withholdingLabel: fmtBaht(Number(d.withholdingTaxAmount) || 0),
       billRef: d.referenceVendorBillNo || '—',
@@ -580,7 +581,7 @@ export default function AccountingWithholdingVendorDocumentsPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-end gap-2 shrink-0">
                 <Button
                   type="button"
                   variant="outline"
@@ -591,9 +592,11 @@ export default function AccountingWithholdingVendorDocumentsPage() {
                   พิมพ์รายการ
                 </Button>
                 {!loadingDocs && !error ? (
-                  <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-2 min-w-[11rem]">
-                    <p className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">ยอดหักรวม (ในตาราง)</p>
-                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(totalWithholding)}</p>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">ยอดหักรวม (ในตาราง)</p>
+                    <div className="flex h-10 min-w-[11rem] items-center justify-end rounded-md border border-primary/30 bg-primary/5 px-4">
+                      <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(totalWithholding)}</p>
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -769,7 +772,7 @@ export default function AccountingWithholdingVendorDocumentsPage() {
                               <div className="truncate text-xs text-muted-foreground font-mono">{d.payee.taxId}</div>
                             ) : null}
                           </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm">{d.paymentDate || '—'}</TableCell>
+                          <TableCell className="whitespace-nowrap text-sm">{formatYmdLocalThaiBE(d.paymentDate)}</TableCell>
                           <TableCell className={cn(VENDOR_WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>
                             {fmtBaht(vendorWhtPaidAmount(d))}
                           </TableCell>

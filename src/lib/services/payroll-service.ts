@@ -38,6 +38,7 @@ import {
   OfficePayrollRun,
   OfficePayrollLineHrAdjustments,
   OfficePayrollPitMode,
+  ExecutiveNonPayrollIncomeType,
 } from '@/lib/types';
 import { canApproveWorkerPayrollBatchAsManager, isPayrollOfficer, isSystemAdmin } from '@/lib/permission-core';
 import { PayrollBatchSchema, PayrollBatchLineSchema } from '@/lib/validations/payroll-schemas';
@@ -65,6 +66,7 @@ export type ApplyOfficeLineHrAdjustmentsInput = {
   pitManualPercent?: number | null;
   pitManualAmountBaht?: number | null;
   pitManualIncomeLabel?: string | null;
+  pitManualIncomeType?: ExecutiveNonPayrollIncomeType | null;
 };
 import { recordPayrollFinanceApprovalPayout } from '@/lib/services/payroll-payout-service';
 import { writeAuditLog } from './audit-service';
@@ -2239,6 +2241,8 @@ export class PayrollService {
       pitManualAmountBaht:
         pitMode === 'MANUAL_AMOUNT' ? Math.max(0, Number(input.pitManualAmountBaht) || 0) : null,
       pitManualIncomeLabel: pitManualIncomeLabel || null,
+      pitManualIncomeType:
+        input.pitManualIncomeType ?? line.hrLineAdjustments?.pitManualIncomeType ?? null,
       updatedAt: Date.now(),
       updatedBy: user.displayName || user.email || user.id,
     };

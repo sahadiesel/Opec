@@ -123,7 +123,7 @@ export const MENU_PERMISSION_GROUPS: MenuPermissionGroup[] = [
       },
       {
         moduleKey: 'withholding_tax_items',
-        label: 'หัก ณ ที่จ่าย (พนักงาน/คู่ค้า)',
+        label: 'หัก ณ ที่จ่าย (บุคลากร/คู่ค้า)',
         path: '/accounting/withholding-payroll',
       },
       {
@@ -142,7 +142,8 @@ export const MENU_PERMISSION_GROUPS: MenuPermissionGroup[] = [
         label: 'เงินเดือน — ลูกจ้าง · ทำจ่าย (บัญชี)',
         path: '/accounting/worker-payroll',
       },
-      { moduleKey: 'cash_advances', label: 'รออนุมัติจ่ายเบิกเงิน', path: '/accounting/cash-advances-payout' },
+      { moduleKey: 'cash_advances', label: 'รอจ่ายเงินเบิกล่วงหน้า', path: '/accounting/cash-advances-payout' },
+      { moduleKey: 'ap_bills', label: 'รายการรอจ่ายเจ้าหนี้', path: '/accounting/vendor-bills-payout' },
       {
         moduleKey: 'executive_payroll',
         label: 'เงินเดือนผู้บริหาร (Executive Payroll)',

@@ -163,7 +163,7 @@ export async function recordOfficePayrollWhtTaxPayment(
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const { run, line } = params;
   if (!isOfficePayrollWagePaid(run, line)) {
-    throw new Error('ยังไม่ได้จ่ายเงินเดือน — ไม่สามารถจ่ายภาษีหัก ณ ที่จ่ายได้');
+    throw new Error('ยังไม่ได้จ่ายยอดผู้บริหาร — ไม่สามารถจ่ายภาษีหัก ณ ที่จ่ายได้');
   }
   if (isOfficePayrollWhtTaxPaid(line)) {
     throw new Error('รายการนี้จ่ายภาษีหัก ณ ที่จ่ายแล้ว');
@@ -293,7 +293,9 @@ export async function recordExecutivePayrollWhtTaxPayment(
 
   const earner = (params.earnerName || line.staffName || line.staffId || '').trim() || 'ผู้บริหาร';
   const runLabel = run.payrollRunNo || run.id;
-  const description = `จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) ผู้บริหาร ${earner} · งวด ${runLabel} · ตัดจากบัญชี ${bankCode}`;
+  const formLabel =
+    line.hrLineAdjustments?.pitManualIncomeType === 'DIVIDEND' ? 'ภ.ง.ด.2' : 'ภ.ง.ด.1';
+  const description = `จ่ายภาษีหัก ณ ที่จ่าย (${formLabel}) ผู้บริหาร ${earner} · งวด ${runLabel} · ตัดจากบัญชี ${bankCode}`;
 
   const { cashbookEntryId, entryNo } = await recordCashbookMovementWithBalance(db, user, {
     bankAccountId,

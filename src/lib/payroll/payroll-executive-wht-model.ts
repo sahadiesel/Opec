@@ -80,6 +80,7 @@ export function buildPayrollExecutiveWhtPrintVm(
 ): PayrollWorkerWhtPrintVm {
   const issueYear = Number(input.issueDateYmd.slice(0, 4)) || new Date().getFullYear();
   const pitMode = input.line.hrLineAdjustments?.pitMode ?? 'SYSTEM';
+  const manualIncomeType = input.line.hrLineAdjustments?.pitManualIncomeType ?? null;
   const manualIncomeLabel = (input.line.hrLineAdjustments?.pitManualIncomeLabel || '').trim();
   const manualPercent = Number(input.line.hrLineAdjustments?.pitManualPercent);
   const usesManualWht = pitMode === 'MANUAL_PERCENT' || pitMode === 'MANUAL_AMOUNT';
@@ -90,8 +91,31 @@ export function buildPayrollExecutiveWhtPrintVm(
   return {
     ...vm,
     documentNo: buildPayrollExecutiveWhtDocumentNo(input.run.id, input.staff.staffCode, issueYear),
-    subtitleTh: 'สำหรับเงินได้จากการจ้างงาน / เงินเดือนผู้บริหาร',
-    incomeTypeNameTh: usesManualWht && manualIncomeLabel ? manualIncomeLabel : 'เงินเดือน / ค่าจ้างผู้บริหาร',
+    subtitleTh:
+      manualIncomeType === 'MEETING_ALLOWANCE'
+        ? 'สำหรับเบี้ยประชุมประจำเดือน'
+        : manualIncomeType === 'DIVIDEND'
+          ? 'สำหรับเงินปันผล'
+          : manualIncomeType === 'OTHER'
+            ? `สำหรับ${manualIncomeLabel || 'รายได้อื่น ๆ'}`
+            : 'สำหรับเงินได้จากการจ้างงาน / เงินเดือนผู้บริหาร',
+    incomeTypeCode:
+      manualIncomeType === 'MEETING_ALLOWANCE'
+        ? 'MEETING_ALLOWANCE'
+        : manualIncomeType === 'DIVIDEND'
+          ? 'DIVIDEND'
+          : manualIncomeType === 'OTHER'
+            ? 'OTHER'
+            : 'PAYROLL_WAGE',
+    incomeTypeNameTh:
+      manualIncomeType === 'MEETING_ALLOWANCE'
+        ? 'เบี้ยประชุมประจำเดือน'
+        : manualIncomeType === 'DIVIDEND'
+          ? 'เงินปันผล'
+          : usesManualWht && manualIncomeLabel
+            ? manualIncomeLabel
+            : 'เงินเดือน / ค่าจ้างผู้บริหาร',
+    formTypeCode: manualIncomeType === 'DIVIDEND' ? 'PND2' : 'PND1',
     withholdingTaxRateDisplayTh:
       pitMode === 'MANUAL_PERCENT' && Number.isFinite(manualPercent)
         ? `${manualPercent}%`

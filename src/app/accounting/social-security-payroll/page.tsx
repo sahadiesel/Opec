@@ -23,10 +23,12 @@ import {
 } from '@/components/ui/dialog';
 import { PayrollSsoSectionCard } from '@/components/accounting/payroll-sso-section-card';
 import { PayrollSsoCombinedPayButton } from '@/components/accounting/payroll-sso-combined-pay';
+import { fmtSsoBaht } from '@/components/accounting/payroll-sso-list-table';
 import { fmtBaht } from '@/components/accounting/withholding-wht-pay-tax-ui';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { Users, Loader2, Search, Building2, Briefcase, ShieldCheck, Printer } from 'lucide-react';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import type { User, PayrollBatch, PayrollBatchLine, OfficePayrollRun, OfficePayrollLine, BankAccount, Worker, OfficeStaff, ExecutivePayrollStaff } from '@/lib/types';
 import { canSeeAccountingPillarUi, canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { canViewHrPayrollFlowSubsection } from '@/lib/navigation/nav-access';
@@ -54,6 +56,7 @@ import {
   type SocialSecurityPayrollListPrintRow,
 } from '@/lib/documents/social-security-payroll-list-print';
 import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import { roundSocialSecurityBahtUp } from '@/lib/payroll/d8/deductions-from-policy';
 import {
   type WorkerSsoRow,
   type OfficeSsoRow,
@@ -69,19 +72,15 @@ import {
 
 export type { WorkerSsoRow, OfficeSsoRow, ExecutiveSsoRow };
 
-function round2(n: number): number {
-  return Math.round((Number(n) || 0) * 100) / 100;
-}
-
 function workerLineSsoAmount(line: PayrollBatchLine): number {
   const db = line.deductionsBreakdown || {};
   const snap = line.d8Snapshot?.deductions || {};
   const v = Number(db.social_security ?? snap.social_security ?? 0);
-  return round2(Number.isFinite(v) ? v : 0);
+  return roundSocialSecurityBahtUp(Number.isFinite(v) ? v : 0);
 }
 
 function officeLineSsoAmount(line: OfficePayrollLine): number {
-  return round2(Number(line.socialSecurity) || 0);
+  return roundSocialSecurityBahtUp(Number(line.socialSecurity) || 0);
 }
 
 /**
@@ -163,10 +162,10 @@ function buildSocialSecurityPrintRows(
       batchLabel: batch.id,
       earnerName: line.workerNameSnapshot || '—',
       earnerId: resolveWorkerNationalId(line, nationalIdByWorkerId),
-      paymentDate: paymentYmd,
+      paymentDate: formatYmdLocalThaiBE(paymentYmd),
       paidLabel: fmtBaht(workerLineGrossPayAmount(line)),
-      ssoLabel: fmtBaht(sso),
-      employerLabel: fmtBaht(ssoCombinedRemitAmount(sso)),
+      ssoLabel: fmtSsoBaht(sso),
+      employerLabel: fmtSsoBaht(ssoCombinedRemitAmount(sso)),
     });
   }
   for (const { run, line, sso, paymentYmd } of offices) {
@@ -179,10 +178,10 @@ function buildSocialSecurityPrintRows(
       batchLabel: run.payrollRunNo || run.id,
       earnerName: line.staffName || '—',
       earnerId: resolveStaffNationalId(line.staffId, nationalIdByOfficeStaffId),
-      paymentDate: paymentYmd,
+      paymentDate: formatYmdLocalThaiBE(paymentYmd),
       paidLabel: fmtBaht(officeLineGrossPayAmount(line)),
-      ssoLabel: fmtBaht(sso),
-      employerLabel: fmtBaht(ssoCombinedRemitAmount(sso)),
+      ssoLabel: fmtSsoBaht(sso),
+      employerLabel: fmtSsoBaht(ssoCombinedRemitAmount(sso)),
     });
   }
   for (const { run, line, sso, paymentYmd } of executives) {
@@ -195,10 +194,10 @@ function buildSocialSecurityPrintRows(
       batchLabel: run.payrollRunNo || run.id,
       earnerName: line.staffName || '—',
       earnerId: resolveStaffNationalId(line.staffId, nationalIdByExecutiveStaffId),
-      paymentDate: paymentYmd,
+      paymentDate: formatYmdLocalThaiBE(paymentYmd),
       paidLabel: fmtBaht(officeLineGrossPayAmount(line)),
-      ssoLabel: fmtBaht(sso),
-      employerLabel: fmtBaht(ssoCombinedRemitAmount(sso)),
+      ssoLabel: fmtSsoBaht(sso),
+      employerLabel: fmtSsoBaht(ssoCombinedRemitAmount(sso)),
     });
   }
   return rows;
@@ -586,10 +585,10 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           rows,
           scopeTitle,
           filterLines,
-          grandTotalLabel: fmtBaht(workerTotal + officeTotal + executiveTotal),
-          workerTotalLabel: fmtBaht(workerTotal),
-          officeTotalLabel: fmtBaht(officeTotal),
-          executiveTotalLabel: fmtBaht(executiveTotal),
+          grandTotalLabel: fmtSsoBaht(workerTotal + officeTotal + executiveTotal),
+          workerTotalLabel: fmtSsoBaht(workerTotal),
+          officeTotalLabel: fmtSsoBaht(officeTotal),
+          executiveTotalLabel: fmtSsoBaht(executiveTotal),
           generatedAt,
           printedBy: currentUser?.displayName,
           truncated,
@@ -721,7 +720,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                   พิมพ์รายการ
                 </Button>
               </div>
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-end gap-2 shrink-0">
                 <PayrollSsoCombinedPayButton
                   canPay={canPaySso}
                   loading={ssoDataLoading}
@@ -739,9 +738,11 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                   onExecutiveRowsChange={setExecutiveRows}
                 />
                 {!ssoDataLoading ? (
-                  <div className="rounded-md border border-primary/30 bg-primary/5 px-4 py-2 min-w-[11rem]">
-                    <p className="text-[10px] font-medium text-muted-foreground whitespace-nowrap">รวม ปกส.+สมทบ (3 หมวด)</p>
-                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(grandTotal)}</p>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">รวม ปกส.+สมทบ (3 หมวด)</p>
+                    <div className="flex h-10 min-w-[11rem] items-center justify-end rounded-md border border-primary/30 bg-primary/5 px-4">
+                      <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtSsoBaht(grandTotal)}</p>
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -772,7 +773,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                 <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredRowCount} รายการ</p>
               </div>
               <p className="text-xs text-muted-foreground">
-                ข้อมูลทั้งหมด: {allRowCount} รายการ · สมทบรวม {fmtBaht(
+                ข้อมูลทั้งหมด: {allRowCount} รายการ · สมทบรวม {fmtSsoBaht(
                   workerRows.reduce((s, r) => s + r.sso, 0) +
                     officeRows.reduce((s, r) => s + r.sso, 0) +
                     executiveRows.reduce((s, r) => s + r.sso, 0),
@@ -823,7 +824,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           }
           emptyAll=""
           tableRows={workerTableRows}
-          totalSsoLabel={fmtBaht(workerTotalSso)}
+          totalSsoLabel={fmtSsoBaht(workerTotalSso)}
           canPay={canPaySso}
           firestore={firestore}
           currentUser={user}
@@ -846,7 +847,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           }
           emptyAll=""
           tableRows={officeTableRows}
-          totalSsoLabel={fmtBaht(officeTotalSso)}
+          totalSsoLabel={fmtSsoBaht(officeTotalSso)}
           canPay={canPaySso}
           firestore={firestore}
           currentUser={user}
@@ -869,7 +870,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           }
           emptyAll=""
           tableRows={executiveTableRows}
-          totalSsoLabel={fmtBaht(executiveTotalSso)}
+          totalSsoLabel={fmtSsoBaht(executiveTotalSso)}
           canPay={canPaySso}
           firestore={firestore}
           currentUser={user}

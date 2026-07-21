@@ -10,11 +10,11 @@ import {
 } from '@/lib/payroll/employee-payroll-deductions';
 import type { PayrollPolicyRecord } from '@/lib/types';
 
-/** ปัดเศษสตางค์ ปกส. — ต่ำกว่า 0.5 ปัดลง, 0.5 ขึ้นไปปัดขึ้น */
-export function roundSocialSecurityBahtHalfUp(amount: number): number {
+/** ปกส. ต้องเป็นจำนวนเงินบาทเต็ม — หากมีเศษให้ปัดขึ้นเสมอ เช่น 337.50 → 338 */
+export function roundSocialSecurityBahtUp(amount: number): number {
   const v = Number(amount);
   if (!Number.isFinite(v) || v <= 0) return 0;
-  return Math.floor(v * 100 + 0.5) / 100;
+  return Math.ceil(v);
 }
 
 export function resolveSocialSecurityMonthlyCeilingBaht(
@@ -36,7 +36,7 @@ export function socialSecurityFromPolicy(
   const rate = Number(policy.config.employeeRatePercent ?? DEFAULT_SOCIAL_SECURITY_EMPLOYEE_RATE_PERCENT) / 100;
   const ceiling = resolveSocialSecurityMonthlyCeilingBaht(policy, asOfDate);
   const base = Math.min(Math.max(0, grossForSS), ceiling);
-  return roundSocialSecurityBahtHalfUp(base * rate);
+  return roundSocialSecurityBahtUp(base * rate);
 }
 
 /**

@@ -20,8 +20,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2 } from 'lucide-react';
-import { fmtBaht } from '@/components/accounting/withholding-wht-pay-tax-ui';
-import type { PayrollSsoTableRow } from '@/components/accounting/payroll-sso-list-table';
+import {
+  fmtSsoBaht,
+  type PayrollSsoTableRow,
+} from '@/components/accounting/payroll-sso-list-table';
 import {
   payAmountForRow,
   applyLocalCombinedSsoPaymentPatch,
@@ -274,7 +276,7 @@ export function PayrollSsoCombinedPayButton({
               <p className="font-medium">รายการที่พร้อมจ่าย {payTargets.length} รายการ</p>
               <p className="text-muted-foreground">
                 ยอดรวม{' '}
-                <span className="font-semibold text-destructive tabular-nums">{fmtBaht(payDialogTotal)}</span>
+                <span className="font-semibold text-destructive tabular-nums">{fmtSsoBaht(payDialogTotal)}</span>
               </p>
             </div>
             <div className="space-y-2">

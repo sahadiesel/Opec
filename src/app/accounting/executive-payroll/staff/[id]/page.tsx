@@ -20,7 +20,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowLeft, Loader2, Save, ShieldAlert, ShieldCheck, History, Pencil, Briefcase } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { collection, doc, setDoc, updateDoc, deleteField } from 'firebase/firestore';
-import { ExecutivePayrollStaff, User } from '@/lib/types';
+import type {
+  ExecutiveNonPayrollIncomeType,
+  ExecutiveNonPayrollWhtPercent,
+  ExecutivePayrollStaff,
+  User,
+} from '@/lib/types';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, canEdit } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
@@ -44,6 +49,9 @@ function emptyForm(): ExecStaffFormState {
     employmentType: 'FULL_TIME',
     salaryType: 'MONTHLY',
     excludeFromPayrollRuns: false,
+    nonPayrollIncomeType: undefined,
+    nonPayrollIncomeOtherLabel: '',
+    nonPayrollWhtPercent: undefined,
     status: 'ACTIVE',
     notes: '',
     linkedOfficeStaffId: '',
@@ -123,6 +131,9 @@ export default function ExecutivePayrollStaffEditorPage({
       employmentType: existing.employmentType ?? 'FULL_TIME',
       salaryType: existing.salaryType ?? 'MONTHLY',
       excludeFromPayrollRuns: !!existing.excludeFromPayrollRuns,
+      nonPayrollIncomeType: existing.nonPayrollIncomeType,
+      nonPayrollIncomeOtherLabel: existing.nonPayrollIncomeOtherLabel ?? '',
+      nonPayrollWhtPercent: existing.nonPayrollWhtPercent,
       status: existing.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE',
       notes: existing.notes ?? '',
       linkedOfficeStaffId: existing.linkedOfficeStaffId ?? '',
@@ -208,6 +219,22 @@ export default function ExecutivePayrollStaffEditorPage({
       });
       return;
     }
+    if (form.excludeFromPayrollRuns) {
+      const allowedRates = new Set<number>([5, 10, 15, 20, 25, 30, 35]);
+      if (
+        !form.nonPayrollIncomeType ||
+        !allowedRates.has(Number(form.nonPayrollWhtPercent)) ||
+        (form.nonPayrollIncomeType === 'OTHER' && !form.nonPayrollIncomeOtherLabel?.trim()) ||
+        (Number(form.monthlySalary) || 0) <= 0
+      ) {
+        toast({
+          variant: 'destructive',
+          title: 'ข้อมูลรายได้นอกเงินเดือนไม่ครบ',
+          description: 'กรุณาเลือกประเภทรายได้ อัตราหัก ณ ที่จ่าย และระบุยอดจ่ายมากกว่า 0 บาท',
+        });
+        return;
+      }
+    }
     if (isNew && !canSaveNew) return;
     if (!isNew && !canSaveEdit) return;
 
@@ -231,6 +258,16 @@ export default function ExecutivePayrollStaffEditorPage({
           employmentType: form.employmentType,
           salaryType: form.salaryType,
           excludeFromPayrollRuns: form.excludeFromPayrollRuns,
+          ...(form.excludeFromPayrollRuns
+            ? {
+                nonPayrollIncomeType: form.nonPayrollIncomeType,
+                nonPayrollIncomeOtherLabel:
+                  form.nonPayrollIncomeType === 'OTHER'
+                    ? form.nonPayrollIncomeOtherLabel?.trim()
+                    : undefined,
+                nonPayrollWhtPercent: Number(form.nonPayrollWhtPercent),
+              }
+            : {}),
           status: form.status,
           notes: form.notes?.trim() || undefined,
           linkedOfficeStaffId: form.linkedOfficeStaffId?.trim() || undefined,
@@ -259,6 +296,16 @@ export default function ExecutivePayrollStaffEditorPage({
             employmentType: form.employmentType,
             salaryType: form.salaryType,
             excludeFromPayrollRuns: form.excludeFromPayrollRuns,
+            nonPayrollIncomeType: form.excludeFromPayrollRuns
+              ? form.nonPayrollIncomeType
+              : deleteField(),
+            nonPayrollIncomeOtherLabel:
+              form.excludeFromPayrollRuns && form.nonPayrollIncomeType === 'OTHER'
+                ? form.nonPayrollIncomeOtherLabel?.trim()
+                : deleteField(),
+            nonPayrollWhtPercent: form.excludeFromPayrollRuns
+              ? Number(form.nonPayrollWhtPercent)
+              : deleteField(),
             status: form.status,
             notes: form.notes?.trim() || undefined,
             linkedOfficeStaffId: form.linkedOfficeStaffId?.trim() || undefined,
@@ -397,7 +444,9 @@ export default function ExecutivePayrollStaffEditorPage({
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>เงินเดือนต่อเดือน (บาท)</Label>
+                    <Label>
+                      {form.excludeFromPayrollRuns ? 'ยอดจ่ายตามประเภทรายได้ (บาท)' : 'เงินเดือนต่อเดือน (บาท)'}
+                    </Label>
                     <Input
                       type="number"
                       min={0}
@@ -514,6 +563,77 @@ export default function ExecutivePayrollStaffEditorPage({
                     ไม่นำเข้างวดคำนวณอัตโนมัติ
                   </Label>
                 </div>
+
+                {form.excludeFromPayrollRuns ? (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50/70 p-4 space-y-4">
+                    <div>
+                      <p className="text-sm font-semibold text-amber-950">กำหนดรายได้นอกเงินเดือนและภาษีหัก ณ ที่จ่าย</p>
+                      <p className="mt-1 text-xs text-amber-900/75">
+                        ระบบใช้ยอดจากช่อง “ยอดจ่ายตามประเภทรายได้” ด้านบน โดยไม่คำนวณประกันสังคม
+                      </p>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>ประเภทเงินได้</Label>
+                        <Select
+                          value={form.nonPayrollIncomeType ?? ''}
+                          onValueChange={(value) =>
+                            setForm({
+                              ...form,
+                              nonPayrollIncomeType: value as ExecutiveNonPayrollIncomeType,
+                              nonPayrollIncomeOtherLabel:
+                                value === 'OTHER' ? form.nonPayrollIncomeOtherLabel : '',
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="เลือกประเภทเงินได้" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="MEETING_ALLOWANCE">เบี้ยประชุมประจำเดือน (ภ.ง.ด.1)</SelectItem>
+                            <SelectItem value="DIVIDEND">เงินปันผล (ภ.ง.ด.2)</SelectItem>
+                            <SelectItem value="OTHER">อื่น ๆ — ระบุข้อความ</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>อัตราหัก ณ ที่จ่าย</Label>
+                        <Select
+                          value={form.nonPayrollWhtPercent ? String(form.nonPayrollWhtPercent) : ''}
+                          onValueChange={(value) =>
+                            setForm({
+                              ...form,
+                              nonPayrollWhtPercent: Number(value) as ExecutiveNonPayrollWhtPercent,
+                            })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="เลือกเปอร์เซ็นต์" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {[5, 10, 15, 20, 25, 30, 35].map((rate) => (
+                              <SelectItem key={rate} value={String(rate)}>
+                                {rate}%
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {form.nonPayrollIncomeType === 'OTHER' ? (
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label>ระบุประเภทรายได้อื่น ๆ</Label>
+                          <Input
+                            value={form.nonPayrollIncomeOtherLabel ?? ''}
+                            onChange={(e) =>
+                              setForm({ ...form, nonPayrollIncomeOtherLabel: e.target.value })
+                            }
+                            placeholder="เช่น ค่าตอบแทนกรรมการ"
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="space-y-2">
                   <Label>อ้างอิง office_staff (ถ้ามี)</Label>

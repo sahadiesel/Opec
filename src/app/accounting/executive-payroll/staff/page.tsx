@@ -181,7 +181,7 @@ export default function ExecutivePayrollStaffListPage() {
                           )}
                           {s.excludeFromPayrollRuns ? (
                             <Badge variant="outline" className="ml-1 text-[10px]">
-                              ข้ามงวด
+                              รายได้นอกเงินเดือน
                             </Badge>
                           ) : null}
                         </TableCell>

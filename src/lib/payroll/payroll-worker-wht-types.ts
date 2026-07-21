@@ -45,7 +45,7 @@ export type PayrollWhtElectronicPayload = {
   payeeAddress: string;
   incomeTypeCode: string;
   incomeTypeName: string;
-  formTypeCode: 'PND1';
+  formTypeCode: 'PND1' | 'PND2';
   withholdingTaxBase: number;
   withholdingTaxAmount: number;
   taxConditionCode: WhtTaxCondition;
@@ -92,9 +92,9 @@ export type PayrollWorkerWhtPrintVm = {
     bankAccountLast4?: string;
   };
 
-  incomeTypeCode: 'PAYROLL_WAGE';
+  incomeTypeCode: 'PAYROLL_WAGE' | 'MEETING_ALLOWANCE' | 'DIVIDEND' | 'OTHER';
   incomeTypeNameTh: string;
-  formTypeCode: 'PND1';
+  formTypeCode: 'PND1' | 'PND2';
 
   earningsRows: Array<{ label: string; amount: number }>;
   deductionsRows: Array<{ label: string; amount: number }>;
