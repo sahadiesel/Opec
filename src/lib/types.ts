@@ -2300,6 +2300,8 @@ export interface WhtTaxPaymentProofAttachment {
   uploadedAt: number;
   uploadedByUid?: string;
   uploadedByName?: string;
+  /** YYYY-MM ของงวด/เดือนที่จ่ายภาษี — ใช้กรองแสดงตามเดือนที่เลือก */
+  periodYm?: string;
 }
 
 /** ปรับยอดรายคนงวดพนักงานออฟฟิศ — รายรับเพิ่ม / หักเพิ่ม (คู่กับ D8 manual_ded_*) */

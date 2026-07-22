@@ -7,13 +7,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -25,10 +18,18 @@ import { PayrollSsoSectionCard } from '@/components/accounting/payroll-sso-secti
 import { PayrollSsoCombinedPayButton } from '@/components/accounting/payroll-sso-combined-pay';
 import { fmtSsoBaht } from '@/components/accounting/payroll-sso-list-table';
 import { fmtBaht } from '@/components/accounting/withholding-wht-pay-tax-ui';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { Users, Loader2, Search, Building2, Briefcase, ShieldCheck, Printer } from 'lucide-react';
 import { formatYmdLocalThaiBE } from '@/lib/date-thai';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  describeYearMonthScopeFilter,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
 import type { User, PayrollBatch, PayrollBatchLine, OfficePayrollRun, OfficePayrollLine, BankAccount, Worker, OfficeStaff, ExecutivePayrollStaff } from '@/lib/types';
 import { canSeeAccountingPillarUi, canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { canViewHrPayrollFlowSubsection } from '@/lib/navigation/nav-access';
@@ -110,33 +111,13 @@ function executiveRowYm(r: ExecutiveSsoRow): string | null {
   return null;
 }
 
-const TH_MONTHS = [
-  'ม.ค.',
-  'ก.พ.',
-  'มี.ค.',
-  'เม.ย.',
-  'พ.ค.',
-  'มิ.ย.',
-  'ก.ค.',
-  'ส.ค.',
-  'ก.ย.',
-  'ต.ค.',
-  'พ.ย.',
-  'ธ.ค.',
-] as const;
-
-function ymLabelTh(ym: string): string {
-  const [y, m] = ym.split('-');
-  const mi = Number(m);
-  if (!y || !Number.isFinite(mi) || mi < 1 || mi > 12) return ym;
-  return `${TH_MONTHS[mi - 1]} ${Number(y) + 543}`;
-}
-
-function describeSocialSecurityPrintFilters(searchTerm: string, monthFilter: string): string[] {
+function describeSocialSecurityPrintFilters(
+  searchTerm: string,
+  yearCe: number,
+  monthScope: string,
+): string[] {
   const lines: string[] = [];
-  if (monthFilter !== 'ALL') {
-    lines.push(`งวดเงินเดือน: ${ymLabelTh(monthFilter)} (${monthFilter})`);
-  }
+  lines.push(`งวดเงินเดือน: ${describeYearMonthScopeFilter(yearCe, monthScope)}`);
   if (searchTerm.trim()) {
     lines.push(`ค้นหา: "${searchTerm.trim()}"`);
   }
@@ -209,7 +190,8 @@ export default function AccountingSocialSecurityPayrollHubPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
   const [q, setQ] = useState('');
-  const [monthFilter, setMonthFilter] = useState<string>('ALL');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
   const [workerRows, setWorkerRows] = useState<WorkerSsoRow[]>([]);
@@ -441,6 +423,8 @@ export default function AccountingSocialSecurityPayrollHubPage() {
     return Array.from(set).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
   }, [workerRows, officeRows, executiveRows]);
 
+  const yearOptionsCe = useMemo(() => buildYearCeOptions(monthOptions), [monthOptions]);
+
   const workerRowsBySearch = useMemo(() => {
     const t = q.trim().toLowerCase();
     if (!t) return workerRows;
@@ -485,19 +469,16 @@ export default function AccountingSocialSecurityPayrollHubPage() {
   }, [executiveRows, q, nationalIdByExecutiveStaffId]);
 
   const filteredWorker = useMemo(() => {
-    if (monthFilter === 'ALL') return workerRowsBySearch;
-    return workerRowsBySearch.filter((r) => workerRowYm(r) === monthFilter);
-  }, [workerRowsBySearch, monthFilter]);
+    return workerRowsBySearch.filter((r) => ymMatchesYearMonthScope(workerRowYm(r), yearFilterCe, monthScope));
+  }, [workerRowsBySearch, yearFilterCe, monthScope]);
 
   const filteredOffice = useMemo(() => {
-    if (monthFilter === 'ALL') return officeRowsBySearch;
-    return officeRowsBySearch.filter((r) => officeRowYm(r) === monthFilter);
-  }, [officeRowsBySearch, monthFilter]);
+    return officeRowsBySearch.filter((r) => ymMatchesYearMonthScope(officeRowYm(r), yearFilterCe, monthScope));
+  }, [officeRowsBySearch, yearFilterCe, monthScope]);
 
   const filteredExecutive = useMemo(() => {
-    if (monthFilter === 'ALL') return executiveRowsBySearch;
-    return executiveRowsBySearch.filter((r) => executiveRowYm(r) === monthFilter);
-  }, [executiveRowsBySearch, monthFilter]);
+    return executiveRowsBySearch.filter((r) => ymMatchesYearMonthScope(executiveRowYm(r), yearFilterCe, monthScope));
+  }, [executiveRowsBySearch, yearFilterCe, monthScope]);
 
   const workerTotalSso = useMemo(
     () => filteredWorker.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0),
@@ -577,7 +558,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           dateStyle: 'medium',
           timeStyle: 'short',
         });
-        const filterLines = scope === 'filtered' ? describeSocialSecurityPrintFilters(q, monthFilter) : [];
+        const filterLines = scope === 'filtered' ? describeSocialSecurityPrintFilters(q, yearFilterCe, monthScope) : [];
         const scopeTitle =
           scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
 
@@ -622,7 +603,8 @@ export default function AccountingSocialSecurityPayrollHubPage() {
       officeRows,
       executiveRows,
       q,
-      monthFilter,
+      yearFilterCe,
+      monthScope,
       currentUser?.displayName,
       toast,
       nationalIdByWorkerId,
@@ -693,34 +675,16 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                     aria-label="ค้นหารายการประกันสังคม"
                   />
                 </div>
-                <Select value={monthFilter} onValueChange={setMonthFilter}>
-                  <SelectTrigger
-                    id="sso-month-filter"
-                    className="h-10 w-[min(100%,13rem)] shrink-0 bg-background"
-                    aria-label="กรองตามงวดเงินเดือน"
-                  >
-                    <SelectValue placeholder="เลือกเดือน" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">ทุกเดือน</SelectItem>
-                    {monthOptions.map((ym) => (
-                      <SelectItem key={ym} value={ym}>
-                        {ymLabelTh(ym)} ({ym})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 shrink-0 gap-2 whitespace-nowrap"
-                  onClick={() => setPrintDialogOpen(true)}
-                >
-                  <Printer className="h-4 w-4 shrink-0" />
-                  พิมพ์รายการ
-                </Button>
+                <YearMonthScopeSelects
+                  idPrefix="sso"
+                  yearCe={yearFilterCe}
+                  monthScope={monthScope}
+                  yearOptionsCe={yearOptionsCe}
+                  onYearCeChange={setYearFilterCe}
+                  onMonthScopeChange={setMonthScope}
+                />
               </div>
-              <div className="flex flex-wrap items-end gap-2 shrink-0">
+              <div className="flex flex-wrap items-end gap-2 shrink-0 ml-auto justify-end">
                 <PayrollSsoCombinedPayButton
                   canPay={canPaySso}
                   loading={ssoDataLoading}
@@ -745,6 +709,15 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                     </div>
                   </div>
                 ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 shrink-0 gap-2 whitespace-nowrap"
+                  onClick={() => setPrintDialogOpen(true)}
+                >
+                  <Printer className="h-4 w-4 shrink-0" />
+                  พิมพ์รายการ
+                </Button>
               </div>
             </div>
           </CardContent>
@@ -762,13 +735,9 @@ export default function AccountingSocialSecurityPayrollHubPage() {
               <div className="rounded-md border bg-muted/30 p-3 space-y-1">
                 <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
                 <ul className="list-disc list-inside text-xs text-muted-foreground">
-                  {describeSocialSecurityPrintFilters(q, monthFilter).length > 0 ? (
-                    describeSocialSecurityPrintFilters(q, monthFilter).map((line) => (
-                      <li key={line}>{line}</li>
-                    ))
-                  ) : (
-                    <li>ทุกเดือน — ไม่มีคำค้น</li>
-                  )}
+                  {describeSocialSecurityPrintFilters(q, yearFilterCe, monthScope).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
                 </ul>
                 <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredRowCount} รายการ</p>
               </div>

@@ -342,7 +342,7 @@ export function PoDailyBoardCard({
   }, []);
   const [billingModesByPo, setBillingModesByPo] = useState<PoBillingModeRow[] | null>(null);
   const [billingProceedHref, setBillingProceedHref] = useState<string | null>(null);
-  const [rowDisplayFilter, setRowDisplayFilter] = useState<PoDailyBoardRowFilter>('all');
+  const [rowDisplayFilter, setRowDisplayFilter] = useState<PoDailyBoardRowFilter>('filled');
 
   const billingProceedCopy = useMemo(
     () => (billingModesByPo?.length ? buildBillingModeProceedCopy(billingModesByPo) : null),

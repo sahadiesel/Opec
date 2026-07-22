@@ -37,6 +37,14 @@ import {
 } from '@/components/accounting/withholding-wht-pay-tax-ui';
 import { cn } from '@/lib/utils';
 import { formatYmdLocalThaiBE } from '@/lib/date-thai';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  describeYearMonthScopeFilter,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import { useFirestore, useCollection, useMemoFirebase, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canSeeAccountingPillarUi, canExecuteBankCashbookPayments } from '@/lib/permissions';
@@ -75,28 +83,6 @@ function vendorDocKey(id: string): string {
   return id;
 }
 
-const TH_MONTHS = [
-  'ม.ค.',
-  'ก.พ.',
-  'มี.ค.',
-  'เม.ย.',
-  'พ.ค.',
-  'มิ.ย.',
-  'ก.ค.',
-  'ส.ค.',
-  'ก.ย.',
-  'ต.ค.',
-  'พ.ย.',
-  'ธ.ค.',
-] as const;
-
-function ymLabelTh(ym: string): string {
-  const [y, m] = ym.split('-');
-  const mi = Number(m);
-  if (!y || !Number.isFinite(mi) || mi < 1 || mi > 12) return ym;
-  return `${TH_MONTHS[mi - 1]} ${Number(y) + 543}`;
-}
-
 function vendorWhtDocYm(d: WithholdingCertificateDocument): string | null {
   const pd = (d.paymentDate || '').trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(pd)) return pd.slice(0, 7);
@@ -114,11 +100,13 @@ function vendorWhtDocYm(d: WithholdingCertificateDocument): string | null {
   return null;
 }
 
-function describeWithholdingVendorPrintFilters(searchTerm: string, monthFilter: string): string[] {
+function describeWithholdingVendorPrintFilters(
+  searchTerm: string,
+  yearCe: number,
+  monthScope: string,
+): string[] {
   const lines: string[] = [];
-  if (monthFilter !== 'ALL') {
-    lines.push(`เดือน: ${ymLabelTh(monthFilter)} (${monthFilter})`);
-  }
+  lines.push(`ช่วง: ${describeYearMonthScopeFilter(yearCe, monthScope)}`);
   if (searchTerm.trim()) {
     lines.push(`ค้นหา: "${searchTerm.trim()}"`);
   }
@@ -155,7 +143,8 @@ export default function AccountingWithholdingVendorDocumentsPage() {
   const { toast } = useToast();
   const payTaxProofInputRef = useRef<HTMLInputElement>(null);
   const [q, setQ] = useState('');
-  const [monthFilter, setMonthFilter] = useState<string>('ALL');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
   const [vendorDocs, setVendorDocs] = useState<WithholdingCertificateDocument[]>([]);
@@ -204,11 +193,7 @@ export default function AccountingWithholdingVendorDocumentsPage() {
     return Array.from(set).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
   }, [vendorDocs]);
 
-  useEffect(() => {
-    if (monthFilter !== 'ALL' && !monthOptions.includes(monthFilter)) {
-      setMonthFilter('ALL');
-    }
-  }, [monthFilter, monthOptions]);
+  const yearOptionsCe = useMemo(() => buildYearCeOptions(monthOptions), [monthOptions]);
 
   const vendorDocsBySearch = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -223,9 +208,8 @@ export default function AccountingWithholdingVendorDocumentsPage() {
   }, [vendorDocs, q]);
 
   const filtered = useMemo(() => {
-    if (monthFilter === 'ALL') return vendorDocsBySearch;
-    return vendorDocsBySearch.filter((d) => vendorWhtDocYm(d) === monthFilter);
-  }, [vendorDocsBySearch, monthFilter]);
+    return vendorDocsBySearch.filter((d) => ymMatchesYearMonthScope(vendorWhtDocYm(d), yearFilterCe, monthScope));
+  }, [vendorDocsBySearch, yearFilterCe, monthScope]);
 
   const payableRows = useMemo(() => filtered.filter(isVendorWhtRowPayable), [filtered]);
 
@@ -300,7 +284,7 @@ export default function AccountingWithholdingVendorDocumentsPage() {
           dateStyle: 'medium',
           timeStyle: 'short',
         });
-        const filterLines = scope === 'filtered' ? describeWithholdingVendorPrintFilters(q, monthFilter) : [];
+        const filterLines = scope === 'filtered' ? describeWithholdingVendorPrintFilters(q, yearFilterCe, monthScope) : [];
         const scopeTitle =
           scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
 
@@ -335,7 +319,7 @@ export default function AccountingWithholdingVendorDocumentsPage() {
         setPrintBusy(false);
       }
     },
-    [filtered, vendorDocs, q, monthFilter, currentUser?.displayName, toast],
+    [filtered, vendorDocs, q, yearFilterCe, monthScope, currentUser?.displayName, toast],
   );
 
   const openPayTaxDialog = useCallback(() => {
@@ -563,23 +547,14 @@ export default function AccountingWithholdingVendorDocumentsPage() {
                     aria-label="ค้นหาเอกสารหัก ณ ที่จ่ายคู่ค้า"
                   />
                 </div>
-                <Select value={monthFilter} onValueChange={setMonthFilter}>
-                  <SelectTrigger
-                    id="vendor-wht-month-filter"
-                    className="h-10 w-[min(100%,13rem)] shrink-0 bg-background"
-                    aria-label="กรองตามเดือน"
-                  >
-                    <SelectValue placeholder="เลือกเดือน" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">ทุกเดือน</SelectItem>
-                    {monthOptions.map((ym) => (
-                      <SelectItem key={ym} value={ym}>
-                        {ymLabelTh(ym)} ({ym})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <YearMonthScopeSelects
+                  idPrefix="vendor-wht"
+                  yearCe={yearFilterCe}
+                  monthScope={monthScope}
+                  yearOptionsCe={yearOptionsCe}
+                  onYearCeChange={setYearFilterCe}
+                  onMonthScopeChange={setMonthScope}
+                />
               </div>
               <div className="flex flex-wrap items-end gap-2 shrink-0">
                 <Button
@@ -614,13 +589,9 @@ export default function AccountingWithholdingVendorDocumentsPage() {
               <div className="rounded-md border bg-muted/30 p-3 space-y-1">
                 <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
                 <ul className="list-disc list-inside text-xs text-muted-foreground">
-                  {describeWithholdingVendorPrintFilters(q, monthFilter).length > 0 ? (
-                    describeWithholdingVendorPrintFilters(q, monthFilter).map((line) => (
-                      <li key={line}>{line}</li>
-                    ))
-                  ) : (
-                    <li>ทุกเดือน — ไม่มีคำค้น</li>
-                  )}
+                  {describeWithholdingVendorPrintFilters(q, yearFilterCe, monthScope).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
                 </ul>
                 <p className="text-xs font-medium pt-1">จะพิมพ์ {filtered.length} รายการ</p>
               </div>

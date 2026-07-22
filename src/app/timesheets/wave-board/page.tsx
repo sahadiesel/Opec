@@ -297,7 +297,7 @@ function WaveTimesheetBoardContent() {
               </Button>
               <h1 className="text-3xl font-bold tracking-tight text-primary">
                 <CalendarDays className="mr-3 inline-block h-8 w-8 align-middle text-primary" aria-hidden />
-                คีย์ลงเวลาแบบกลุ่ม (Bulk Check-in)
+                ลงเวลารายวัน (Auto/Manual)
               </h1>
               <p className="text-muted-foreground text-lg max-w-4xl">
                 {filterPoActiveBundleId ? (

@@ -72,6 +72,20 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  describeYearMonthScopeFilter,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+
+function vendorBillCreatedYm(bill: PurchaseVendorBill): string | null {
+  const d = new Date(bill.createdAt);
+  if (!Number.isFinite(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
 
 async function unlinkVendorBillFromPurchaseMilestones(firestore: Firestore, bill: PurchaseVendorBill) {
   const milestonesSnap = await getDocs(
@@ -150,7 +164,8 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
     mode === 'store' ? 'DRAFT' : 'SUBMITTED',
   );
   const [billSearch, setBillSearch] = useState('');
-  const [billMonth, setBillMonth] = useState<string>('all');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [billVendorId, setBillVendorId] = useState<string>('all');
 
   const billsQuery = useMemoFirebase(() => {
@@ -175,14 +190,13 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
 
   const billPurchaseIds = useMemo(() => new Set((bills || []).map((b) => b.purchaseId)), [bills]);
 
-  const billMonthOptions = useMemo(() => {
+  const yearOptionsCe = useMemo(() => {
     const set = new Set<string>();
     (bills || []).forEach((b) => {
-      const d = new Date(b.createdAt);
-      if (!Number.isFinite(d.getTime())) return;
-      set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+      const ym = vendorBillCreatedYm(b);
+      if (ym) set.add(ym);
     });
-    return [...set].sort().reverse();
+    return buildYearCeOptions(set);
   }, [bills]);
 
   const billsFiltered = useMemo(() => {
@@ -203,11 +217,7 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
             : bills.filter((b) => b.status === tab);
     list = list.filter((b) => {
       if (billVendorId !== 'all' && b.vendorId !== billVendorId) return false;
-      if (billMonth !== 'all') {
-        const d = new Date(b.createdAt);
-        const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        if (ym !== billMonth) return false;
-      }
+      if (!ymMatchesYearMonthScope(vendorBillCreatedYm(b), yearFilterCe, monthScope)) return false;
       if (!qq) return true;
       const v = vendors?.find((x) => x.id === b.vendorId);
       return (
@@ -217,7 +227,7 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
       );
     });
     return list;
-  }, [bills, tab, billSearch, billMonth, billVendorId, vendors]);
+  }, [bills, tab, billSearch, yearFilterCe, monthScope, billVendorId, vendors]);
 
   const billsFilteredBillAmountSum = useMemo(() => {
     return billsFiltered.reduce((sum, b) => sum + (Number(b.billAmount) || 0), 0);
@@ -459,19 +469,14 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                 onChange={(e) => setBillSearch(e.target.value)}
               />
             </div>
-            <Select value={billMonth} onValueChange={setBillMonth}>
-              <SelectTrigger className="h-10 w-full sm:w-[200px]">
-                <SelectValue placeholder="เดือน (สร้าง)" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">ทุกเดือน</SelectItem>
-                {billMonthOptions.map((ym) => (
-                  <SelectItem key={ym} value={ym}>
-                    {ym}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <YearMonthScopeSelects
+              idPrefix="vendor-bills"
+              yearCe={yearFilterCe}
+              monthScope={monthScope}
+              yearOptionsCe={yearOptionsCe}
+              onYearCeChange={setYearFilterCe}
+              onMonthScopeChange={setMonthScope}
+            />
             <Select value={billVendorId} onValueChange={setBillVendorId}>
               <SelectTrigger className="h-10 w-full sm:w-[220px]">
                 <SelectValue placeholder="คู่ค้า" />
@@ -579,14 +584,14 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                     )}
                   </TableBody>
                 </Table>
-                {billsFiltered.length > 0 && (billVendorId !== 'all' || billMonth !== 'all') ? (
+                {billsFiltered.length > 0 ? (
                   <div className="border-t px-6 py-3 bg-muted/25 text-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <span className="text-muted-foreground leading-snug">
                       ยอดรวมฟิลด์ «ยอดในใบ» ในรายการที่แสดง ({billsFiltered.length} ใบ)
+                      {` · เดือนสร้าง ${describeYearMonthScopeFilter(yearFilterCe, monthScope)}`}
                       {billVendorId !== 'all'
                         ? ` · คู่ค้า: ${vendors?.find((v) => v.id === billVendorId)?.vendorName ?? ''}`
                         : ''}
-                      {billMonth !== 'all' ? ` · เดือนสร้าง ${billMonth}` : ''}
                     </span>
                     <span className="font-mono font-bold text-base tabular-nums">
                       ฿{billsFilteredBillAmountSum.toLocaleString(undefined, { minimumFractionDigits: 2 })}

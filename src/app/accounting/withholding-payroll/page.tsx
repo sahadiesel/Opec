@@ -28,6 +28,15 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { formatYmdLocalThaiBE } from '@/lib/date-thai';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  describeYearMonthScopeFilter,
+  isMonthScopeLookback,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import { useFirestore, useCollection, useMemoFirebase, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { Users, ExternalLink, Loader2, Search, Building2, Printer, Banknote, Paperclip, Briefcase } from 'lucide-react';
@@ -112,9 +121,9 @@ function ProofAttachmentZone({
 }) {
   if (attachments.length === 0) return null;
   return (
-    <div className="mb-4 rounded-md border border-amber-300/80 bg-amber-50/90 px-3 py-2.5 dark:border-amber-700/60 dark:bg-amber-950/30">
+    <div className="rounded-md border border-amber-300/80 bg-amber-50/90 px-3 py-2.5 dark:border-amber-700/60 dark:bg-amber-950/30">
       <p className="text-xs font-semibold text-amber-900 dark:text-amber-100 mb-2">
-        เอกสารแนบการโอน (ภงด.1)
+        เอกสารแนบการโอน (ภงด.) — ตามเดือนที่เลือก
       </p>
       <ul className="space-y-1.5">
         {attachments.map((a) => (
@@ -145,6 +154,23 @@ function ProofAttachmentZone({
       </ul>
     </div>
   );
+}
+
+/** เดือนอ้างอิงสำหรับไฟล์แนบรอบนี้ — ถ้าเลือกเดือนเจาะจงใช้ปี+เดือนนั้น ไม่งั้นใช้เดือนปัจจุบัน */
+function resolveSessionProofPeriodYm(yearCe: number, monthScope: string): string {
+  if (!isMonthScopeLookback(monthScope) && /^\d{2}$/.test(monthScope)) {
+    return `${yearCe}-${monthScope}`;
+  }
+  return `${currentYearCe()}-${currentMonthMm()}`;
+}
+
+/** ติด periodYm ให้ไฟล์แนบที่ยังไม่มี — อิงเดือนของบรรทัดที่จ่าย */
+function withPeriodYm(
+  attachments: WhtTaxPaymentProofAttachment[],
+  periodYm: string | null,
+): WhtTaxPaymentProofAttachment[] {
+  if (!periodYm) return attachments;
+  return attachments.map((a) => (a.periodYm ? a : { ...a, periodYm }));
 }
 
 function workerPayrollLinePaidAmount(line: PayrollBatchLine): number {
@@ -212,28 +238,6 @@ function officeRowYm(r: OfficeWhtRow): string | null {
   return null;
 }
 
-const TH_MONTHS = [
-  'ม.ค.',
-  'ก.พ.',
-  'มี.ค.',
-  'เม.ย.',
-  'พ.ค.',
-  'มิ.ย.',
-  'ก.ค.',
-  'ส.ค.',
-  'ก.ย.',
-  'ต.ค.',
-  'พ.ย.',
-  'ธ.ค.',
-] as const;
-
-function ymLabelTh(ym: string): string {
-  const [y, m] = ym.split('-');
-  const mi = Number(m);
-  if (!y || !Number.isFinite(mi) || mi < 1 || mi > 12) return ym;
-  return `${TH_MONTHS[mi - 1]} ${Number(y) + 543}`;
-}
-
 function buildWithholdingPayrollPrintRows(
   workers: WorkerWhtRow[],
   offices: OfficeWhtRow[],
@@ -288,11 +292,13 @@ function buildWithholdingPayrollPrintRows(
   return rows;
 }
 
-function describeWithholdingPayrollPrintFilters(searchTerm: string, monthFilter: string): string[] {
+function describeWithholdingPayrollPrintFilters(
+  searchTerm: string,
+  yearCe: number,
+  monthScope: string,
+): string[] {
   const lines: string[] = [];
-  if (monthFilter !== 'ALL') {
-    lines.push(`เดือน: ${ymLabelTh(monthFilter)} (${monthFilter})`);
-  }
+  lines.push(`ช่วง: ${describeYearMonthScopeFilter(yearCe, monthScope)}`);
   if (searchTerm.trim()) {
     lines.push(`ค้นหา: "${searchTerm.trim()}"`);
   }
@@ -307,8 +313,10 @@ export default function AccountingWithholdingPayrollHubPage() {
   const { toast } = useToast();
   const payTaxProofInputRef = useRef<HTMLInputElement>(null);
   const [q, setQ] = useState('');
-  /** 'ALL' | YYYY-MM — กรองรายการตามเดือนอ้างอิง (วันที่จ่าย / ช่วงงวด) */
-  const [monthFilter, setMonthFilter] = useState<string>('ALL');
+  /** ปี ค.ศ. — ค่าเริ่มต้นปีปัจจุบัน */
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  /** เดือน: LAST_2 | LAST_3 | '01'..'12' — ค่าเริ่มต้นเดือนปัจจุบัน */
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
   const [workerRows, setWorkerRows] = useState<WorkerWhtRow[]>([]);
@@ -561,6 +569,8 @@ export default function AccountingWithholdingPayrollHubPage() {
     return Array.from(set).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
   }, [workerRows, officeRows, executiveRows]);
 
+  const yearOptionsCe = useMemo(() => buildYearCeOptions(monthOptions), [monthOptions]);
+
   const workerRowsBySearch = useMemo(() => {
     const t = q.trim().toLowerCase();
     if (!t) return workerRows;
@@ -630,19 +640,16 @@ export default function AccountingWithholdingPayrollHubPage() {
   }, [executiveRows, q, nationalIdByExecutiveStaffId]);
 
   const filteredWorker = useMemo(() => {
-    if (monthFilter === 'ALL') return workerRowsBySearch;
-    return workerRowsBySearch.filter((r) => workerRowYm(r) === monthFilter);
-  }, [workerRowsBySearch, monthFilter]);
+    return workerRowsBySearch.filter((r) => ymMatchesYearMonthScope(workerRowYm(r), yearFilterCe, monthScope));
+  }, [workerRowsBySearch, yearFilterCe, monthScope]);
 
   const filteredOffice = useMemo(() => {
-    if (monthFilter === 'ALL') return officeRowsBySearch;
-    return officeRowsBySearch.filter((r) => officeRowYm(r) === monthFilter);
-  }, [officeRowsBySearch, monthFilter]);
+    return officeRowsBySearch.filter((r) => ymMatchesYearMonthScope(officeRowYm(r), yearFilterCe, monthScope));
+  }, [officeRowsBySearch, yearFilterCe, monthScope]);
 
   const filteredExecutive = useMemo(() => {
-    if (monthFilter === 'ALL') return executiveRowsBySearch;
-    return executiveRowsBySearch.filter((r) => officeRowYm(r) === monthFilter);
-  }, [executiveRowsBySearch, monthFilter]);
+    return executiveRowsBySearch.filter((r) => ymMatchesYearMonthScope(officeRowYm(r), yearFilterCe, monthScope));
+  }, [executiveRowsBySearch, yearFilterCe, monthScope]);
 
   const payableWorkerRows = useMemo(
     () => filteredWorker.filter(isWorkerRowPayable),
@@ -718,20 +725,31 @@ export default function AccountingWithholdingPayrollHubPage() {
     payableWorkerRows.length + payableOfficeRows.length + payableExecutiveRows.length;
   const selectedPayTaxTotal = selectedWorkerTaxTotal + selectedOfficeTaxTotal + selectedExecutiveTaxTotal;
 
-  const workerDisplayedProofAttachments = useMemo(() => {
-    const fromRows = workerRows.flatMap((r) => r.line.whtTaxPaymentProofAttachments ?? []);
-    return mergeUniqueProofAttachments(fromRows, sessionProofAttachments);
-  }, [workerRows, sessionProofAttachments]);
-
-  const officeDisplayedProofAttachments = useMemo(() => {
-    const fromRows = officeRows.flatMap((r) => r.line.whtTaxPaymentProofAttachments ?? []);
-    return mergeUniqueProofAttachments(fromRows, sessionProofAttachments);
-  }, [officeRows, sessionProofAttachments]);
-
-  const executiveDisplayedProofAttachments = useMemo(() => {
-    const fromRows = executiveRows.flatMap((r) => r.line.whtTaxPaymentProofAttachments ?? []);
-    return mergeUniqueProofAttachments(fromRows, sessionProofAttachments);
-  }, [executiveRows, sessionProofAttachments]);
+  /** ไฟล์แนบรวมทั้ง 3 ส่วน — แสดงเฉพาะที่อยู่ในเดือน/ช่วงที่กรองอยู่ */
+  const monthScopedProofAttachments = useMemo(() => {
+    const fromRows = [
+      ...filteredWorker.flatMap((r) => r.line.whtTaxPaymentProofAttachments ?? []),
+      ...filteredOffice.flatMap((r) => r.line.whtTaxPaymentProofAttachments ?? []),
+      ...filteredExecutive.flatMap((r) => r.line.whtTaxPaymentProofAttachments ?? []),
+    ];
+    const sessionForMonth = sessionProofAttachments.filter((a) => {
+      const ym = a.periodYm?.trim();
+      if (ym) return ymMatchesYearMonthScope(ym, yearFilterCe, monthScope);
+      return ymMatchesYearMonthScope(
+        `${currentYearCe()}-${currentMonthMm()}`,
+        yearFilterCe,
+        monthScope,
+      );
+    });
+    return mergeUniqueProofAttachments(fromRows, sessionForMonth);
+  }, [
+    filteredWorker,
+    filteredOffice,
+    filteredExecutive,
+    sessionProofAttachments,
+    yearFilterCe,
+    monthScope,
+  ]);
 
   const removableProofIds = useMemo(
     () => new Set(sessionProofAttachments.map((a) => a.id)),
@@ -806,7 +824,7 @@ export default function AccountingWithholdingPayrollHubPage() {
           timeStyle: 'short',
         });
         const filterLines =
-          scope === 'filtered' ? describeWithholdingPayrollPrintFilters(q, monthFilter) : [];
+          scope === 'filtered' ? describeWithholdingPayrollPrintFilters(q, yearFilterCe, monthScope) : [];
         const scopeTitle =
           scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
 
@@ -854,7 +872,8 @@ export default function AccountingWithholdingPayrollHubPage() {
       nationalIdByOfficeStaffId,
       nationalIdByExecutiveStaffId,
       q,
-      monthFilter,
+      yearFilterCe,
+      monthScope,
       currentUser?.displayName,
       toast,
     ],
@@ -897,6 +916,7 @@ export default function AccountingWithholdingPayrollHubPage() {
     async (files: FileList | null) => {
       if (!files?.length || !firebaseApp || !currentUser) return;
       setAttachProofBusy(true);
+      const periodYm = resolveSessionProofPeriodYm(yearFilterCe, monthScope);
       try {
         const uploaded: WhtTaxPaymentProofAttachment[] = [];
         for (const file of Array.from(files)) {
@@ -907,7 +927,7 @@ export default function AccountingWithholdingPayrollHubPage() {
             file,
             currentUser.displayName || currentUser.email || currentUser.id,
           );
-          uploaded.push(attachment);
+          uploaded.push({ ...attachment, periodYm });
         }
         setPayTaxAttachments((prev) => {
           const next = [...prev];
@@ -932,7 +952,7 @@ export default function AccountingWithholdingPayrollHubPage() {
         if (payTaxProofInputRef.current) payTaxProofInputRef.current.value = '';
       }
     },
-    [firebaseApp, currentUser, toast],
+    [firebaseApp, currentUser, yearFilterCe, monthScope, toast],
   );
 
   const handleRemovePayTaxProof = useCallback((attachmentId: string) => {
@@ -1024,6 +1044,8 @@ export default function AccountingWithholdingPayrollHubPage() {
                 whtTaxPaidByName: currentUser.displayName || currentUser.email || currentUser.id,
               });
             } else {
+              const rowYm = workerRowYm(target.row);
+              const proofs = withPeriodYm(payTaxAttachments, rowYm);
               const result = await recordWorkerPayrollWhtTaxPayment(firestore, currentUser as User, {
                 batch,
                 line,
@@ -1031,12 +1053,12 @@ export default function AccountingWithholdingPayrollHubPage() {
                 bankAccountId: payTaxBankId,
                 entryDate: payTaxDate,
                 earnerName: line.workerNameSnapshot || line.workerId,
-                proofAttachments: payTaxAttachments,
+                proofAttachments: proofs,
               });
               paidWorkerKeys.add(key);
               const mergedProofs = mergeUniqueProofAttachments(
                 line.whtTaxPaymentProofAttachments ?? [],
-                payTaxAttachments,
+                proofs,
               );
               workerLineUpdates.set(key, {
                 whtTaxCashbookEntryId: result.cashbookEntryId,
@@ -1065,6 +1087,8 @@ export default function AccountingWithholdingPayrollHubPage() {
                 whtTaxPaidByName: currentUser.displayName || currentUser.email || currentUser.id,
               });
             } else {
+              const rowYm = officeRowYm(target.row);
+              const proofs = withPeriodYm(payTaxAttachments, rowYm);
               const payInput = {
                 run,
                 line,
@@ -1072,7 +1096,7 @@ export default function AccountingWithholdingPayrollHubPage() {
                 bankAccountId: payTaxBankId,
                 entryDate: payTaxDate,
                 earnerName: line.staffName || line.staffId,
-                proofAttachments: payTaxAttachments,
+                proofAttachments: proofs,
               };
               const result =
                 target.kind === 'office'
@@ -1081,7 +1105,7 @@ export default function AccountingWithholdingPayrollHubPage() {
               paidKeys.add(key);
               const mergedProofs = mergeUniqueProofAttachments(
                 line.whtTaxPaymentProofAttachments ?? [],
-                payTaxAttachments,
+                proofs,
               );
               lineUpdates.set(key, {
                 whtTaxCashbookEntryId: result.cashbookEntryId,
@@ -1275,23 +1299,14 @@ export default function AccountingWithholdingPayrollHubPage() {
                     aria-label="ค้นหารายการหัก ณ ที่จ่าย"
                   />
                 </div>
-                <Select value={monthFilter} onValueChange={setMonthFilter}>
-                  <SelectTrigger
-                    id="wht-month-filter"
-                    className="h-10 w-[min(100%,13rem)] shrink-0 bg-background"
-                    aria-label="กรองตามเดือน"
-                  >
-                    <SelectValue placeholder="เลือกเดือน" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">ทุกเดือน</SelectItem>
-                    {monthOptions.map((ym) => (
-                      <SelectItem key={ym} value={ym}>
-                        {ymLabelTh(ym)} ({ym})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <YearMonthScopeSelects
+                  idPrefix="wht"
+                  yearCe={yearFilterCe}
+                  monthScope={monthScope}
+                  yearOptionsCe={yearOptionsCe}
+                  onYearCeChange={setYearFilterCe}
+                  onMonthScopeChange={setMonthScope}
+                />
               </div>
               <div className="flex flex-wrap items-end gap-2 shrink-0">
                 <Button
@@ -1340,13 +1355,9 @@ export default function AccountingWithholdingPayrollHubPage() {
               <div className="rounded-md border bg-muted/30 p-3 space-y-1">
                 <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
                 <ul className="list-disc list-inside text-xs text-muted-foreground">
-                  {describeWithholdingPayrollPrintFilters(q, monthFilter).length > 0 ? (
-                    describeWithholdingPayrollPrintFilters(q, monthFilter).map((line) => (
-                      <li key={line}>{line}</li>
-                    ))
-                  ) : (
-                    <li>ทุกเดือน — ไม่มีคำค้น</li>
-                  )}
+                  {describeWithholdingPayrollPrintFilters(q, yearFilterCe, monthScope).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
                 </ul>
                 <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredRowCount} รายการ</p>
               </div>
@@ -1384,6 +1395,12 @@ export default function AccountingWithholdingPayrollHubPage() {
           </p>
         ) : null}
 
+        <ProofAttachmentZone
+          attachments={monthScopedProofAttachments}
+          onRemove={canPayWhtTax ? handleRemoveSessionProof : undefined}
+          removableIds={canPayWhtTax ? removableProofIds : undefined}
+        />
+
         <Card>
           <CardHeader>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1407,11 +1424,6 @@ export default function AccountingWithholdingPayrollHubPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <ProofAttachmentZone
-              attachments={workerDisplayedProofAttachments}
-              onRemove={canPayWhtTax ? handleRemoveSessionProof : undefined}
-              removableIds={canPayWhtTax ? removableProofIds : undefined}
-            />
             {workerLinesErr ? (
               <p className="text-sm text-destructive">{workerLinesErr}</p>
             ) : loadingBatches || loadingWorkerLines ? (
@@ -1569,11 +1581,6 @@ export default function AccountingWithholdingPayrollHubPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <ProofAttachmentZone
-              attachments={officeDisplayedProofAttachments}
-              onRemove={canPayWhtTax ? handleRemoveSessionProof : undefined}
-              removableIds={canPayWhtTax ? removableProofIds : undefined}
-            />
             {officeLinesErr ? (
               <p className="text-sm text-destructive">{officeLinesErr}</p>
             ) : loadingRuns || loadingOfficeLines ? (
@@ -1732,11 +1739,6 @@ export default function AccountingWithholdingPayrollHubPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <ProofAttachmentZone
-              attachments={executiveDisplayedProofAttachments}
-              onRemove={canPayWhtTax ? handleRemoveSessionProof : undefined}
-              removableIds={canPayWhtTax ? removableProofIds : undefined}
-            />
             {executiveLinesErr ? (
               <p className="text-sm text-destructive">{executiveLinesErr}</p>
             ) : loadingExecutiveRuns || loadingExecutiveLines ? (
