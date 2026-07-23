@@ -12,6 +12,7 @@ import { CustomerQueryService } from '@/lib/services/customer-query-service';
 import { assignmentReadyForWaveTimesheet } from '@/lib/constants/timesheet-ui';
 import { isAssignmentActiveOnWaveRoster } from '@/lib/ops/assignment-roster';
 import { totalPlannedWorkersOnWave } from '@/lib/ops/wave-allocation';
+import { PortalCustomerApprovalStatusBadge } from '@/components/client-portal/portal-month-customer-actions';
 import {
   formatCustomerPoNumberForPortal,
   formatYearMonthLabel,
@@ -159,10 +160,15 @@ export default function ClientPortalTimesheetHubPage() {
                 return null;
               }
               const r = { id: snap.id, ...(snap.data() as object) } as WaveMonthTimesheetReview;
+              const currentYm = getLastNCalendarMonths(1)[0];
               if (r.status === 'approved') {
                 return { wave: w, yearMonth: ym, review: r, reviewDisplay: 'manager' as const };
               }
               if (hasCommercialForWaveMonth(w.id, ym)) {
+                return { wave: w, yearMonth: ym, review: r, reviewDisplay: 'billing' as const };
+              }
+              /** เดือนปัจจุบัน — ให้ลูกค้าดูได้แม้ยังไม่ปล่อยอนุมัติ */
+              if (ym === currentYm && r.status !== 'rejected') {
                 return { wave: w, yearMonth: ym, review: r, reviewDisplay: 'billing' as const };
               }
               return null;
@@ -174,8 +180,14 @@ export default function ClientPortalTimesheetHubPage() {
             portalTryGetPoMonthReviewSnap(firestore, p.id, ym).then((snap) => {
               if (!snap || !snap.exists()) return null;
               const r = { id: snap.id, ...(snap.data() as object) } as PoMonthTimesheetReview;
-              if (r.status !== 'approved') return null;
-              return { po: p, poId: p.id, yearMonth: ym, review: r };
+              const currentYm = getLastNCalendarMonths(1)[0];
+              if (r.status === 'approved') {
+                return { po: p, poId: p.id, yearMonth: ym, review: r };
+              }
+              if (ym === currentYm && r.status !== 'rejected') {
+                return { po: p, poId: p.id, yearMonth: ym, review: r };
+              }
+              return null;
             }),
           ),
         );
@@ -435,14 +447,21 @@ export default function ClientPortalTimesheetHubPage() {
                       <div className="px-4 sm:px-6 pt-4 text-sm font-semibold text-foreground/90">
                         {t('tsHubSectionPoMonth')}
                       </div>
-                      <Table>
+                      <Table className="table-fixed w-full">
+                        <colgroup>
+                          <col className="w-[28%]" />
+                          <col className="w-[14%]" />
+                          <col className="w-[28%]" />
+                          <col className="w-[20%]" />
+                          <col className="w-[10%]" />
+                        </colgroup>
                         <TableHeader>
                           <TableRow>
-                            <TableHead className="whitespace-nowrap min-w-[9rem]">{t('tsHubColCustomerPoNo')}</TableHead>
-                            <TableHead className="whitespace-nowrap">{t('tsHubColMonth')}</TableHead>
-                            <TableHead className="text-center">{t('tsHubColReview')}</TableHead>
-                            <TableHead className="text-left min-w-[7rem]">{t('tsHubColBillingRef')}</TableHead>
-                            <TableHead className="w-14 text-right">{t('tsHubColDetail')}</TableHead>
+                            <TableHead className="px-4 whitespace-nowrap">{t('tsHubColCustomerPoNo')}</TableHead>
+                            <TableHead className="px-4 whitespace-nowrap">{t('tsHubColMonth')}</TableHead>
+                            <TableHead className="px-4 text-center">{t('tsHubColReview')}</TableHead>
+                            <TableHead className="px-4 text-left">{t('tsHubColBillingRef')}</TableHead>
+                            <TableHead className="px-4 text-right">{t('tsHubColDetail')}</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -451,16 +470,17 @@ export default function ClientPortalTimesheetHubPage() {
                             const detailHref = `/client-portal/timesheets/po-month?poId=${encodeURIComponent(poId)}&month=${encodeURIComponent(r.yearMonth)}`;
                             return (
                               <TableRow key={r.review.id}>
-                                <TableCell className="font-mono text-sm">{poLabel}</TableCell>
-                                <TableCell className="text-sm font-semibold text-primary whitespace-nowrap">
+                                <TableCell className="px-4 font-mono text-sm align-middle break-words">{poLabel}</TableCell>
+                                <TableCell className="px-4 text-sm font-semibold text-primary whitespace-nowrap align-middle">
                                   {formatYearMonthLabel(r.yearMonth, locale)}
                                 </TableCell>
-                                <TableCell className="text-center">
-                                  <Badge variant="outline" className="text-[10px] border-emerald-600/50 text-emerald-800">
-                                    {t('tsHubApprovedBadge')}
-                                  </Badge>
+                                <TableCell className="px-4 text-center align-middle">
+                                  <PortalCustomerApprovalStatusBadge
+                                    customerApprovalStatus={r.review.customerApprovalStatus}
+                                    managerApproved={r.review.status === 'approved'}
+                                  />
                                 </TableCell>
-                                <TableCell className="text-sm">
+                                <TableCell className="px-4 text-sm align-middle">
                                   {commRows.length > 0 ? (
                                     <div className="flex flex-col gap-1">
                                       {commRows.map((commRow) => (
@@ -483,7 +503,7 @@ export default function ClientPortalTimesheetHubPage() {
                                     <span className="text-muted-foreground">—</span>
                                   )}
                                 </TableCell>
-                                <TableCell className="text-right p-1">
+                                <TableCell className="px-4 text-right align-middle">
                                   <Link
                                     href={detailHref}
                                     className="inline-flex h-9 w-9 items-center justify-center rounded-md text-primary hover:bg-muted"
@@ -504,22 +524,33 @@ export default function ClientPortalTimesheetHubPage() {
                       <div className="px-4 sm:px-6 pt-4 text-sm font-semibold text-foreground/90">
                         {t('tsHubSectionWaves')}
                       </div>
-                      <Table>
+                      <Table className="table-fixed w-full">
+                        <colgroup>
+                          <col className="w-[12%]" />
+                          <col className="w-[16%]" />
+                          <col className="w-[10%]" />
+                          <col className="w-[12%]" />
+                          <col className="w-[16%]" />
+                          <col className="w-[10%]" />
+                          <col className="w-[8%]" />
+                          <col className="w-[10%]" />
+                          <col className="w-[6%]" />
+                        </colgroup>
                         <TableHeader>
                           <TableRow>
-                            <TableHead>{t('tsHubColWave')}</TableHead>
-                            <TableHead className="whitespace-nowrap min-w-[9rem]">{t('tsHubColCustomerPoNo')}</TableHead>
-                            <TableHead className="whitespace-nowrap">{t('tsHubColMonth')}</TableHead>
-                            <TableHead>{t('tsHubColLocation')}</TableHead>
-                            <TableHead className="text-center">{t('tsHubColWaveStatus')}</TableHead>
-                            <TableHead className="text-center">{t('tsHubColAssigned')}</TableHead>
-                            <TableHead className="text-center max-w-[120px]">{t('tsHubColReady')}</TableHead>
-                            <TableHead className="text-left min-w-[7rem]">{t('tsHubColBillingRef')}</TableHead>
-                            <TableHead className="w-14 text-right">{t('tsHubColDetail')}</TableHead>
+                            <TableHead className="px-3">{t('tsHubColWave')}</TableHead>
+                            <TableHead className="px-3 whitespace-nowrap">{t('tsHubColCustomerPoNo')}</TableHead>
+                            <TableHead className="px-3 whitespace-nowrap">{t('tsHubColMonth')}</TableHead>
+                            <TableHead className="px-3">{t('tsHubColLocation')}</TableHead>
+                            <TableHead className="px-3 text-center">{t('tsHubColWaveStatus')}</TableHead>
+                            <TableHead className="px-3 text-center">{t('tsHubColAssigned')}</TableHead>
+                            <TableHead className="px-3 text-center">{t('tsHubColReady')}</TableHead>
+                            <TableHead className="px-3 text-left">{t('tsHubColBillingRef')}</TableHead>
+                            <TableHead className="px-3 text-right">{t('tsHubColDetail')}</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {rows.map(({ wave: w, yearMonth }) => {
+                          {rows.map(({ wave: w, yearMonth, review: waveReview }) => {
                             const mobs = mobsByWave.get(w.id) ?? [];
                             const activeMobs = mobs.filter((m) => isAssignmentActiveOnWaveRoster(m));
                             const assignedActive = activeMobs.length;
@@ -532,26 +563,32 @@ export default function ClientPortalTimesheetHubPage() {
                               : null;
                             return (
                               <TableRow key={`${w.id}-${yearMonth}`}>
-                                <TableCell className="font-mono font-semibold">
+                                <TableCell className="px-3 font-mono font-semibold align-middle break-words">
                                   <span className="flex items-center gap-1">
-                                    <Waves className="h-3.5 w-3.5 text-primary" />
+                                    <Waves className="h-3.5 w-3.5 shrink-0 text-primary" />
                                     {w.waveCode}
                                   </span>
                                 </TableCell>
-                                <TableCell className="font-mono text-sm">{poLabel}</TableCell>
-                                <TableCell className="text-sm font-semibold text-primary whitespace-nowrap">
+                                <TableCell className="px-3 font-mono text-sm align-middle break-words">{poLabel}</TableCell>
+                                <TableCell className="px-3 text-sm font-semibold text-primary whitespace-nowrap align-middle">
                                   {formatYearMonthLabel(yearMonth, locale)}
                                 </TableCell>
-                                <TableCell>
-                                  <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
-                                    <MapPin className="h-3 w-3 shrink-0" />
+                                <TableCell className="px-3 align-middle">
+                                  <span className="inline-flex items-start gap-1 text-sm text-muted-foreground break-words">
+                                    <MapPin className="h-3 w-3 shrink-0 mt-0.5" />
                                     {w.siteLocation || '—'}
                                   </span>
                                 </TableCell>
-                                <TableCell className="text-center">
-                                  <Badge variant="outline">{w.status}</Badge>
+                                <TableCell className="px-3 text-center align-middle">
+                                  <div className="flex flex-col items-center gap-1">
+                                    <Badge variant="outline">{w.status}</Badge>
+                                    <PortalCustomerApprovalStatusBadge
+                                      customerApprovalStatus={waveReview?.customerApprovalStatus}
+                                      managerApproved={waveReview?.status === 'approved'}
+                                    />
+                                  </div>
                                 </TableCell>
-                                <TableCell className="text-center">
+                                <TableCell className="px-3 text-center align-middle">
                                   <span className="inline-flex items-center justify-center gap-1">
                                     <Users className="h-3.5 w-3.5" />
                                     {assignedActive}
@@ -559,8 +596,8 @@ export default function ClientPortalTimesheetHubPage() {
                                     {planned}
                                   </span>
                                 </TableCell>
-                                <TableCell className="text-center font-semibold text-green-700">{ready}</TableCell>
-                                <TableCell className="text-sm">
+                                <TableCell className="px-3 text-center font-semibold text-green-700 align-middle">{ready}</TableCell>
+                                <TableCell className="px-3 text-sm align-middle break-words">
                                   {billingHref && commRow ? (
                                     <Link
                                       href={billingHref}
@@ -572,7 +609,7 @@ export default function ClientPortalTimesheetHubPage() {
                                     <span className="text-muted-foreground">—</span>
                                   )}
                                 </TableCell>
-                                <TableCell className="text-right p-1">
+                                <TableCell className="px-3 text-right align-middle">
                                   <Link
                                     href={detailHref}
                                     className="inline-flex h-9 w-9 items-center justify-center rounded-md text-primary hover:bg-muted"

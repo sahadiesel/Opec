@@ -15,6 +15,7 @@ import {
 } from '@/lib/client-portal/timesheet-portal-utils';
 import type { PortalDictKey } from '@/lib/i18n/client-portal-dictionary';
 import type { Assignment, DailyTimesheet, PoMonthTimesheetReview, PoMonthTimesheetPhotoBundle, PurchaseOrder, Wave } from '@/lib/types';
+import { PortalCustomerApprovalStatusBadge } from '@/components/client-portal/portal-month-customer-actions';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import type { PortalLocale } from '@/lib/i18n/client-portal-dictionary';
@@ -48,9 +49,15 @@ export function PortalPoMonthDocHeaderCard({
             <span className="font-mono text-primary">
               {formatYearMonthLabel(yearMonth, locale)}
             </span>
-            <Badge variant="outline" className="text-[10px] font-normal border-emerald-600/50 text-emerald-800">
-              {t('tsHubApprovedBadge')}
-            </Badge>
+            {monthReview.status === 'approved' ? (
+              <Badge variant="outline" className="text-[10px] font-normal border-emerald-600/50 text-emerald-800">
+                {t('tsHubApprovedBadge')}
+              </Badge>
+            ) : null}
+            <PortalCustomerApprovalStatusBadge
+              customerApprovalStatus={monthReview.customerApprovalStatus}
+              managerApproved={monthReview.status === 'approved'}
+            />
           </CardTitle>
         </div>
         <div className="flex flex-col gap-2 pt-1 border-t border-dashed border-muted-foreground/30 w-full">

@@ -1,20 +1,35 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { HardHat, ChevronRight, MapPin } from 'lucide-react';
-import type { Assignment, POLine, Position, Wave, Worker } from '@/lib/types';
+import type { Assignment, DeploymentStatus, POLine, Position, Wave, Worker } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { CustomerQueryService } from '@/lib/services/customer-query-service';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { useWorkersByIds } from '@/hooks/use-workers-by-ids';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { collection, doc, getDoc, getDocs, limit, query } from 'firebase/firestore';
 import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { mobilizationWorkerNameFromWorker } from '@/lib/ops/mobilization-worker-name';
+import { ensureWorkersAssignedCustomerId } from '@/lib/client-portal/ensure-worker-assigned-customer';
+
+/** Rosters visible to the customer from assign through on-site (exclude closed/demob). */
+const PORTAL_ROSTER_STATUSES: DeploymentStatus[] = [
+  'DRAFT',
+  'READINESS_CHECK',
+  'CLIENT_SUBMITTED',
+  'CLIENT_APPROVED',
+  'CONFIRMED',
+  'READY_TO_MOB',
+  'MOBILIZING',
+  'ACTIVE',
+];
 
 function workerDisplayName(a: Assignment, w: Worker | undefined): string {
   const fromMob = (a.workerName || '').trim();
@@ -37,8 +52,67 @@ function siteDisplayLabel(a: Assignment, waveById: Map<string, Wave>, poLineByKe
   return proj || '—';
 }
 
+function portalDeploymentLabel(
+  status: DeploymentStatus | string | undefined,
+  locale: 'en' | 'th',
+): { label: string; className: string } {
+  const en = locale === 'en';
+  switch (status) {
+    case 'DRAFT':
+      return {
+        label: en ? 'Assigned · Waiting MOB' : 'มอบหมายแล้ว · Waiting MOB',
+        className: 'bg-sky-50 text-sky-900 border-sky-200',
+      };
+    case 'READINESS_CHECK':
+      return {
+        label: en ? 'Readiness check' : 'ตรวจความพร้อม',
+        className: 'bg-amber-50 text-amber-800 border-amber-200',
+      };
+    case 'CLIENT_SUBMITTED':
+      return {
+        label: en ? 'Submitted for review' : 'ส่งให้ลูกค้าพิจารณา',
+        className: 'bg-blue-50 text-blue-800 border-blue-200',
+      };
+    case 'CLIENT_APPROVED':
+      return {
+        label: en ? 'Client approved' : 'ลูกค้าอนุมัติแล้ว',
+        className: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+      };
+    case 'CONFIRMED':
+      return {
+        label: en ? 'Confirmed' : 'ยืนยันแล้ว',
+        className: 'bg-violet-50 text-violet-800 border-violet-200',
+      };
+    case 'READY_TO_MOB':
+      return {
+        label: en ? 'Ready to MOB' : 'พร้อมเดินทาง',
+        className: 'bg-blue-50 text-blue-900 border-blue-200',
+      };
+    case 'MOBILIZING':
+      return {
+        label: en ? 'Mobilizing' : 'กำลังระดมพล',
+        className: 'bg-amber-50 text-amber-800 border-amber-200',
+      };
+    case 'ACTIVE':
+      return {
+        label: en ? 'On site' : 'อยู่หน้างาน',
+        className: 'bg-green-50 text-green-800 border-green-200',
+      };
+    default:
+      return {
+        label: status || '—',
+        className: 'bg-muted text-muted-foreground border-border',
+      };
+  }
+}
+
 export default function ClientWorkersPage() {
-  const { effectiveUser: currentUser, appUserLoading: userLoading, canAccessPortal } = useClientPortalIdentity();
+  const {
+    effectiveUser: currentUser,
+    appUserLoading: userLoading,
+    canAccessPortal,
+    isPortalAdminPreview,
+  } = useClientPortalIdentity();
   const firestore = useFirestore();
   const { locale } = usePortalLocale();
   const [positionLabels, setPositionLabels] = useState<Record<string, string>>({});
@@ -70,12 +144,21 @@ export default function ClientWorkersPage() {
     () => [...new Set((assignments ?? []).map((a) => a.workerId).filter(Boolean))],
     [assignments]
   );
+  const workerIdsKey = workerIds.join('|');
   const workersById = useWorkersByIds(firestore, workerIds);
+
+  /** Admin preview: backfill assignedCustomerIds so real client_user can open Docs afterward. */
+  useEffect(() => {
+    if (!firestore || !isPortalAdminPreview || !currentUser?.customerId || !workerIdsKey) return;
+    const ids = workerIdsKey.split('|').filter(Boolean);
+    if (ids.length === 0) return;
+    void ensureWorkersAssignedCustomerId(firestore, ids, currentUser.customerId);
+  }, [firestore, isPortalAdminPreview, currentUser?.customerId, workerIdsKey]);
 
   const rows = useMemo(
     () =>
       (assignments ?? []).filter((a) =>
-        ['ACTIVE', 'MOBILIZING', 'READY_TO_MOB', 'CONFIRMED', 'CLIENT_APPROVED'].includes(a.deploymentStatus)
+        PORTAL_ROSTER_STATUSES.includes(a.deploymentStatus as DeploymentStatus),
       ),
     [assignments]
   );
@@ -156,7 +239,7 @@ export default function ClientWorkersPage() {
   }, [rowMeta, locale]);
 
   const filteredRows = useMemo(() => {
-    return rowMeta.filter(({ a, pos, site }) => {
+    return rowMeta.filter(({ a, site }) => {
       if (filterPositionId && a.positionId !== filterPositionId) return false;
       if (filterSite && site !== filterSite) return false;
       return true;
@@ -190,8 +273,8 @@ export default function ClientWorkersPage() {
         </h2>
         <p className="text-sm text-muted-foreground">
           {locale === 'en'
-            ? 'Name, role, and site. Per-person document links will be enabled here when OPEC turns them on.'
-            : 'ชื่อ ตำแหน่ง และสถานที่ — ลิงก์เอกสารรายคนจะเปิดใช้เมื่อ OPEC เปิดให้'}
+            ? 'See who is assigned to your PO from Waiting MOB through On site. Open Docs for certificates and compliance files (read-only).'
+            : 'ดูรายชื่อที่มอบหมายลง PO ตั้งแต่ Waiting MOB จนถึงอยู่หน้างาน — กดเอกสารเพื่อดูใบรับรองและเอกสารที่เกี่ยวข้อง (อ่านอย่างเดียว)'}
         </p>
       </div>
 
@@ -201,7 +284,9 @@ export default function ClientWorkersPage() {
             <div>
               <CardTitle className="text-base">{locale === 'en' ? 'Roster' : 'รายชื่อ'}</CardTitle>
               <CardDescription>
-                {locale === 'en' ? 'From active mobilizations' : 'จากการมอบหมายที่เกี่ยวข้อง'}
+                {locale === 'en'
+                  ? 'From PO assignments (assigned → on site)'
+                  : 'จากการมอบหมายตาม PO (มอบหมายแล้ว → อยู่หน้างาน)'}
               </CardDescription>
             </div>
             {rows.length > 0 && (
@@ -264,51 +349,63 @@ export default function ClientWorkersPage() {
           {isLoading ? (
             <p className="p-6 text-sm">…</p>
           ) : (
-            <Table>
+            <Table className="table-fixed w-full">
               <TableHeader>
                 <TableRow>
-                  <TableHead>{locale === 'en' ? 'Name' : 'ชื่อ'}</TableHead>
-                  <TableHead>{locale === 'en' ? 'Position' : 'ตำแหน่ง'}</TableHead>
-                  <TableHead>{locale === 'en' ? 'Site / project' : 'สถานที่ / โครงการ'}</TableHead>
-                  <TableHead className="text-right w-[100px]">{locale === 'en' ? 'Docs' : 'เอกสาร'}</TableHead>
+                  <TableHead className="w-[22%]">{locale === 'en' ? 'Name' : 'ชื่อ'}</TableHead>
+                  <TableHead className="w-[20%]">{locale === 'en' ? 'Status' : 'สถานะ'}</TableHead>
+                  <TableHead className="w-[22%]">{locale === 'en' ? 'Position' : 'ตำแหน่ง'}</TableHead>
+                  <TableHead className="w-[26%]">{locale === 'en' ? 'Site / project' : 'สถานที่ / โครงการ'}</TableHead>
+                  <TableHead className="w-[10%] text-right">{locale === 'en' ? 'Docs' : 'เอกสาร'}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredRows.map(({ a, name, pos, site }) => (
+                {filteredRows.map(({ a, name, pos, site }) => {
+                    const statusUi = portalDeploymentLabel(a.deploymentStatus, locale);
+                    return (
                     <TableRow key={a.id}>
-                      <TableCell className="font-medium">{name}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{pos}</TableCell>
-                      <TableCell>
-                        <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
-                          <MapPin className="h-3.5 w-3.5 shrink-0" />
+                      <TableCell className="font-medium align-middle break-words">{name}</TableCell>
+                      <TableCell className="align-middle">
+                        <Badge variant="outline" className={`font-medium whitespace-normal text-left ${statusUi.className}`}>
+                          {statusUi.label}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground align-middle break-words">{pos}</TableCell>
+                      <TableCell className="align-middle">
+                        <span className="inline-flex items-start gap-1 text-sm text-muted-foreground break-words">
+                          <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                           {site}
                         </span>
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right align-middle">
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
-                          disabled
-                          className="pointer-events-none opacity-40"
-                          aria-label={locale === 'en' ? 'Details (coming soon)' : 'รายละเอียด (ยังไม่เปิดใช้)'}
-                          title={locale === 'en' ? 'Coming soon' : 'ยังไม่เปิดใช้'}
+                          className="h-8 w-8 p-0"
+                          asChild
+                          disabled={!a.workerId}
+                          aria-label={locale === 'en' ? 'View documents' : 'ดูเอกสาร'}
+                          title={locale === 'en' ? 'View documents' : 'ดูเอกสาร'}
                         >
-                          <ChevronRight className="h-4 w-4" aria-hidden />
+                          <Link href={`/client-portal/workers/${encodeURIComponent(a.workerId)}`}>
+                            <ChevronRight className="h-4 w-4" aria-hidden />
+                          </Link>
                         </Button>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 {rows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center py-10 text-muted-foreground">
+                    <TableCell colSpan={5} className="text-center py-10 text-muted-foreground">
                       {locale === 'en' ? 'No personnel rows.' : 'ไม่มีรายการ'}
                     </TableCell>
                   </TableRow>
                 )}
                 {rows.length > 0 && filteredRows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center py-10 text-muted-foreground">
+                    <TableCell colSpan={5} className="text-center py-10 text-muted-foreground">
                       {locale === 'en' ? 'No matches for the selected filters.' : 'ไม่พบรายการตามตัวกรอง'}
                     </TableCell>
                   </TableRow>

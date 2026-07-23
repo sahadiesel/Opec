@@ -104,6 +104,7 @@ import {
   resolvePoActiveBundleKeyForPo,
 } from '@/lib/ops/po-active-bundle';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
+import { ensureWorkerAssignedCustomerId } from '@/lib/client-portal/ensure-worker-assigned-customer';
 import {
   buildEligibleMainContractIdSet,
   filterPurchaseOrdersForPoActiveWorkflow,
@@ -797,6 +798,11 @@ function AssignmentsPageContent() {
         workerStatus: 'ASSIGNED',
         updatedAt: nowTs,
       });
+      if (po.customerId) {
+        void ensureWorkerAssignedCustomerId(firestore, workerIdTrim, po.customerId).catch((e) =>
+          console.error('[assignment] assignedCustomerIds', e),
+        );
+      }
 
       toast({ title: 'มอบหมายงานสำเร็จ', description: `รหัสการมอบหมาย: ${finalNo} — ไปดำเนินการ Mobilization (Waiting MOB)` });
       setIsDialogOpen(false);

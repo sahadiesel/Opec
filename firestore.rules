@@ -79,6 +79,19 @@ service cloud.firestore {
     function portalOwnsResourceCustomerId() {
       return portalCustomerIdOk() && resource.data.customerId == userData().customerId;
     }
+    /** Client portal: worker profile/docs shared explicitly via assignedCustomerIds */
+    function portalAssignedWorkerReadOk() {
+      return portalCustomerIdOk()
+        && 'assignedCustomerIds' in resource.data
+        && resource.data.assignedCustomerIds is list
+        && userData().customerId in resource.data.assignedCustomerIds;
+    }
+    function portalWorkerSubtreeReadOk(workerId) {
+      return portalCustomerIdOk()
+        && exists(/databases/$(database)/documents/workers/$(workerId))
+        && get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds is list
+        && userData().customerId in get(/databases/$(database)/documents/workers/$(workerId)).data.assignedCustomerIds;
+    }
     /** Client portal: daily row owned via denormalized customerId, PO, wave, or mobilization link */
     function portalDailyTimesheetPoReadOk() {
       return 'purchaseOrderId' in resource.data
@@ -131,6 +144,29 @@ service cloud.firestore {
           || (resource.data.status == 'PENDING_CUSTOMER' && request.resource.data.status == 'ISSUED')
           || (resource.data.status == 'ISSUED' && request.resource.data.status == 'ISSUED')
         );
+    }
+    /** Portal: อนุมัติ / ร้องขอแก้ไข timesheet รายเดือน (หลัง OPEC manager อนุมัติแล้วเท่านั้น) */
+    function portalPoMonthReviewCustomerActionOk() {
+      return isClientPortalUser()
+        && userRole() in ['client_user']
+        && portalCustomerIdOk()
+        && resource.data.status == 'approved'
+        && request.resource.data.status == 'approved'
+        && request.resource.data.poId == resource.data.poId
+        && request.resource.data.yearMonth == resource.data.yearMonth
+        && exists(/databases/$(database)/documents/purchase_orders/$(resource.data.poId))
+        && get(/databases/$(database)/documents/purchase_orders/$(resource.data.poId)).data.customerId == userData().customerId;
+    }
+    function portalWaveMonthReviewCustomerActionOk() {
+      return isClientPortalUser()
+        && userRole() in ['client_user']
+        && portalCustomerIdOk()
+        && resource.data.status == 'approved'
+        && request.resource.data.status == 'approved'
+        && request.resource.data.waveId == resource.data.waveId
+        && request.resource.data.yearMonth == resource.data.yearMonth
+        && exists(/databases/$(database)/documents/waves/$(resource.data.waveId))
+        && get(/databases/$(database)/documents/waves/$(resource.data.waveId)).data.customerId == userData().customerId;
     }
     function portalCustomerRootReadOk(customerId) {
       return isClientPortalUser()
@@ -422,7 +458,7 @@ service cloud.firestore {
     }
     // ===== HR & Payroll - Match blocks =====
     match /workers/{workerId}/{document=**} {
-      allow read:   if rs8();
+      allow read:   if rs10() || portalWorkerSubtreeReadOk(workerId);
       allow create: if blockExecutiveWrite() && rs2();
       allow update: if blockExecutiveWrite() && (rs2() || rs9());
       allow delete: if blockExecutiveWrite() && rs0();
@@ -462,13 +498,13 @@ service cloud.firestore {
     match /wave_month_timesheet_reviews/{id} {
       allow read:   if rs12();
       allow create: if blockExecutiveWrite() && rs13();
-      allow update: if blockExecutiveWrite() && (rs13() || rs13());
+      allow update: if (blockExecutiveWrite() && rs13()) || portalWaveMonthReviewCustomerActionOk();
       allow delete: if blockExecutiveWrite() && rs13();
     }
     match /po_month_timesheet_reviews/{id} {
       allow read:   if rs12();
       allow create: if blockExecutiveWrite() && rs13();
-      allow update: if blockExecutiveWrite() && (rs13() || rs13());
+      allow update: if (blockExecutiveWrite() && rs13()) || portalPoMonthReviewCustomerActionOk();
       allow delete: if blockExecutiveWrite() && rs13();
     }
     match /po_location_month_timesheets/{id} {
@@ -821,7 +857,7 @@ service cloud.firestore {
       allow write: if internalWriteOk() || isClientPortalUser();
     }
     match /workers/{workerId} {
-      allow read: if isInternalUser();
+      allow read: if isInternalUser() || portalAssignedWorkerReadOk();
       allow write: if internalWriteOk();
     }
     match /attendance_kiosk_sessions/{token} {

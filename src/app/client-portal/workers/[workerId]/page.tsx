@@ -2,7 +2,7 @@
 
 import { use } from 'react';
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -19,6 +19,14 @@ import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import { formatDateTimeThaiBE } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
+
+type DocRow = {
+  k: string;
+  a: string;
+  b: string;
+  c: string;
+  url?: string | null;
+};
 
 export default function ClientWorkerDocumentsPage({ params }: { params: Promise<{ workerId: string }> }) {
   const { workerId } = use(params);
@@ -74,8 +82,8 @@ export default function ClientWorkerDocumentsPage({ params }: { params: Promise<
         </Button>
         <p className="text-sm text-destructive">
           {locale === 'en'
-            ? 'No access to this worker profile. Ask OPEC to add your company to assignedCustomerIds on the worker record.'
-            : 'ไม่มีสิทธิ์ดูคนงานนี้ — ให้ OPEC เพิ่มบริษัทท่านใน assignedCustomerIds ที่เรกคอร์ดคนงาน'}
+            ? 'No access to this worker profile. Ask OPEC to open document sharing for your company on this worker (assignedCustomerIds).'
+            : 'ไม่มีสิทธิ์ดูคนงานนี้ — ให้ OPEC เปิดสิทธิ์แชร์เอกสารให้บริษัทท่านบนเรกคอร์ดคนงาน (assignedCustomerIds)'}
         </p>
       </div>
     );
@@ -113,6 +121,7 @@ export default function ClientWorkerDocumentsPage({ params }: { params: Promise<
           a: c.certificateName,
           b: c.certificateNo || '—',
           c: formatDateTimeThaiBE(c.expiryDate),
+          url: c.attachment?.downloadUrl,
         }))}
         locale={locale}
       />
@@ -123,6 +132,7 @@ export default function ClientWorkerDocumentsPage({ params }: { params: Promise<
           a: m.medicalType,
           b: m.fitStatus,
           c: formatDateTimeThaiBE(m.expiryDate),
+          url: m.attachment?.downloadUrl,
         }))}
         locale={locale}
       />
@@ -133,6 +143,7 @@ export default function ClientWorkerDocumentsPage({ params }: { params: Promise<
           a: d.substanceLabelSnapshot || d.substanceKey || '—',
           b: d.result,
           c: formatDateTimeThaiBE(d.testDate),
+          url: d.attachment?.downloadUrl,
         }))}
         locale={locale}
       />
@@ -143,6 +154,7 @@ export default function ClientWorkerDocumentsPage({ params }: { params: Promise<
           a: d.documentType,
           b: d.documentNo,
           c: formatDateTimeThaiBE(d.expiryDate),
+          url: d.attachment?.downloadUrl,
         }))}
         locale={locale}
       />
@@ -156,7 +168,7 @@ function DocTable({
   locale,
 }: {
   title: string;
-  rows: { k: string; a: string; b: string; c: string }[];
+  rows: DocRow[];
   locale: string;
 }) {
   return (
@@ -165,25 +177,46 @@ function DocTable({
         <CardTitle className="text-sm">{title}</CardTitle>
       </CardHeader>
       <CardContent className="p-0">
-        <Table>
+        <Table className="table-fixed w-full">
+          <colgroup>
+            <col className="w-[40%]" />
+            <col className="w-[22%]" />
+            <col className="w-[26%]" />
+            <col className="w-[12%]" />
+          </colgroup>
           <TableHeader>
             <TableRow>
-              <TableHead>{locale === 'en' ? 'Item' : 'รายการ'}</TableHead>
-              <TableHead>{locale === 'en' ? 'Ref' : 'อ้างอิง'}</TableHead>
-              <TableHead>{locale === 'en' ? 'Expiry / date' : 'วันหมดอายุ'}</TableHead>
+              <TableHead className="px-4">{locale === 'en' ? 'Item' : 'รายการ'}</TableHead>
+              <TableHead className="px-4">{locale === 'en' ? 'Ref' : 'อ้างอิง'}</TableHead>
+              <TableHead className="px-4">{locale === 'en' ? 'Expiry / date' : 'วันหมดอายุ'}</TableHead>
+              <TableHead className="px-4 text-right">{locale === 'en' ? 'File' : 'ไฟล์'}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((r) => (
               <TableRow key={r.k}>
-                <TableCell className="text-sm">{r.a}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{r.b}</TableCell>
-                <TableCell className="text-xs">{r.c}</TableCell>
+                <TableCell className="px-4 text-sm align-middle break-words">{r.a || '—'}</TableCell>
+                <TableCell className="px-4 text-xs text-muted-foreground align-middle break-words">
+                  {r.b || '—'}
+                </TableCell>
+                <TableCell className="px-4 text-xs align-middle whitespace-nowrap">{r.c || '—'}</TableCell>
+                <TableCell className="px-4 text-right align-middle">
+                  {r.url ? (
+                    <Button variant="ghost" size="sm" className="h-8 px-2" asChild>
+                      <a href={r.url} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+                        <span className="sr-only">{locale === 'en' ? 'Open file' : 'เปิดไฟล์'}</span>
+                      </a>
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </TableCell>
               </TableRow>
             ))}
             {rows.length === 0 && (
               <TableRow>
-                <TableCell colSpan={3} className="text-center py-6 text-muted-foreground text-sm">
+                <TableCell colSpan={4} className="px-4 text-center py-6 text-muted-foreground text-sm">
                   —
                 </TableCell>
               </TableRow>

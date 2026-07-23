@@ -8,6 +8,7 @@ import { ChevronLeft, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { isPartialPoMonthCommercialInvoice } from '@/lib/commercial/partial-po-month-billing';
+import { PortalMonthCustomerActions } from '@/components/client-portal/portal-month-customer-actions';
 import { PortalPoMonthDocHeaderCard } from '@/components/client-portal/portal-po-month-readonly-fragments';
 import { PortalPoMonthUnifiedReadonlyCard } from '@/components/client-portal/portal-wave-month-readonly-card';
 import { useCollection, useFirestore, useMemoFirebase } from '@/firebase';
@@ -21,6 +22,7 @@ import {
   dailyTimesheetsQueryForPortalCustomerMonth,
   dailyTimesheetsQueryForPortalPoMonth,
   filterDailyTimesheetsForPortalPoMonthGrid,
+  getLastNCalendarMonths,
   mergePortalDailyTimesheetsForPoMonth,
   poMonthTimesheetReviewDocId,
 } from '@/lib/client-portal/timesheet-portal-utils';
@@ -225,7 +227,9 @@ function ClientPortalPoMonthContent() {
         const bSnap = bSettled.status === 'fulfilled' ? bSettled.value : null;
         if (rSnap?.exists()) {
           const r = { id: rSnap.id, ...(rSnap.data() as object) } as PoMonthTimesheetReview;
-          if (r.status === 'approved') {
+          const currentYm = getLastNCalendarMonths(1)[0];
+          /** ปล่อยให้ดูได้เมื่อ manager อนุมัติแล้ว หรือเป็นเดือนปัจจุบัน */
+          if (r.status === 'approved' || (monthYm === currentYm && r.status !== 'rejected')) {
             setReview(r);
           } else {
             setReview(null);
@@ -470,6 +474,11 @@ function ClientPortalPoMonthContent() {
             bundle={bundle}
             locale={locale}
             t={t}
+          />
+          <PortalMonthCustomerActions
+            kind="po"
+            review={review}
+            onUpdated={(next) => setReview(next)}
           />
           {commercialForRows.length > 0 ? (
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">

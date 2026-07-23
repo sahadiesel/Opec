@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useRef, useState, type ChangeEvent, type RefObject } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
@@ -22,9 +22,12 @@ import {
   Pencil,
   FileBadge,
   RefreshCw,
+  Paperclip,
+  ExternalLink,
 } from 'lucide-react';
 import {
   CommercialInvoice,
+  CommercialInvoiceAttachment,
   CommercialInvoiceLine,
   Customer,
   MainContract,
@@ -34,7 +37,7 @@ import {
   User,
 } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
-import { useCollection, useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
+import { useCollection, useFirestore, useDoc, useMemoFirebase, useUser, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canCreate, canEdit, canView, isSystemAdmin } from '@/lib/permissions';
 import { isSimpleAccounting, isSimpleAdmin } from '@/lib/simple-tier-model';
@@ -64,9 +67,19 @@ import {
   voidCommercialInvoice,
   updateCommercialDraftInvoice,
   regenerateCommercialDraftInvoiceFromTimesheets,
+  addCommercialInvoiceAttachment,
+  removeCommercialInvoiceAttachment,
   QUOTATION_PO_WAVE_PLACEHOLDER,
   PO_MONTH_WAVE_PLACEHOLDER,
 } from '@/lib/services/commercial-invoice-service';
+import {
+  COMMERCIAL_INVOICE_ATTACHMENT_MIME_ACCEPT,
+  MAX_COMMERCIAL_INVOICE_ATTACHMENT_BYTES,
+  MAX_COMMERCIAL_INVOICE_ATTACHMENTS,
+  deleteCommercialInvoiceAttachmentFile,
+  uploadCommercialInvoiceAttachment,
+  validateCommercialInvoiceAttachmentFile,
+} from '@/lib/storage/commercial-invoice-attachments';
 import {
   buildCommercialInvoicePrintHtml,
   openStandardPrintWindow,
@@ -126,9 +139,11 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const { id } = use(params);
   const router = useRouter();
   const { currentUser, isLoading: userLoading } = useAppUser();
-  const { isUserLoading } = useUser();
+  const { user: authUser, isUserLoading } = useUser();
   const firestore = useFirestore();
+  const firebaseApp = useFirebaseApp();
   const { toast } = useToast();
+  const attachInputRef = useRef<HTMLInputElement>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [voidBusy, setVoidBusy] = useState(false);
@@ -142,6 +157,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const [verifyPayBusy, setVerifyPayBusy] = useState(false);
   const [verifyBankId, setVerifyBankId] = useState<string>('');
   const [verifyEntryDate, setVerifyEntryDate] = useState('');
+  const [attachUploading, setAttachUploading] = useState(false);
+  const [attachRemovingId, setAttachRemovingId] = useState<string | null>(null);
 
   const isAccountingActor = useMemo(
     () => !!currentUser && (isSystemAdmin(currentUser) || isSimpleAccounting(currentUser)),
@@ -414,6 +431,86 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       });
     } finally {
       setActionBusy(false);
+    }
+  };
+
+  const canEditAttachments =
+    !!canAct &&
+    !!invoice &&
+    (invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER');
+  const invoiceAttachments = invoice?.attachments ?? [];
+
+  const handleAttachFiles = async (e: ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files?.length || !firestore || !currentUser || !authUser || !invoice || !canEditAttachments) {
+      e.target.value = '';
+      return;
+    }
+    setAttachUploading(true);
+    try {
+      let count = invoiceAttachments.length;
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (count >= MAX_COMMERCIAL_INVOICE_ATTACHMENTS) {
+          toast({
+            variant: 'destructive',
+            title: 'ครบจำนวนไฟล์แล้ว',
+            description: `แนบได้สูงสุด ${MAX_COMMERCIAL_INVOICE_ATTACHMENTS} ไฟล์ — ลบบางรายการก่อนเพิ่ม`,
+          });
+          break;
+        }
+        const v = validateCommercialInvoiceAttachmentFile(file);
+        if (v) {
+          toast({ variant: 'destructive', title: file.name, description: v });
+          continue;
+        }
+        const att = await uploadCommercialInvoiceAttachment(
+          firebaseApp,
+          invoice.id,
+          file,
+          authUser.uid,
+          currentUser.displayName || authUser.email || currentUser.id,
+        );
+        await addCommercialInvoiceAttachment(firestore, invoice.id, att, currentUser);
+        count += 1;
+      }
+      toast({
+        title: 'แนบเอกสารแล้ว',
+        description: `ลูกค้าจะเปิดดูไฟล์เหล่านี้ได้ตอนตรวจใบวางบิล (สูงสุด ${MAX_COMMERCIAL_INVOICE_ATTACHMENTS} ไฟล์ · ไม่เกิน ${MAX_COMMERCIAL_INVOICE_ATTACHMENT_BYTES / (1024 * 1024)} MB ต่อไฟล์)`,
+      });
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: 'destructive',
+        title: 'แนบเอกสารไม่สำเร็จ',
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setAttachUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveAttachment = async (att: CommercialInvoiceAttachment) => {
+    if (!firestore || !currentUser || !invoice || !canEditAttachments) return;
+    setAttachRemovingId(att.id);
+    try {
+      try {
+        await deleteCommercialInvoiceAttachmentFile(firebaseApp, att.storagePath);
+      } catch {
+        /* file may already be gone */
+      }
+      await removeCommercialInvoiceAttachment(firestore, invoice.id, att.id, currentUser);
+      toast({ title: 'ลบเอกสารแนบแล้ว' });
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: 'destructive',
+        title: 'ลบไม่สำเร็จ',
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setAttachRemovingId(null);
     }
   };
 
@@ -968,7 +1065,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
         )}
 
         {invoice.status === 'DRAFT' && (canAct || canAdminVoid) ? (
-          <div className="print:hidden flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
+          <div className="print:hidden grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)] lg:items-start">
+            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
             {canAct && (
               <Button
                 className="gap-2 shrink-0"
@@ -1009,10 +1107,22 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 </AlertDialogContent>
               </AlertDialog>
             )}
+            </div>
+            <CommercialInvoiceAttachmentsPanel
+              attachments={invoiceAttachments}
+              canEdit={canEditAttachments}
+              uploading={attachUploading}
+              removingId={attachRemovingId}
+              inputRef={attachInputRef}
+              onPick={() => attachInputRef.current?.click()}
+              onFileChange={(e) => void handleAttachFiles(e)}
+              onRemove={(att) => void handleRemoveAttachment(att)}
+            />
           </div>
         ) : null}
 
         {invoice.status === 'PENDING_CUSTOMER' && (
+          <div className="print:hidden grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)] lg:items-start">
           <Alert className="border-amber-200 bg-amber-50/80">
             <AlertTitle>รอการยืนยันยอด</AlertTitle>
             <AlertDescription>
@@ -1062,7 +1172,35 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               )}
             </AlertDescription>
           </Alert>
+          <CommercialInvoiceAttachmentsPanel
+            attachments={invoiceAttachments}
+            canEdit={canEditAttachments}
+            uploading={attachUploading}
+            removingId={attachRemovingId}
+            inputRef={attachInputRef}
+            onPick={() => attachInputRef.current?.click()}
+            onFileChange={(e) => void handleAttachFiles(e)}
+            onRemove={(att) => void handleRemoveAttachment(att)}
+          />
+          </div>
         )}
+
+        {invoice.status !== 'DRAFT' &&
+          invoice.status !== 'PENDING_CUSTOMER' &&
+          invoiceAttachments.length > 0 && (
+            <div className="print:hidden max-w-md">
+              <CommercialInvoiceAttachmentsPanel
+                attachments={invoiceAttachments}
+                canEdit={false}
+                uploading={false}
+                removingId={null}
+                inputRef={attachInputRef}
+                onPick={() => undefined}
+                onFileChange={() => undefined}
+                onRemove={() => undefined}
+              />
+            </div>
+          )}
 
         {visibleGenerationWarnings.length > 0 && (
           <Alert className="border-amber-200 bg-amber-50/80">
@@ -1276,5 +1414,107 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
         </AlertDialogContent>
       </AlertDialog>
     </AppShell>
+  );
+}
+
+function CommercialInvoiceAttachmentsPanel({
+  attachments,
+  canEdit,
+  uploading,
+  removingId,
+  inputRef,
+  onPick,
+  onFileChange,
+  onRemove,
+}: {
+  attachments: CommercialInvoiceAttachment[];
+  canEdit: boolean;
+  uploading: boolean;
+  removingId: string | null;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onPick: () => void;
+  onFileChange: (e: ChangeEvent<HTMLInputElement>) => void;
+  onRemove: (att: CommercialInvoiceAttachment) => void;
+}) {
+  const maxMb = MAX_COMMERCIAL_INVOICE_ATTACHMENT_BYTES / (1024 * 1024);
+  return (
+    <Card className="border-2 border-blue-400 bg-blue-50/50 dark:border-blue-600 dark:bg-blue-950/25 shadow-sm">
+      <CardHeader className="pb-2 pt-4 px-4">
+        <CardTitle className="text-sm font-semibold text-blue-900 dark:text-blue-100 flex items-center gap-2">
+          <Paperclip className="h-4 w-4" />
+          เอกสารแนบ
+          <Badge variant="secondary" className="font-normal text-[10px]">
+            {attachments.length}/{MAX_COMMERCIAL_INVOICE_ATTACHMENTS}
+          </Badge>
+        </CardTitle>
+        <CardDescription className="text-xs text-blue-900/70 dark:text-blue-100/70">
+          รูปหรือ PDF · ไม่เกิน {maxMb} MB ต่อไฟล์ · สูงสุด {MAX_COMMERCIAL_INVOICE_ATTACHMENTS} ไฟล์ — ลูกค้าเปิดดูได้ตอนตรวจใบวางบิล
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 px-4 pb-4">
+        {canEdit && (
+          <>
+            <input
+              ref={inputRef}
+              type="file"
+              multiple
+              accept={COMMERCIAL_INVOICE_ATTACHMENT_MIME_ACCEPT}
+              className="hidden"
+              onChange={onFileChange}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full gap-2 border-blue-300 bg-white text-blue-900 hover:bg-blue-100 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-100"
+              disabled={uploading || attachments.length >= MAX_COMMERCIAL_INVOICE_ATTACHMENTS}
+              onClick={onPick}
+            >
+              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+              แนบเอกสาร
+            </Button>
+          </>
+        )}
+        {attachments.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-2">ยังไม่มีไฟล์แนบ</p>
+        ) : (
+          <ul className="space-y-1.5">
+            {attachments.map((att) => (
+              <li
+                key={att.id}
+                className="flex items-center gap-2 rounded-md border border-blue-200/80 bg-white/80 dark:bg-background/40 px-2 py-1.5 text-xs"
+              >
+                <a
+                  href={att.downloadUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="min-w-0 flex-1 truncate font-medium text-primary hover:underline inline-flex items-center gap-1"
+                  title={att.fileName}
+                >
+                  <ExternalLink className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{att.fileName}</span>
+                </a>
+                {canEdit && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0 text-destructive"
+                    disabled={removingId === att.id}
+                    onClick={() => onRemove(att)}
+                    aria-label="ลบไฟล์"
+                  >
+                    {removingId === att.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }

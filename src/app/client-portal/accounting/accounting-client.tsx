@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ChevronRight, FileBarChart, Receipt } from 'lucide-react';
+import { ChevronRight, FileBarChart, Receipt, Paperclip } from 'lucide-react';
 import type { TaxInvoice, CommercialInvoice, MoneyReceipt } from '@/lib/types';
 import { isPartialPoMonthCommercialInvoice } from '@/lib/commercial/partial-po-month-billing';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -203,24 +203,35 @@ export function AccountingContent() {
               {commercialLoad ? (
                 <p className="p-6 text-sm">…</p>
               ) : (
-                <Table>
+                <Table className="table-fixed w-full">
+                  <colgroup>
+                    <col className="w-[22%]" />
+                    <col className="w-[14%]" />
+                    <col className="w-[16%]" />
+                    <col className="w-[20%]" />
+                    <col className="w-[18%]" />
+                    <col className="w-[10%]" />
+                  </colgroup>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>{en ? 'No.' : 'เลขที่'}</TableHead>
-                      <TableHead>{en ? 'Date' : 'วันที่'}</TableHead>
-                      <TableHead className="text-right">{en ? 'Amount' : 'ยอด'}</TableHead>
-                      <TableHead>{en ? 'Status' : 'สถานะ'}</TableHead>
-                      <TableHead className="w-14 text-right">{t('accColAction')}</TableHead>
+                      <TableHead className="px-4">{en ? 'No.' : 'เลขที่'}</TableHead>
+                      <TableHead className="px-4">{en ? 'Date' : 'วันที่'}</TableHead>
+                      <TableHead className="px-4 text-right">{en ? 'Amount' : 'ยอด'}</TableHead>
+                      <TableHead className="px-4">{en ? 'Status' : 'สถานะ'}</TableHead>
+                      <TableHead className="px-4">{t('accColAttachments')}</TableHead>
+                      <TableHead className="px-4 text-right">{t('accColAction')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {commercialForPortal.map((inv) => (
+                    {commercialForPortal.map((inv) => {
+                      const atts = inv.attachments ?? [];
+                      return (
                       <TableRow
                         key={inv.id}
                         className="cursor-pointer"
                         onClick={() => openCommercial(inv)}
                       >
-                        <TableCell className="font-mono font-semibold">
+                        <TableCell className="px-4 font-mono font-semibold align-middle break-words">
                           <span className="inline-flex flex-wrap items-center gap-1.5">
                             {inv.invoiceNo}
                             {isPartialPoMonthCommercialInvoice(inv) ? (
@@ -230,15 +241,15 @@ export function AccountingContent() {
                             ) : null}
                           </span>
                         </TableCell>
-                        <TableCell className="text-sm">{formatStoredDateThaiBE(inv.issueDate)}</TableCell>
-                        <TableCell className="text-right text-sm tabular-nums">
+                        <TableCell className="px-4 text-sm align-middle">{formatStoredDateThaiBE(inv.issueDate)}</TableCell>
+                        <TableCell className="px-4 text-right text-sm tabular-nums align-middle">
                           {inv.currency}{' '}
                           {inv.totalAmount.toLocaleString(en ? 'en-GB' : 'th-TH', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="px-4 align-middle">
                           {inv.status === 'PENDING_CUSTOMER' ? (
                             inv.customerRevisionRequestedAt ? (
                               <Badge className="bg-orange-700">{en ? 'Revision requested' : 'ร้องขอแก้ไข'}</Badge>
@@ -255,7 +266,39 @@ export function AccountingContent() {
                             <Badge className="bg-emerald-800">{t('ciStatusAwaitingPayment')}</Badge>
                           )}
                         </TableCell>
-                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                        <TableCell
+                          className="px-4 align-middle"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {atts.length === 0 ? (
+                            <span className="text-muted-foreground text-sm">{t('accAttachmentsNone')}</span>
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              {atts.slice(0, 3).map((a) => (
+                                <a
+                                  key={a.id}
+                                  href={a.downloadUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline truncate max-w-full"
+                                  title={a.fileName}
+                                >
+                                  <Paperclip className="h-3 w-3 shrink-0" />
+                                  <span className="truncate">{a.fileName}</span>
+                                </a>
+                              ))}
+                              {atts.length > 3 ? (
+                                <Link
+                                  href={`/client-portal/commercial-invoices/${inv.id}`}
+                                  className="text-[10px] text-muted-foreground hover:underline"
+                                >
+                                  +{atts.length - 3} · {t('accAttachmentsOpen')}
+                                </Link>
+                              ) : null}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="px-4 text-right align-middle" onClick={(e) => e.stopPropagation()}>
                           <Button variant="ghost" size="icon" asChild>
                             <Link href={`/client-portal/commercial-invoices/${inv.id}`}>
                               <ChevronRight className="h-4 w-4" />
@@ -263,10 +306,11 @@ export function AccountingContent() {
                           </Button>
                         </TableCell>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                     {commercialForPortal.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+                        <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
                           {t('noData')}
                         </TableCell>
                       </TableRow>

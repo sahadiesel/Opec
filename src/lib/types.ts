@@ -1563,6 +1563,12 @@ export type WaveMonthTimesheetReviewStatus =
   | 'approved'
   | 'rejected';
 
+/** สถานะการตรวจของลูกค้าบน portal (หลัง OPEC manager อนุมัติแล้ว) */
+export type PortalCustomerTimesheetApprovalStatus =
+  | 'pending'
+  | 'approved'
+  | 'correction_requested';
+
 /** สถานะปิดงวดรายคนต่อ PO+เดือน — collection `worker_month_timesheet_closures` */
 export type WorkerMonthClosureStatus =
   | 'open'
@@ -1670,6 +1676,15 @@ export interface WaveMonthTimesheetReview {
   reviewNote?: string;
   /** รูปถ่าย timesheet ที่แนบตอนส่งผู้จัดการ (คัดลอกจาก bundle ตอนกดส่ง) */
   timesheetPhotoAttachments?: WaveMonthTimesheetPhotoAttachment[];
+  /** ลูกค้ายืนยัน / ร้องขอแก้ไข บน client portal (ไม่เปลี่ยน status ภายใน OPEC) */
+  customerApprovalStatus?: PortalCustomerTimesheetApprovalStatus;
+  customerApprovedAt?: number;
+  customerApprovedByUid?: string;
+  customerApprovedByName?: string;
+  customerApprovalSource?: 'CLIENT_PORTAL';
+  customerRevisionRequestedAt?: number;
+  customerRevisionRequestNote?: string;
+  customerRevisionIssueId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -1711,6 +1726,15 @@ export interface PoMonthTimesheetReview {
   timesheetPhotoAttachments?: WaveMonthTimesheetPhotoAttachment[];
   /** wave ที่กินเวลาใน PO+เดือนนี้ (สรุปจากฝั่ง client ตอนสร้างคิว) */
   relatedWaveIds?: string[];
+  /** ลูกค้ายืนยัน / ร้องขอแก้ไข บน client portal (ไม่เปลี่ยน status ภายใน OPEC) */
+  customerApprovalStatus?: PortalCustomerTimesheetApprovalStatus;
+  customerApprovedAt?: number;
+  customerApprovedByUid?: string;
+  customerApprovedByName?: string;
+  customerApprovalSource?: 'CLIENT_PORTAL';
+  customerRevisionRequestedAt?: number;
+  customerRevisionRequestNote?: string;
+  customerRevisionIssueId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -2164,12 +2188,30 @@ export interface CommercialInvoice {
   notes?: string;
   /** ใบกำกับภาษี / ใบเสร็จ (ร่างหรือออกแล้ว) ที่สร้างจากใบเรียกเก็บนี้ */
   linkedTaxInvoiceId?: string;
+  /**
+   * เอกสารสนับสนุนที่ OPEC แนบให้ลูกค้าเปิดดูตอนตรวจใบวางบิล
+   * (รูป/PDF · สูงสุด 5 ไฟล์ · ไม่เกิน 2 MB ต่อไฟล์)
+   */
+  attachments?: CommercialInvoiceAttachment[];
   createdAt: number;
   createdByUid: string;
   createdByName: string;
   updatedAt: number;
   updatedByUid?: string;
   updatedByName?: string;
+}
+
+/** เอกสารแนบประกอบใบแจ้งหนี้เชิงพาณิชย์ (ให้ลูกค้าเปิดดูใน portal) */
+export interface CommercialInvoiceAttachment {
+  id: string;
+  storagePath: string;
+  downloadUrl: string;
+  fileName: string;
+  contentType: string;
+  size?: number;
+  uploadedAt: number;
+  uploadedByUid?: string;
+  uploadedByName?: string;
 }
 
 export interface CashbookEntry {

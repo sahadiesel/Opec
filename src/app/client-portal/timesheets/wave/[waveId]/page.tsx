@@ -10,6 +10,7 @@ import {
   yearMonthFromCommercialInvoice,
 } from '@/lib/client-portal/timesheet-portal-utils';
 import { Button } from '@/components/ui/button';
+import { PortalMonthCustomerActions } from '@/components/client-portal/portal-month-customer-actions';
 import { PortalWaveMonthReadonlyCard } from '@/components/client-portal/portal-wave-month-readonly-card';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useDoc } from '@/firebase/firestore/use-doc';
@@ -158,8 +159,11 @@ function ClientPortalWaveMonthDetailContent() {
     if (monthReviewDoc?.status === 'approved') return true;
     if (commercialThisMonth && monthReviewDoc) return true;
     if (commercialThisMonth && !monthReviewDoc) return true;
+    /** เดือนปัจจุบัน — ดูได้อย่างเดียวแม้ยังไม่ปล่อยอนุมัติ */
+    if (monthYm === ymNow() && monthReviewDoc && monthReviewDoc.status !== 'rejected') return true;
+    if (monthYm === ymNow() && (poMonthDailySheets?.length ?? 0) > 0) return true;
     return false;
-  }, [wave, monthReviewDoc, commercialThisMonth]);
+  }, [wave, monthReviewDoc, commercialThisMonth, monthYm, poMonthDailySheets?.length]);
 
   const reviewBadge: 'manager' | 'billing' =
     monthReviewDoc?.status === 'approved' ? 'manager' : 'billing';
@@ -208,17 +212,26 @@ function ClientPortalWaveMonthDetailContent() {
           {t('tsWaveMonthNotApproved')}
         </p>
       ) : (
-        <PortalWaveMonthReadonlyCard
-          wave={wave}
-          po={po}
-          monthYm={monthYm}
-          monthReview={monthReviewDoc}
-          reviewBadge={reviewBadge}
-          bundle={bundle}
-          waveAssignments={waveAssignments}
-          poMonthDailySheets={poMonthDailySheets ?? []}
-          t={t}
-        />
+        <>
+          {monthReviewDoc ? (
+            <PortalMonthCustomerActions
+              kind="wave"
+              review={monthReviewDoc}
+              onUpdated={(next) => setMonthReviewDoc(next)}
+            />
+          ) : null}
+          <PortalWaveMonthReadonlyCard
+            wave={wave}
+            po={po}
+            monthYm={monthYm}
+            monthReview={monthReviewDoc}
+            reviewBadge={reviewBadge}
+            bundle={bundle}
+            waveAssignments={waveAssignments}
+            poMonthDailySheets={poMonthDailySheets ?? []}
+            t={t}
+          />
+        </>
       )}
     </div>
   );

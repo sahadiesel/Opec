@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import type {
   CommercialInvoice,
+  CommercialInvoiceAttachment,
   CommercialInvoiceLine,
   MainContract,
   POLine,
@@ -28,6 +29,7 @@ import type {
   WaveMonthTimesheetReview,
   WorkerMonthTimesheetClosure,
 } from '@/lib/types';
+import { MAX_COMMERCIAL_INVOICE_ATTACHMENTS } from '@/lib/storage/commercial-invoice-attachments';
 import {
   commercialInvoiceCoversAnyWorker,
   commercialInvoiceCoversWorkerSet,
@@ -1759,5 +1761,86 @@ export async function updateCommercialDraftInvoice(
     sourceModule: 'commercial_invoices',
     linkedIds: [cur.customerId, cur.poId, cur.waveId],
     afterSummary: 'บันทึกการแก้ไขรายการใบแจ้งหนี้ (รวมส่วนลด/เพิ่ม)',
+  });
+}
+
+const ATTACH_EDITABLE_STATUSES = new Set(['DRAFT', 'PENDING_CUSTOMER']);
+
+/** OPEC: เพิ่มเอกสารแนบให้ลูกค้าเปิดดูตอนตรวจใบวางบิล (สูงสุด 5 ไฟล์) */
+export async function addCommercialInvoiceAttachment(
+  db: Firestore,
+  invoiceId: string,
+  attachment: CommercialInvoiceAttachment,
+  actor: User,
+): Promise<void> {
+  const ref = doc(db, 'commercial_invoices', invoiceId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
+  const cur = snap.data() as CommercialInvoice;
+  if (!ATTACH_EDITABLE_STATUSES.has(cur.status)) {
+    throw new Error('แนบเอกสารได้เฉพาะใบสถานะ DRAFT หรือรอลูกค้าตรวจ');
+  }
+  const existing = cur.attachments ?? [];
+  if (existing.length >= MAX_COMMERCIAL_INVOICE_ATTACHMENTS) {
+    throw new Error(`แนบได้สูงสุด ${MAX_COMMERCIAL_INVOICE_ATTACHMENTS} ไฟล์ — ลบบางรายการก่อนเพิ่ม`);
+  }
+  if (existing.some((a) => a.id === attachment.id)) {
+    throw new Error('ไฟล์นี้มีอยู่ในรายการแล้ว');
+  }
+  const next = [...existing, attachment];
+  const now = Date.now();
+  await updateDoc(
+    ref,
+    sanitizeFirestorePayload({
+      attachments: next,
+      updatedAt: now,
+      updatedByUid: actor.id,
+      updatedByName: actor.displayName || actor.email || actor.id,
+    }) as any,
+  );
+  await writeAuditLog(db, actor, {
+    actionType: 'UPDATE',
+    entityType: 'CommercialInvoice',
+    entityId: invoiceId,
+    entityLabel: `${cur.invoiceNo} → แนบเอกสาร`,
+    sourceModule: 'commercial_invoices',
+    linkedIds: [cur.customerId, cur.poId],
+    afterSummary: `แนบ ${attachment.fileName} (${next.length}/${MAX_COMMERCIAL_INVOICE_ATTACHMENTS})`,
+  });
+}
+
+/** OPEC: ลบเอกสารแนบออกจากใบแจ้งหนี้ (ลบไฟล์ Storage แยกที่ UI) */
+export async function removeCommercialInvoiceAttachment(
+  db: Firestore,
+  invoiceId: string,
+  attachmentId: string,
+  actor: User,
+): Promise<void> {
+  const ref = doc(db, 'commercial_invoices', invoiceId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
+  const cur = snap.data() as CommercialInvoice;
+  if (!ATTACH_EDITABLE_STATUSES.has(cur.status)) {
+    throw new Error('ลบเอกสารแนบได้เฉพาะใบสถานะ DRAFT หรือรอลูกค้าตรวจ');
+  }
+  const next = (cur.attachments ?? []).filter((a) => a.id !== attachmentId);
+  const now = Date.now();
+  await updateDoc(
+    ref,
+    sanitizeFirestorePayload({
+      attachments: next,
+      updatedAt: now,
+      updatedByUid: actor.id,
+      updatedByName: actor.displayName || actor.email || actor.id,
+    }) as any,
+  );
+  await writeAuditLog(db, actor, {
+    actionType: 'UPDATE',
+    entityType: 'CommercialInvoice',
+    entityId: invoiceId,
+    entityLabel: `${cur.invoiceNo} → ลบเอกสารแนบ`,
+    sourceModule: 'commercial_invoices',
+    linkedIds: [cur.customerId, cur.poId],
+    afterSummary: `เหลือ ${next.length} ไฟล์`,
   });
 }

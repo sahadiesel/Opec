@@ -36,6 +36,7 @@ import {
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, getDoc, updateDoc, deleteField } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { ensureWorkerAssignedCustomerId } from '@/lib/client-portal/ensure-worker-assigned-customer';
 import {
   formatDateThaiBE,
   formatDateTimeThaiBE,
@@ -841,6 +842,11 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         poActiveStandbyAutoStartYmd: deleteField(),
         poActiveStandbyAutoEndYmd: deleteField(),
       });
+      if (firestore && assignment.workerId && assignment.customerId) {
+        void ensureWorkerAssignedCustomerId(firestore, assignment.workerId, assignment.customerId).catch((e) =>
+          console.error('[mob] assignedCustomerIds', e),
+        );
+      }
       setClearanceEditMode(0);
       toast({
         title: editing ? 'แก้ไขวันเริ่มงานแล้ว' : 'เริ่มวันทำงานแล้ว',

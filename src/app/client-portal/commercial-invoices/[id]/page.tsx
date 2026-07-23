@@ -2,7 +2,7 @@
 
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, CheckCircle2, Loader2, MessageSquareWarning, Printer } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Loader2, MessageSquareWarning, Printer, Paperclip, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -396,6 +396,42 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
           </div>
         </CardContent>
       </Card>
+
+      {(invoice.attachments?.length ?? 0) > 0 && (
+        <Card className="border-blue-200 bg-blue-50/30 dark:bg-blue-950/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Paperclip className="h-4 w-4" />
+              {en ? 'Attachments' : 'เอกสารแนบ'}
+              <span className="text-xs font-normal text-muted-foreground">
+                ({invoice.attachments!.length})
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              {en
+                ? 'Supporting files from OPEC — open to review with this invoice.'
+                : 'ไฟล์ประกอบจาก OPEC — เปิดดูประกอบการตรวจใบวางบิลนี้'}
+            </p>
+            <ul className="space-y-1.5">
+              {invoice.attachments!.map((att) => (
+                <li key={att.id}>
+                  <a
+                    href={att.downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                    <span className="break-all">{att.fileName}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="flex flex-wrap gap-2 print:hidden">
         {invoice.status === 'PENDING_CUSTOMER' && !isApprover && (
