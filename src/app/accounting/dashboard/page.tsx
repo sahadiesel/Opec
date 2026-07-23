@@ -341,7 +341,7 @@ export default function AccountingDashboardPage() {
                 <ShortcutItem href="/accounting/trip-billing" label="ทำใบแจ้งหนี้แบบ Trip" sub="M1→D1 · หลายคนต่อ invoice" icon={FileText} />
                 <ShortcutItem
                   href="/tax-invoices"
-                  label="ใบกำกับภาษี"
+                  label="ใบกำกับภาษีขาย"
                   sub="แยกจากใบเสร็จ — ออกรับเงินทีหลัง"
                   icon={FileBadge}
                 />

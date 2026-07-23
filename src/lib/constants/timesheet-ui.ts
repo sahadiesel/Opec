@@ -352,15 +352,16 @@ export function assignmentIsRemobMobilizationOnDoc(
 
 /** mobilization เดียว: จบไซต์รอบเก่า (mobEnd) แล้วยังไม่ถึงวัน SB/เริ่มงานรอบใหม่ */
 export function assignmentHasSplitPriorAndNewCycleOnDoc(
-  a: Pick<Assignment, 'mobLocationEndDate' | 'mobWorkingStartDate'>,
+  a: Pick<Assignment, 'mobLocationEndDate' | 'mobWorkingStartDate' | 'mobStandbyDate'>,
 ): boolean {
   const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(mobEnd)) return false;
   const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
-  return (
-    /^\d{4}-\d{2}-\d{2}$/.test(mobEnd) &&
-    /^\d{4}-\d{2}-\d{2}$/.test(mobStart) &&
-    mobEnd < mobStart
-  );
+  const mobStandby = (a.mobStandbyDate || '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(mobStart) && mobEnd < mobStart) return true;
+  /** Final Clearance Step 2 (Mob) ตั้ง mobStandbyDate ก่อนมี mobWorkingStartDate */
+  if (/^\d{4}-\d{2}-\d{2}$/.test(mobStandby) && mobEnd < mobStandby) return true;
+  return false;
 }
 
 /** วันแรกของ mobilization รอบใหม่ (Standby หรือเริ่มงาน — อันไหนมาก่อน) */
@@ -564,9 +565,12 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
    */
   const splitPriorAndNewCycleOnDoc = assignmentHasSplitPriorAndNewCycleOnDoc(a);
 
-  /** วันนี้อยู่ในรอบที่ปิดแล้ว (ก่อนเริ่มรอบใหม่ที่สะสมใน mobilization เดียวกัน) */
+  /** วันนี้อยู่ในรอบที่ปิดแล้ว (ก่อนเริ่มรอบใหม่ที่สะสมใน mobilization เดียวกัน — รวมกรณีมีแค่ mobStandbyDate) */
   const inClosedPriorCycle =
-    hasMobEnd && hasMobStart && mobEnd < mobStart && d <= mobEnd;
+    splitPriorAndNewCycleOnDoc &&
+    !!mobSegmentStart &&
+    hasMobEnd &&
+    d <= mobEnd;
   /** เดือนปฏิทินต่างจากเดือนของวันแรกช่วง mobilization — ใช้ขอบจากมอบหมาย ไม่ใช่แค่วันเริ่มงานรอบใหม่ */
   const inEarlierCalendarMonthThanMobSegment =
     !!segmentForMonthCompare &&
@@ -668,18 +672,31 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
   return true;
 }
 
-/** วันนี้ยังแก้ไขลงเวลารอบก่อนจบงานได้ แม้อยู่ Waiting MOB (DRAFT + mobLocationEndDate) */
+/** วันนี้ยังแก้ไขลงเวลารอบก่อนจบงานได้ แม้อยู่ Waiting MOB / กำลัง Mob รอบใหม่ */
 export function isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(
-  asgn: Pick<Assignment, 'deploymentStatus' | 'mobLocationEndDate' | 'mobCycleNumber' | 'unassignedAt'>,
+  asgn: Pick<
+    Assignment,
+    | 'deploymentStatus'
+    | 'mobLocationEndDate'
+    | 'mobCycleNumber'
+    | 'unassignedAt'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+  >,
   dateYmd: string,
 ): boolean {
-  if (asgn.deploymentStatus !== 'DRAFT') return false;
+  if (asgn.deploymentStatus !== 'DRAFT' && asgn.deploymentStatus !== 'MOBILIZING') return false;
   if (!(asgn.mobLocationEndDate || '').trim()) return false;
   if (isAssignmentDraftAwaitingFirstMobOnly(asgn)) return false;
   const mobEnd = (asgn.mobLocationEndDate || '').trim().slice(0, 10);
   const d = dateYmd.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(mobEnd) || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
-  return d <= mobEnd;
+  if (d > mobEnd) return false;
+  /** MOBILIZING: อนุญาตวันรอบเก่าเฉพาะเมื่อมีหลักฐานเริ่มรอบใหม่หลัง mobEnd (SB/W) */
+  if (asgn.deploymentStatus === 'MOBILIZING') {
+    return assignmentHasSplitPriorAndNewCycleOnDoc(asgn);
+  }
+  return true;
 }
 
 /** กระดานรายวัน / สรุปรายเดือน — วันนี้แก้ไขหรือบันทึก timesheet ได้หรือไม่ */

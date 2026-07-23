@@ -62,6 +62,13 @@ export async function executeVendorBillPayment(params: {
   whtPaymentProofFileName?: string;
   /** เมื่อมี paymentInstallments — เลือกงวดที่จ่าย (ถ้าไม่ส่ง = งวดแรกที่ยัง PENDING) */
   installmentId?: string;
+  /** บัญชีรับโอนของคู่ค้าที่เลือกตอนทำจ่าย */
+  vendorPayeeBank?: {
+    id?: string;
+    bankName?: string;
+    bankAccountName?: string;
+    bankAccountNumber?: string;
+  } | null;
 }): Promise<{ cashbookEntryNo: string; createdWhtCertificateId?: string }> {
   const {
     firestore,
@@ -79,6 +86,7 @@ export async function executeVendorBillPayment(params: {
     whtPaymentProofUrl,
     whtPaymentProofFileName,
     installmentId: installmentIdParam,
+    vendorPayeeBank,
   } = params;
 
   const installmentPlanActive = billUsesPaymentInstallmentPlan(bill);
@@ -213,6 +221,25 @@ export async function executeVendorBillPayment(params: {
         }
       : {};
 
+  const vendorPayeePayload =
+    vendorPayeeBank &&
+    (vendorPayeeBank.bankName?.trim() ||
+      vendorPayeeBank.bankAccountName?.trim() ||
+      vendorPayeeBank.bankAccountNumber?.trim())
+      ? {
+          ...(vendorPayeeBank.id?.trim() ? { vendorPayeeBankAccountId: vendorPayeeBank.id.trim() } : {}),
+          ...(vendorPayeeBank.bankName?.trim()
+            ? { vendorPayeeBankName: vendorPayeeBank.bankName.trim() }
+            : {}),
+          ...(vendorPayeeBank.bankAccountName?.trim()
+            ? { vendorPayeeBankAccountName: vendorPayeeBank.bankAccountName.trim() }
+            : {}),
+          ...(vendorPayeeBank.bankAccountNumber?.trim()
+            ? { vendorPayeeBankAccountNumber: vendorPayeeBank.bankAccountNumber.trim() }
+            : {}),
+        }
+      : {};
+
   const whtProofPayload =
     whtBreakdown &&
     whtBreakdown.wht > 0.005 &&
@@ -241,6 +268,7 @@ export async function executeVendorBillPayment(params: {
             cashbookEntryId: cbRef.id,
             cashbookEntryNo: entryNo,
             ...proofPayload,
+            ...vendorPayeePayload,
             ...whtProofPayload,
           }
         : i,
@@ -258,7 +286,7 @@ export async function executeVendorBillPayment(params: {
       billPatch.paidByName = actor;
       billPatch.cashbookEntryId = cbRef.id;
       billPatch.cashbookEntryNo = entryNo;
-      Object.assign(billPatch, proofPayload, whtProofPayload);
+      Object.assign(billPatch, proofPayload, vendorPayeePayload, whtProofPayload);
     }
   } else {
     billPatch = {
@@ -269,6 +297,7 @@ export async function executeVendorBillPayment(params: {
       cashbookEntryId: cbRef.id,
       cashbookEntryNo: entryNo,
       ...proofPayload,
+      ...vendorPayeePayload,
       ...whtProofPayload,
       updatedAt: now,
     };

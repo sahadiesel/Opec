@@ -215,7 +215,7 @@ export const SYSTEM_MODULES = [
   {
     group: 'บัญชี (Accounting)',
     key: 'tax_invoices',
-    label: 'ใบกำกับภาษี (Tax invoice)',
+    label: 'ใบกำกับภาษีขาย (Sales tax invoice)',
   },
   {
     group: 'บัญชี (Accounting)',

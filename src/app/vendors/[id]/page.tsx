@@ -15,17 +15,15 @@ import {
   Loader2, 
   Building2,
   CreditCard,
-  Phone,
-  Mail,
-  MapPin,
-  Briefcase,
   History,
   ShieldCheck,
-  Building
+  Pencil,
+  Plus,
+  Trash2,
 } from 'lucide-react';
-import { useFirestore, useDoc, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 import { doc, collection, setDoc, updateDoc } from 'firebase/firestore';
-import { Vendor, VendorType, VendorLegalForm, User } from '@/lib/types';
+import { Vendor, VendorType, VendorLegalForm, VendorBankAccount, User } from '@/lib/types';
 
 function normalizeVendorPaymentTerms(raw: string | undefined | null): 'Cash' | 'Credit' {
   const s = (raw || '').trim().toLowerCase();
@@ -35,11 +33,15 @@ function normalizeVendorPaymentTerms(raw: string | undefined | null): 'Cash' | '
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import Link from 'next/link';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { formatDateTimeThaiBE } from '@/lib/date-thai';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, canEdit } from '@/lib/permissions';
+import {
+  createEmptyVendorBankAccount,
+  resolveVendorBankAccounts,
+  syncVendorPrimaryBankFields,
+} from '@/lib/vendors/vendor-bank-accounts';
 
 export default function VendorDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -67,29 +69,74 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
     phone: '',
     email: '',
     address: '',
+    goodsOrServicesDetail: '',
     paymentTerms: 'Credit' as const,
     creditDays: 30,
     defaultCurrency: 'THB',
     bankAccountName: '',
     bankAccountNumber: '',
     bankName: '',
+    bankAccounts: [createEmptyVendorBankAccount({ label: 'บัญชีหลัก', isPrimary: true })],
     status: 'ACTIVE',
     notes: ''
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isEditing, setIsEditing] = useState(isNew);
+  const fieldsLocked = !isNew && !isEditing;
 
   useEffect(() => {
     if (vendorData) {
+      const days = Number(vendorData.creditDays);
+      const banks = resolveVendorBankAccounts(vendorData);
       setFormData({
         ...vendorData,
         vendorLegalForm: vendorData.vendorLegalForm ?? 'JURISTIC',
         branchType: vendorData.branchType || ((vendorData.branchNo || '00000') === '00000' ? 'head_office' : 'branch'),
         branchNo: (vendorData.branchNo || '00000') === '00000' ? '' : (vendorData.branchNo || ''),
         paymentTerms: normalizeVendorPaymentTerms(vendorData.paymentTerms),
+        creditDays: Number.isFinite(days) ? days : 30,
+        bankAccounts: banks.length > 0 ? banks : [createEmptyVendorBankAccount({ label: 'บัญชีหลัก', isPrimary: true })],
       });
+      setIsEditing(false);
     }
   }, [vendorData]);
+
+  const bankAccounts = formData.bankAccounts ?? [];
+
+  const updateBankAccount = (id: string, patch: Partial<VendorBankAccount>) => {
+    setFormData((prev) => ({
+      ...prev,
+      bankAccounts: (prev.bankAccounts ?? []).map((b) => (b.id === id ? { ...b, ...patch } : b)),
+    }));
+  };
+
+  const addBankAccount = () => {
+    setFormData((prev) => ({
+      ...prev,
+      bankAccounts: [...(prev.bankAccounts ?? []), createEmptyVendorBankAccount()],
+    }));
+  };
+
+  const removeBankAccount = (id: string) => {
+    setFormData((prev) => {
+      const next = (prev.bankAccounts ?? []).filter((b) => b.id !== id);
+      if (next.length === 0) {
+        return { ...prev, bankAccounts: [createEmptyVendorBankAccount({ label: 'บัญชีหลัก', isPrimary: true })] };
+      }
+      if (!next.some((b) => b.isPrimary)) {
+        next[0] = { ...next[0]!, isPrimary: true };
+      }
+      return { ...prev, bankAccounts: next };
+    });
+  };
+
+  const setPrimaryBankAccount = (id: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      bankAccounts: (prev.bankAccounts ?? []).map((b) => ({ ...b, isPrimary: b.id === id })),
+    }));
+  };
 
   const handleSave = async () => {
     if (!firestore || !currentUser) return;
@@ -120,6 +167,12 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
       const branchTypeToSave: 'head_office' | 'branch' =
         legalForm === 'NATURAL' ? 'head_office' : formData.branchType === 'branch' ? 'branch' : 'head_office';
 
+      const creditDaysToSave = Number.isFinite(Number(formData.creditDays))
+        ? Number(formData.creditDays)
+        : 0;
+
+      const bankSync = syncVendorPrimaryBankFields(formData.bankAccounts ?? []);
+
       if (isNew) {
         // Atomic Code Generation
         const { code: finalCode } = await generateNextDocumentCode(firestore, 'vendor', { actor: currentUser.displayName });
@@ -130,6 +183,11 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
           vendorLegalForm: legalForm,
           branchType: branchTypeToSave,
           branchNo: normalizedBranchNo,
+          creditDays: creditDaysToSave,
+          bankAccounts: bankSync.bankAccounts,
+          bankName: bankSync.bankName,
+          bankAccountName: bankSync.bankAccountName,
+          bankAccountNumber: bankSync.bankAccountNumber,
           vendorCode: finalCode,
           id: newRef.id,
           createdAt: now,
@@ -143,10 +201,15 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
           vendorLegalForm: legalForm,
           branchType: branchTypeToSave,
           branchNo: normalizedBranchNo,
+          creditDays: creditDaysToSave,
+          bankAccounts: bankSync.bankAccounts,
+          bankName: bankSync.bankName,
+          bankAccountName: bankSync.bankAccountName,
+          bankAccountNumber: bankSync.bankAccountNumber,
           updatedAt: now,
         });
         toast({ title: "อัปเดตข้อมูลสำเร็จ" });
-        router.back();
+        setIsEditing(false);
       }
     } catch (e: unknown) {
       console.error(e);
@@ -191,14 +254,32 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
               <p className="text-sm text-muted-foreground">ทะเบียนประวัติคู่ค้าและผู้ขายเพื่อระบบจัดซื้อและคลังสินค้า</p>
             </div>
           </div>
-          <Button
-            className="gap-2 px-8 font-bold shadow-lg bg-primary"
-            onClick={handleSave}
-            disabled={isSubmitting || (isNew ? !canCreateVendors : !canEditVendors)}
-          >
-            {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            {isNew ? 'บันทึกคู่ค้าใหม่' : 'บันทึกการเปลี่ยนแปลง'}
-          </Button>
+          <div className="flex items-center gap-2">
+            {!isNew && canEditVendors ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2 px-6 font-bold"
+                disabled={isSubmitting || isEditing}
+                onClick={() => setIsEditing(true)}
+              >
+                <Pencil className="h-4 w-4" />
+                แก้ไข
+              </Button>
+            ) : null}
+            <Button
+              className="gap-2 px-8 font-bold shadow-lg bg-primary"
+              onClick={handleSave}
+              disabled={
+                isSubmitting ||
+                (isNew ? !canCreateVendors : !canEditVendors) ||
+                (!isNew && !isEditing)
+              }
+            >
+              {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {isNew ? 'บันทึกคู่ค้าใหม่' : 'บันทึกการเปลี่ยนแปลง'}
+            </Button>
+          </div>
         </div>
 
         <Tabs defaultValue="basic" className="w-full">
@@ -217,7 +298,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                     <Label className="font-bold">รหัสคู่ค้า (Vendor Code)</Label>
                     <Input 
                       value={formData.vendorCode} 
-                      disabled={isNew} 
+                      disabled={isNew || fieldsLocked} 
                       onChange={e => setFormData({...formData, vendorCode: e.target.value})} 
                       className={isNew ? "bg-muted font-mono font-bold text-primary" : ""}
                       placeholder=" เช่น VEND-001" 
@@ -226,11 +307,12 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">ชื่อบริษัท / ร้านค้า (Vendor Name) *</Label>
-                    <Input value={formData.vendorName} onChange={e => setFormData({...formData, vendorName: e.target.value})} />
+                    <Input disabled={fieldsLocked} value={formData.vendorName} onChange={e => setFormData({...formData, vendorName: e.target.value})} />
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">รูปแบบคู่ค้า</Label>
                     <Select
+                      disabled={fieldsLocked}
                       value={formData.vendorLegalForm ?? 'JURISTIC'}
                       onValueChange={(v: VendorLegalForm) =>
                         setFormData({
@@ -240,7 +322,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                         })
                       }
                     >
-                      <SelectTrigger>
+                      <SelectTrigger disabled={fieldsLocked}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -254,8 +336,8 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                   </div>
                   <div className="space-y-2">
                     <Label>ประเภทคู่ค้า (Vendor Type)</Label>
-                    <Select onValueChange={(v: VendorType) => setFormData({...formData, vendorType: v})} value={formData.vendorType}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                    <Select disabled={fieldsLocked} onValueChange={(v: VendorType) => setFormData({...formData, vendorType: v})} value={formData.vendorType}>
+                      <SelectTrigger disabled={fieldsLocked}><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="PPE_SUPPLIER">PPE Supplier</SelectItem>
                         <SelectItem value="TOOL_SUPPLIER">Tool Supplier</SelectItem>
@@ -269,17 +351,18 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                   </div>
                   <div className="space-y-2">
                     <Label>เลขประจำตัวผู้เสียภาษี (Tax ID)</Label>
-                    <Input value={formData.taxId} onChange={e => setFormData({...formData, taxId: e.target.value})} />
+                    <Input disabled={fieldsLocked} value={formData.taxId} onChange={e => setFormData({...formData, taxId: e.target.value})} />
                   </div>
                   {(formData.vendorLegalForm ?? 'JURISTIC') === 'JURISTIC' ? (
                     <>
                       <div className="space-y-2">
                         <Label>ประเภทสาขา</Label>
                         <Select
+                          disabled={fieldsLocked}
                           onValueChange={(v: 'head_office' | 'branch') => setFormData({ ...formData, branchType: v })}
                           value={(formData.branchType as 'head_office' | 'branch') || 'head_office'}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger disabled={fieldsLocked}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -292,6 +375,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                         <div className="space-y-2">
                           <Label>เลขสาขา (Branch No.)</Label>
                           <Input
+                            disabled={fieldsLocked}
                             value={formData.branchNo || ''}
                             onChange={(e) => setFormData({ ...formData, branchNo: e.target.value })}
                             placeholder="เช่น 00001"
@@ -302,20 +386,20 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                   ) : null}
                   <div className="space-y-2">
                     <Label>ชื่อผู้ติดต่อ (Contact Name)</Label>
-                    <Input value={formData.contactName} onChange={e => setFormData({...formData, contactName: e.target.value})} />
+                    <Input disabled={fieldsLocked} value={formData.contactName} onChange={e => setFormData({...formData, contactName: e.target.value})} />
                   </div>
                   <div className="space-y-2">
                     <Label>เบอร์โทรศัพท์ (Phone)</Label>
-                    <Input value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
+                    <Input disabled={fieldsLocked} value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
                   </div>
                   <div className="space-y-2">
                     <Label>อีเมล (Email)</Label>
-                    <Input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
+                    <Input disabled={fieldsLocked} type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
                   </div>
                   <div className="space-y-2">
                     <Label>สถานะ</Label>
-                    <Select onValueChange={(v: 'ACTIVE' | 'INACTIVE') => setFormData({...formData, status: v})} value={formData.status}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                    <Select disabled={fieldsLocked} onValueChange={(v: 'ACTIVE' | 'INACTIVE') => setFormData({...formData, status: v})} value={formData.status}>
+                      <SelectTrigger disabled={fieldsLocked}><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="ACTIVE">ACTIVE</SelectItem>
                         <SelectItem value="INACTIVE">INACTIVE</SelectItem>
@@ -323,9 +407,26 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                     </Select>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>ที่อยู่ (Address)</Label>
-                  <Textarea value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} className="min-h-[100px]" />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>ที่อยู่ (Address)</Label>
+                    <Textarea
+                      disabled={fieldsLocked}
+                      value={formData.address ?? ''}
+                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                      className="min-h-[100px]"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>รายละเอียดสินค้าหรือการบริการ</Label>
+                    <Textarea
+                      disabled={fieldsLocked}
+                      value={formData.goodsOrServicesDetail ?? ''}
+                      onChange={(e) => setFormData({ ...formData, goodsOrServicesDetail: e.target.value })}
+                      className="min-h-[100px]"
+                      placeholder="บันทึกรายละเอียดสินค้าหรือการบริการที่คู่ค้าจัดหา"
+                    />
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -339,12 +440,13 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                   <div className="space-y-2">
                     <Label>รูปแบบการชำระเงิน</Label>
                     <Select
+                      disabled={fieldsLocked}
                       value={normalizeVendorPaymentTerms(formData.paymentTerms)}
                       onValueChange={(v: 'Cash' | 'Credit') =>
                         setFormData({ ...formData, paymentTerms: v })
                       }
                     >
-                      <SelectTrigger>
+                      <SelectTrigger disabled={fieldsLocked}>
                         <SelectValue placeholder="เลือกรูปแบบการชำระเงิน" />
                       </SelectTrigger>
                       <SelectContent>
@@ -355,12 +457,28 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                   </div>
                   <div className="space-y-2">
                     <Label>จำนวนวันเครดิต (Credit Days)</Label>
-                    <Input type="number" value={formData.creditDays} onChange={e => setFormData({...formData, creditDays: parseInt(e.target.value)})} />
+                    <Input
+                      type="number"
+                      min={0}
+                      disabled={fieldsLocked}
+                      value={Number.isFinite(formData.creditDays) ? formData.creditDays : ''}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (raw === '') {
+                          setFormData({ ...formData, creditDays: undefined });
+                          return;
+                        }
+                        const n = Number.parseInt(raw, 10);
+                        if (Number.isFinite(n)) {
+                          setFormData({ ...formData, creditDays: n });
+                        }
+                      }}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>สกุลเงินหลัก (Default Currency)</Label>
-                    <Select onValueChange={v => setFormData({...formData, defaultCurrency: v})} value={formData.defaultCurrency}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                    <Select disabled={fieldsLocked} onValueChange={v => setFormData({...formData, defaultCurrency: v})} value={formData.defaultCurrency}>
+                      <SelectTrigger disabled={fieldsLocked}><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="THB">THB - Thai Baht</SelectItem>
                         <SelectItem value="USD">USD - US Dollar</SelectItem>
@@ -371,20 +489,90 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
               </Card>
 
               <Card>
-                <CardHeader><CardTitle>บัญชีธนาคาร (Bank Details)</CardTitle></CardHeader>
+                <CardHeader>
+                  <CardTitle>บัญชีธนาคาร (Bank Details)</CardTitle>
+                  <CardDescription>รองรับหลายบัญชี — เลือกบัญชีที่จะโอนเข้าตอนทำจ่ายได้</CardDescription>
+                </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>ชื่อธนาคาร (Bank Name)</Label>
-                    <Input value={formData.bankName} onChange={e => setFormData({...formData, bankName: e.target.value})} placeholder="เช่น กสิกรไทย, ไทยพาณิชย์" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>ชื่อบัญชี (Account Name)</Label>
-                    <Input value={formData.bankAccountName} onChange={e => setFormData({...formData, bankAccountName: e.target.value})} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>เลขที่บัญชี (Account Number)</Label>
-                    <Input value={formData.bankAccountNumber} onChange={e => setFormData({...formData, bankAccountNumber: e.target.value})} placeholder="000-0-00000-0" />
-                  </div>
+                  {bankAccounts.map((acct, idx) => (
+                    <div key={acct.id} className="rounded-lg border bg-muted/20 p-3 space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold">บัญชี {idx + 1}{acct.isPrimary ? ' · หลัก' : ''}</p>
+                        <div className="flex items-center gap-1">
+                          {!acct.isPrimary ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 text-xs"
+                              disabled={fieldsLocked}
+                              onClick={() => setPrimaryBankAccount(acct.id)}
+                            >
+                              ตั้งเป็นหลัก
+                            </Button>
+                          ) : null}
+                          {bankAccounts.length > 1 ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-destructive"
+                              disabled={fieldsLocked}
+                              onClick={() => removeBankAccount(acct.id)}
+                              aria-label="ลบบัญชี"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>ชื่อเรียก (ไม่บังคับ)</Label>
+                        <Input
+                          disabled={fieldsLocked}
+                          value={acct.label ?? ''}
+                          onChange={(e) => updateBankAccount(acct.id, { label: e.target.value })}
+                          placeholder="เช่น บัญชีหลัก / บัญชีค่าบริการ"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>ชื่อธนาคาร (Bank Name)</Label>
+                        <Input
+                          disabled={fieldsLocked}
+                          value={acct.bankName}
+                          onChange={(e) => updateBankAccount(acct.id, { bankName: e.target.value })}
+                          placeholder="เช่น กสิกรไทย, ไทยพาณิชย์"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>ชื่อบัญชี (Account Name)</Label>
+                        <Input
+                          disabled={fieldsLocked}
+                          value={acct.bankAccountName}
+                          onChange={(e) => updateBankAccount(acct.id, { bankAccountName: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>เลขที่บัญชี (Account Number)</Label>
+                        <Input
+                          disabled={fieldsLocked}
+                          value={acct.bankAccountNumber}
+                          onChange={(e) => updateBankAccount(acct.id, { bankAccountNumber: e.target.value })}
+                          placeholder="000-0-00000-0"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full gap-2"
+                    disabled={fieldsLocked}
+                    onClick={addBankAccount}
+                  >
+                    <Plus className="h-4 w-4" />
+                    เพิ่มบัญชีธนาคาร
+                  </Button>
                 </CardContent>
               </Card>
             </div>
@@ -396,7 +584,13 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
               <CardContent className="space-y-6">
                 <div className="space-y-2">
                   <Label>หมายเหตุภายใน</Label>
-                  <Textarea value={formData.notes} onChange={e => setFormData({...formData, notes: e.target.value})} className="min-h-[150px]" placeholder="ระบุข้อมูลเพิ่มเติมเกี่ยวกับคู่ค้า เช่น บริการที่โดดเด่น หรือเงื่อนไขพิเศษ" />
+                  <Textarea
+                    disabled={fieldsLocked}
+                    value={formData.notes}
+                    onChange={e => setFormData({...formData, notes: e.target.value})}
+                    className="min-h-[150px]"
+                    placeholder="ระบุข้อมูลเพิ่มเติมเกี่ยวกับคู่ค้า เช่น บริการที่โดดเด่น หรือเงื่อนไขพิเศษ"
+                  />
                 </div>
 
                 <div className="p-4 border rounded-lg bg-muted/30 space-y-2">

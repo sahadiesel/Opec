@@ -1,5 +1,5 @@
-import { formatPayrollYearMonthThaiBE } from '@/lib/date-thai';
 import { escapeHtmlDoc } from '@/lib/documents/standard-document-print';
+import { describeYearMonthScopeFilter } from '@/lib/date/year-month-scope-filter';
 
 export type MoneyReceiptListPrintRow = {
   receiptNo: string;
@@ -11,16 +11,15 @@ export type MoneyReceiptListPrintRow = {
 
 export type MoneyReceiptListPrintFilterSummary = {
   searchTerm: string;
-  monthYyyyMm: string;
+  yearCe: number;
+  monthScope: string;
 };
 
 const PRINT_ROW_LIMIT = 500;
 
 export function describeMoneyReceiptListPrintFilters(f: MoneyReceiptListPrintFilterSummary): string[] {
   const lines: string[] = [];
-  if (f.monthYyyyMm.trim()) {
-    lines.push(`เดือนเอกสาร: ${formatPayrollYearMonthThaiBE(f.monthYyyyMm)}`);
-  }
+  lines.push(`เดือนเอกสาร: ${describeYearMonthScopeFilter(f.yearCe, f.monthScope)}`);
   if (f.searchTerm.trim()) {
     lines.push(`ค้นหา: "${f.searchTerm.trim()}"`);
   }

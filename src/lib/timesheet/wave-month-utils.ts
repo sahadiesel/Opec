@@ -5,7 +5,6 @@ import {
   assignmentHasAnyMobTimesheetDayInCalendarMonth,
   assignmentEndedWithoutEverMobilizingOnSite,
   isHtmlDateAfterMobLocationEnd,
-  isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob,
   isYmdAfterSiteEndAwaitingRemob,
   isYmdInRemobGapBetweenCycles,
   isYmdWithinAssignmentMobTimesheetWindow,
@@ -492,38 +491,19 @@ export function resolveTimesheetForWaveMonthCell(
 
 /**
  * มีแถว daily_timesheet อย่างน้อยหนึ่งแถวในเดือนปฏิทินนี้ที่ผูก mobilization นี้
- * — ใช้เมื่อช่วง mobilization ไม่ทับวันในปฏิทินตามฟิลด์ แต่มีข้อมูลลงเวลาจริงในเดือน (ข้อมูลขอบเขตไม่ตรงกัน)
+ * — ใช้เป็นเกณฑ์คงแถวในสรุปรายเดือนเมื่อมีกิจกรรมจริงในเดือน (งาน/ลา/Mob)
+ *   แม้สถานะปัจจุบันเป็นรอ remob / กำลัง Mob รอบใหม่
  */
 export function assignmentHasTimesheetRowInCalendarMonth(
-  m: Pick<
-    Assignment,
-    | 'id'
-    | 'deploymentStatus'
-    | 'mobLocationEndDate'
-    | 'mobCycleNumber'
-    | 'unassignedAt'
-    | 'mobStandbyDate'
-    | 'mobWorkingStartDate'
-    | 'startDate'
-    | 'assignedDate'
-    | 'endDate'
-    | 'poActiveStandbyAutoStartYmd'
-    | 'poActiveStandbyAutoEndYmd'
-  >,
+  m: Pick<Assignment, 'id'>,
   monthYm: string,
   sheets: readonly Pick<DailyTimesheet, 'assignmentId' | 'date'>[] | undefined,
 ): boolean {
   if (!sheets?.length || !/^\d{4}-\d{2}$/.test(monthYm)) return false;
   const prefix = `${monthYm}-`;
-  return sheets.some((t) => {
-    if (typeof t.date !== 'string' || !t.date.startsWith(prefix) || t.assignmentId !== m.id) {
-      return false;
-    }
-    return (
-      isYmdWithinAssignmentMobTimesheetWindow(m, t.date) ||
-      isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(m, t.date)
-    );
-  });
+  return sheets.some(
+    (t) => typeof t.date === 'string' && t.date.startsWith(prefix) && t.assignmentId === m.id,
+  );
 }
 
 /** คนละหนึ่งแถวในงวดเดือนต่อ wave — สอดคล้อง `/timesheets/wave-month` (รองรับ PO scope / remob) */

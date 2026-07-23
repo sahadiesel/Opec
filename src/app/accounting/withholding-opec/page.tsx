@@ -8,14 +8,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import {
   Search,
@@ -35,6 +27,14 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { useToast } from '@/hooks/use-toast';
 import { canView, canSeeAccountingPillarUi } from '@/lib/permissions';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  describeYearMonthScopeFilter,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import type { User, TaxInvoice, Customer, TaxInvoiceTimesheetAttachment } from '@/lib/types';
 import {
   validateTaxInvoiceWhtFile,
@@ -47,28 +47,6 @@ import {
 } from '@/lib/documents/withholding-opec-list-print';
 import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 
-const TH_MONTHS = [
-  'ม.ค.',
-  'ก.พ.',
-  'มี.ค.',
-  'เม.ย.',
-  'พ.ค.',
-  'มิ.ย.',
-  'ก.ค.',
-  'ส.ค.',
-  'ก.ย.',
-  'ต.ค.',
-  'พ.ย.',
-  'ธ.ค.',
-] as const;
-
-function ymLabelTh(ym: string): string {
-  const [y, m] = ym.split('-');
-  const mi = Number(m);
-  if (!y || !Number.isFinite(mi) || mi < 1 || mi > 12) return ym;
-  return `${TH_MONTHS[mi - 1]} ${Number(y) + 543}`;
-}
-
 function formatMoney(amount: number, currency = 'THB'): string {
   return `${currency} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
 }
@@ -80,7 +58,8 @@ export default function WithholdingOpecPage() {
   const { toast } = useToast();
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [monthFilter, setMonthFilter] = useState('ALL');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [printBusy, setPrintBusy] = useState(false);
@@ -125,16 +104,13 @@ export default function WithholdingOpecPage() {
     });
   }, [invoices]);
 
-  // Extract unique months from all WHT invoices
-  const monthOptions = useMemo(() => {
+  const yearOptionsCe = useMemo(() => {
     const months = new Set<string>();
     for (const inv of whtInvoices) {
       const ym = (inv.issueDate || '').slice(0, 7);
-      if (/^\d{4}-\d{2}$/.test(ym)) {
-        months.add(ym);
-      }
+      if (/^\d{4}-\d{2}$/.test(ym)) months.add(ym);
     }
-    return Array.from(months).sort((a, b) => b.localeCompare(a));
+    return buildYearCeOptions(months);
   }, [whtInvoices]);
 
   // Filter & Search logic
@@ -142,18 +118,15 @@ export default function WithholdingOpecPage() {
     const list = whtInvoices;
     const term = searchTerm.trim().toLowerCase();
     return list.filter((inv) => {
-      // Month Filter
-      if (monthFilter !== 'ALL') {
-        const ym = (inv.issueDate || '').slice(0, 7);
-        if (ym !== monthFilter) return false;
+      if (!ymMatchesYearMonthScope((inv.issueDate || '').slice(0, 7), yearFilterCe, monthScope)) {
+        return false;
       }
-      // Text Search
       if (!term) return true;
       const no = (inv.taxInvoiceNo || '').toLowerCase();
       const custName = (customerNameMap.get(inv.customerId) || '').toLowerCase();
       return no.includes(term) || custName.includes(term);
     });
-  }, [whtInvoices, searchTerm, monthFilter, customerNameMap]);
+  }, [whtInvoices, searchTerm, yearFilterCe, monthScope, customerNameMap]);
 
   // Calculate statistics totals
   const totals = useMemo(() => {
@@ -254,11 +227,9 @@ export default function WithholdingOpecPage() {
       );
 
       const generatedAt = new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
-      const scopeTitle = monthFilter === 'ALL' ? 'ทุกงวดเดือน' : `งวดเดือน ${ymLabelTh(monthFilter)}`;
-      const filterLines: string[] = [];
-      if (monthFilter !== 'ALL') {
-        filterLines.push(`เดือน: ${ymLabelTh(monthFilter)} (${monthFilter})`);
-      }
+      const periodLabel = describeYearMonthScopeFilter(yearFilterCe, monthScope);
+      const scopeTitle = `งวด ${periodLabel}`;
+      const filterLines: string[] = [`เดือน: ${periodLabel}`];
       if (searchTerm.trim()) {
         filterLines.push(`ค้นหา: "${searchTerm.trim()}"`);
       }
@@ -277,7 +248,7 @@ export default function WithholdingOpecPage() {
 
       const ok = await openStandardPrintWindow({
         windowTitle: 'Withholding-OPEC-List',
-        suggestedFileName: `Withholding-OPEC-List-${monthFilter}`,
+        suggestedFileName: `Withholding-OPEC-List-${yearFilterCe}-${monthScope}`,
         bodyInnerHtml: body,
         htmlLang: 'th',
       });
@@ -332,16 +303,6 @@ export default function WithholdingOpecPage() {
               รายการที่ลูกค้ามีหัก ณ ที่จ่าย OPEC (หัก ณ ที่จ่าย 3% อ้างอิงจากใบกำกับภาษีที่ออกให้ลูกค้า)
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" className="gap-2" onClick={handlePrint} disabled={printBusy}>
-              {printBusy ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Printer className="h-4 w-4" />
-              )}
-              พิมพ์รายงาน / PDF
-            </Button>
-          </div>
         </div>
 
         {/* Statistics Cards */}
@@ -387,52 +348,42 @@ export default function WithholdingOpecPage() {
         {/* Filters */}
         <Card className="shadow-sm">
           <CardContent className="pt-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-              <div className="space-y-2">
-                <Label htmlFor="search" className="text-xs font-semibold">
-                  ค้นหาเลขที่เอกสาร / ชื่อลูกค้า
-                </Label>
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-md">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     id="search"
-                    placeholder="ค้นหา..."
-                    className="pl-9"
+                    placeholder="ค้นหาเลขที่เอกสาร / ชื่อลูกค้า..."
+                    className="h-10 pl-9"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
+                    aria-label="ค้นหาเลขที่เอกสาร / ชื่อลูกค้า"
                   />
                 </div>
+                <YearMonthScopeSelects
+                  idPrefix="wht-opec"
+                  yearCe={yearFilterCe}
+                  monthScope={monthScope}
+                  yearOptionsCe={yearOptionsCe}
+                  onYearCeChange={setYearFilterCe}
+                  onMonthScopeChange={setMonthScope}
+                />
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="month" className="text-xs font-semibold">
-                  เลือกงวดเดือนที่หักภาษี
-                </Label>
-                <Select value={monthFilter} onValueChange={setMonthFilter}>
-                  <SelectTrigger id="month">
-                    <SelectValue placeholder="ทั้งหมด" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ALL">ทุกงวดเดือน</SelectItem>
-                    {monthOptions.map((ym) => (
-                      <SelectItem key={ym} value={ym}>
-                        {ymLabelTh(ym)} ({ym})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex justify-end">
+              <div className="flex shrink-0 flex-wrap items-center gap-2 justify-end">
                 <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setSearchTerm('');
-                    setMonthFilter('ALL');
-                  }}
-                  className="text-xs"
+                  type="button"
+                  variant="outline"
+                  className="h-10 shrink-0 gap-2 whitespace-nowrap"
+                  onClick={() => void handlePrint()}
+                  disabled={printBusy || filteredInvoices.length === 0}
                 >
-                  ล้างตัวกรอง
+                  {printBusy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Printer className="h-4 w-4 shrink-0" />
+                  )}
+                  พิมพ์รายการถูกหัก
                 </Button>
               </div>
             </div>
@@ -447,13 +398,13 @@ export default function WithholdingOpecPage() {
                 <TableHeader className="bg-muted/50">
                   <TableRow>
                     <TableHead className="w-12 text-center">#</TableHead>
-                    <TableHead className="w-32">วันที่ออก</TableHead>
-                    <TableHead className="w-48">เลขที่ใบกำกับภาษี</TableHead>
+                    <TableHead className="w-28 whitespace-nowrap">วันที่ออก</TableHead>
+                    <TableHead className="w-44 whitespace-nowrap">เลขที่ใบกำกับภาษี</TableHead>
                     <TableHead>ลูกค้า</TableHead>
-                    <TableHead className="w-40 text-right">ยอดก่อน VAT</TableHead>
-                    <TableHead className="w-40 text-right">หัก ณ ที่จ่าย</TableHead>
-                    <TableHead className="w-64">เอกสารแนบจากลูกค้า</TableHead>
-                    <TableHead className="w-36 text-center">จัดการ</TableHead>
+                    <TableHead className="min-w-[11rem] w-52 text-right whitespace-nowrap">ยอดก่อน VAT</TableHead>
+                    <TableHead className="w-40 text-right whitespace-nowrap">หัก ณ ที่จ่าย</TableHead>
+                    <TableHead className="w-56">เอกสารแนบจากลูกค้า</TableHead>
+                    <TableHead className="w-24 text-center whitespace-nowrap">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -486,10 +437,10 @@ export default function WithholdingOpecPage() {
                               </span>
                             </div>
                           </TableCell>
-                          <TableCell className="text-right font-mono text-sm">
+                          <TableCell className="text-right font-mono text-sm tabular-nums whitespace-nowrap">
                             {formatMoney(inv.taxableAmount ?? 0, inv.currency)}
                           </TableCell>
-                          <TableCell className="text-right font-mono font-semibold text-amber-600 text-sm">
+                          <TableCell className="text-right font-mono font-semibold text-amber-600 text-sm tabular-nums whitespace-nowrap">
                             {formatMoney(inv.withholdingTaxAmount ?? 0, inv.currency)}
                           </TableCell>
                           <TableCell>
@@ -532,9 +483,9 @@ export default function WithholdingOpecPage() {
                               </div>
                             )}
                           </TableCell>
-                          <TableCell className="text-center">
+                          <TableCell className="text-center w-24 px-2">
                             <label
-                              className={`cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border bg-background hover:bg-muted transition-colors ${
+                              className={`cursor-pointer inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-medium border bg-background hover:bg-muted transition-colors ${
                                 uploadingId === inv.id ? 'opacity-50 pointer-events-none' : ''
                               }`}
                             >
@@ -543,7 +494,7 @@ export default function WithholdingOpecPage() {
                               ) : (
                                 <UploadCloud className="h-3.5 w-3.5 text-primary" />
                               )}
-                              <span>แนบไฟล์</span>
+                              <span>แนบ</span>
                               <input
                                 type="file"
                                 className="hidden"

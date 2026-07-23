@@ -132,7 +132,7 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
     items: [
       { key: 'draft_invoices', title: 'ทำใบแจ้งหนี้แบบ Monthly', href: '/draft-invoices', icon: FileText },
       { key: 'draft_invoices', title: 'ทำใบแจ้งหนี้แบบ Trip', href: '/accounting/trip-billing', icon: Users },
-      { key: 'tax_invoices', title: 'ใบกำกับภาษี', href: '/tax-invoices', icon: FileBadge },
+      { key: 'tax_invoices', title: 'ใบกำกับภาษีขาย', href: '/tax-invoices', icon: FileBadge },
       { key: 'receipts', title: 'ใบเสร็จรับเงิน (ลูกค้า)', href: '/receipts', icon: Receipt },
       { key: 'accounts_receivable', title: 'ลูกหนี้การค้า (AR)', href: '/accounts-receivable', icon: ArrowUpRight },
       { key: 'withholding_tax_items', title: 'หัก ณ ที่จ่าย ( OPEC )', href: '/accounting/withholding-opec', icon: Percent },

@@ -25,7 +25,15 @@ import { canView } from '@/lib/permissions';
 import { collection, query, orderBy, doc, getDoc, where } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { formatPayrollYearMonthThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
+import { formatStoredDateThaiBE } from '@/lib/date-thai';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  describeYearMonthScopeFilter,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { deleteAccountsReceivableEntryAsAdmin } from '@/lib/services/accounts-receivable-delete-service';
 import { useToast } from '@/hooks/use-toast';
@@ -79,10 +87,8 @@ export default function AccountsReceivablePage() {
   const [deleteTarget, setDeleteTarget] = useState<(AccountsReceivable & { id: string }) | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [monthYm, setMonthYm] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  });
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
 
@@ -133,9 +139,25 @@ export default function AccountsReceivablePage() {
     [arItems, supersededCommercialIds],
   );
 
+  const yearOptionsCe = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of visibleArItems) {
+      const ym = String(item.issueDate || '').slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(ym)) set.add(ym);
+    }
+    return buildYearCeOptions(set);
+  }, [visibleArItems]);
+
+  const periodLabel = useMemo(
+    () => describeYearMonthScopeFilter(yearFilterCe, monthScope),
+    [yearFilterCe, monthScope],
+  );
+
   const monthFilteredItems = useMemo(() => {
-    return visibleArItems.filter((item) => String(item.issueDate || '').slice(0, 7) === monthYm);
-  }, [visibleArItems, monthYm]);
+    return visibleArItems.filter((item) =>
+      ymMatchesYearMonthScope(String(item.issueDate || '').slice(0, 7), yearFilterCe, monthScope),
+    );
+  }, [visibleArItems, yearFilterCe, monthScope]);
 
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -170,8 +192,8 @@ export default function AccountsReceivablePage() {
   }, [visibleArItems, monthFilteredItems]);
 
   const printFilterSummary = useMemo(
-    () => ({ searchTerm: searchQuery, monthYyyyMm: monthYm }),
-    [searchQuery, monthYm],
+    () => ({ searchTerm: searchQuery, yearCe: yearFilterCe, monthScope }),
+    [searchQuery, yearFilterCe, monthScope],
   );
 
   const buildPrintRows = useCallback(
@@ -343,7 +365,7 @@ export default function AccountsReceivablePage() {
             <CardContent>
               <div className="text-3xl font-black text-indigo-700">฿ {stats.monthOutstanding.toLocaleString()}</div>
               <p className="text-[10px] text-muted-foreground mt-1">
-                งวด {formatPayrollYearMonthThaiBE(monthYm)} · จากใบในเดือนที่เลือก
+                งวด {periodLabel} · จากใบในเดือนที่เลือก
               </p>
             </CardContent>
           </Card>
@@ -354,7 +376,7 @@ export default function AccountsReceivablePage() {
             <CardContent>
               <div className="text-3xl font-black text-red-600">฿ {stats.overdue.toLocaleString()}</div>
               <p className="text-[10px] text-muted-foreground mt-1">
-                งวด {formatPayrollYearMonthThaiBE(monthYm)} · หนี้เกินกำหนดในเดือนที่เลือก
+                งวด {periodLabel} · หนี้เกินกำหนดในเดือนที่เลือก
               </p>
             </CardContent>
           </Card>
@@ -365,7 +387,7 @@ export default function AccountsReceivablePage() {
             <CardContent>
               <div className="text-3xl font-black text-green-700">฿ {stats.collected.toLocaleString()}</div>
               <p className="text-[10px] text-muted-foreground mt-1">
-                งวด {formatPayrollYearMonthThaiBE(monthYm)} · ยอดรับแล้วในเดือนที่เลือก
+                งวด {periodLabel} · ยอดรับแล้วในเดือนที่เลือก
               </p>
             </CardContent>
           </Card>
@@ -419,13 +441,13 @@ export default function AccountsReceivablePage() {
                 aria-label="ค้นหาลูกหนี้"
               />
             </div>
-            <Input
-              type="month"
-              className="h-10 w-[11rem] shrink-0 font-mono"
-              value={monthYm}
-              onChange={(e) => setMonthYm(e.target.value)}
-              aria-label="กรองตามเดือนเอกสาร"
-              title="เดือนเอกสาร"
+            <YearMonthScopeSelects
+              idPrefix="ar"
+              yearCe={yearFilterCe}
+              monthScope={monthScope}
+              yearOptionsCe={yearOptionsCe}
+              onYearCeChange={setYearFilterCe}
+              onMonthScopeChange={setMonthScope}
             />
           </div>
           <Button
@@ -557,8 +579,8 @@ export default function AccountsReceivablePage() {
                     <TableRow>
                       <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
                         {searchQuery.trim()
-                          ? `ไม่พบรายการที่ตรงกับ "${searchQuery.trim()}" ในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`
-                          : `ไม่มีรายการลูกหนี้ในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`}
+                          ? `ไม่พบรายการที่ตรงกับ "${searchQuery.trim()}" ในงวด ${periodLabel}`
+                          : `ไม่มีรายการลูกหนี้ในงวด ${periodLabel}`}
                       </TableCell>
                     </TableRow>
                   )}

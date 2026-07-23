@@ -61,6 +61,10 @@ import {
 } from '@/lib/types';
 import { executeVendorBillPayment } from '@/lib/ops/vendor-bill-payment';
 import {
+  resolveVendorBankAccounts,
+  vendorBankAccountLabel,
+} from '@/lib/vendors/vendor-bank-accounts';
+import {
   billUsesPaymentInstallmentPlan,
   buildEqualInstallmentDrafts,
   mergePaidInstallmentsWithPendingDraft,
@@ -348,6 +352,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const [payDate, setPayDate] = useState('');
   const [notes, setNotes] = useState('');
   const [payoutBankId, setPayoutBankId] = useState('');
+  const [payoutVendorPayeeBankId, setPayoutVendorPayeeBankId] = useState('');
   const [payoutMethod, setPayoutMethod] = useState<PaymentMethod>('TRANSFER');
   const [payoutEntryDate, setPayoutEntryDate] = useState('');
   const [paying, setPaying] = useState(false);
@@ -494,14 +499,32 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     [bill?.supplierWithholdingTaxBaseBill],
   );
 
-  const vendorPayeeBankDisplay = useMemo(() => {
-    if (!vendor) return null;
-    const bankName = vendor.bankName?.trim();
-    const acctName = vendor.bankAccountName?.trim();
-    const acctNo = vendor.bankAccountNumber?.trim();
-    if (!bankName && !acctName && !acctNo) return null;
-    return { bankName, acctName, acctNo };
-  }, [vendor]);
+  const vendorPayeeBankOptions = useMemo(() => resolveVendorBankAccounts(vendor), [vendor]);
+
+  const selectedVendorPayeeBank = useMemo(() => {
+    if (!vendorPayeeBankOptions.length) return null;
+    return (
+      vendorPayeeBankOptions.find((b) => b.id === payoutVendorPayeeBankId) ||
+      vendorPayeeBankOptions.find((b) => b.isPrimary) ||
+      vendorPayeeBankOptions[0] ||
+      null
+    );
+  }, [vendorPayeeBankOptions, payoutVendorPayeeBankId]);
+
+  useEffect(() => {
+    if (!vendorPayeeBankOptions.length) {
+      setPayoutVendorPayeeBankId('');
+      return;
+    }
+    setPayoutVendorPayeeBankId((prev) => {
+      if (prev && vendorPayeeBankOptions.some((b) => b.id === prev)) return prev;
+      return (
+        vendorPayeeBankOptions.find((b) => b.isPrimary)?.id ||
+        vendorPayeeBankOptions[0]?.id ||
+        ''
+      );
+    });
+  }, [vendorPayeeBankOptions]);
 
   /** ฐานหัก ณ ที่จ่าย — อัตราใช้ override บนใบวางบิล (บัญชีแก้) ถ้ามี ไม่เช่นนั้นใช้จาก PO */
   const withholdingPreview = useMemo(() => {
@@ -1416,6 +1439,16 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         ...(billHasInstallmentPlan && installmentPayTargetId.trim()
           ? { installmentId: installmentPayTargetId.trim() }
           : {}),
+        ...(selectedVendorPayeeBank
+          ? {
+              vendorPayeeBank: {
+                id: selectedVendorPayeeBank.id,
+                bankName: selectedVendorPayeeBank.bankName,
+                bankAccountName: selectedVendorPayeeBank.bankAccountName,
+                bankAccountNumber: selectedVendorPayeeBank.bankAccountNumber,
+              },
+            }
+          : {}),
       });
       toast({
         title: 'บันทึกจ่ายแล้ว',
@@ -1967,34 +2000,59 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                       </Select>
                     </div>
                   </div>
-                  {vendorPayeeBankDisplay ? (
-                    <div className="rounded-md border border-sky-200/90 bg-sky-50/45 px-3 py-3 space-y-2 dark:bg-sky-950/25 dark:border-sky-900/45">
+                  {vendorPayeeBankOptions.length > 0 ? (
+                    <div className="rounded-md border border-sky-200/90 bg-sky-50/45 px-3 py-3 space-y-3 dark:bg-sky-950/25 dark:border-sky-900/45">
                       <div className="flex items-center gap-2 text-sm font-semibold text-sky-950 dark:text-sky-100">
                         <Building2 className="h-4 w-4 shrink-0 opacity-80" />
-                        บัญชีรับเงินของคู่ค้า (โอนเข้า — จากทะเบียนคู่ค้า)
+                        บัญชีรับเงินของคู่ค้า (โอนเข้า)
                       </div>
-                      <dl className="grid gap-1.5 text-sm">
-                        {vendorPayeeBankDisplay.bankName ? (
-                          <div className="flex flex-wrap gap-x-2">
-                            <dt className="text-muted-foreground shrink-0">ธนาคาร</dt>
-                            <dd className="font-mono font-medium">{vendorPayeeBankDisplay.bankName}</dd>
-                          </div>
-                        ) : null}
-                        {vendorPayeeBankDisplay.acctName ? (
-                          <div className="flex flex-wrap gap-x-2">
-                            <dt className="text-muted-foreground shrink-0">ชื่อบัญชี</dt>
-                            <dd className="font-medium">{vendorPayeeBankDisplay.acctName}</dd>
-                          </div>
-                        ) : null}
-                        {vendorPayeeBankDisplay.acctNo ? (
-                          <div className="flex flex-wrap gap-x-2">
-                            <dt className="text-muted-foreground shrink-0">เลขที่บัญชี</dt>
-                            <dd className="font-mono font-semibold tracking-wide">{vendorPayeeBankDisplay.acctNo}</dd>
-                          </div>
-                        ) : null}
-                      </dl>
+                      {vendorPayeeBankOptions.length > 1 ? (
+                        <div className="space-y-2">
+                          <Label>เลือกบัญชีที่ต้องโอน</Label>
+                          <Select
+                            value={selectedVendorPayeeBank?.id || undefined}
+                            onValueChange={setPayoutVendorPayeeBankId}
+                          >
+                            <SelectTrigger className="h-11 w-full bg-background">
+                              <SelectValue placeholder="เลือกบัญชีคู่ค้า..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {vendorPayeeBankOptions.map((b, i) => (
+                                <SelectItem key={b.id} value={b.id}>
+                                  {vendorBankAccountLabel(b, i)}
+                                  {b.isPrimary ? ' (หลัก)' : ''}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
+                      {selectedVendorPayeeBank ? (
+                        <dl className="grid gap-1.5 text-sm">
+                          {selectedVendorPayeeBank.bankName ? (
+                            <div className="flex flex-wrap gap-x-2">
+                              <dt className="text-muted-foreground shrink-0">ธนาคาร</dt>
+                              <dd className="font-mono font-medium">{selectedVendorPayeeBank.bankName}</dd>
+                            </div>
+                          ) : null}
+                          {selectedVendorPayeeBank.bankAccountName ? (
+                            <div className="flex flex-wrap gap-x-2">
+                              <dt className="text-muted-foreground shrink-0">ชื่อบัญชี</dt>
+                              <dd className="font-medium">{selectedVendorPayeeBank.bankAccountName}</dd>
+                            </div>
+                          ) : null}
+                          {selectedVendorPayeeBank.bankAccountNumber ? (
+                            <div className="flex flex-wrap gap-x-2">
+                              <dt className="text-muted-foreground shrink-0">เลขที่บัญชี</dt>
+                              <dd className="font-mono font-semibold tracking-wide">
+                                {selectedVendorPayeeBank.bankAccountNumber}
+                              </dd>
+                            </div>
+                          ) : null}
+                        </dl>
+                      ) : null}
                       <p className="text-[11px] text-muted-foreground leading-snug">
-                        ใช้อ้างอิงตอนโอนและแนบสลิป — ถ้าไม่ตรงกับของจริงให้แก้ที่เมนูทะเบียนคู่ค้า (ข้อมูลการเงิน)
+                        ใช้อ้างอิงตอนโอนและแนบสลิป — เพิ่ม/แก้บัญชีได้ที่เมนูทะเบียนคู่ค้า (ข้อมูลการเงิน)
                       </p>
                       {vendor?.id ? (
                         <Button variant="link" className="h-auto p-0 text-xs font-semibold" asChild>

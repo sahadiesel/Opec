@@ -22,6 +22,13 @@ import {
 import {
   formatStoredDateThaiBE,
 } from '@/lib/date-thai';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import { TaxInvoice, TaxInvoiceStatus, User, Customer, CommercialInvoice, MoneyReceipt } from '@/lib/types';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { Badge } from '@/components/ui/badge';
@@ -52,6 +59,7 @@ import {
   buildTaxInvoiceListPrintHtml,
   capTaxInvoiceListPrintRows,
   describeTaxInvoiceListPrintFilters,
+  formatTaxInvoiceSalesReportPeriodLabel,
   type TaxInvoiceListPrintRow,
 } from '@/lib/documents/tax-invoice-list-print';
 import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
@@ -138,7 +146,8 @@ export default function TaxInvoicesPage() {
   const [deleting, setDeleting] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [monthFilter, setMonthFilter] = useState('');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
 
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
@@ -167,13 +176,21 @@ export default function TaxInvoicesPage() {
     return receiptNoByTaxInvoiceId.get(inv.id)?.trim() || '-';
   };
 
+  const yearOptionsCe = useMemo(() => {
+    const set = new Set<string>();
+    for (const inv of invoices ?? []) {
+      const ym = (inv.issueDate || '').slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(ym)) set.add(ym);
+    }
+    return buildYearCeOptions(set);
+  }, [invoices]);
+
   const filteredInvoices = useMemo(() => {
     const list = invoices ?? [];
     const term = searchTerm.trim().toLowerCase();
     return list.filter((inv) => {
-      if (monthFilter) {
-        const ym = (inv.issueDate || '').slice(0, 7);
-        if (ym !== monthFilter) return false;
+      if (!ymMatchesYearMonthScope((inv.issueDate || '').slice(0, 7), yearFilterCe, monthScope)) {
+        return false;
       }
       if (!term) return true;
       const no = (inv.taxInvoiceNo || '').toLowerCase();
@@ -181,16 +198,11 @@ export default function TaxInvoicesPage() {
       const custName = (cust?.name || '').toLowerCase();
       return no.includes(term) || custName.includes(term);
     });
-  }, [invoices, searchTerm, monthFilter, customers]);
+  }, [invoices, searchTerm, yearFilterCe, monthScope, customers]);
 
   const printFilterSummary = useMemo(
-    () => ({ searchTerm, monthYyyyMm: monthFilter }),
-    [searchTerm, monthFilter],
-  );
-
-  const hasActivePrintFilters = useMemo(
-    () => searchTerm.trim() !== '' || monthFilter.trim() !== '',
-    [searchTerm, monthFilter],
+    () => ({ searchTerm, yearCe: yearFilterCe, monthScope }),
+    [searchTerm, yearFilterCe, monthScope],
   );
 
   const buildPrintRows = useCallback(
@@ -244,6 +256,10 @@ export default function TaxInvoicesPage() {
           scope === 'filtered' ? describeTaxInvoiceListPrintFilters(printFilterSummary) : [];
         const scopeTitle =
           scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
+        const periodLabel =
+          scope === 'filtered'
+            ? formatTaxInvoiceSalesReportPeriodLabel(yearFilterCe, monthScope)
+            : 'ทั้งหมด';
 
         const body = buildTaxInvoiceListPrintHtml({
           rows,
@@ -252,6 +268,7 @@ export default function TaxInvoicesPage() {
           generatedAt,
           printedBy: currentUser?.displayName,
           truncated,
+          periodLabel,
         });
 
         const ok = await openStandardPrintWindow({
@@ -279,6 +296,8 @@ export default function TaxInvoicesPage() {
       invoices,
       buildPrintRows,
       printFilterSummary,
+      yearFilterCe,
+      monthScope,
       currentUser?.displayName,
       toast,
     ],
@@ -363,7 +382,7 @@ export default function TaxInvoicesPage() {
       <div className="space-y-6 max-w-[1600px] mx-auto">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <FileBadge className="h-8 w-8" /> ใบกำกับภาษี
+            <FileBadge className="h-8 w-8" /> ใบกำกับภาษีขาย
           </h1>
           <p className="text-muted-foreground text-lg">
             ออกจากใบแจ้งหนี้ที่อนุมัติแล้ว หรือสร้างฉบับอิสระ (ไม่ใช่ e-Tax) — เมื่อ ISSUED บันทึกลูกหนี้; หลังแจ้งชำระและยืนยันรับเงิน
@@ -392,26 +411,14 @@ export default function TaxInvoicesPage() {
                 aria-label="ค้นหาใบกำกับภาษี"
               />
             </div>
-            <Input
-              id="tax-inv-month"
-              type="month"
-              value={monthFilter}
-              onChange={(e) => setMonthFilter(e.target.value)}
-              className="h-10 w-[11rem] shrink-0"
-              aria-label="กรองตามเดือนออกเอกสาร"
-              title="เดือนออกเอกสาร"
+            <YearMonthScopeSelects
+              idPrefix="tax-inv"
+              yearCe={yearFilterCe}
+              monthScope={monthScope}
+              yearOptionsCe={yearOptionsCe}
+              onYearCeChange={setYearFilterCe}
+              onMonthScopeChange={setMonthScope}
             />
-            {monthFilter ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-10 shrink-0 px-2"
-                onClick={() => setMonthFilter('')}
-              >
-                ล้างเดือน
-              </Button>
-            ) : null}
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -421,7 +428,7 @@ export default function TaxInvoicesPage() {
               className="h-10 gap-2"
               onClick={() => setPrintDialogOpen(true)}
             >
-              <Printer className="h-4 w-4" /> พิมพ์รายการ
+              <Printer className="h-4 w-4" /> พิมพ์รายการภาษีขาย
             </Button>
 
           <Dialog
@@ -505,27 +512,21 @@ export default function TaxInvoicesPage() {
         <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>พิมพ์รายการใบกำกับภาษี</DialogTitle>
+              <DialogTitle>พิมพ์รายการภาษีขาย</DialogTitle>
               <DialogDescription>
                 เลือกพิมพ์ตามตัวกรองที่ตั้งไว้ หรือพิมพ์ทุกรายการในชุดข้อมูลล่าสุด (สูงสุด 500 รายการ)
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 text-sm">
-              {hasActivePrintFilters ? (
-                <div className="rounded-md border bg-muted/30 p-3 space-y-1">
-                  <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
-                  <ul className="list-disc list-inside text-xs text-muted-foreground space-y-0.5">
-                    {describeTaxInvoiceListPrintFilters(printFilterSummary).map((line) => (
-                      <li key={line}>{line}</li>
-                    ))}
-                  </ul>
-                  <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredInvoices.length} รายการ</p>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  ยังไม่ได้ตั้งตัวกรอง — 「พิมพ์ตามตัวกรอง」จะพิมพ์ทุกรายการในตาราง (เท่ากับพิมพ์ทั้งหมด)
-                </p>
-              )}
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                <ul className="list-disc list-inside text-xs text-muted-foreground space-y-0.5">
+                  {describeTaxInvoiceListPrintFilters(printFilterSummary).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+                <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredInvoices.length} รายการ</p>
+              </div>
               <p className="text-xs text-muted-foreground">
                 ข้อมูลทั้งหมดในระบบ: {invoices?.length ?? 0} รายการ
               </p>

@@ -17,6 +17,13 @@ import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ChevronRight, Receipt, Building2, Calendar, Search, Printer, Loader2 } from 'lucide-react';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import type { Customer, MoneyReceipt, User } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -73,18 +80,27 @@ export default function MoneyReceiptsListPage() {
   }, [customers]);
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [monthFilter, setMonthFilter] = useState('');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
 
   const allRows = useMemo(() => rows ?? [], [rows]);
 
+  const yearOptionsCe = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of allRows) {
+      const ym = (r.receiptDate || '').slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(ym)) set.add(ym);
+    }
+    return buildYearCeOptions(set);
+  }, [allRows]);
+
   const filteredRows = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     return allRows.filter((r) => {
-      if (monthFilter) {
-        const ym = (r.receiptDate || '').slice(0, 7);
-        if (ym !== monthFilter) return false;
+      if (!ymMatchesYearMonthScope((r.receiptDate || '').slice(0, 7), yearFilterCe, monthScope)) {
+        return false;
       }
       if (!term) return true;
       const receiptNo = (r.receiptNo || '').toLowerCase();
@@ -98,11 +114,11 @@ export default function MoneyReceiptsListPage() {
         custName.includes(term)
       );
     });
-  }, [allRows, searchTerm, monthFilter, custById]);
+  }, [allRows, searchTerm, yearFilterCe, monthScope, custById]);
 
   const printFilterSummary = useMemo(
-    () => ({ searchTerm, monthYyyyMm: monthFilter }),
-    [searchTerm, monthFilter],
+    () => ({ searchTerm, yearCe: yearFilterCe, monthScope }),
+    [searchTerm, yearFilterCe, monthScope],
   );
 
   const mapReceiptToPrintRow = useCallback(
@@ -125,7 +141,7 @@ export default function MoneyReceiptsListPage() {
           title: 'ไม่มีรายการให้พิมพ์',
           description:
             scope === 'filtered'
-              ? 'ไม่พบรายการตามตัวกรอง — ล้างคำค้นห/เดือนหรือพิมพ์ทั้งหมด'
+              ? 'ไม่พบรายการตามตัวกรอง — ปรับคำค้น/เดือนหรือพิมพ์ทั้งหมด'
               : 'ยังไม่มีใบเสร็จรับเงินในระบบ',
         });
         return;
@@ -223,28 +239,14 @@ export default function MoneyReceiptsListPage() {
                     aria-label="ค้นหาใบเสร็จรับเงิน"
                   />
                 </div>
-                <div className="flex min-w-0 shrink-0 items-center gap-2">
-                  <Input
-                    id="receipt-month-filter"
-                    type="month"
-                    value={monthFilter}
-                    onChange={(e) => setMonthFilter(e.target.value)}
-                    className="h-10 w-[min(100%,11rem)] shrink-0 font-mono"
-                    aria-label="เลือกงวดเอกสาร"
-                    title="เลือกงวดเอกสาร"
-                  />
-                  {monthFilter ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-10 shrink-0 px-2"
-                      onClick={() => setMonthFilter('')}
-                    >
-                      ล้างเดือน
-                    </Button>
-                  ) : null}
-                </div>
+                <YearMonthScopeSelects
+                  idPrefix="receipt"
+                  yearCe={yearFilterCe}
+                  monthScope={monthScope}
+                  yearOptionsCe={yearOptionsCe}
+                  onYearCeChange={setYearFilterCe}
+                  onMonthScopeChange={setMonthScope}
+                />
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Button
@@ -255,7 +257,7 @@ export default function MoneyReceiptsListPage() {
                   onClick={() => setPrintDialogOpen(true)}
                 >
                   <Printer className="h-4 w-4 shrink-0" />
-                  พิมพ์รายการ
+                  พิมพ์รายการใบเสร็จ
                 </Button>
                 <Button
                   type="button"

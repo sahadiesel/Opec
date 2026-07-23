@@ -11,6 +11,13 @@ import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
+import {
   buildCommercialInvoiceListPrintHtml,
   capCommercialInvoiceListPrintRows,
   describeCommercialInvoiceListPrintFilters,
@@ -175,7 +182,8 @@ export default function DraftInvoicesPage() {
   const [voidBusy, setVoidBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<CommercialInvoice | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [monthFilter, setMonthFilter] = useState('');
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
 
@@ -284,11 +292,21 @@ export default function DraftInvoicesPage() {
     return (customerId: string) => nameById.get(customerId) || customerId;
   }, [customers]);
 
+  const yearOptionsCe = useMemo(() => {
+    const set = new Set<string>();
+    for (const inv of invoices ?? []) {
+      const ym = (inv.issueDate || '').slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(ym)) set.add(ym);
+    }
+    return buildYearCeOptions(set);
+  }, [invoices]);
+
   const filteredInvoices = useMemo(() => {
     const list = invoices ?? [];
-    if (!monthFilter.trim()) return list;
-    return list.filter((inv) => (inv.issueDate || '').slice(0, 7) === monthFilter);
-  }, [invoices, monthFilter]);
+    return list.filter((inv) =>
+      ymMatchesYearMonthScope((inv.issueDate || '').slice(0, 7), yearFilterCe, monthScope),
+    );
+  }, [invoices, yearFilterCe, monthScope]);
 
   const buildPrintRows = useCallback(
     (list: CommercialInvoice[]): CommercialInvoiceListPrintRow[] =>
@@ -312,7 +330,7 @@ export default function DraftInvoicesPage() {
           title: 'ไม่มีรายการให้พิมพ์',
           description:
             scope === 'filtered'
-              ? 'ไม่พบข้อมูลตามเดือนที่เลือก — ล้างเดือนหรือเลือกพิมพ์ทั้งหมด'
+              ? 'ไม่พบข้อมูลตามเดือนที่เลือก — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
               : 'ยังไม่มีใบแจ้งหนี้ในระบบ',
         });
         return;
@@ -326,7 +344,9 @@ export default function DraftInvoicesPage() {
           timeStyle: 'short',
         });
         const filterLines =
-          scope === 'filtered' ? describeCommercialInvoiceListPrintFilters({ monthYyyyMm: monthFilter }) : [];
+          scope === 'filtered'
+            ? describeCommercialInvoiceListPrintFilters({ yearCe: yearFilterCe, monthScope })
+            : [];
         const scopeTitle =
           scope === 'filtered' ? 'พิมพ์ตามเดือนที่เลือก' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
 
@@ -359,7 +379,7 @@ export default function DraftInvoicesPage() {
         setPrintBusy(false);
       }
     },
-    [filteredInvoices, invoices, buildPrintRows, monthFilter, currentUser?.displayName, toast],
+    [filteredInvoices, invoices, buildPrintRows, yearFilterCe, monthScope, currentUser?.displayName, toast],
   );
 
   const waveById = useMemo(() => {
@@ -657,26 +677,14 @@ export default function DraftInvoicesPage() {
             ทำใบแจ้งหนี้แบบ Monthly
           </h1>
           <div className="flex flex-wrap items-center gap-2">
-            <Input
-              id="draft-inv-month"
-              type="month"
-              value={monthFilter}
-              onChange={(e) => setMonthFilter(e.target.value)}
-              className="h-10 w-[11rem] shrink-0"
-              aria-label="กรองตามเดือนเอกสาร"
-              title="เดือนเอกสาร"
+            <YearMonthScopeSelects
+              idPrefix="draft-inv"
+              yearCe={yearFilterCe}
+              monthScope={monthScope}
+              yearOptionsCe={yearOptionsCe}
+              onYearCeChange={setYearFilterCe}
+              onMonthScopeChange={setMonthScope}
             />
-            {monthFilter ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-10 shrink-0 px-2"
-                onClick={() => setMonthFilter('')}
-              >
-                ล้างเดือน
-              </Button>
-            ) : null}
             <Button type="button" variant="outline" className="h-10 gap-2" onClick={() => setPrintDialogOpen(true)}>
               <Printer className="h-4 w-4" /> พิมพ์รายการ
             </Button>
@@ -813,21 +821,15 @@ export default function DraftInvoicesPage() {
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 text-sm">
-              {monthFilter ? (
-                <div className="rounded-md border bg-muted/30 p-3 space-y-1">
-                  <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
-                  <ul className="list-disc list-inside text-xs text-muted-foreground">
-                    {describeCommercialInvoiceListPrintFilters({ monthYyyyMm: monthFilter }).map((line) => (
-                      <li key={line}>{line}</li>
-                    ))}
-                  </ul>
-                  <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredInvoices.length} รายการ</p>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  ยังไม่ได้เลือกเดือน — 「พิมพ์ตามเดือน」จะพิมพ์ทุกรายการในตาราง (เท่ากับพิมพ์ทั้งหมด)
-                </p>
-              )}
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                <ul className="list-disc list-inside text-xs text-muted-foreground">
+                  {describeCommercialInvoiceListPrintFilters({ yearCe: yearFilterCe, monthScope }).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+                <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredInvoices.length} รายการ</p>
+              </div>
               <p className="text-xs text-muted-foreground">ข้อมูลทั้งหมดในระบบ: {invoices?.length ?? 0} รายการ</p>
             </div>
             <DialogFooter className="flex-col sm:flex-row gap-2">
@@ -839,7 +841,7 @@ export default function DraftInvoicesPage() {
                 onClick={() => void runCommercialInvoiceListPrint('filtered')}
               >
                 <Printer className="h-4 w-4 mr-2" />
-                พิมพ์ตามเดือน ({filteredInvoices.length})
+                พิมพ์ตามตัวกรอง ({filteredInvoices.length})
               </Button>
               <Button
                 type="button"

@@ -1,4 +1,5 @@
 import { escapeHtmlDoc } from '@/lib/documents/standard-document-print';
+import { describeYearMonthScopeFilter } from '@/lib/date/year-month-scope-filter';
 
 export type CommercialInvoiceListPrintRow = {
   invoiceNo: string;
@@ -10,26 +11,16 @@ export type CommercialInvoiceListPrintRow = {
 };
 
 export type CommercialInvoiceListPrintFilterSummary = {
-  monthYyyyMm: string;
+  yearCe: number;
+  monthScope: string;
 };
 
 const PRINT_ROW_LIMIT = 500;
 
-export function formatCommercialInvoiceListMonthLabel(yyyyMm: string): string {
-  const parts = yyyyMm.split('-').map(Number);
-  const y = parts[0];
-  const m = parts[1];
-  if (!y || !m) return yyyyMm;
-  return new Date(y, m - 1, 1).toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
-}
-
 export function describeCommercialInvoiceListPrintFilters(
   f: CommercialInvoiceListPrintFilterSummary,
 ): string[] {
-  if (f.monthYyyyMm.trim()) {
-    return [`เดือนเอกสาร: ${formatCommercialInvoiceListMonthLabel(f.monthYyyyMm)}`];
-  }
-  return [];
+  return [`เดือนเอกสาร: ${describeYearMonthScopeFilter(f.yearCe, f.monthScope)}`];
 }
 
 export function buildCommercialInvoiceListPrintHtml(params: {

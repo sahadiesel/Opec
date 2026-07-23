@@ -380,7 +380,7 @@ export const MODULE_FIRESTORE_SPECS: ModuleFirestoreSpec[] = [
   },
   {
     moduleKey: 'tax_invoices',
-    label: 'ใบกำกับภาษี',
+    label: 'ใบกำกับภาษีขาย',
     domain: 'accounting',
     fnPrefix: 'TaxInvoices',
     paths: [

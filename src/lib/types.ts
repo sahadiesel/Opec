@@ -3081,6 +3081,10 @@ export interface VendorBillPaymentInstallment {
   cashbookEntryNo?: string;
   paymentProofUrl?: string;
   paymentProofFileName?: string;
+  vendorPayeeBankAccountId?: string;
+  vendorPayeeBankName?: string;
+  vendorPayeeBankAccountName?: string;
+  vendorPayeeBankAccountNumber?: string;
 }
 
 /** รายการหัก ณ ที่จ่าย (ผู้รับเงิน) — สะสมเพื่อสรุปนำส่งสรรพากร ไม่ตัดบัญชีธนาคารตอนจ่ายคู่ค้า */
@@ -3379,6 +3383,11 @@ export interface PurchaseVendorBill {
   /** หลักฐานการจ่าย (URL จาก Storage — มักเป็น PDF) */
   paymentProofUrl?: string;
   paymentProofFileName?: string;
+  /** บัญชีรับโอนของคู่ค้าที่เลือกตอนทำจ่าย (snapshot) */
+  vendorPayeeBankAccountId?: string;
+  vendorPayeeBankName?: string;
+  vendorPayeeBankAccountName?: string;
+  vendorPayeeBankAccountNumber?: string;
   /** หลักฐานแนบหัก ณ ที่จ่าย (PDF) — เมื่อมีการหัก ณ ที่จ่ายในบิลนี้ */
   whtPaymentProofUrl?: string;
   whtPaymentProofFileName?: string;
@@ -3404,6 +3413,17 @@ export interface PurchaseVendorBill {
 /** นิติบุคคล (บริษัท/ห้าง) vs บุคคลธรรมดา — ใช้ซ่อนสาขาในฟอร์มและพิมพ์หัก ณ ที่จ่ายให้ถูกต้อง */
 export type VendorLegalForm = 'JURISTIC' | 'NATURAL';
 
+/** บัญชีธนาคารของคู่ค้า (รับโอน) */
+export interface VendorBankAccount {
+  id: string;
+  /** ชื่อเรียกสั้น ๆ เช่น บัญชีหลัก / บัญชีค่าบริการ */
+  label?: string;
+  bankName: string;
+  bankAccountName: string;
+  bankAccountNumber: string;
+  isPrimary?: boolean;
+}
+
 export interface Vendor {
   id: string;
   vendorCode: string;
@@ -3418,10 +3438,17 @@ export interface Vendor {
   phone?: string;
   email?: string;
   address?: string;
+  /** รายละเอียดสินค้าหรือการบริการที่คู่ค้าจัดหา */
+  goodsOrServicesDetail?: string;
   /** รูปแบบการชำระเงิน: เงินสด / เครดิต (เก็บเป็นข้อความ Cash | Credit) */
   paymentTerms?: 'Cash' | 'Credit' | string;
   creditDays?: number;
   defaultCurrency?: string;
+  /**
+   * บัญชีรับเงินของคู่ค้า (หลายบัญชีได้) — ใช้เลือกตอนทำจ่ายโอนเข้า
+   * ฟิลด์ bankName / bankAccountName / bankAccountNumber ด้านล่าง = สำเนาบัญชีหลัก (backward compatible)
+   */
+  bankAccounts?: VendorBankAccount[];
   bankAccountName?: string;
   bankAccountNumber?: string;
   bankName?: string;
