@@ -17,7 +17,7 @@ import {
   type DocumentData,
   type Firestore,
 } from 'firebase/firestore';
-import type { Assignment, DailyTimesheet, LaborCostContractTerm, POLine, PurchaseOrder, User, Worker } from '@/lib/types';
+import type { Assignment, DailyTimesheet, LaborCostContractTerm, MobDayChargeSpec, POLine, PurchaseOrder, User, Worker } from '@/lib/types';
 import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
 import { assertPayrollPermission } from '@/lib/permissions';
 import { isPoActiveBundleAutoDailyDisabled, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
@@ -35,11 +35,11 @@ import {
   shouldDeleteStalePoActiveAutoDailyRow,
 } from '@/lib/timesheet/po-active-auto-daily-build';
 import { purgeStalePrefixContinuityWorkDaysForMonth } from '@/lib/timesheet/mobilization-clearance-timesheet';
+import { healOneTimesheetPerWorkerPoDayInMonth, deleteConflictingWorkerPoDayTimesheets, healZeroStandbyLikeHoursInMonth } from '@/lib/timesheet/enforce-one-timesheet-per-worker-po-day';
+import { defaultPackageHoursForWorkMode } from '@/lib/ops/mob-day-charge';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
-import { resolvePriorCycleWorkStartFloorYmd } from '@/lib/constants/timesheet-ui';
-import { TimesheetService } from '@/lib/services/timesheet-service';
 
 export type PoActiveAutoDailySyncOptions = {
   /** เติมเฉพาะ yyyy-mm-dd ปัจจุบันในเขตไทย — ใช้หลังเที่ยงคืนหรือเปิดกระดาน */
@@ -211,6 +211,16 @@ export async function syncPoActiveAutoDailyForAssignment(
         ? buildPoActiveAutoStandbyRowPayload(rowParams)
         : buildPoActiveAutoDailyRowPayload(rowParams);
 
+    /** คน+PO+วัน = หนึ่งสถานะ — ลบใบของ mobilization อื่นก่อนเขียน */
+    await deleteConflictingWorkerPoDayTimesheets(db, {
+      workerId: assignment.workerId,
+      purchaseOrderId: assignment.poId,
+      dateYmd: date,
+      keepAssignmentId: assignment.id,
+      keepDocId: id,
+      batch,
+    });
+
     if (existing.exists()) {
       const cur = existing.data() as DailyTimesheet;
       if (isTimesheetFinanciallyImmutable(cur.status)) {
@@ -315,43 +325,49 @@ export async function purgeStalePoActiveAutoDailyForCalendarMonth(
   }
 
   const tsCol = collection(db, 'daily_timesheets');
-  const service = new TimesheetService(db);
   let deleted = 0;
-  const priorFloor = resolvePriorCycleWorkStartFloorYmd(assignment);
-  const mobEnd = (assignment.mobLocationEndDate || '').trim().slice(0, 10);
 
   for (const date of eachYmdInRange(monthStart, through)) {
+    if (!shouldDeleteStalePoActiveAutoDailyRow(assignment, date)) continue;
     const id = poActiveDailyTimesheetDocId(assignment.workerId, assignment.id, date);
     const dRef = doc(tsCol, id);
     const existing = await getDoc(dRef);
     if (!existing.exists()) continue;
     const cur = existing.data() as DailyTimesheet;
+    if (cur.poActiveAutoDaily !== true) continue;
     if (isTimesheetFinanciallyImmutable(cur.status)) continue;
-
-    if (shouldDeleteStalePoActiveAutoDailyRow(assignment, date) && cur.poActiveAutoDaily === true) {
-      await deleteDoc(dRef);
-      deleted++;
-      continue;
-    }
-
-    /**
-     * W ก่อนวันเริ่มงานรอบก่อน (snapshot) ในรอบที่ปิดแล้ว —
-     * รวมแถวที่ไม่ได้ mark auto (เช่น เติมต่อเนื่องต้นเดือน / สร้างผิด)
-     */
-    if (
-      priorFloor &&
-      date < priorFloor &&
-      /^\d{4}-\d{2}-\d{2}$/.test(mobEnd) &&
-      date <= mobEnd &&
-      cur.eventType === 'work_day' &&
-      !service.isFinalized(cur.status)
-    ) {
-      await deleteDoc(dRef);
-      deleted++;
-    }
+    await deleteDoc(dRef);
+    deleted++;
   }
 
+  /** ลบเฉพาะ W ที่เติม «ต่อเนื่องต้นเดือน» ผิดช่วง — ไม่ลบประวัติ mob/demob หลายรอบ */
   deleted += await purgeStalePrefixContinuityWorkDaysForMonth(db, assignment, monthYm);
+
+  /** คน+PO+วัน = หนึ่งสถานะ — เก็บใบของ mobilization ที่ยังอยู่บน roster */
+  if (
+    (assignment.poId || '').trim() &&
+    (assignment.workerId || '').trim() &&
+    assignment.deploymentStatus !== 'DEMOBILIZED' &&
+    assignment.deploymentStatus !== 'CLOSED'
+  ) {
+    const healed = await healOneTimesheetPerWorkerPoDayInMonth(db, {
+      workerId: assignment.workerId,
+      purchaseOrderId: assignment.poId,
+      keepAssignmentId: assignment.id,
+      monthYm,
+    });
+    deleted += healed.deleted;
+
+    const pkg = defaultPackageHoursForWorkMode(assignment.workMode);
+    await healZeroStandbyLikeHoursInMonth(db, {
+      workerId: assignment.workerId,
+      purchaseOrderId: assignment.poId,
+      assignmentId: assignment.id,
+      monthYm,
+      packageHours: pkg,
+    });
+  }
+
   return deleted;
 }
 
@@ -549,6 +565,7 @@ export async function upsertPoActiveStopTodayEvent(
   assignmentId: string,
   user: User,
   eventType: PoActiveStopTodayEvent,
+  charges?: { billing: MobDayChargeSpec; payroll: MobDayChargeSpec },
 ): Promise<string> {
   assertPayrollPermission(user, 'timesheet', 'edit');
   const ctx = await loadPoActiveAssignmentWriteContext(db, assignmentId);
@@ -566,6 +583,15 @@ export async function upsertPoActiveStopTodayEvent(
     workerNameSnapshot: workerName,
     poActiveBundleId: bundleId,
     laborCostContractTermId,
+    ...(eventType === 'demobilization_day' && charges ? { charges } : {}),
+  });
+
+  await deleteConflictingWorkerPoDayTimesheets(db, {
+    workerId: assignment.workerId,
+    purchaseOrderId: assignment.poId,
+    dateYmd: today,
+    keepAssignmentId: assignment.id,
+    keepDocId: id,
   });
 
   if (existing.exists()) {

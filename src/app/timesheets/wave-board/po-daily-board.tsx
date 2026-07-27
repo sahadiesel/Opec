@@ -82,6 +82,7 @@ import {
   countTimesheetsAfterMobFinishDate,
   deleteTimesheetsAfterMobFinishDate,
 } from '@/lib/timesheet/mob-finish-timesheet-cleanup';
+import { deleteOrphanTimesheetsForWorkerPoInRange } from '@/lib/timesheet/enforce-one-timesheet-per-worker-po-day';
 import { purgeStalePoActiveAutoDailyForCalendarMonth } from '@/lib/timesheet/po-active-auto-daily-sync';
 import { buildMobCycleDocId } from '@/lib/ops/mob-cycle-ids';
 import {
@@ -109,6 +110,23 @@ import {
   isAssignmentInPoActiveSbToggleMode,
   poActiveDailyTimesheetDocId,
 } from '@/lib/timesheet/po-active-auto-daily-build';
+import {
+  defaultDemobDayCharges,
+  defaultPackageHoursForWorkMode,
+} from '@/lib/ops/mob-day-charge';
+import { buildMobDayChargeBahtPreviewRates } from '@/lib/ops/mob-day-charge-baht-preview';
+import { MobDayChargeSideEditors } from '@/components/timesheet/mob-day-charge-side-editors';
+import { resolveBillingSellWorkingDayRate } from '@/lib/commercial/position-rate-sell';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import type { MobDayChargeSpec } from '@/lib/types';
+import { resolveMatrixCostRate } from '@/lib/commercial/position-rate-matrix';
 
 const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
@@ -299,6 +317,14 @@ export function PoDailyBoardCard({
     }
   >(null);
   const [stopFlow, setStopFlow] = useState<null | { assignment: Assignment }>(null);
+  const [demobChargeOpen, setDemobChargeOpen] = useState(false);
+  const [demobChargeAssignment, setDemobChargeAssignment] = useState<Assignment | null>(null);
+  const [demobBillingCharge, setDemobBillingCharge] = useState<MobDayChargeSpec>(() =>
+    defaultDemobDayCharges().billing,
+  );
+  const [demobPayrollCharge, setDemobPayrollCharge] = useState<MobDayChargeSpec>(() =>
+    defaultDemobDayCharges().payroll,
+  );
   const [cancelFinishTarget, setCancelFinishTarget] = useState<Assignment | null>(null);
   const [finishJobDateYmd, setFinishJobDateYmd] = useState('');
   const [finishAfterCounts, setFinishAfterCounts] = useState<{
@@ -312,6 +338,7 @@ export function PoDailyBoardCard({
     mode: 'finish' | 'revise';
     finishTiming?: 'today' | 'tomorrow';
     todayEventType?: PoActiveStopTodayEvent;
+    charges?: { billing: MobDayChargeSpec; payroll: MobDayChargeSpec };
     deletable: number;
     locked: number;
   } | null>(null);
@@ -659,8 +686,17 @@ export function PoDailyBoardCard({
       if (existing[asgn.id]) {
         persisted.add(asgn.id);
         const ex = existing[asgn.id];
+        const et = ex.eventType;
+        const nh = Number(ex.normalHours);
+        const needsPackageHours =
+          (et === 'mobilization_day' || et === 'demobilization_day' || et === 'standby_day') &&
+          !(Number.isFinite(nh) && nh > 0);
         next[asgn.id] =
-          ex.eventType === 'unpaid_leave' && (ex.normalHours ?? 0) !== 0 ? { ...ex, normalHours: 0 } : ex;
+          et === 'unpaid_leave' && (ex.normalHours ?? 0) !== 0
+            ? { ...ex, normalHours: 0 }
+            : needsPackageHours
+              ? { ...ex, normalHours: dft }
+              : ex;
       } else {
         next[asgn.id] = {
           workerId: asgn.workerId,
@@ -851,7 +887,28 @@ export function PoDailyBoardCard({
           ot15Hours: 0,
           status: 'DRAFT' as DailyTimesheetStatus,
         } satisfies Partial<DailyTimesheet>);
-      updated[asgn.id] = { ...cur, [field]: value };
+      if (field === 'eventType') {
+        const eventType = value as RateConditionEventType;
+        let nextHours = Number(cur.normalHours) || 0;
+        let nextOt = cur.ot15Hours ?? 0;
+        if (eventType === 'unpaid_leave') {
+          nextHours = 0;
+          nextOt = 0;
+        } else if (
+          eventType === 'mobilization_day' ||
+          eventType === 'demobilization_day' ||
+          eventType === 'standby_day'
+        ) {
+          nextHours = nextHours > 0 ? nextHours : dft;
+          nextOt = 0;
+        } else if (eventType === 'work_day') {
+          nextHours = nextHours > 0 ? nextHours : dft;
+        }
+        if (eventType !== 'work_day') nextOt = 0;
+        updated[asgn.id] = { ...cur, eventType, normalHours: nextHours, ot15Hours: nextOt };
+      } else {
+        updated[asgn.id] = { ...cur, [field]: value };
+      }
       nextCleared.delete(asgn.id);
     }
     setClearedRowIds(nextCleared);
@@ -1130,14 +1187,21 @@ export function PoDailyBoardCard({
     mode: 'finish' | 'revise';
     finishTiming?: 'today' | 'tomorrow';
     todayEventType?: PoActiveStopTodayEvent;
+    charges?: { billing: MobDayChargeSpec; payroll: MobDayChargeSpec };
   }) => {
     if (!firestore || !currentUser?.id) return;
-    const { asgn, finishYmd, mode, finishTiming, todayEventType } = params;
+    const { asgn, finishYmd, mode, finishTiming, todayEventType, charges } = params;
     const now = Date.now();
     setDemobSubmitting(true);
     try {
       if (mode === 'finish' && todayEventType) {
-        await upsertPoActiveStopTodayEvent(firestore, asgn.id, currentUser, todayEventType);
+        await upsertPoActiveStopTodayEvent(
+          firestore,
+          asgn.id,
+          currentUser,
+          todayEventType,
+          todayEventType === 'demobilization_day' ? charges : undefined,
+        );
       }
 
       const mobRef = doc(firestore, 'mobilizations', asgn.id);
@@ -1205,6 +1269,16 @@ export function PoDailyBoardCard({
         await purgeStalePoActiveAutoDailyForCalendarMonth(firestore, asgn.id, targetYm);
       }
 
+      /** ลบใบของ mobilization อื่นคน+PO เดียวกันหลังวันจบ — กันวันเดียวสองสถานะตอน remob */
+      if ((asgn.poId || '').trim() && (asgn.workerId || '').trim()) {
+        await deleteOrphanTimesheetsForWorkerPoInRange(firestore, {
+          workerId: asgn.workerId,
+          purchaseOrderId: asgn.poId,
+          keepAssignmentId: asgn.id,
+          fromYmdInclusive: addDaysToYmd(finishYmd, 1),
+        });
+      }
+
       setFinishJobModal(null);
       setFinishPurgeConfirm(null);
       await loadRoster();
@@ -1246,8 +1320,55 @@ export function PoDailyBoardCard({
       mode: finishPurgeConfirm.mode,
       finishTiming: finishPurgeConfirm.finishTiming,
       todayEventType: finishPurgeConfirm.todayEventType,
+      charges: finishPurgeConfirm.charges,
     });
   };
+
+  const openDemobChargeConfig = (asgn: Assignment) => {
+    const defaults = defaultDemobDayCharges(asgn.workMode);
+    setDemobBillingCharge(defaults.billing);
+    setDemobPayrollCharge(defaults.payroll);
+    setDemobChargeAssignment(asgn);
+    setStopFlow(null);
+    setDemobChargeOpen(true);
+  };
+
+  const demobPreviewRates = useMemo(() => {
+    const asgn = demobChargeAssignment;
+    if (!asgn) return null;
+    const line = bundlePoLines.find((l) => l.id === asgn.poLineId && l.poId === asgn.poId);
+    const rates = ratesByContractId.get((asgn.contractId || '').trim()) ?? [];
+    const positionRate =
+      rates.find((r) => r.positionId === asgn.positionId && r.active !== false) ?? null;
+    const workMode = (asgn.workMode === 'ONSHORE' ? 'ONSHORE' : 'OFFSHORE') as 'ONSHORE' | 'OFFSHORE';
+    const pkg = defaultPackageHoursForWorkMode(asgn.workMode);
+    const sellWorking = line
+      ? resolveBillingSellWorkingDayRate({
+          poLine: line,
+          workMode,
+          contractRate: positionRate ?? undefined,
+        })
+      : 0;
+    const costWorking = Math.max(
+      0,
+      Number(line?.costBaselineSnapshot) ||
+        (positionRate
+          ? resolveMatrixCostRate(
+              positionRate,
+              workMode === 'ONSHORE' ? 'onshore_working_day' : 'offshore_working_day',
+            ) ?? 0
+          : 0),
+    );
+    const otMult = Number((line?.costOtRulesSnapshot as { afterShift?: number } | undefined)?.afterShift) || 1.5;
+    return buildMobDayChargeBahtPreviewRates({
+      packageHours: pkg,
+      positionRate,
+      sellWorkingDayRate: sellWorking,
+      costWorkingDayRate: costWorking,
+      otAfterShiftMultiplier: otMult,
+      workMode: asgn.workMode,
+    });
+  }, [demobChargeAssignment, bundlePoLines, ratesByContractId]);
 
   const confirmCancelFinishJob = async () => {
     if (!firestore || !currentUser?.id || !cancelFinishTarget) return;
@@ -1308,7 +1429,11 @@ export function PoDailyBoardCard({
   };
 
   const runStopFinishChoice = useCallback(
-    async (asgn: Assignment, todayEventType: PoActiveStopTodayEvent) => {
+    async (
+      asgn: Assignment,
+      todayEventType: PoActiveStopTodayEvent,
+      charges?: { billing: MobDayChargeSpec; payroll: MobDayChargeSpec },
+    ) => {
       if (!firestore || !canEditTimesheets || !currentUser?.id) {
         toast({ variant: 'destructive', title: 'ไม่พร้อม', description: 'ไม่มีสิทธิ์หรือไม่ได้เชื่อมต่อ' });
         return;
@@ -1326,6 +1451,7 @@ export function PoDailyBoardCard({
       setStandbySubmitting(true);
       try {
         setStopFlow(null);
+        setDemobChargeOpen(false);
         const counts = await countTimesheetsAfterMobFinishDate(firestore, asgn.id, finishYmd);
         if (counts.deletable > 0) {
           setFinishPurgeConfirm({
@@ -1333,6 +1459,7 @@ export function PoDailyBoardCard({
             finishYmd,
             mode: 'finish',
             todayEventType,
+            charges,
             deletable: counts.deletable,
             locked: counts.locked,
           });
@@ -1343,6 +1470,7 @@ export function PoDailyBoardCard({
           finishYmd,
           mode: 'finish',
           todayEventType,
+          charges,
         });
       } catch (e: unknown) {
         toast({
@@ -1661,7 +1789,22 @@ export function PoDailyBoardCard({
                         : {
                             ...raw,
                             eventType: et,
-                            normalHours: et === 'unpaid_leave' ? 0 : (raw?.normalHours ?? dft),
+                            normalHours:
+                              et === 'unpaid_leave'
+                                ? 0
+                                : (() => {
+                                    const nh = Number(raw?.normalHours);
+                                    if (Number.isFinite(nh) && nh > 0) return nh;
+                                    /** M1/D1/SB ที่เคยบันทึก 0 — โชว์ชม.แพ็กมาตรฐาน (OFF 12 / ON 8) */
+                                    if (
+                                      et === 'mobilization_day' ||
+                                      et === 'demobilization_day' ||
+                                      et === 'standby_day'
+                                    ) {
+                                      return dft;
+                                    }
+                                    return dft;
+                                  })(),
                             ot15Hours: raw?.ot15Hours ?? 0,
                             remark: raw?.remark ?? '',
                           };
@@ -1767,12 +1910,21 @@ export function PoDailyBoardCard({
                                   status: 'DRAFT' as DailyTimesheetStatus,
                                 };
                                 const eventType = v as RateConditionEventType;
-                                let nextHours = cur.normalHours ?? dft;
+                                let nextHours = Number(cur.normalHours) || 0;
                                 let nextOt = cur.ot15Hours ?? 0;
                                 if (eventType === 'unpaid_leave') {
                                   nextHours = 0;
                                   nextOt = 0;
+                                } else if (
+                                  eventType === 'mobilization_day' ||
+                                  eventType === 'demobilization_day' ||
+                                  eventType === 'standby_day'
+                                ) {
+                                  nextHours = nextHours > 0 ? nextHours : dft;
+                                  nextOt = 0;
                                 } else if (cur.eventType === 'unpaid_leave') {
+                                  nextHours = dft;
+                                } else if (!(nextHours > 0)) {
                                   nextHours = dft;
                                 }
                                 if (eventType !== 'work_day') nextOt = 0;
@@ -2114,13 +2266,11 @@ export function PoDailyBoardCard({
                     variant="outline"
                     className="h-auto justify-start whitespace-normal px-3 py-3 text-left"
                     disabled={standbySubmitting || demobSubmitting}
-                    onClick={() =>
-                      stopFlow && void runStopFinishChoice(stopFlow.assignment, 'demobilization_day')
-                    }
+                    onClick={() => stopFlow && openDemobChargeConfig(stopFlow.assignment)}
                   >
                     <span className="block font-semibold text-foreground">2. วันนี้เป็น D1 พรุ่งนี้ไม่บันทึก</span>
                     <span className="mt-1 block text-xs leading-snug">
-                      วันนี้ = Demob (D1) · หยุดซิงก์หลังวันนี้ · กลับ Waiting MOB
+                      วันนี้ = Demob (D1) · ตั้งค่าบิล/จ่าย · หยุดซิงก์หลังวันนี้ · กลับ Waiting MOB
                     </span>
                   </Button>
                   <Button
@@ -2163,6 +2313,70 @@ export function PoDailyBoardCard({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={demobChargeOpen}
+        onOpenChange={(open) => {
+          if (!open && !standbySubmitting && !demobSubmitting) {
+            setDemobChargeOpen(false);
+            setDemobChargeAssignment(null);
+          }
+        }}
+      >
+        <DialogContent className="flex max-h-[min(90vh,40rem)] w-[calc(100vw-1.5rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:w-full">
+          <DialogHeader className="shrink-0 space-y-1 border-b px-5 py-4 text-left">
+            <DialogTitle>กำหนดค่า D1 — วางบิล / จ่ายลูกจ้าง</DialogTitle>
+            <DialogDescription>
+              {demobChargeAssignment
+                ? `จบงานวันนี้เป็น Demob · ${demobChargeAssignment.workerId}`
+                : 'จบงานวันนี้เป็น Demob'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+            <MobDayChargeSideEditors
+              billing={demobBillingCharge}
+              payroll={demobPayrollCharge}
+              onBillingChange={setDemobBillingCharge}
+              onPayrollChange={setDemobPayrollCharge}
+              packageHours={defaultPackageHoursForWorkMode(demobChargeAssignment?.workMode)}
+              disabled={standbySubmitting || demobSubmitting}
+              previewRates={demobPreviewRates}
+              includeD1
+              layout="grid"
+              compact
+            />
+          </div>
+          <DialogFooter className="shrink-0 gap-2 border-t px-5 py-3 sm:gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={standbySubmitting || demobSubmitting}
+              onClick={() => {
+                setDemobChargeOpen(false);
+                setDemobChargeAssignment(null);
+              }}
+            >
+              ยกเลิก
+            </Button>
+            <Button
+              type="button"
+              disabled={standbySubmitting || demobSubmitting || !demobChargeAssignment}
+              onClick={() =>
+                demobChargeAssignment &&
+                void runStopFinishChoice(demobChargeAssignment, 'demobilization_day', {
+                  billing: demobBillingCharge,
+                  payroll: demobPayrollCharge,
+                })
+              }
+            >
+              {standbySubmitting || demobSubmitting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : null}
+              ยืนยัน D1 และจบงาน
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog
         open={finishJobModal !== null}

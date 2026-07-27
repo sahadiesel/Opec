@@ -1,14 +1,10 @@
 import type { Assignment, DailyTimesheet, RateConditionEventType, WaveMonthTimesheetPhotoAttachment } from '@/lib/types';
 import { resolveStandbyPaidHours } from '@/lib/payroll/package-labor-cost';
+import { defaultPackageHoursForWorkMode } from '@/lib/ops/mob-day-charge';
 import {
   assignmentIncludedInWaveTimesheetRoster,
   assignmentHasAnyMobTimesheetDayInCalendarMonth,
   assignmentEndedWithoutEverMobilizingOnSite,
-  isHtmlDateAfterMobLocationEnd,
-  isYmdAfterSiteEndAwaitingRemob,
-  isYmdInRemobGapBetweenCycles,
-  isYmdWithinAssignmentMobTimesheetWindow,
-  waveMonthCellTimesheetVisible,
 } from '@/lib/constants/timesheet-ui';
 import { assignmentOverlapsYearMonthForPoDailyBoard } from '@/lib/ops/timesheet-hub-po-month';
 import { assignmentReleasedFromPoLineQuota } from '@/lib/ops/po-fulfillment-read-model';
@@ -103,15 +99,26 @@ const WAVE_MONTH_STANDBY_EVENT_TYPES = new Set<RateConditionEventType>([
 ]);
 
 /**
+ * ชม.ที่โชว์/นับสำหรับ SB · M1 · D1 — ยึด normalHours ในใบงาน
+ * ถ้าเป็น 0 (ข้อมูลเก่า) ใช้ฐานแพ็กจาก workMode (OFF 12 / ON 8) ให้สอดคล้องสัญญาและกระดานรายวัน
+ */
+export function standbyLikeHoursForWaveMonth(
+  ts: Pick<DailyTimesheet, 'normalHours' | 'workMode' | 'standbyUnits'> | undefined,
+): number {
+  if (!ts) return 0;
+  const pkg = defaultPackageHoursForWorkMode(ts.workMode);
+  return resolveStandbyPaidHours(ts, pkg);
+}
+
+/**
  * ชม.ที่นับเป็น standby ในสรุปรายเดือน — SB / M1 / D1
- * ยึด `normalHours` ที่ลงในใบงาน (สอดคล้องสูตรจ่ายค่าแรง — 8 ชม. vs 12 ชม. ได้อัตราต่างกัน)
- * ถ้าไม่ได้ลงชม. ใช้ fallback จาก `resolveStandbyPaidHours` (standbyUnits × 8)
+ * สัมพันธ์กับชม.บนรายวันและฐานแพ็กในสัญญา (ใช้คำนวณสัดส่วน SB 8↔12)
  */
 export function standbyHoursCountedForWaveMonth(
-  ts: Pick<DailyTimesheet, 'eventType' | 'normalHours' | 'standbyUnits'> | undefined,
+  ts: Pick<DailyTimesheet, 'eventType' | 'normalHours' | 'standbyUnits' | 'workMode'> | undefined,
 ): number {
   if (!ts || !WAVE_MONTH_STANDBY_EVENT_TYPES.has(ts.eventType as RateConditionEventType)) return 0;
-  return resolveStandbyPaidHours(ts, 8);
+  return standbyLikeHoursForWaveMonth(ts);
 }
 
 /**
@@ -362,12 +369,22 @@ export function timesheetWaveMonthCellDisplayWithRetro(
   if (ot > 0) {
     const otLabel = Number.isInteger(ot) ? String(ot) : ot.toFixed(1);
     label = `${abbr}+${otLabel}`;
+  } else if (
+    ts.eventType === 'standby_day' ||
+    ts.eventType === 'mobilization_day' ||
+    ts.eventType === 'demobilization_day'
+  ) {
+    /**
+     * M1/D1/SB บนกริด — ไม่โชว์ชม. (อาจบิล 12 จ่าย 8 คนละค่า)
+     * เปิดเซลล์ดูรายละเอียดวางบิล/จ่าย
+     */
+    if (retroM1 > 1) label = `${abbr}+${retroM1}`;
+    else if (retroD1 > 1) label = `${abbr}+${retroD1}`;
+    else label = abbr;
   } else if (retroM1 > 0) {
     label = retroM1 > 1 ? `${abbr}+${retroM1}` : abbr;
   } else if (retroD1 > 0) {
     label = retroD1 > 1 ? `${abbr}+${retroD1}` : abbr;
-  } else if (retroSb > 0) {
-    label = abbr;
   } else {
     label = abbr;
   }
@@ -411,82 +428,54 @@ export function resolveTimesheetForWaveMonthCell(
     ...(alternateAssignmentIds?.filter((id) => id && id !== rosterAssignmentId) ?? []),
   ];
 
-  const lookupIgnoringMobWindow = (enforceMobWindow: boolean): DailyTimesheet | undefined => {
-    if (
-      enforceMobWindow &&
-      assignmentWindow &&
-      !isYmdWithinAssignmentMobTimesheetWindow(assignmentWindow, date)
-    ) {
-      return undefined;
-    }
-
-    /** ต้องจับคู่ assignment — ไม่ใช้แค่วันที่ (กัน wave เดียวกันมีหลาย mobilization / remob ซ้อน) */
-    const tryKeyed = (wid: string): DailyTimesheet | undefined => {
-      const keyed = sheetsByWaveWorker.get(`${wid}|${workerId}`);
-      if (!keyed?.length) return undefined;
-      for (const aid of assignmentIdsToTry) {
-        const hit = keyed.find((t) => t.date === date && t.assignmentId === aid);
-        if (hit) return hit;
-      }
-      return undefined;
-    };
-    const fromWave = tryKeyed(waveId);
-    if (fromWave) return fromWave;
-    if (poScopeWaveId && poScopeWaveId !== waveId) {
-      const fromScope = tryKeyed(poScopeWaveId);
-      if (fromScope) return fromScope;
-    }
+  /**
+   * หาแถวที่มีอยู่แล้วเสมอ — คนหนึ่งอาจมีหลายรอบ mob/demob ในเดือนเดียวกัน
+   * อย่าตัดทิ้งด้วย remob gap / หน้าต่างรอบล่าสุด (แถวผิดช่วงให้ purge ไม่ใช่ซ่อน)
+   */
+  const tryKeyed = (wid: string): DailyTimesheet | undefined => {
+    const keyed = sheetsByWaveWorker.get(`${wid}|${workerId}`);
+    if (!keyed?.length) return undefined;
     for (const aid of assignmentIdsToTry) {
-      const hit = flatMonthSheets.find(
-        (t) => t.workerId === workerId && t.date === date && t.assignmentId === aid,
-      );
+      const hit = keyed.find((t) => t.date === date && t.assignmentId === aid);
       if (hit) return hit;
-    }
-
-    /** Fallback: บันทึกจาก mobilization เก่าหรือคีย์ไม่ตรง — จับคู่ PO + คน + วัน + wave (ถ้ามีหลายรายการ) */
-    const poId = (assignmentWindow?.poId || '').trim();
-    if (poId) {
-      const candidates = flatMonthSheets.filter(
-        (t) =>
-          t.workerId === workerId &&
-          t.date === date &&
-          (t.purchaseOrderId || '').trim() === poId,
-      );
-      if (candidates.length === 1) return candidates[0];
-      const byWave = candidates.find(
-        (t) => t.waveId === waveId || (!!poScopeWaveId && t.waveId === poScopeWaveId),
-      );
-      if (byWave) return byWave;
-      const byKnownMob = candidates.find((t) => assignmentIdsToTry.includes(t.assignmentId));
-      if (byKnownMob) return byKnownMob;
     }
     return undefined;
   };
-
-  /** รอบแรก: เคารพช่วง mobilization */
-  const strict = lookupIgnoringMobWindow(true);
-  if (strict !== undefined) return strict;
-
-  /**
-   * รอบสอง: ผ่อนเมื่อฟิลด์ mobilization ไม่ตรงใบงาน — แต่ห้ามดึงใบงานหลังวันจบไซต์ที่บันทึกแล้ว
-   * (กัน auto/sync สร้าง work_day เกินวันจบงานแล้วไปโผล่สรุปรายเดือน)
-   */
-  const outsideMobWindow =
-    !!assignmentWindow &&
-    !isYmdWithinAssignmentMobTimesheetWindow(assignmentWindow, date);
-  if (outsideMobWindow && assignmentWindow && isYmdInRemobGapBetweenCycles(assignmentWindow, date)) {
-    return undefined;
+  const fromWave = tryKeyed(waveId);
+  if (fromWave) return fromWave;
+  if (poScopeWaveId && poScopeWaveId !== waveId) {
+    const fromScope = tryKeyed(poScopeWaveId);
+    if (fromScope) return fromScope;
   }
-  if (assignmentWindow && isYmdAfterSiteEndAwaitingRemob(assignmentWindow, date)) {
-    return undefined;
+  for (const aid of assignmentIdsToTry) {
+    const hit = flatMonthSheets.find(
+      (t) => t.workerId === workerId && t.date === date && t.assignmentId === aid,
+    );
+    if (hit) return hit;
   }
-  const mobEndStr = (assignmentWindow?.mobLocationEndDate || '').trim().slice(0, 10);
-  const hasConfirmedMobEnd = /^\d{4}-\d{2}-\d{2}$/.test(mobEndStr);
-  const afterRecordedSiteEnd =
-    !!assignmentWindow && hasConfirmedMobEnd && isHtmlDateAfterMobLocationEnd(assignmentWindow, date);
-  if (outsideMobWindow && afterRecordedSiteEnd) return undefined;
 
-  return lookupIgnoringMobWindow(false);
+  /** Fallback: บันทึกจาก mobilization เก่าหรือคีย์ไม่ตรง — จับคู่ PO + คน + วัน (เก็บใบของ roster ก่อน) */
+  const poId = (assignmentWindow?.poId || '').trim();
+  if (poId) {
+    const candidates = flatMonthSheets.filter(
+      (t) =>
+        t.workerId === workerId &&
+        t.date === date &&
+        (t.purchaseOrderId || '').trim() === poId,
+    );
+    if (candidates.length === 0) return undefined;
+    const byKnownMob = candidates.find((t) => assignmentIdsToTry.includes(t.assignmentId));
+    if (byKnownMob) return byKnownMob;
+    if (candidates.length === 1) return candidates[0];
+    const byWave = candidates.find(
+      (t) => t.waveId === waveId || (!!poScopeWaveId && t.waveId === poScopeWaveId),
+    );
+    if (byWave) return byWave;
+    return [...candidates].sort(
+      (a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0),
+    )[0];
+  }
+  return undefined;
 }
 
 /**
@@ -562,8 +551,8 @@ export function timesheetCellSummary(ts: DailyTimesheet | undefined): string {
 }
 
 /**
- * กระดานสรุปรายเดือน — แสดงรหัสประเภทวัน + OT (เช่น W+5 = ทำงาน + OT 5 ชม.)
- * ไม่มีข้อมูล / วันไม่จ่าย (unpaid_leave) = " - "
+ * กระดานสรุปรายเดือน — รหัสประเภทวัน
+ * W+5 = ทำงาน + OT · M1 / D1 / SB = ไม่ติดชม.บนเซลล์ (เปิดดูรายละเอียด — บิล/จ่ายอาจคนละชม.)
  */
 export function timesheetWaveMonthCellDisplay(ts: DailyTimesheet | undefined): string {
   if (!ts) return ' - ';

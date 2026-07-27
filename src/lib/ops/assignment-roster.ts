@@ -25,6 +25,31 @@ export function countActiveAssignmentsOnWaveRoster(
  * กรณีเดียวกัน (worker) มีมากกว่า 1 รายการมอบหมายบน wave เดิม (เช่น demob แล้วยังลิงก์) — แสดง/นับเฉพาะรายการที่ "ยังอยู่บน roster"
  * หรือรายการล่าสุดถ้าทุกอัน terminal
  */
+/** ลำดับความสำคัญเมื่อคนเดียวกันมีหลาย mobilization บน PO/wave เดียวกัน */
+export function rosterDeploymentTier(status: DeploymentStatus | string | undefined): number {
+  switch (status) {
+    case 'ACTIVE':
+      return 50;
+    case 'MOBILIZING':
+      return 40;
+    case 'READY_TO_MOB':
+      return 30;
+    case 'DRAFT':
+      return 20;
+    default:
+      return 0;
+  }
+}
+
+function pickPreferredRosterAssignment(list: readonly Assignment[]): Assignment {
+  return list.reduce((a, b) => {
+    const ta = rosterDeploymentTier(a.deploymentStatus);
+    const tb = rosterDeploymentTier(b.deploymentStatus);
+    if (ta !== tb) return ta >= tb ? a : b;
+    return (a.updatedAt ?? 0) >= (b.updatedAt ?? 0) ? a : b;
+  });
+}
+
 export function pickRosterLinePerWorker(mobs: readonly Assignment[]): Assignment[] {
   if (!mobs.length) return [];
   const by = new Map<string, Assignment[]>();
@@ -42,10 +67,10 @@ export function pickRosterLinePerWorker(mobs: readonly Assignment[]): Assignment
     }
     const actives = list.filter((a) => isAssignmentActiveOnWaveRoster(a));
     if (actives.length) {
-      out.push(actives.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b)));
+      out.push(pickPreferredRosterAssignment(actives));
       continue;
     }
-    out.push(list.reduce((a, b) => (a.updatedAt >= b.updatedAt ? a : b)));
+    out.push(pickPreferredRosterAssignment(list));
   }
   return out;
 }

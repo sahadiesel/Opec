@@ -10,6 +10,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import type { WorkerMonthClosureStatus, WorkerMonthTimesheetClosure } from '@/lib/types';
 import {
+  canReopenWorkerMonthClosureForEdit,
   isWorkerMonthClosureGridLocked,
   workerMonthClosureStatusLabelTh,
 } from '@/lib/timesheet/worker-month-closure';
@@ -38,11 +39,25 @@ export function WorkerMonthClosureCell(props: {
   onSelectedChange: (checked: boolean) => void;
   onMarkDeferred: () => void;
   onClearDeferred: () => void;
+  /** ยกเลิกปิดงวดเพื่อกลับมาแก้ชม./OT (ยังไม่ล็อก payroll) */
+  onReopenClosure?: () => void;
   busy?: boolean;
 }) {
-  const { closure, canEdit, selected, selectable, onSelectedChange, onMarkDeferred, onClearDeferred, busy } = props;
+  const {
+    closure,
+    canEdit,
+    selected,
+    selectable,
+    onSelectedChange,
+    onMarkDeferred,
+    onClearDeferred,
+    onReopenClosure,
+    busy,
+  } = props;
   const status = closure?.status;
   const locked = isWorkerMonthClosureGridLocked(status);
+  const canReopen = canEdit && !!onReopenClosure && canReopenWorkerMonthClosureForEdit(status);
+  const showMenu = canEdit && (!locked || canReopen || status === 'deferred');
 
   return (
     <div className="flex items-center gap-1.5 min-w-[7.5rem]">
@@ -54,7 +69,7 @@ export function WorkerMonthClosureCell(props: {
           aria-label="เลือกปิดงวด"
         />
       ) : null}
-      {canEdit && !locked ? (
+      {showMenu ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -69,11 +84,16 @@ export function WorkerMonthClosureCell(props: {
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="text-xs">
+            {canReopen ? (
+              <DropdownMenuItem onClick={onReopenClosure}>
+                ยกเลิกปิดงวด — กลับมาแก้ไข
+              </DropdownMenuItem>
+            ) : null}
             {status === 'deferred' ? (
               <DropdownMenuItem onClick={onClearDeferred}>กลับเป็นพร้อมปิดงวด</DropdownMenuItem>
-            ) : (
+            ) : !locked ? (
               <DropdownMenuItem onClick={onMarkDeferred}>รอ timesheet</DropdownMenuItem>
-            )}
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (
@@ -94,7 +114,6 @@ export function workerMonthClosureSummaryText(
   const pending = byStatus('pending_manager_review');
   const locked = byStatus('entry_locked');
   const deferred = byStatus('deferred');
-  const open = totalWorkers - closures.length + byStatus('open') + byStatus('rejected');
   const openApprox = Math.max(0, totalWorkers - approved - pending - locked - deferred);
 
   return `${approved} อนุมัติ · ${pending} รอผู้จัดการ · ${locked} ปิดแล้ว · ${deferred} รอ timesheet · ~${openApprox} เปิด`;

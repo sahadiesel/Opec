@@ -1,4 +1,4 @@
-import type { Assignment, DailyTimesheet, POLine, PurchaseOrder } from '@/lib/types';
+import type { Assignment, DailyTimesheet, MobDayChargeSpec, POLine, PurchaseOrder } from '@/lib/types';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { assignmentHasUnassignedAtSet } from '@/lib/ops/po-fulfillment-read-model';
 import {
@@ -8,10 +8,13 @@ import {
   isYmdAfterSiteEndAwaitingRemob,
   mobLocationEndDateCapsAssignmentTimesheetWindow,
   resolveMobSegmentStartYmd,
-  resolvePriorCycleWorkStartFloorYmd,
 } from '@/lib/constants/timesheet-ui';
 import { resolveWorkModeForPoContext } from '@/lib/ops/po-active-bundle';
 import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
+import {
+  buildTimesheetFieldsFromMobCharges,
+  defaultPackageHoursForWorkMode,
+} from '@/lib/ops/mob-day-charge';
 
 export function minYmd(a: string, b: string): string {
   return a <= b ? a : b;
@@ -174,7 +177,7 @@ export function computePoActiveAutoDailyRange(
   return { start: startRaw, end: cap };
 }
 
-/** ลบแถว auto ที่สร้างผิดก่อนวัน remob / ในช่วง gap ระหว่างรอบ / ก่อนเริ่มงานรอบก่อน */
+/** ลบแถว auto ที่สร้างผิดก่อนวัน remob / ในช่วง gap ระหว่างรอบ */
 export function shouldDeleteStalePoActiveAutoDailyRow(
   a: Assignment,
   dateYmd: string,
@@ -183,9 +186,8 @@ export function shouldDeleteStalePoActiveAutoDailyRow(
   if (isYmdAfterSiteEndAwaitingRemob(a, dateYmd)) return true;
   const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
   const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
+  /** รอบเก่าที่ปิดแล้ว (≤ mobEnd) — เก็บประวัติหลายรอบ mob/demob ไว้ อย่าลบด้วย snapshot รอบล่าสุด */
   if (assignmentHasSplitPriorAndNewCycleOnDoc(a) && /^\d{4}-\d{2}-\d{2}$/.test(mobEnd) && dateYmd <= mobEnd) {
-    const priorFloor = resolvePriorCycleWorkStartFloorYmd(a);
-    if (priorFloor && dateYmd < priorFloor) return true;
     return false;
   }
   if (/^\d{4}-\d{2}-\d{2}$/.test(mobStart) && dateYmd < mobStart) return true;
@@ -214,6 +216,8 @@ export type PoActiveAutoDailyRowParams = {
   workerNameSnapshot: string;
   poActiveBundleId: string;
   laborCostContractTermId?: string;
+  /** สเปกวางบิล/จ่าย — ใช้ตอนจบงานเป็น D1 (และขยายได้ภายหลัง) */
+  charges?: { billing: MobDayChargeSpec; payroll: MobDayChargeSpec };
 };
 
 /** Partial fields สำหรับสร้าง/อัปเดต daily_timesheets — event work_day */
@@ -267,10 +271,31 @@ export function buildPoActiveAutoStandbyRowPayload(p: PoActiveAutoDailyRowParams
 /** แถว D1 (demob) เมื่อหยุดจาก Wave Board — วันนี้เป็น D1 แล้วจบรอบ */
 export function buildPoActiveAutoDemobRowPayload(p: PoActiveAutoDailyRowParams): Partial<DailyTimesheet> {
   const row = buildPoActiveAutoDailyRowPayload(p);
+  const pkg = defaultPackageHoursForWorkMode(
+    p.assignment.workMode ?? (p.line.normalWorkHoursSnapshot === 12 ? 'OFFSHORE' : 'ONSHORE'),
+  );
+  if (p.charges) {
+    const chargeFields = buildTimesheetFieldsFromMobCharges(
+      p.charges.billing,
+      p.charges.payroll,
+      pkg,
+    );
+    return {
+      ...row,
+      ...chargeFields,
+      shiftType: chargeFields.eventType === 'standby_day' ? 'STANDBY' : 'DAY',
+      remark: 'Auto — PO Active stop (D1)',
+    };
+  }
+  const nh = normalHoursFromPoLine(p.line);
   return {
     ...row,
     eventType: 'demobilization_day',
     shiftType: 'DAY',
+    normalHours: nh,
+    demobUnits: 1,
+    mobUnits: 0,
+    standbyUnits: 0,
     remark: 'Auto — PO Active stop (D1)',
   };
 }

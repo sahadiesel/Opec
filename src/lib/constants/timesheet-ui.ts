@@ -460,8 +460,40 @@ export function isYmdAfterSiteEndAwaitingRemob(
   return true;
 }
 
-/** แสดงเซลล์รายวันในสรุปรายเดือน — ไม่รวมแถว auto ค้างหลังจบไซต์ */
+/** แสดงเซลล์รายวันในสรุปรายเดือน — มีบันทึกรายวันแล้วให้ขึ้นเสมอ (รองรับ mob/demob หลายรอบในเดือน) */
 export function waveMonthCellTimesheetVisible(
+  _asgn: Pick<
+    Assignment,
+    | 'deploymentStatus'
+    | 'mobLocationEndDate'
+    | 'mobCycleNumber'
+    | 'unassignedAt'
+    | 'mobStandbyDate'
+    | 'mobWorkingStartDate'
+    | 'startDate'
+    | 'assignedDate'
+    | 'endDate'
+    | 'poActiveStandbyAutoStartYmd'
+    | 'poActiveStandbyAutoEndYmd'
+    | 'mobFinishUndoSnapshot'
+  >,
+  _ymd: string,
+  ts: DailyTimesheet | undefined,
+): boolean {
+  if (!ts) return false;
+  /**
+   * คนหนึ่งอาจมีหลายรอบ mob→ทำงาน→demob ในเดือนเดียวกัน (มี/ไม่มี SB คั่น)
+   * แถวที่มีใน daily_timesheets แล้วต้องโผล่ในสรุปรายเดือน — อย่าซ่อนด้วย remob gap / เพดานรอบล่าสุด
+   * (แถว auto ผิดช่วงให้ลบด้วย purge แทนการซ่อน; payroll ใช้ waveMonthCellTimesheetPayable)
+   */
+  return true;
+}
+
+/**
+ * ใบงานที่ควรเข้า payroll — ไม่รวมช่วง gap remob / หลังจบไซต์รอ remob
+ * (ต่างจาก UI ที่โชว์ทุกแถวที่มีอยู่แล้ว)
+ */
+export function waveMonthCellTimesheetPayable(
   asgn: Pick<
     Assignment,
     | 'deploymentStatus'

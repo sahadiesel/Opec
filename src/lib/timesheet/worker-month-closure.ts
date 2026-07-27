@@ -357,6 +357,108 @@ const REOPENABLE_AFTER_PAYROLL_CANCEL: WorkerMonthClosureStatus[] = [
   'pending_manager_review',
 ];
 
+/** สถานะที่ยังยกเลิกปิดงวดเพื่อแก้ชม./OT ได้ (ยังไม่ล็อกจ่าย) */
+const REOPENABLE_FOR_MANUAL_EDIT: WorkerMonthClosureStatus[] = [
+  'entry_locked',
+  'pending_manager_review',
+  'approved',
+];
+
+export function canReopenWorkerMonthClosureForEdit(
+  status: WorkerMonthClosureStatus | undefined | null,
+): boolean {
+  if (!status) return false;
+  return REOPENABLE_FOR_MANUAL_EDIT.includes(status);
+}
+
+async function workerHasLockedTimesheetsInPoMonth(
+  db: Firestore,
+  poId: string,
+  yearMonth: string,
+  workerId: string,
+): Promise<boolean> {
+  const ym = yearMonth.trim();
+  const wid = workerId.trim();
+  const pid = poId.trim();
+  if (!wid || !pid || !/^\d{4}-\d{2}$/.test(ym)) return false;
+  /** ใช้ index ที่มีอยู่แล้ว (purchaseOrderId + date) — กรอง worker/LOCKED ฝั่ง client */
+  const snap = await getDocs(
+    query(
+      collection(db, 'daily_timesheets'),
+      where('purchaseOrderId', '==', pid),
+      where('date', '>=', `${ym}-01`),
+      where('date', '<=', `${ym}-31`),
+    ),
+  );
+  for (const d of snap.docs) {
+    const ts = d.data() as { workerId?: string; status?: string; date?: string };
+    if ((ts.workerId || '').trim() !== wid) continue;
+    if (!(ts.date || '').startsWith(`${ym}-`)) continue;
+    if (ts.status === 'LOCKED') return true;
+  }
+  return false;
+}
+
+/**
+ * ยกเลิกปิดงวดรายคน — กลับเป็น «เปิด» เพื่อแก้ชม./OT/ประเภทวัน
+ * ใช้ได้เมื่อยังไม่ล็อก payroll (ใบงานไม่เป็น LOCKED)
+ */
+export async function reopenWorkerMonthClosureForEdit(
+  db: Firestore,
+  params: {
+    poId: string;
+    yearMonth: string;
+    workerId: string;
+    workerName?: string;
+    actor: User;
+    periodBounds?: { periodStartDate: string; periodEndDate: string };
+  },
+): Promise<void> {
+  const { poId, yearMonth, workerId, actor, periodBounds } = params;
+  const id = workerMonthClosureDocId(poId, yearMonth, workerId);
+  const snap = await getDoc(doc(db, 'worker_month_timesheet_closures', id));
+  if (!snap.exists()) {
+    throw new Error('ไม่พบสถานะปิดงวดของคนนี้');
+  }
+  const cur = { id: snap.id, ...(snap.data() as object) } as WorkerMonthTimesheetClosure;
+  if (!canReopenWorkerMonthClosureForEdit(cur.status)) {
+    throw new Error(
+      cur.status === 'deferred'
+        ? 'คนนี้อยู่สถานะรอ timesheet — ใช้เมนูกลับเป็นพร้อมปิดงวดแทน'
+        : 'สถานะนี้ยกเลิกปิดงวดไม่ได้',
+    );
+  }
+  if (await workerHasLockedTimesheetsInPoMonth(db, poId, yearMonth, workerId)) {
+    throw new Error(
+      'มีใบงานถูกล็อกในชุดจ่าย payroll แล้ว — ยกเลิก/ลบชุดจ่ายก่อนจึงจะเปิดงวดกลับมาแก้ได้',
+    );
+  }
+
+  await upsertWorkerClosure(db, {
+    poId,
+    yearMonth,
+    workerId,
+    workerName: params.workerName || cur.workerName,
+    status: 'open',
+    actor,
+    patch: {
+      entryLockedAt: deleteField(),
+      entryLockedByUserId: deleteField(),
+      entryLockedByName: deleteField(),
+      submittedAt: deleteField(),
+      submittedByUserId: deleteField(),
+      submittedByName: deleteField(),
+      reviewedAt: deleteField(),
+      reviewedByUserId: deleteField(),
+      reviewedByName: deleteField(),
+      reviewNote: deleteField(),
+    },
+  });
+
+  await clearReadyPayrollFlagsForPoMonthWorkerIds(db, poId, yearMonth, [workerId]);
+  await syncPoMonthReviewFromClosures(db, poId, yearMonth, actor, periodBounds);
+}
+
 /** เปิดงวดรายคนกลับหลังยกเลิก payroll batch — ให้แก้ OT ใน wave-month ได้ */
 export async function reopenWorkerMonthClosuresAfterPayrollCancel(
   db: Firestore,

@@ -59,8 +59,8 @@ import {
   PurchaseOrder,
   MainContract,
   POLine,
+  PositionRate,
   DrugTestPanelSubstance,
-  MobDayChargeKind,
   MobDayChargeSpec,
 } from '@/lib/types';
 import Link from 'next/link';
@@ -97,12 +97,16 @@ import {
 import type { MobStep2Choice } from '@/lib/ops/mob-day-charge';
 import {
   defaultMobDayCharges,
+  defaultPackageHoursForWorkMode,
   formatMobDayChargeSummary,
-  mobDayChargeKindLabel,
   mobStep2ChoiceLabel,
   mobStep2ChoiceToLegacyEventType,
   normalizeMobDayChargeSpec,
 } from '@/lib/ops/mob-day-charge';
+import { buildMobDayChargeBahtPreviewRates } from '@/lib/ops/mob-day-charge-baht-preview';
+import { MobDayChargeSideEditors } from '@/components/timesheet/mob-day-charge-side-editors';
+import { resolveBillingSellWorkingDayRate } from '@/lib/commercial/position-rate-sell';
+import { resolveMatrixCostRate } from '@/lib/commercial/position-rate-matrix';
 import {
   Dialog,
   DialogContent,
@@ -144,6 +148,7 @@ import {
   assignmentHasStaleFinalClearanceWhileAwaitingRemob,
   buildMobRemobClearanceDeleteFields,
 } from '@/lib/timesheet/mob-finish-undo';
+import { healOneTimesheetPerWorkerPoDayInMonth } from '@/lib/timesheet/enforce-one-timesheet-per-worker-po-day';
 
 export default function MobilizationDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -265,6 +270,57 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   const contractRef = useMemoFirebase(() => (firestore && assignment?.contractId ? doc(firestore, 'main_contracts', assignment.contractId) : null), [firestore, assignment?.contractId]);
   const { data: contract } = useDoc<MainContract>(contractRef as any);
 
+  const positionRatesQuery = useMemoFirebase(
+    () =>
+      firestore && assignment?.contractId
+        ? collection(firestore, 'main_contracts', assignment.contractId, 'position_rates')
+        : null,
+    [firestore, assignment?.contractId],
+  );
+  const { data: positionRates } = useCollection<PositionRate>(positionRatesQuery as any);
+
+  const mobChargePositionRate = useMemo(() => {
+    const pid = (assignment?.positionId || '').trim();
+    if (!pid || !positionRates?.length) return null;
+    return positionRates.find((r) => r.positionId === pid && r.active !== false) ?? null;
+  }, [assignment?.positionId, positionRates]);
+
+  const mobChargePreviewRates = useMemo(() => {
+    if (!assignment) return null;
+    const workMode = (assignment.workMode === 'ONSHORE' ? 'ONSHORE' : 'OFFSHORE') as
+      | 'ONSHORE'
+      | 'OFFSHORE';
+    const pkg = defaultPackageHoursForWorkMode(assignment.workMode);
+    const sellWorking = primaryPoLine
+      ? resolveBillingSellWorkingDayRate({
+          poLine: primaryPoLine,
+          workMode,
+          contractRate: mobChargePositionRate ?? undefined,
+        })
+      : 0;
+    const costWorking = Math.max(
+      0,
+      Number(primaryPoLine?.costBaselineSnapshot) ||
+        (mobChargePositionRate
+          ? resolveMatrixCostRate(
+              mobChargePositionRate,
+              workMode === 'ONSHORE' ? 'onshore_working_day' : 'offshore_working_day',
+            ) ?? 0
+          : 0),
+    );
+    const otMult =
+      Number((primaryPoLine?.costOtRulesSnapshot as { afterShift?: number } | undefined)?.afterShift) ||
+      1.5;
+    return buildMobDayChargeBahtPreviewRates({
+      packageHours: pkg,
+      positionRate: mobChargePositionRate,
+      sellWorkingDayRate: sellWorking,
+      costWorkingDayRate: costWorking,
+      otAfterShiftMultiplier: otMult,
+      workMode: assignment.workMode,
+    });
+  }, [assignment, primaryPoLine, mobChargePositionRate]);
+
   useEffect(() => {
     if (!assignment) return;
     const preMob = (assignment.mobPreMobDate || '').trim();
@@ -324,6 +380,15 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         const snap = await getDoc(doc(firestore, 'mobilizations', assignment.id));
         if (snap.exists()) {
           setAssignment({ id: snap.id, ...(snap.data() as object) } as Assignment);
+        }
+        const ym = thailandTodayYmd().slice(0, 7);
+        if ((assignment.poId || '').trim() && (assignment.workerId || '').trim()) {
+          await healOneTimesheetPerWorkerPoDayInMonth(firestore, {
+            workerId: assignment.workerId,
+            purchaseOrderId: assignment.poId,
+            keepAssignmentId: assignment.id,
+            monthYm: ym,
+          });
         }
         setPreMobDateDraft(thailandTodayYmd());
         setStandbyDateDraft(thailandTodayYmd());
@@ -612,14 +677,15 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       return;
     }
     setStep2ChoiceDraft(choice);
-    const defaults = defaultMobDayCharges(choice);
+    const pkg = defaultPackageHoursForWorkMode(assignment?.workMode);
+    const defaults = defaultMobDayCharges(choice, assignment?.workMode);
     const existingBilling =
       assignment?.mobStep2Choice === choice && assignment.mobStep2BillingCharge
-        ? normalizeMobDayChargeSpec(assignment.mobStep2BillingCharge)
+        ? normalizeMobDayChargeSpec(assignment.mobStep2BillingCharge, pkg)
         : defaults.billing;
     const existingPayroll =
       assignment?.mobStep2Choice === choice && assignment.mobStep2PayrollCharge
-        ? normalizeMobDayChargeSpec(assignment.mobStep2PayrollCharge)
+        ? normalizeMobDayChargeSpec(assignment.mobStep2PayrollCharge, pkg)
         : defaults.payroll;
     setBillingChargeDraft(existingBilling);
     setPayrollChargeDraft(existingPayroll);
@@ -2093,86 +2159,31 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
           if (!open && clearanceSavingStep !== 2) setPreMobConfigOpen(false);
         }}
       >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[min(90vh,40rem)] w-[calc(100vw-1.5rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:w-full">
+          <DialogHeader className="shrink-0 space-y-1 border-b px-5 py-4 text-left">
             <DialogTitle>
               กำหนดค่า {mobStep2ChoiceLabel(step2ChoiceDraft)} — วางบิล / จ่ายลูกจ้าง
             </DialogTitle>
             <DialogDescription>
-              ใช้เฉพาะคนนี้ในงานนี้ · ค่าเริ่มต้น{' '}
-              M1 ตามตารางสัญญาทั้งสองฝั่ง — แก้ได้
+              ใช้เฉพาะคนนี้ในงานนี้ · ราคา M1 ในสัญญาอ้างอิงแพ็กชม.มาตรฐาน
+              (Offshore 12 ชม. / Onshore 8 ชม.) — แก้ชม.หรือจำนวนเงินได้แยกฝั่งขาย/จ่าย · แสดงประมาณการบาทเมื่อเปลี่ยนชม.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-5 text-sm">
-            {(['billing', 'payroll'] as const).map((side) => {
-              const draft = side === 'billing' ? billingChargeDraft : payrollChargeDraft;
-              const setDraft = side === 'billing' ? setBillingChargeDraft : setPayrollChargeDraft;
-              const title = side === 'billing' ? 'วางบิลลูกค้า' : 'จ่ายลูกจ้าง (payroll)';
-              return (
-                <div key={side} className="space-y-3 rounded-md border p-3">
-                  <p className="font-semibold">{title}</p>
-                  <div className="space-y-2">
-                    <Label>รูปแบบ</Label>
-                    <Select
-                      value={draft.kind}
-                      onValueChange={(v) => {
-                        const kind = v as MobDayChargeKind;
-                        if (kind === 'M1') setDraft({ kind: 'M1', m1AmountOverride: draft.m1AmountOverride });
-                        else setDraft({ kind, hours: draft.hours && draft.hours > 0 ? draft.hours : 8 });
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="STANDBY">{mobDayChargeKindLabel('STANDBY')}</SelectItem>
-                        <SelectItem value="WORKING">{mobDayChargeKindLabel('WORKING')}</SelectItem>
-                        <SelectItem value="M1">{mobDayChargeKindLabel('M1')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {draft.kind === 'STANDBY' || draft.kind === 'WORKING' ? (
-                    <div className="space-y-2">
-                      <Label>จำนวนชั่วโมง</Label>
-                      <Input
-                        type="number"
-                        min={0.5}
-                        max={24}
-                        step={0.5}
-                        value={draft.hours ?? 8}
-                        onChange={(e) =>
-                          setDraft({
-                            kind: draft.kind,
-                            hours: Number(e.target.value) || 0,
-                          })
-                        }
-                      />
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <Label>จำนวนเงิน M1 (บาท) — ว่าง = ตามตารางสัญญา</Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        step={0.01}
-                        placeholder="ใช้ค่าสัญญา"
-                        value={draft.m1AmountOverride ?? ''}
-                        onChange={(e) => {
-                          const raw = e.target.value.trim();
-                          if (!raw) {
-                            setDraft({ kind: 'M1' });
-                            return;
-                          }
-                          setDraft({ kind: 'M1', m1AmountOverride: Number(raw) });
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
+            <MobDayChargeSideEditors
+              billing={billingChargeDraft}
+              payroll={payrollChargeDraft}
+              onBillingChange={setBillingChargeDraft}
+              onPayrollChange={setPayrollChargeDraft}
+              packageHours={defaultPackageHoursForWorkMode(assignment?.workMode)}
+              disabled={clearanceSavingStep === 2}
+              previewRates={mobChargePreviewRates}
+              includeD1={false}
+              layout="grid"
+              compact
+            />
           </div>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="shrink-0 gap-2 border-t px-5 py-3 sm:gap-2">
             <Button
               type="button"
               variant="outline"

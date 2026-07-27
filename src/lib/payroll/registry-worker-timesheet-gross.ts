@@ -11,7 +11,7 @@ import {
   resolveEffectivePayrollContractId,
   timesheetToLaborWorkMode,
 } from '@/lib/payroll/timesheet-labor-base-cost';
-import { resolveMatrixCostRate, resolveMatrixSellRate } from '@/lib/commercial/position-rate-matrix';
+import { resolveMatrixCostRate } from '@/lib/commercial/position-rate-matrix';
 import {
   type WorkerGlobalLaborContext,
   workerGlobalLaborToPayrollRestSchedule,
@@ -105,7 +105,7 @@ export function computeRegistryWorkerTimesheetGross(
 ): RegistryWorkerTimesheetGrossResult {
   const payrollCharge = resolveTimesheetPayrollCharge(ts);
   if (
-    payrollCharge.kind === 'M1' &&
+    (payrollCharge.kind === 'M1' || payrollCharge.kind === 'D1') &&
     payrollCharge.m1AmountOverride != null &&
     payrollCharge.m1AmountOverride > 0
   ) {
@@ -121,13 +121,14 @@ export function computeRegistryWorkerTimesheetGross(
     ...ts,
     eventType: mobDayChargeKindToEventType(payrollCharge.kind),
     normalHours:
-      payrollCharge.kind === 'M1'
+      payrollCharge.kind === 'M1' || payrollCharge.kind === 'D1'
         ? Number(ts.normalHours) || 0
         : Math.max(0, Number(payrollCharge.hours ?? ts.normalHours ?? 8)),
     ...(payrollCharge.kind === 'STANDBY'
       ? { standbyUnits: Math.max(1, Number(ts.standbyUnits ?? 1)) }
       : {}),
     ...(payrollCharge.kind === 'M1' ? { mobUnits: Math.max(1, Number(ts.mobUnits ?? 1)) } : {}),
+    ...(payrollCharge.kind === 'D1' ? { demobUnits: Math.max(1, Number(ts.demobUnits ?? 1)) } : {}),
   };
 
   const payrollContractId = resolveEffectivePayrollContractId(payTs, input.poContractById);
@@ -139,21 +140,19 @@ export function computeRegistryWorkerTimesheetGross(
   );
   const mode = timesheetToLaborWorkMode(payTs, input.poWorkModeByPoId);
 
+  /** จ่ายลูกจ้างใช้ Cost เท่านั้น — ห้าม fallback ไป Sell เมื่อ Cost ว่าง */
   let resolvedMatrixRate: number | null = null;
   if (contractPositionRate) {
     if (payTs.eventType === 'mobilization_day' && mode === 'offshore') {
       const costRate = resolveMatrixCostRate(contractPositionRate, 'offshore_m1_per_trip');
-      const sellRate = resolveMatrixSellRate(contractPositionRate, 'offshore_m1_per_trip');
-      resolvedMatrixRate = (costRate !== null && costRate > 0) ? costRate : sellRate;
+      resolvedMatrixRate = costRate !== null && costRate > 0 ? costRate : null;
     } else if (payTs.eventType === 'demobilization_day' && mode === 'offshore') {
       const costRate = resolveMatrixCostRate(contractPositionRate, 'offshore_d1_per_trip');
-      const sellRate = resolveMatrixSellRate(contractPositionRate, 'offshore_d1_per_trip');
-      resolvedMatrixRate = (costRate !== null && costRate > 0) ? costRate : sellRate;
+      resolvedMatrixRate = costRate !== null && costRate > 0 ? costRate : null;
     } else if (payTs.eventType === 'standby_day') {
       const cat = mode === 'offshore' ? 'offshore_standby_day' : 'onshore_standby_day';
       const costRate = resolveMatrixCostRate(contractPositionRate, cat);
-      const sellRate = resolveMatrixSellRate(contractPositionRate, cat);
-      resolvedMatrixRate = (costRate !== null && costRate > 0) ? costRate : sellRate;
+      resolvedMatrixRate = costRate !== null && costRate > 0 ? costRate : null;
     }
   }
 

@@ -321,7 +321,9 @@ export function PositionRateMatrixFields({
       <div>
         <Label className="text-sm font-semibold">Rate Sheet ขยาย (Mob / Standby / OT / M1-D1)</Label>
         <p className="text-xs text-muted-foreground mt-1">
-          ราคารายการเพิ่มเติมตามตารางสัญญาลูกค้า — Working / วัน จะ sync กับราคาขาย Onshore/Offshore ด้านบนเมื่อบันทึก
+          ราคารายการเพิ่มเติมตามตารางสัญญา — Working / SB / M1 / D1 อ้างอิงชม.แพ็กที่ตั้งไว้ด้านบน
+          (มาตรฐาน <strong>Offshore = 12 ชม.</strong> · <strong>Onshore = 8 ชม.</strong>)
+          — ใช้เป็นฐานสัดส่วนเมื่อแก้ชม.วัน M1/D1 หรือ SB
         </p>
       </div>
 

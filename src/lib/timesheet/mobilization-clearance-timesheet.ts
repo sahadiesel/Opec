@@ -174,11 +174,15 @@ export async function upsertMobClearanceDailyTimesheet(
   let chargeFields: Partial<DailyTimesheet> = {};
 
   if (billingCharge && payrollCharge && kind !== 'work_day') {
-    const built = buildTimesheetFieldsFromMobCharges(billingCharge, payrollCharge);
+    const packageHours = normalHoursFromPoLine(line) === 12 ? 12 : 8;
+    const built = buildTimesheetFieldsFromMobCharges(billingCharge, payrollCharge, packageHours);
     eventType = built.eventType;
     normalHours = built.normalHours;
     const { eventType: _e, normalHours: _n, ...rest } = built;
     chargeFields = rest;
+  } else if (kind === 'mobilization_day' && (!billingCharge || !payrollCharge)) {
+    /** ไม่มี charge แยก — ใช้ชม.แพ็กจาก PO line (OFF 12 / ON 8) ไม่เขียน 0 */
+    normalHours = normalHoursFromPoLine(line);
   }
 
   if (existingSnap.exists()) {

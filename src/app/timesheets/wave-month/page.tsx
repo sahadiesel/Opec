@@ -34,6 +34,8 @@ import type {
   MainContract,
   PoMonthTimesheetReview,
   Position,
+  PositionRate,
+  POLine,
   PurchaseOrder,
   RateConditionEventType,
   User,
@@ -60,6 +62,18 @@ import { assignmentOverlapsYearMonthForPoDailyBoard } from '@/lib/ops/timesheet-
 import { syncPoActiveAutoDailyForAssignment, purgeStalePoActiveAutoDailyForCalendarMonth } from '@/lib/timesheet/po-active-auto-daily-sync';
 import { isAssignmentEligibleForPoActiveAutoDaily } from '@/lib/timesheet/po-active-auto-daily-build';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
+import {
+  defaultPackageHoursForWorkMode,
+  formatMobDayChargeSummary,
+  normalizeMobDayChargeSpec,
+  resolveTimesheetBillingCharge,
+  resolveTimesheetPayrollCharge,
+} from '@/lib/ops/mob-day-charge';
+import { buildMobDayChargeBahtPreviewRates } from '@/lib/ops/mob-day-charge-baht-preview';
+import { MobDayChargeSideEditors } from '@/components/timesheet/mob-day-charge-side-editors';
+import { resolveBillingSellWorkingDayRate } from '@/lib/commercial/position-rate-sell';
+import { resolveMatrixCostRate } from '@/lib/commercial/position-rate-matrix';
+import { rosterDeploymentTier } from '@/lib/ops/assignment-roster';
 import {
   isWaveMonthAttachmentPdf,
   lastDayOfCalendarMonth,
@@ -114,11 +128,12 @@ import {
   type TimesheetPoMonthToolbarSnapshot,
 } from '@/components/timesheet/timesheet-po-month-panel';
 import { WorkerMonthClosureCell, workerMonthClosureSummaryText } from '@/components/timesheet/worker-month-closure-cell';
-import type { WorkerMonthTimesheetClosure } from '@/lib/types';
+import type { WorkerMonthTimesheetClosure, MobDayChargeSpec } from '@/lib/types';
 import {
   clearWorkerMonthDeferred,
   fetchWorkerClosuresForPoIdsAndMonth,
   partialCloseWorkersForPoMonth,
+  reopenWorkerMonthClosureForEdit,
   sendEntryLockedWorkersForManagerReview,
   setWorkerMonthDeferred,
   workerClosureByPoWorkerKey,
@@ -212,7 +227,38 @@ type CellEditContext = {
   assignment: Assignment;
   cellDate: string;
   timesheet: DailyTimesheet | undefined;
+  poLine?: POLine | null;
+  positionRate?: PositionRate | null;
 };
+
+async function loadCellEditRateContext(
+  firestore: import('firebase/firestore').Firestore,
+  assignment: Assignment,
+  po: PurchaseOrder | undefined,
+): Promise<{ poLine: POLine | null; positionRate: PositionRate | null }> {
+  const poId = (assignment.poId || po?.id || '').trim();
+  const poLineId = (assignment.poLineId || '').trim();
+  const contractId = (assignment.contractId || po?.contractId || '').trim();
+  const positionId = (assignment.positionId || '').trim();
+  let poLine: POLine | null = null;
+  let positionRate: PositionRate | null = null;
+  try {
+    if (poId && poLineId) {
+      const lineSnap = await getDoc(doc(firestore, 'purchase_orders', poId, 'po_lines', poLineId));
+      if (lineSnap.exists()) {
+        poLine = { id: lineSnap.id, ...(lineSnap.data() as object) } as POLine;
+      }
+    }
+    if (contractId && positionId) {
+      const ratesSnap = await getDocs(collection(firestore, 'main_contracts', contractId, 'position_rates'));
+      const rates = ratesSnap.docs.map((d) => ({ id: d.id, ...(d.data() as object) } as PositionRate));
+      positionRate = rates.find((r) => r.positionId === positionId && r.active !== false) ?? null;
+    }
+  } catch {
+    /* preview optional */
+  }
+  return { poLine, positionRate };
+}
 
 function isTimesheetPayrollLocked(ts: DailyTimesheet | undefined): boolean {
   return ts?.status === 'LOCKED';
@@ -307,6 +353,8 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [editHours, setEditHours] = useState(12);
   const [editOtHours, setEditOtHours] = useState(0);
   const [editRemark, setEditRemark] = useState('');
+  const [editBillingCharge, setEditBillingCharge] = useState<MobDayChargeSpec>({ kind: 'M1', hours: 12 });
+  const [editPayrollCharge, setEditPayrollCharge] = useState<MobDayChargeSpec>({ kind: 'M1', hours: 12 });
   const [savingCell, setSavingCell] = useState(false);
   /** ยืนยันใน Dialog เดียว — ไม่ใช้ AlertDialog ซ้อน (กันค้าง overlay/focus) */
   const [cellSaveAwaitingConfirm, setCellSaveAwaitingConfirm] = useState(false);
@@ -339,11 +387,66 @@ export default function WaveMonthTimesheetSummaryPage() {
     if (!cellEdit) return;
     setCellSaveAwaitingConfirm(false);
     const ts = cellEdit.timesheet;
+    const pkg = defaultPackageHoursForWorkMode(cellEdit.assignment?.workMode);
     setEditDate(ts?.date ?? cellEdit.cellDate);
     setEditEvent((ts?.eventType as RateConditionEventType) ?? 'work_day');
-    setEditHours(typeof ts?.normalHours === 'number' ? ts.normalHours : 12);
+    const nh = typeof ts?.normalHours === 'number' ? ts.normalHours : pkg;
+    const et = (ts?.eventType as RateConditionEventType) ?? 'work_day';
+    const needsPkg =
+      et === 'mobilization_day' || et === 'demobilization_day' || et === 'standby_day';
+    setEditHours(needsPkg ? (nh > 0 ? nh : pkg) : nh > 0 ? nh : pkg);
     setEditOtHours(typeof ts?.ot15Hours === 'number' ? ts.ot15Hours : 0);
     setEditRemark(ts?.remark ?? '');
+    if (ts && needsPkg) {
+      setEditBillingCharge(resolveTimesheetBillingCharge(ts));
+      setEditPayrollCharge(resolveTimesheetPayrollCharge(ts));
+    } else if (et === 'mobilization_day') {
+      setEditBillingCharge({ kind: 'M1', hours: pkg });
+      setEditPayrollCharge({ kind: 'M1', hours: pkg });
+    } else if (et === 'demobilization_day') {
+      setEditBillingCharge({ kind: 'D1', hours: pkg });
+      setEditPayrollCharge({ kind: 'D1', hours: pkg });
+    } else {
+      setEditBillingCharge({ kind: 'STANDBY', hours: pkg });
+      setEditPayrollCharge({ kind: 'STANDBY', hours: pkg });
+    }
+  }, [cellEdit]);
+
+  const monthCellPreviewRates = useMemo(() => {
+    if (!cellEdit) return null;
+    const workMode = (cellEdit.assignment.workMode === 'ONSHORE' ? 'ONSHORE' : 'OFFSHORE') as
+      | 'ONSHORE'
+      | 'OFFSHORE';
+    const pkg = defaultPackageHoursForWorkMode(cellEdit.assignment.workMode);
+    const line = cellEdit.poLine;
+    const positionRate = cellEdit.positionRate ?? null;
+    const sellWorking = line
+      ? resolveBillingSellWorkingDayRate({
+          poLine: line,
+          workMode,
+          contractRate: positionRate ?? undefined,
+        })
+      : 0;
+    const costWorking = Math.max(
+      0,
+      Number(line?.costBaselineSnapshot) ||
+        (positionRate
+          ? resolveMatrixCostRate(
+              positionRate,
+              workMode === 'ONSHORE' ? 'onshore_working_day' : 'offshore_working_day',
+            ) ?? 0
+          : 0),
+    );
+    const otMult =
+      Number((line?.costOtRulesSnapshot as { afterShift?: number } | undefined)?.afterShift) || 1.5;
+    return buildMobDayChargeBahtPreviewRates({
+      packageHours: pkg,
+      positionRate,
+      sellWorkingDayRate: sellWorking,
+      costWorkingDayRate: costWorking,
+      otAfterShiftMultiplier: otMult,
+      workMode: cellEdit.assignment.workMode,
+    });
   }, [cellEdit]);
 
   useEffect(() => {
@@ -1191,8 +1294,11 @@ export default function WaveMonthTimesheetSummaryPage() {
     };
 
     const better = (a: Scored, b: Scored): boolean => {
-      if (a.waveMatchCount !== b.waveMatchCount) return a.waveMatchCount > b.waveMatchCount;
+      const aTier = rosterDeploymentTier(a.tr.rosterAssignment.deploymentStatus);
+      const bTier = rosterDeploymentTier(b.tr.rosterAssignment.deploymentStatus);
+      if (aTier !== bTier) return aTier > bTier;
       if (a.assignmentMatchCount !== b.assignmentMatchCount) return a.assignmentMatchCount > b.assignmentMatchCount;
+      if (a.waveMatchCount !== b.waveMatchCount) return a.waveMatchCount > b.waveMatchCount;
       if (a.poMatchCount !== b.poMatchCount) return a.poMatchCount > b.poMatchCount;
       const aOpen = OPEN_WAVE_STATUSES_FOR_TIMESHEET.includes(a.tr.wave.status) ? 1 : 0;
       const bOpen = OPEN_WAVE_STATUSES_FOR_TIMESHEET.includes(b.tr.wave.status) ? 1 : 0;
@@ -1429,6 +1535,36 @@ export default function WaveMonthTimesheetSummaryPage() {
     [firestore, currentUser, canEditTs, monthYm, refreshWorkerClosures, toast],
   );
 
+  const handleReopenWorkerClosure = useCallback(
+    async (poId: string, workerId: string, workerName: string) => {
+      if (!firestore || !currentUser || !canEditTs) return;
+      setPartialWorkflowBusy(true);
+      try {
+        await reopenWorkerMonthClosureForEdit(firestore, {
+          poId,
+          yearMonth: monthYm,
+          workerId,
+          workerName,
+          actor: currentUser as User,
+        });
+        await refreshWorkerClosures();
+        toast({
+          title: 'ยกเลิกปิดงวดแล้ว',
+          description: `${workerName} — แก้ชม./OT/ประเภทวันได้จนกว่าจะปิดงวดใหม่`,
+        });
+      } catch (e: unknown) {
+        toast({
+          variant: 'destructive',
+          title: 'ยกเลิกปิดงวดไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setPartialWorkflowBusy(false);
+      }
+    },
+    [firestore, currentUser, canEditTs, monthYm, refreshWorkerClosures, toast],
+  );
+
   const handlePrintGridTable = useCallback(async () => {
     if (dedupedTableRows.length === 0) {
       toast({
@@ -1529,7 +1665,7 @@ export default function WaveMonthTimesheetSummaryPage() {
   ]);
 
   const openCellEdit = useCallback(
-    (
+    async (
       wave: Wave,
       po: PurchaseOrder | undefined,
       monthReview: WaveMonthTimesheetReview | undefined,
@@ -1558,6 +1694,9 @@ export default function WaveMonthTimesheetSummaryPage() {
           });
           return;
         }
+        const rateCtx = firestore
+          ? await loadCellEditRateContext(firestore, assignment, po)
+          : { poLine: null, positionRate: null };
         setCellEdit({
           wave,
           po,
@@ -1567,6 +1706,7 @@ export default function WaveMonthTimesheetSummaryPage() {
           assignment,
           cellDate,
           timesheet: ts,
+          ...rateCtx,
         });
         return;
       }
@@ -1646,9 +1786,10 @@ export default function WaveMonthTimesheetSummaryPage() {
         assignment,
         cellDate,
         timesheet: ts,
+        ...(firestore ? await loadCellEditRateContext(firestore, assignment, po) : {}),
       });
     },
-    [canEditTs, toast, isRowLockedForWorker, retroOnlyPayrollMonth],
+    [canEditTs, toast, isRowLockedForWorker, retroOnlyPayrollMonth, firestore],
   );
 
   const performSaveCellEdit = useCallback(async () => {
@@ -1753,16 +1894,44 @@ export default function WaveMonthTimesheetSummaryPage() {
         : workerName;
       const isUnpaid = editEvent === 'unpaid_leave';
       const isWorkDay = editEvent === 'work_day';
-      const nHours = isUnpaid ? 0 : Math.min(24, Math.max(0, Number(editHours) || 0));
+      const isMobLike =
+        editEvent === 'mobilization_day' ||
+        editEvent === 'demobilization_day' ||
+        editEvent === 'standby_day';
+      const pkg = defaultPackageHoursForWorkMode(assignment.workMode);
+      const billing = normalizeMobDayChargeSpec(editBillingCharge, pkg);
+      const payroll = normalizeMobDayChargeSpec(editPayrollCharge, pkg);
+      /** ชม.บนตาราง — ถ้าจ่ายเป็น SB/W ใช้ชม.ฝั่งจ่าย (เช่น จ่าย 8 แต่บิล M1 ตามสัญญา) */
+      const nHours = isUnpaid
+        ? 0
+        : isWorkDay
+          ? Math.min(24, Math.max(0, Number(editHours) || 0))
+          : isMobLike
+            ? Math.min(
+                24,
+                Math.max(
+                  0,
+                  Number(
+                    payroll.kind === 'STANDBY' || payroll.kind === 'WORKING'
+                      ? payroll.hours
+                      : billing.kind === 'STANDBY' || billing.kind === 'WORKING'
+                        ? billing.hours
+                        : payroll.hours ?? billing.hours ?? pkg,
+                  ) || pkg,
+                ),
+              )
+            : Math.min(24, Math.max(0, Number(editHours) || 0));
       const otHours = isWorkDay ? Math.min(24, Math.max(0, Number(editOtHours) || 0)) : 0;
 
       const priorRemark = String(baseTs?.remark || '').trim();
       const manualRemark = editRemark.trim();
+      const chargeRemark =
+        isMobLike
+          ? `Mob — แก้รายเดือน · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`
+          : '';
       const nextRemark = manualRemark
         ? manualRemark
-        : priorRemark.startsWith('Auto —')
-          ? ''
-          : priorRemark;
+        : chargeRemark || (priorRemark.startsWith('Auto —') ? '' : priorRemark);
 
       const payload: Partial<DailyTimesheet> = {
         ...(baseTs ? { ...baseTs, id: undefined } : {}),
@@ -1783,11 +1952,41 @@ export default function WaveMonthTimesheetSummaryPage() {
         customerId: wave.customerId || '',
         positionId,
         workMode: assignment.workMode ?? 'OFFSHORE',
-        shiftType: editEvent === 'standby_day' ? 'STANDBY' : 'DAY',
+        shiftType: editEvent === 'standby_day' || payroll.kind === 'STANDBY' ? 'STANDBY' : 'DAY',
         workerNameSnapshot: nameSnap,
-        // แก้มือแล้ว — ห้ามให้ PO Active auto ทับกลับเป็น W (โดยเฉพาะหลังลง D1 / แก้เป็น SB)
         poActiveAutoDaily: false,
       };
+
+      if (isMobLike) {
+        payload.mobBillingChargeKind = billing.kind;
+        payload.mobPayrollChargeKind = payroll.kind;
+        payload.mobBillingChargeHours = billing.hours ?? pkg;
+        payload.mobPayrollChargeHours = payroll.hours ?? pkg;
+        if (
+          (billing.kind === 'M1' || billing.kind === 'D1') &&
+          billing.m1AmountOverride != null &&
+          billing.m1AmountOverride > 0
+        ) {
+          payload.mobBillingM1AmountOverride = billing.m1AmountOverride;
+        }
+        if (
+          (payroll.kind === 'M1' || payroll.kind === 'D1') &&
+          payroll.m1AmountOverride != null &&
+          payroll.m1AmountOverride > 0
+        ) {
+          payload.mobPayrollM1AmountOverride = payroll.m1AmountOverride;
+        }
+        payload.mobUnits = billing.kind === 'M1' || payroll.kind === 'M1' ? 1 : 0;
+        payload.standbyUnits =
+          billing.kind === 'STANDBY' || payroll.kind === 'STANDBY' ? 1 : 0;
+        if (
+          editEvent === 'demobilization_day' ||
+          billing.kind === 'D1' ||
+          payroll.kind === 'D1'
+        ) {
+          payload.demobUnits = Math.max(1, Number(baseTs?.demobUnits) || 1);
+        }
+      }
 
       if (!baseTs) {
         payload.status = 'DRAFT';
@@ -1798,7 +1997,12 @@ export default function WaveMonthTimesheetSummaryPage() {
       }
 
       await service.bulkUpsertTimesheets([payload], currentUser);
-      toast({ title: 'บันทึกแล้ว', description: 'อัปเดตลงเวลารายวันเรียบร้อย' });
+      toast({
+        title: 'บันทึกแล้ว',
+        description: isMobLike
+          ? `วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`
+          : 'อัปเดตลงเวลารายวันเรียบร้อย',
+      });
       setCellEdit(null);
     } catch (e: unknown) {
       setCellSaveAwaitingConfirm(false);
@@ -1822,6 +2026,8 @@ export default function WaveMonthTimesheetSummaryPage() {
     editHours,
     editOtHours,
     editRemark,
+    editBillingCharge,
+    editPayrollCharge,
     allWorkers,
     retroOnlyPayrollMonth,
     isRowLockedForWorker,
@@ -2260,7 +2466,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                       </p>
                       <p>
                         แถวต่อพนักงาน — เฉพาะคนที่ช่วงมอบหมายทับเดือนนี้ ·{' '}
-                        <strong>รวมชม.</strong> = ชม.ทำงาน (W) · Standby (SB/M1/D1 ตามชม.ที่ลง) · OT แยกคอลัมน์ — เซลล์รายวันแสดง W+5 เมื่อมี OT 5 ชม.
+                        <strong>รวมชม.</strong> = ชม.ทำงาน (W) · Standby (SB/M1/D1 ตามชม.ฝั่งจ่ายในใบงาน) · OT แยกคอลัมน์ — เซลล์ M1/D1 ไม่โชว์ชม. (คลิกดู) · สัมพันธ์สัญญา · หน้า Mob · รายวัน · วางบิล/payroll
                       </p>
                       {canEditTs && dedupedTableRows.length > 0 ? (
                         <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 space-y-2">
@@ -2307,7 +2513,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                             ) : null}
                           </div>
                           <p className="text-[10px] text-muted-foreground">
-                            ติ๊กเลือกคนที่ timesheet ครบ → ปิดงวด → ไป Payroll Batch ได้ทันที · กดซิงก์พร้อมจ่ายถ้า Batch ยังเห็น 0 คน · ส่งผู้จัดการอนุมัติเมื่อต้องการ
+                            ติ๊กเลือกคนที่ timesheet ครบ → ปิดงวด → ไป Payroll Batch ได้ทันที · กดซิงก์พร้อมจ่ายถ้า Batch ยังเห็น 0 คน · ส่งผู้จัดการอนุมัติเมื่อต้องการ · คนที่ปิดแล้ว: เมนูสถานะ → «ยกเลิกปิดงวด — กลับมาแก้ไข» (ได้จนกว่าใบงานจะถูกล็อกในชุดจ่าย)
                           </p>
                           {overdueDeferredClosures.length > 0 ? (
                             <Alert variant="destructive" className="py-2">
@@ -2469,6 +2675,9 @@ export default function WaveMonthTimesheetSummaryPage() {
                                       onClearDeferred={() =>
                                         void handleClearWorkerDeferred(po.id, rw.workerId, rw.name)
                                       }
+                                      onReopenClosure={() =>
+                                        void handleReopenWorkerClosure(po.id, rw.workerId, rw.name)
+                                      }
                                     />
                                   ) : null}
                                 </div>
@@ -2618,7 +2827,10 @@ export default function WaveMonthTimesheetSummaryPage() {
                     </Table>
                     <div className="border-t px-4 py-3 text-xs text-muted-foreground space-y-1">
                       <p>
-                        <strong>คีย์:</strong> ตัวอักษร = ประเภทวัน (W ทำงาน, SB สแตนด์บาย …) · <strong>W+5</strong> = ทำงาน + OT 5 ชม. · <strong>†</strong> = มีแก้ไขย้อนหลัง (วงแหวนแดง) · เซลล์ «-» = ยังไม่มีบันทึก —{' '}
+                        <strong>คีย์:</strong> ตัวอักษร = ประเภทวัน (W ทำงาน, SB สแตนด์บาย …) · <strong>W+5</strong> = ทำงาน + OT 5 ชม. ·{' '}
+                        <strong>M1 / D1 / SB</strong> = ไม่ติดชม.บนเซลล์ (คลิกดูรายละเอียด — บิล/จ่ายอาจคนละชม.) ·{' '}
+                        ฐานแพ็กสัญญา OFF 12 / ON 8 ·{' '}
+                        <strong>†</strong> = มีแก้ไขย้อนหลัง (วงแหวนแดง) · เซลล์ «-» = ยังไม่มีบันทึก —{' '}
                         <strong className="text-emerald-700">เขียว</strong>=ทำงาน{' '}
                         <strong className="text-sky-700">ฟ้า</strong>=สแตนด์บาย{' '}
                         <strong className="text-violet-700">ม่วง</strong>=เดินทาง{' '}
@@ -2653,8 +2865,8 @@ export default function WaveMonthTimesheetSummaryPage() {
           }
         }}
       >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[min(90vh,40rem)] w-[calc(100vw-1.5rem)] max-w-3xl flex-col gap-0 overflow-hidden p-0 sm:w-full">
+          <DialogHeader className="shrink-0 space-y-1 border-b px-5 py-4 text-left">
             <DialogTitle>แก้ไขลงเวลารายวัน</DialogTitle>
             <DialogDescription>
               {cellEdit
@@ -2663,7 +2875,7 @@ export default function WaveMonthTimesheetSummaryPage() {
             </DialogDescription>
           </DialogHeader>
           {cellEdit ? (
-            <div className="space-y-3 py-1">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
               {cellSaveAwaitingConfirm ? (
                 <Alert className="border-amber-200/80 bg-amber-50/80 dark:border-amber-900/50 dark:bg-amber-950/30">
                   <AlertTitle className="text-sm">ยืนยันการบันทึก</AlertTitle>
@@ -2673,78 +2885,107 @@ export default function WaveMonthTimesheetSummaryPage() {
                   </AlertDescription>
                 </Alert>
               ) : null}
-              <div className="space-y-1.5">
-                <Label htmlFor="wm-edit-date">วันที่ (ในเดือนที่เลือก)</Label>
-                <Input
-                  id="wm-edit-date"
-                  type="date"
-                  min={`${monthYm}-01`}
-                  max={lastDayOfCalendarMonth(monthYm)}
-                  value={editDate}
-                  onChange={(e) => setEditDate(e.target.value)}
-                  disabled={savingCell || cellSaveAwaitingConfirm}
-                />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="wm-edit-date">วันที่ (ในเดือนที่เลือก)</Label>
+                  <Input
+                    id="wm-edit-date"
+                    type="date"
+                    min={`${monthYm}-01`}
+                    max={lastDayOfCalendarMonth(monthYm)}
+                    value={editDate}
+                    onChange={(e) => setEditDate(e.target.value)}
+                    disabled={savingCell || cellSaveAwaitingConfirm}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>ประเภทวัน</Label>
+                  <Select
+                    value={editEvent}
+                    onValueChange={(v: RateConditionEventType) => setEditEvent(v)}
+                    disabled={savingCell || cellSaveAwaitingConfirm}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder="เลือกประเภท" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {EVENT_TYPE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <div className="space-y-1.5">
-                <Label>ประเภทวัน</Label>
-                <Select
-                  value={editEvent}
-                  onValueChange={(v: RateConditionEventType) => setEditEvent(v)}
-                  disabled={savingCell || cellSaveAwaitingConfirm}
-                >
-                  <SelectTrigger className="h-10">
-                    <SelectValue placeholder="เลือกประเภท" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {EVENT_TYPE_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="wm-edit-hours">ชั่วโมงปกติ (0–24)</Label>
-                <Input
-                  id="wm-edit-hours"
-                  type="number"
-                  min={0}
-                  max={24}
-                  step={0.5}
-                  value={editHours}
-                  onChange={(e) => setEditHours(Number(e.target.value))}
-                  disabled={savingCell || cellSaveAwaitingConfirm || editEvent === 'unpaid_leave'}
-                />
-                {editEvent === 'unpaid_leave' ? (
-                  <p className="text-xs text-muted-foreground">ลาไม่รับค่าจ้าง — ชั่วโมงจะถูกตั้งเป็น 0</p>
-                ) : null}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="wm-edit-ot-hours">OT ชม. (0–24)</Label>
-                <Input
-                  id="wm-edit-ot-hours"
-                  type="number"
-                  min={0}
-                  max={24}
-                  step={0.5}
-                  value={editOtHours}
-                  onChange={(e) => setEditOtHours(Number(e.target.value))}
-                  disabled={
-                    savingCell ||
-                    cellSaveAwaitingConfirm ||
-                    editEvent === 'unpaid_leave' ||
-                    editEvent !== 'work_day'
-                  }
-                />
-                {editEvent !== 'work_day' ? (
-                  <p className="text-xs text-muted-foreground">OT ใช้ได้เฉพาะวันทำงาน (Work day)</p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    ตรงกับ Total OT ใน timesheet ลูกค้า — บันทึกเป็น ot15 สำหรับ payroll/billing
-                  </p>
-                )}
-              </div>
+              {editEvent === 'mobilization_day' ||
+              editEvent === 'demobilization_day' ||
+              editEvent === 'standby_day' ? (
+                <div className="space-y-2 rounded-md border p-3">
+                  <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between">
+                    <p className="text-xs font-medium text-foreground">
+                      แยกค่าเงิน — วางบิลลูกค้า / จ่ายลูกจ้าง
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      ตัวอย่าง: บิล <strong>M1 ตามสัญญา</strong> · จ่าย <strong>SB 8 ชม.</strong>
+                    </p>
+                  </div>
+                  <MobDayChargeSideEditors
+                    billing={editBillingCharge}
+                    payroll={editPayrollCharge}
+                    onBillingChange={setEditBillingCharge}
+                    onPayrollChange={setEditPayrollCharge}
+                    packageHours={defaultPackageHoursForWorkMode(cellEdit.assignment?.workMode)}
+                    disabled={savingCell || cellSaveAwaitingConfirm}
+                    previewRates={monthCellPreviewRates}
+                    includeD1
+                    layout="grid"
+                    compact
+                  />
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="wm-edit-hours">ชั่วโมงปกติ (0–24)</Label>
+                    <Input
+                      id="wm-edit-hours"
+                      type="number"
+                      min={0}
+                      max={24}
+                      step={0.5}
+                      value={editHours}
+                      onChange={(e) => setEditHours(Number(e.target.value))}
+                      disabled={savingCell || cellSaveAwaitingConfirm || editEvent === 'unpaid_leave'}
+                    />
+                    {editEvent === 'unpaid_leave' ? (
+                      <p className="text-xs text-muted-foreground">ลาไม่รับค่าจ้าง — ชั่วโมงจะถูกตั้งเป็น 0</p>
+                    ) : null}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="wm-edit-ot-hours">OT ชม. (0–24)</Label>
+                    <Input
+                      id="wm-edit-ot-hours"
+                      type="number"
+                      min={0}
+                      max={24}
+                      step={0.5}
+                      value={editOtHours}
+                      onChange={(e) => setEditOtHours(Number(e.target.value))}
+                      disabled={
+                        savingCell ||
+                        cellSaveAwaitingConfirm ||
+                        editEvent === 'unpaid_leave' ||
+                        editEvent !== 'work_day'
+                      }
+                    />
+                    {editEvent !== 'work_day' ? (
+                      <p className="text-xs text-muted-foreground">OT ใช้ได้เฉพาะวันทำงาน</p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">บันทึกเป็น ot15 สำหรับ payroll/billing</p>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label htmlFor="wm-edit-remark">หมายเหตุ (ถ้ามี)</Label>
                 <Textarea
@@ -2754,11 +2995,12 @@ export default function WaveMonthTimesheetSummaryPage() {
                   onChange={(e) => setEditRemark(e.target.value)}
                   disabled={savingCell || cellSaveAwaitingConfirm}
                   placeholder="เช่น แก้วันผิด / สาเหตุลา"
+                  className="min-h-[2.75rem] resize-y"
                 />
               </div>
             </div>
           ) : null}
-          <DialogFooter className="gap-2 sm:gap-0 flex-wrap">
+          <DialogFooter className="shrink-0 gap-2 border-t px-5 py-3 sm:gap-2 flex-wrap">
             {savingCell ? (
               <span className="mr-auto flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />

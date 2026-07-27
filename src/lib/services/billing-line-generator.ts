@@ -527,15 +527,16 @@ function billingNonWorkDayFromPoAndContract(
 
   const billingCharge = resolveTimesheetBillingCharge(ts);
   if (
-    billingCharge.kind === 'M1' &&
+    (billingCharge.kind === 'M1' || billingCharge.kind === 'D1') &&
     billingCharge.m1AmountOverride != null &&
     billingCharge.m1AmountOverride > 0
   ) {
     const amt = billingCharge.m1AmountOverride;
-    pushAcc(map, accKey(ts.positionId, 'mobilization_day', amt), {
+    const eventType = billingCharge.kind === 'D1' ? 'demobilization_day' : 'mobilization_day';
+    pushAcc(map, accKey(ts.positionId, eventType, amt), {
       workerId: ts.workerId,
       positionId: ts.positionId,
-      eventType: 'mobilization_day',
+      eventType,
       timesheetIds: [ts.id],
       amount: amt,
       quantity: 1,
@@ -933,11 +934,12 @@ export async function generateBillingLines(
       ...ts,
       eventType: effectiveEvent,
       normalHours:
-        billingCharge.kind === 'M1'
+        billingCharge.kind === 'M1' || billingCharge.kind === 'D1'
           ? Number(ts.normalHours) || 0
           : Math.max(0, Number(billingCharge.hours ?? ts.normalHours ?? 8)),
       ...(billingCharge.kind === 'STANDBY' ? { standbyUnits: Math.max(1, Number(ts.standbyUnits ?? 1)) } : {}),
       ...(billingCharge.kind === 'M1' ? { mobUnits: Math.max(1, Number(ts.mobUnits ?? 1)) } : {}),
+      ...(billingCharge.kind === 'D1' ? { demobUnits: Math.max(1, Number(ts.demobUnits ?? 1)) } : {}),
     };
 
     if (projected.eventType === 'work_day') {

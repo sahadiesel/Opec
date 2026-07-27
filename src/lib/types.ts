@@ -1166,13 +1166,16 @@ export type MobLocationPhase =
  * ค่าคิดเงินวัน Pre-Mob / Mob แยกฝั่งวางบิลกับจ่ายลูกจ้าง
  * — ใช้เฉพาะคน/งานที่บันทึกในหน้า Mobilization
  */
-export type MobDayChargeKind = 'STANDBY' | 'WORKING' | 'M1';
+export type MobDayChargeKind = 'STANDBY' | 'WORKING' | 'M1' | 'D1';
 
 export interface MobDayChargeSpec {
   kind: MobDayChargeKind;
-  /** ชม. เมื่อ kind = STANDBY หรือ WORKING (มาตรฐาน Pre-Mob = 8) */
+  /**
+   * ชม.อ้างอิง — STANDBY/WORKING = ชม.คิดเงิน
+   * M1/D1 = ชม.ที่ราคาในสัญญาอ้างอิง (มาตรฐาน OFF 12 / ON 8) และโชว์บนตารางรายวัน
+   */
   hours?: number;
-  /** ทับจำนวนเงิน M1 จากตารางสัญญา (บาท) — ว่าง = ใช้ค่าสัญญา */
+  /** ทับจำนวนเงิน M1/D1 จากตารางสัญญา (บาท) — ว่าง = ใช้ค่าสัญญา */
   m1AmountOverride?: number;
 }
 

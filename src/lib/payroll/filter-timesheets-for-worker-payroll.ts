@@ -2,7 +2,7 @@ import { doc, getDoc, getDocs, query, collection, where, type Firestore } from '
 import type { Assignment, DailyTimesheet } from '@/lib/types';
 import {
   isYmdWithinAssignmentMobTimesheetWindow,
-  waveMonthCellTimesheetVisible,
+  waveMonthCellTimesheetPayable,
 } from '@/lib/constants/timesheet-ui';
 
 /** โหลด mobilization ที่ timesheet อ้างอิง */
@@ -57,7 +57,7 @@ export function isDailyTimesheetPayableForWorkerPayroll(
   if (!aid) return ts.readyForPayroll === true;
   const asgn = assignmentById.get(aid);
   if (!asgn) return ts.readyForPayroll === true;
-  return waveMonthCellTimesheetVisible(asgn, ts.date, ts as DailyTimesheet);
+  return waveMonthCellTimesheetPayable(asgn, ts.date, ts as DailyTimesheet);
 }
 
 /** แยกใบงานที่ควรจ่าย vs ใบที่มี readyForPayroll ค้างแต่ไม่ควรจ่าย (เคลียร์ตอนซิงก์) */

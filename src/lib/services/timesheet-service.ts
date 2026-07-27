@@ -28,6 +28,7 @@ import {
 import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
 import { assertPayrollPermission } from '@/lib/permissions';
 import { writeAuditLog } from './audit-service';
+import { deleteConflictingWorkerPoDayTimesheets } from '@/lib/timesheet/enforce-one-timesheet-per-worker-po-day';
 import { format, subDays, parseISO, isWithinInterval } from 'date-fns';
 
 /** Firestore rejects `undefined` in set/update payloads — strip those keys. */
@@ -181,6 +182,19 @@ export class TimesheetService {
 
       const id = this.getTimesheetId(ts.workerId, ts.assignmentId, ts.date);
       const docRef = doc(this.getCollection(), id);
+
+      /** คน+PO+วัน = หนึ่งสถานะ — ลบใบของ mobilization อื่นก่อนเขียน */
+      if (ts.purchaseOrderId) {
+        await deleteConflictingWorkerPoDayTimesheets(this.db, {
+          workerId: ts.workerId,
+          purchaseOrderId: ts.purchaseOrderId,
+          dateYmd: ts.date,
+          keepAssignmentId: ts.assignmentId,
+          keepDocId: id,
+          batch,
+        });
+      }
+
       const existingSnap = await getDoc(docRef);
 
       if (existingSnap.exists()) {
