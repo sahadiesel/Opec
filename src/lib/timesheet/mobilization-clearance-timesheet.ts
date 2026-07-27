@@ -20,8 +20,12 @@ import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { eachYmdInRange, normalHoursFromPoLine } from '@/lib/timesheet/po-active-auto-daily-build';
 import { addDaysToYmd, shouldAutoFillPrefixWorkDaysBeforeStandby } from '@/lib/ops/mobilization-final-clearance';
 import { buildTimesheetFieldsFromMobCharges } from '@/lib/ops/mob-day-charge';
+import { resolvePriorCycleWorkStartFloorYmd } from '@/lib/constants/timesheet-ui';
 
 const CLEARANCE_REMARK_SNIPPET = 'Final clearance';
+/** แถวที่เติมอัตโนมัติต้นเดือนก่อน Standby — ใช้ระบุเพื่อลบเมื่อสร้างผิดช่วง */
+export const PREFIX_CONTINUITY_WORK_DAY_REMARK =
+  'Mob — Final clearance · ต่อเนื่องต้นเดือน (ก่อน Standby)';
 
 const PO_MONTH_BLOCKS_EDIT: WaveMonthTimesheetReviewStatus[] = [
   'entry_locked',
@@ -244,6 +248,72 @@ export async function deleteDraftMobFinalClearanceTimesheetsInRange(
 }
 
 /**
+ * ลบ W ร่างที่เติม «ต่อเนื่องต้นเดือน» ผิดช่วง (ก่อนวันเริ่มงานรอบก่อน)
+ * + ลบ W ร่างแบบเดียวกันทั้งก้อนเมื่อไม่ควร auto-fill prefix (remob ในเดือนเดียวกัน)
+ */
+export async function purgeStalePrefixContinuityWorkDaysForMonth(
+  db: Firestore,
+  assignment: Assignment,
+  monthYm: string,
+): Promise<number> {
+  const wid = (assignment.workerId || '').trim();
+  const aid = (assignment.id || '').trim();
+  const ym = monthYm.trim().slice(0, 7);
+  if (!wid || !aid || !/^\d{4}-\d{2}$/.test(ym)) return 0;
+
+  const monthStart = `${ym}-01`;
+  const monthEnd = (() => {
+    const [y, m] = ym.split('-').map(Number);
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return `${ym}-${String(last).padStart(2, '0')}`;
+  })();
+
+  const standbyYmd = (assignment.mobStandbyDate || '').trim().slice(0, 10);
+  const shouldFill =
+    /^\d{4}-\d{2}-\d{2}$/.test(standbyYmd) &&
+    shouldAutoFillPrefixWorkDaysBeforeStandby(assignment, standbyYmd);
+
+  const priorFloor = resolvePriorCycleWorkStartFloorYmd(assignment);
+  /** ไม่ควร fill — ลบ prefix ทั้งช่วงต้นเดือนถึงก่อน Standby (หรือสิ้นเดือน) */
+  let deleteBeforeExclusive: string | undefined;
+  if (!shouldFill) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(standbyYmd) && standbyYmd.slice(0, 7) === ym) {
+      deleteBeforeExclusive = standbyYmd;
+    } else if (priorFloor && priorFloor.slice(0, 7) === ym) {
+      deleteBeforeExclusive = priorFloor;
+    } else {
+      deleteBeforeExclusive = addDaysToYmd(monthEnd, 1);
+    }
+  } else if (priorFloor && priorFloor.slice(0, 7) === ym) {
+    deleteBeforeExclusive = priorFloor;
+  }
+
+  if (!deleteBeforeExclusive) return 0;
+
+  const service = new TimesheetService(db);
+  let removed = 0;
+  const through = deleteBeforeExclusive > monthEnd ? monthEnd : addDaysToYmd(deleteBeforeExclusive, -1);
+  if (monthStart > through) return 0;
+
+  for (const d of eachYmdInRange(monthStart, through)) {
+    if (d >= deleteBeforeExclusive) continue;
+    const docId = service.getTimesheetId(wid, aid, d);
+    const ref = doc(db, 'daily_timesheets', docId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) continue;
+    const cur = { id: snap.id, ...(snap.data() as object) } as DailyTimesheet;
+    if (service.isFinalized(cur.status)) continue;
+    if (cur.eventType !== 'work_day') continue;
+    const rmk = String(cur.remark ?? '');
+    const isPrefix = rmk.includes('ต่อเนื่องต้นเดือน') || rmk.includes(PREFIX_CONTINUITY_WORK_DAY_REMARK);
+    if (!isPrefix) continue;
+    await deleteDoc(ref);
+    removed++;
+  }
+  return removed;
+}
+
+/**
  * หลังบันทึกวัน Standby แล้ว — เติม:
  * - (ถ้าต่อจากเดือนก่อน / รอบ Mob > 1) วันทำงานต้นเดือนถึงก่อนวัน Standby
  * - วันระหว่างวัน Standby กับวันเริ่มงาน → standby_day
@@ -271,6 +341,9 @@ export async function applyMobFinalClearanceWorkStartFill(
     throw new Error('วันเริ่มทำงานต้องอยู่หลังวัน Standby (ไม่สามารถเลือกวันเดียวกันหรือก่อนหน้าได้)');
   }
 
+  /** ลบ W «ต่อเนื่องต้นเดือน» ที่เคยเติมผิดช่วง (เช่น remob ในเดือนเดียวกัน) */
+  await purgeStalePrefixContinuityWorkDaysForMonth(db, a, st.slice(0, 7));
+
   const bypass = true;
   const ym = st.slice(0, 7);
   const monthStart = `${ym}-01`;
@@ -288,7 +361,7 @@ export async function applyMobFinalClearanceWorkStartFill(
         bypassPoMonthLock: bypass,
         /** อย่าทับ SB/W ที่มีอยู่แล้วในเดือน (เช่น หยุดแบบ standby ก่อน remob) */
         skipIfExists: true,
-        remarkOverride: 'Mob — Final clearance · ต่อเนื่องต้นเดือน (ก่อน Standby)',
+        remarkOverride: PREFIX_CONTINUITY_WORK_DAY_REMARK,
       });
     }
   }

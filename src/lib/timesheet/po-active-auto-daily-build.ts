@@ -8,6 +8,7 @@ import {
   isYmdAfterSiteEndAwaitingRemob,
   mobLocationEndDateCapsAssignmentTimesheetWindow,
   resolveMobSegmentStartYmd,
+  resolvePriorCycleWorkStartFloorYmd,
 } from '@/lib/constants/timesheet-ui';
 import { resolveWorkModeForPoContext } from '@/lib/ops/po-active-bundle';
 import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
@@ -173,7 +174,7 @@ export function computePoActiveAutoDailyRange(
   return { start: startRaw, end: cap };
 }
 
-/** ลบแถว auto ที่สร้างผิดก่อนวัน remob / ในช่วง gap ระหว่างรอบ */
+/** ลบแถว auto ที่สร้างผิดก่อนวัน remob / ในช่วง gap ระหว่างรอบ / ก่อนเริ่มงานรอบก่อน */
 export function shouldDeleteStalePoActiveAutoDailyRow(
   a: Assignment,
   dateYmd: string,
@@ -183,6 +184,8 @@ export function shouldDeleteStalePoActiveAutoDailyRow(
   const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
   const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
   if (assignmentHasSplitPriorAndNewCycleOnDoc(a) && /^\d{4}-\d{2}-\d{2}$/.test(mobEnd) && dateYmd <= mobEnd) {
+    const priorFloor = resolvePriorCycleWorkStartFloorYmd(a);
+    if (priorFloor && dateYmd < priorFloor) return true;
     return false;
   }
   if (/^\d{4}-\d{2}-\d{2}$/.test(mobStart) && dateYmd < mobStart) return true;

@@ -364,6 +364,17 @@ export function assignmentHasSplitPriorAndNewCycleOnDoc(
   return false;
 }
 
+/** วันเริ่มงานรอบก่อนจาก snapshot ตอนจบไซต์ — ขอบล่างของ W ในรอบที่ปิดแล้ว */
+export function resolvePriorCycleWorkStartFloorYmd(
+  a: Pick<Assignment, 'mobFinishUndoSnapshot' | 'mobLocationEndDate'>,
+): string | undefined {
+  const snapWs = (a.mobFinishUndoSnapshot?.mobWorkingStartDate || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(snapWs)) return undefined;
+  const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(mobEnd) && snapWs > mobEnd) return undefined;
+  return snapWs;
+}
+
 /** วันแรกของ mobilization รอบใหม่ (Standby หรือเริ่มงาน — อันไหนมาก่อน) */
 export function resolveMobSegmentStartYmd(
   a: Pick<Assignment, 'mobStandbyDate' | 'mobWorkingStartDate'>,
@@ -464,6 +475,7 @@ export function waveMonthCellTimesheetVisible(
     | 'endDate'
     | 'poActiveStandbyAutoStartYmd'
     | 'poActiveStandbyAutoEndYmd'
+    | 'mobFinishUndoSnapshot'
   >,
   ymd: string,
   ts: DailyTimesheet | undefined,
@@ -514,6 +526,7 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
     | 'deploymentStatus'
     | 'poActiveStandbyAutoStartYmd'
     | 'poActiveStandbyAutoEndYmd'
+    | 'mobFinishUndoSnapshot'
   >,
   ymd: string,
 ): boolean {
@@ -584,10 +597,11 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
     if (candidates.length) floor = candidates.reduce((a, b) => (a < b ? a : b));
     if (floor !== undefined && d < floor && d <= mobEnd) floor = undefined;
   } else if (inClosedPriorCycle) {
-    const candidates = [assignStart, assignedFallback].filter(
-      (y) => /^\d{4}-\d{2}-\d{2}$/.test(y) && y <= d,
+    const priorFloor = resolvePriorCycleWorkStartFloorYmd(a);
+    const candidates = [priorFloor, assignStart, assignedFallback].filter(
+      (y): y is string => !!y && /^\d{4}-\d{2}-\d{2}$/.test(y) && y <= d,
     );
-    if (candidates.length) floor = candidates.reduce((a, b) => (a < b ? a : b));
+    if (candidates.length) floor = candidates.reduce((a, b) => (a > b ? a : b));
   } else if (inEarlierCalendarMonthThanMobSegment) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(assignStart)) floor = assignStart;
     else if (/^\d{4}-\d{2}-\d{2}$/.test(assignedFallback)) floor = assignedFallback;

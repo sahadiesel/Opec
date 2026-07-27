@@ -34,9 +34,12 @@ import {
   resolvePoActiveAutoDailySyncKind,
   shouldDeleteStalePoActiveAutoDailyRow,
 } from '@/lib/timesheet/po-active-auto-daily-build';
+import { purgeStalePrefixContinuityWorkDaysForMonth } from '@/lib/timesheet/mobilization-clearance-timesheet';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
+import { resolvePriorCycleWorkStartFloorYmd } from '@/lib/constants/timesheet-ui';
+import { TimesheetService } from '@/lib/services/timesheet-service';
 
 export type PoActiveAutoDailySyncOptions = {
   /** เติมเฉพาะ yyyy-mm-dd ปัจจุบันในเขตไทย — ใช้หลังเที่ยงคืนหรือเปิดกระดาน */
@@ -307,22 +310,48 @@ export async function purgeStalePoActiveAutoDailyForCalendarMonth(
   const monthEnd = lastDayOfCalendarMonth(monthYm);
   const todayYmd = thailandTodayYmd();
   const through = monthEnd < todayYmd ? monthEnd : todayYmd;
-  if (monthStart > through) return 0;
+  if (monthStart > through) {
+    return purgeStalePrefixContinuityWorkDaysForMonth(db, assignment, monthYm);
+  }
 
   const tsCol = collection(db, 'daily_timesheets');
+  const service = new TimesheetService(db);
   let deleted = 0;
+  const priorFloor = resolvePriorCycleWorkStartFloorYmd(assignment);
+  const mobEnd = (assignment.mobLocationEndDate || '').trim().slice(0, 10);
+
   for (const date of eachYmdInRange(monthStart, through)) {
-    if (!shouldDeleteStalePoActiveAutoDailyRow(assignment, date)) continue;
     const id = poActiveDailyTimesheetDocId(assignment.workerId, assignment.id, date);
     const dRef = doc(tsCol, id);
     const existing = await getDoc(dRef);
     if (!existing.exists()) continue;
     const cur = existing.data() as DailyTimesheet;
-    if (cur.poActiveAutoDaily !== true) continue;
     if (isTimesheetFinanciallyImmutable(cur.status)) continue;
-    await deleteDoc(dRef);
-    deleted++;
+
+    if (shouldDeleteStalePoActiveAutoDailyRow(assignment, date) && cur.poActiveAutoDaily === true) {
+      await deleteDoc(dRef);
+      deleted++;
+      continue;
+    }
+
+    /**
+     * W ก่อนวันเริ่มงานรอบก่อน (snapshot) ในรอบที่ปิดแล้ว —
+     * รวมแถวที่ไม่ได้ mark auto (เช่น เติมต่อเนื่องต้นเดือน / สร้างผิด)
+     */
+    if (
+      priorFloor &&
+      date < priorFloor &&
+      /^\d{4}-\d{2}-\d{2}$/.test(mobEnd) &&
+      date <= mobEnd &&
+      cur.eventType === 'work_day' &&
+      !service.isFinalized(cur.status)
+    ) {
+      await deleteDoc(dRef);
+      deleted++;
+    }
   }
+
+  deleted += await purgeStalePrefixContinuityWorkDaysForMonth(db, assignment, monthYm);
   return deleted;
 }
 

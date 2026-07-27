@@ -227,7 +227,10 @@ export function canRunFinalClearanceStep(
   return { ok: true };
 }
 
-/** คนที่ทับจากเดือนก่อน / รอบ Mob > 1 — เติมวันทำงานต้นเดือนปฏิทินจนถึงก่อนวัน Standby */
+/**
+ * เติม W ต้นเดือนจนถึงก่อนวัน Standby — เฉพาะคนที่มอบหมายมาจากเดือนก่อน (carry-over)
+ * ไม่ใช้ mobCycle > 1 อย่างเดียว: remob ในเดือนเดียวกันจะไปเติม W วันก่อนเริ่มงานจริง (เช่น 1–5 ทั้งที่เริ่ม 6)
+ */
 export function shouldAutoFillPrefixWorkDaysBeforeStandby(
   a: Pick<Assignment, 'mobCycleNumber' | 'startDate'>,
   standbyYmd: string,
@@ -236,7 +239,6 @@ export function shouldAutoFillPrefixWorkDaysBeforeStandby(
   if (!/^\d{4}-\d{2}$/.test(ym)) return false;
   const monthStart = `${ym}-01`;
   const sd = (a.startDate || '').trim().slice(0, 10);
-  if ((a.mobCycleNumber ?? 1) > 1) return true;
   if (/^\d{4}-\d{2}-\d{2}$/.test(sd) && sd < monthStart) return true;
   return false;
 }
