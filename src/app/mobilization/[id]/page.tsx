@@ -827,6 +827,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
           kind: 'work_day',
           dateYmd: workYmd,
           bypassPoMonthLock: true,
+          overwriteConflictingEventType: true,
         });
       }
 

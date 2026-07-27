@@ -123,6 +123,15 @@ export async function upsertMobClearanceDailyTimesheet(
     /** ค่าวางบิล / จ่ายลูกจ้าง สำหรับวัน Pre-Mob หรือ Mob */
     billingCharge?: MobDayChargeSpec;
     payrollCharge?: MobDayChargeSpec;
+    /**
+     * ถ้ามีแถว DRAFT อยู่แล้ว — ข้ามไม่เขียนทับ (ใช้ตอนเติมต้นเดือนที่ไม่ควรทับ SB/W ที่มีอยู่)
+     */
+    skipIfExists?: boolean;
+    /**
+     * ถ้ามีแถว DRAFT ประเภทอื่น — เขียนทับเป็นประเภทที่ Mob ต้องการ
+     * (เช่น วันเริ่มงานทับ standby อัตโนมัติที่ค้าง / เติมช่องว่างเป็น SB)
+     */
+    overwriteConflictingEventType?: boolean;
   },
 ): Promise<{ created: number; updated: number; skipped: number }> {
   const {
@@ -136,6 +145,8 @@ export async function upsertMobClearanceDailyTimesheet(
     remarkOverride,
     billingCharge,
     payrollCharge,
+    skipIfExists,
+    overwriteConflictingEventType,
   } = args;
 
   if (!bypassPoMonthLock) {
@@ -168,13 +179,16 @@ export async function upsertMobClearanceDailyTimesheet(
 
   if (existingSnap.exists()) {
     const cur = { id: existingSnap.id, ...(existingSnap.data() as object) } as DailyTimesheet;
+    if (skipIfExists) {
+      return { created: 0, updated: 0, skipped: 1 };
+    }
     if (service.isFinalized(cur.status)) {
       throw new Error('รายการวันนี้ถูกล็อกทางบัญชีแล้ว — แก้ไขไม่ได้จากหน้า Mob');
     }
     if (cur.assignmentId && cur.assignmentId !== a.id) {
       throw new Error('วันนี้มีรายการลงเวลากับการมอบหมายอื่นแล้ว — ตรวจใน timesheet');
     }
-    if (cur.eventType && cur.eventType !== eventType) {
+    if (cur.eventType && cur.eventType !== eventType && !overwriteConflictingEventType) {
       throw new Error(
         `วันนี้มีรายการประเภท «${cur.eventType}» อยู่แล้ว — ไปแก้ใน timesheet แทนการบันทึกซ้ำจาก Mob`,
       );
@@ -272,6 +286,8 @@ export async function applyMobFinalClearanceWorkStartFill(
         kind: 'work_day',
         dateYmd: d,
         bypassPoMonthLock: bypass,
+        /** อย่าทับ SB/W ที่มีอยู่แล้วในเดือน (เช่น หยุดแบบ standby ก่อน remob) */
+        skipIfExists: true,
         remarkOverride: 'Mob — Final clearance · ต่อเนื่องต้นเดือน (ก่อน Standby)',
       });
     }
@@ -289,6 +305,8 @@ export async function applyMobFinalClearanceWorkStartFill(
         kind: 'standby_day',
         dateYmd: d,
         bypassPoMonthLock: bypass,
+        /** ช่องว่างก่อนเริ่มงาน — ทับ auto work_day ที่ค้างได้ */
+        overwriteConflictingEventType: true,
       });
     }
   }
@@ -301,5 +319,7 @@ export async function applyMobFinalClearanceWorkStartFill(
     kind: 'work_day',
     dateYmd: wk,
     bypassPoMonthLock: bypass,
+    /** วันเริ่มงาน — ทับ standby/auto ที่ค้างบนวันนั้นได้ */
+    overwriteConflictingEventType: true,
   });
 }
