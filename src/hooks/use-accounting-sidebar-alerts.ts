@@ -61,6 +61,11 @@ export function useAccountingSidebarAlerts(user: User | null | undefined) {
     );
   }, [firestore, enabled]);
 
+  const rentalPayableQ = useMemoFirebase(() => {
+    if (!firestore || !enabled) return null;
+    return query(collection(firestore, 'rental_payables'), where('status', '==', 'PENDING'), limit(1));
+  }, [firestore, enabled]);
+
   const cashAdvanceQ = useMemoFirebase(() => {
     if (!firestore || !enabled) return null;
     return query(
@@ -74,12 +79,14 @@ export function useAccountingSidebarAlerts(user: User | null | undefined) {
   const { data: officePending } = useCollection<OfficePayrollRun>(officePayrollQ as any);
   const { data: apPending } = useCollection<AccountsPayable>(apQ as any);
   const { data: vendorBillsPending } = useCollection<PurchaseVendorBill>(vendorBillQ as any);
+  const { data: rentalPayablesPending } = useCollection<{ id: string }>(rentalPayableQ as any);
   const { data: cashAdvancesPending } = useCollection<CashAdvanceRequest>(cashAdvanceQ as any);
 
   const officePayrollAlert = (officePending?.length ?? 0) > 0;
   const workerPayrollAlert = (workerPending?.length ?? 0) > 0;
   const cashAdvanceAlert = (cashAdvancesPending?.length ?? 0) > 0;
-  const vendorBillAlert = (vendorBillsPending?.length ?? 0) > 0;
+  const vendorBillAlert =
+    (vendorBillsPending?.length ?? 0) > 0 || (rentalPayablesPending?.length ?? 0) > 0;
 
   const payrollAlert =
     officePayrollAlert || workerPayrollAlert || cashAdvanceAlert || vendorBillAlert;

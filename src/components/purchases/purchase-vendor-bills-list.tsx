@@ -73,6 +73,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
+import { RentalPayablesPayoutSection } from '@/components/accounting/rental-payables-payout-section';
 import {
   buildYearCeOptions,
   currentMonthMm,
@@ -362,11 +363,11 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                 </>
               ) : isPayoutMode ? (
                 <>
-                  ใบรับวางบิลเจ้าหนี้ที่ส่งบัญชีแล้วและรอจ่ายเงิน — รายการเดียวกับหน้า{' '}
+                  รวมสองแหล่ง: (1) ใบรับวางบิล PO ที่ส่งบัญชีแล้ว — ชุดเดียวกับ{' '}
                   <Link href="/ap-bills" className="font-medium text-foreground underline underline-offset-2">
                     รับวางบิลเจ้าหนี้ (AP Bills)
-                  </Link>{' '}
-                  ทำจ่ายได้จากทั้งสองที่เหมือนกัน
+                  </Link>
+                  {' '}(2) รอบค่าเช่าตามสัญญาที่ครบกำหนดแล้ว — ทำจ่ายที่หน้ารายละเอียดสัญญา
                 </>
               ) : (
                 <>
@@ -450,6 +451,8 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
           </div>
         </div>
 
+        {isPayoutMode ? <RentalPayablesPayoutSection enabled={ok} /> : null}
+
         <div className="space-y-3">
           <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
             <TabsList>
@@ -495,7 +498,9 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">รายการใบรับวางบิล</CardTitle>
+            <CardTitle className="text-lg">
+              {isPayoutMode ? 'รายการใบรับวางบิล (PO / คลัง)' : 'รายการใบรับวางบิล'}
+            </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             {billsLoading ? (

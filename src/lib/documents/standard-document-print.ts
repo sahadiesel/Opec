@@ -332,7 +332,14 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     align-items: start;
   }
   .sd-totals-notes-row .sd-totals-wrap { margin-top: 0; }
+  /** คอลัมน์ซ้าย — กล่อง TERMS & NOTES กว้างเต็ม ไม่ถูกบีบด้วยข้อความจำนวนเงิน */
+  .sd-notes-col {
+    min-width: 0;
+    width: 100%;
+  }
   .sd-notes-box {
+    box-sizing: border-box;
+    width: 100%;
     border: 1px solid #bae6fd;
     border-radius: 4px;
     padding: 8px 10px;
@@ -369,15 +376,23 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     margin-top: 6px;
     font-style: italic;
   }
-  /** ใบกำกับภาษี — จำนวนเงินเป็นคำ: กว้างเต็มแนว ไม่ตัดสองบรรทัด */
-  .sd-totals-wrap.sd-totals-wrap--tax-words { display: block; }
-  .sd-totals-wrap.sd-totals-wrap--tax-words .sd-totals { width: 280px; max-width: 100%; margin-left: auto; }
-  .sd-amount-words.sd-amount-words--tax-full {
+  /** ซ้อน: แถว notes+totals แล้วตามด้วยจำนวนเงินเป็นคำเต็มความกว้าง แถวเดียว */
+  .sd-totals-notes-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    width: 100%;
+  }
+  .sd-totals-notes-stack > .sd-totals-notes-row {
+    margin-top: 0;
+  }
+  .sd-amount-words.sd-amount-words--under-notes {
     display: block;
     width: 100%;
     max-width: 100%;
+    margin: 0;
     text-align: right;
-    margin-top: 5px;
     font-size: 8.5pt;
     line-height: 1.35;
     color: #525252;
@@ -385,7 +400,7 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     white-space: nowrap;
   }
   @media print {
-    .sd-amount-words.sd-amount-words--tax-full {
+    .sd-amount-words.sd-amount-words--under-notes {
       font-size: 8pt;
     }
   }
@@ -517,12 +532,12 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
   .sd-page--commercial .sd-totals-notes-row { margin-top: 4px; }
   .sd-page--commercial .sd-notes { margin-top: 6px; }
   .sd-page--commercial .sd-sign-footer {
-    margin-top: 5mm;
+    margin-top: 10mm;
     margin-bottom: 3mm;
-    padding-top: 3mm;
+    padding-top: 6mm;
   }
   .sd-page--commercial .sd-sign-line {
-    margin: 26px 10px 6px 10px;
+    margin: 52px 10px 6px 10px;
   }
   .sd-page--commercial .sd-approval-notice {
     margin-top: 6px;
@@ -561,10 +576,10 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
       font-size: 10pt;
     }
     .sd-page--commercial .sd-sign-line {
-      margin: 16px 10px 4px 10px;
+      margin: 32px 10px 4px 10px;
     }
     .sd-page--commercial .sd-sign-footer {
-      margin-top: 3mm;
+      margin-top: 6mm;
       padding-top: 2mm;
     }
   }
@@ -774,8 +789,11 @@ export function buildStandardTotalsBlockHtml(params: {
   rows: StandardTotalsRow[];
   /** จาก amountToThaiBahtText แล้ว */
   amountInWords?: string;
-  /** ยอดเป็นคำ: กว้างเต็ม ไม่ขึ้นบรรทัด (ใช้ฉบับใบกำกับ) */
-  amountInWordsLayout?: 'default' | 'taxFullLine';
+  /**
+   * default = ตัวอักษรเงินใต้ยอดรวมขวา
+   * underNotes = ไม่ใส่ในบล็อกยอด (ให้ `buildStandardTotalsWithNotesRowHtml` วางใต้ TERMS & NOTES)
+   */
+  amountInWordsLayout?: 'default' | 'underNotes' | 'taxFullLine';
 }): string {
   const body = params.rows
     .map((r) => {
@@ -790,13 +808,15 @@ export function buildStandardTotalsBlockHtml(params: {
     })
     .join('');
   const w = params.amountInWords?.trim();
-  if (w && params.amountInWordsLayout === 'taxFullLine') {
-    const words = `<p class="sd-amount-words sd-amount-words--tax-full">${escapeHtmlDoc(w)}</p>`;
-    return `<div class="sd-totals-wrap sd-totals-wrap--tax-words">
+  /** underNotes / taxFullLine (legacy alias) — ไม่ใส่คำใต้ยอด รวมให้คอลัมน์ซ้ายจัดการ */
+  if (
+    params.amountInWordsLayout === 'underNotes' ||
+    params.amountInWordsLayout === 'taxFullLine'
+  ) {
+    return `<div class="sd-totals-wrap">
     <div class="sd-totals">
       ${body}
     </div>
-    ${words}
   </div>`;
   }
   const words = w ? `<p class="sd-amount-words">${escapeHtmlDoc(w)}</p>` : '';
@@ -808,22 +828,50 @@ export function buildStandardTotalsBlockHtml(params: {
   </div>`;
 }
 
-/** ยอดรวมขวา + กล่องหมายเหตุซ้าย (ใบแจ้งหนี้เรียกเก็บ) */
+/** ยอดรวมขวา + กล่องหมายเหตุซ้าย (ใบแจ้งหนี้เรียกเก็บ / ใบกำกับภาษี) */
 export function buildStandardTotalsWithNotesRowHtml(params: {
   totalsParams: Parameters<typeof buildStandardTotalsBlockHtml>[0];
   notes?: string;
   notesTitle?: string;
 }): string {
-  const totalsHtml = buildStandardTotalsBlockHtml(params.totalsParams);
+  const layout = params.totalsParams.amountInWordsLayout;
+  const wordsRaw = (params.totalsParams.amountInWords || '').trim();
+  const placeWordsUnderNotes =
+    !!wordsRaw && (layout === 'underNotes' || layout === 'taxFullLine');
+
+  const totalsHtml = buildStandardTotalsBlockHtml({
+    ...params.totalsParams,
+    amountInWords: placeWordsUnderNotes ? undefined : params.totalsParams.amountInWords,
+    amountInWordsLayout: placeWordsUnderNotes ? 'underNotes' : layout,
+  });
+
   const notesTrim = formatDocumentNotesForPrint(params.notes ?? '');
-  if (!notesTrim) return totalsHtml;
-  const notesBox = `<div class="sd-notes-box">
+  const wordsHtml = placeWordsUnderNotes
+    ? `<p class="sd-amount-words sd-amount-words--under-notes">${escapeHtmlDoc(wordsRaw)}</p>`
+    : '';
+
+  if (!notesTrim && !placeWordsUnderNotes) return totalsHtml;
+
+  const notesBox = notesTrim
+    ? `<div class="sd-notes-box">
     <p class="sd-notes-box-title">${escapeHtmlDoc(params.notesTitle ?? 'Notes')}</p>
     <p class="sd-notes-box-body">${escapeHtmlDoc(notesTrim)}</p>
-  </div>`;
-  return `<div class="sd-totals-notes-row">
-    ${notesBox}
+  </div>`
+    : '';
+
+  const leftCol = notesBox ? `<div class="sd-notes-col">${notesBox}</div>` : `<div class="sd-notes-col"></div>`;
+  const rowHtml = `<div class="sd-totals-notes-row">
+    ${leftCol}
     ${totalsHtml}
+  </div>`;
+
+  if (!placeWordsUnderNotes) {
+    return rowHtml;
+  }
+
+  return `<div class="sd-totals-notes-stack">
+    ${rowHtml}
+    ${wordsHtml}
   </div>`;
 }
 
@@ -1493,7 +1541,7 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
     totalsParams: {
       rows: totalRows,
       amountInWords: totalWords,
-      amountInWordsLayout: 'taxFullLine',
+      amountInWordsLayout: 'underNotes',
     },
     notes: invoice.notes,
     notesTitle: printT(L, 'termsNotes'),

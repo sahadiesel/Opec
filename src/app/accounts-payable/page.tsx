@@ -281,13 +281,22 @@ export default function AccountsPayablePage() {
 
         <Alert className="border-amber-200 bg-amber-50/80">
           <Info className="h-5 w-5 text-amber-800" />
-          <AlertTitle className="font-bold text-amber-950">ใบรับวางบิลจากคลัง</AlertTitle>
-          <AlertDescription className="text-sm text-amber-900">
-            เมื่อคลังส่งเอกสารจากเมนู{' '}
-            <Link href="/ap-bills" className="font-semibold underline">
-              รับวางบิลเจ้าหนี้ (AP Bills)
-            </Link>{' '}
-            รายการจะปรากฏที่นี่ — ตรวจสอบยอดและบันทึกจ่าย / ลง cashbook / หนังสือรับรองหัก ณ ที่จ่าย ทำในหน้ารายละเอียดใบรับวางบิลนั้น
+          <AlertTitle className="font-bold text-amber-950">แหล่งรายการเจ้าหนี้</AlertTitle>
+          <AlertDescription className="text-sm text-amber-900 space-y-1.5">
+            <p>
+              <strong>ใบรับวางบิลคลัง/PO</strong> — เมื่อส่งจากเมนู{' '}
+              <Link href="/ap-bills" className="font-semibold underline">
+                รับวางบิลเจ้าหนี้ (AP Bills)
+              </Link>{' '}
+              จะปรากฏที่นี่และในคิว{' '}
+              <Link href="/accounting/vendor-bills-payout" className="font-semibold underline">
+                รายการรอจ่ายเจ้าหนี้
+              </Link>
+            </p>
+            <p>
+              <strong>สัญญาเช่า</strong> — รอบค่าเช่าถูกสร้างอัตโนมัติเมื่อครบกำหนด (ไม่ผ่าน AP Bills) ดูและทำจ่ายที่หน้ารายละเอียดสัญญา
+              หรือที่คิวรอจ่ายเจ้าหนี้ด้านบน
+            </p>
           </AlertDescription>
         </Alert>
 
