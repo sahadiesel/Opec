@@ -1,12 +1,16 @@
 'use client';
 
 import {
+  addDoc,
   collection,
   doc,
   getDoc,
+  getDocs,
   increment,
+  query,
   runTransaction,
   updateDoc,
+  where,
   writeBatch,
   type Firestore,
 } from 'firebase/firestore';
@@ -20,6 +24,7 @@ import type {
   RentalPayable,
   User,
   Vendor,
+  VendorBillSupportingDocumentLink,
 } from '@/lib/types';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { writeAuditLog } from '@/lib/services/audit-service';
@@ -36,6 +41,61 @@ import { validateWhtCertificateForOfficialIssue } from '@/lib/wht/wht-certificat
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 
 const TENANT_NAME_FALLBACK = 'บริษัท โอเปค เอ็นจิเนียริ่ง แอนด์ แมนเนจเม้นท์ จำกัด';
+
+/** VAT มาตรฐานเมื่อผู้ให้เช่าเป็นนิติบุคคล (หรือไม่ระบุรูปนิติบุคคล) */
+export const RENTAL_DEFAULT_VAT_RATE_JURISTIC = 7;
+
+export function defaultVatRateForLessor(
+  lessor: Pick<Vendor, 'vendorLegalForm'> | null | undefined,
+): number {
+  if (lessor?.vendorLegalForm === 'NATURAL') return 0;
+  return RENTAL_DEFAULT_VAT_RATE_JURISTIC;
+}
+
+/** อ่าน VAT % จากสัญญา — ไม่ระบุ = 0 (สัญญาเก่า) */
+export function resolveContractVatRatePercent(
+  contract: Pick<RentalContract, 'vatRatePercent'>,
+): number {
+  const v = Number(contract.vatRatePercent);
+  if (Number.isFinite(v) && v >= 0) return roundMoney2(v);
+  return 0;
+}
+
+export type RentalMonthAmountBreakdown = {
+  baseRentAmount: number;
+  vatRatePercent: number;
+  vatAmount: number;
+  grossAmount: number;
+  withholdingTaxRatePercent: number;
+  withholdingTaxAmount: number;
+  netPayableAmount: number;
+};
+
+/** ฐานค่าเช่า + VAT − หัก ณ ที่จ่าย (บนฐานก่อน VAT) */
+export function computeRentalMonthAmounts(input: {
+  monthlyRentAmount: number;
+  vatRatePercent?: number | null;
+  withholdingTaxRatePercent: number;
+}): RentalMonthAmountBreakdown {
+  const baseRentAmount = roundMoney2(input.monthlyRentAmount);
+  const vatRatePercent = roundMoney2(Math.max(0, Number(input.vatRatePercent) || 0));
+  const withholdingTaxRatePercent = roundMoney2(
+    Math.max(0, Number(input.withholdingTaxRatePercent) || 0),
+  );
+  const vatAmount = roundMoney2((baseRentAmount * vatRatePercent) / 100);
+  const grossAmount = roundMoney2(baseRentAmount + vatAmount);
+  const withholdingTaxAmount = roundMoney2((baseRentAmount * withholdingTaxRatePercent) / 100);
+  const netPayableAmount = roundMoney2(grossAmount - withholdingTaxAmount);
+  return {
+    baseRentAmount,
+    vatRatePercent,
+    vatAmount,
+    grossAmount,
+    withholdingTaxRatePercent,
+    withholdingTaxAmount,
+    netPayableAmount,
+  };
+}
 
 async function resolveTenantNameFromSystem(db: Firestore): Promise<string> {
   const snap = await getDoc(doc(db, 'system', 'company_profile'));
@@ -59,6 +119,14 @@ function assertCanApproveRentalContract(user: User): void {
   if (!isSystemAdmin(user) && !isAccountingManager(user)) {
     throw new Error('อนุมัติหรือยกเลิกสัญญาได้เฉพาะผู้จัดการบัญชีหรือ Admin');
   }
+}
+
+export function assertCanEditRentalContract(user: User, contract: Pick<RentalContract, 'status'>): void {
+  if (isSystemAdmin(user) || isAccountingManager(user)) return;
+  if (isAccountingOfficer(user) && (contract.status === 'DRAFT' || contract.status === 'REJECTED')) {
+    return;
+  }
+  throw new Error('แก้ไขสัญญาได้เฉพาะผู้จัดการบัญชี/Admin หรือเจ้าหน้าที่บัญชีเมื่อยังเป็นร่าง');
 }
 
 export function rentalPayableId(contractId: string, periodMonth: string): string {
@@ -109,6 +177,9 @@ export async function createRentalContract(
     endDate: string;
     paymentDayOfMonth: number;
     withholdingTaxRatePercent: number;
+    /** ไม่ระบุ = เดาจากประเภทผู้ให้เช่า (นิติบุคคล 7% · บุคคล 0%) */
+    vatRatePercent?: number;
+    vatSource?: 'AUTO_BY_LESSOR' | 'MANUAL';
     notes?: string;
     madeAtLocation?: string;
     contractDate?: string;
@@ -140,6 +211,13 @@ export async function createRentalContract(
   const rate = roundMoney2(input.withholdingTaxRatePercent);
   if (rate < 0 || rate > 100) throw new Error('อัตราหัก ณ ที่จ่ายไม่ถูกต้อง');
 
+  const vatSource = input.vatSource === 'MANUAL' ? 'MANUAL' : 'AUTO_BY_LESSOR';
+  const vatRatePercent =
+    input.vatRatePercent != null && Number.isFinite(Number(input.vatRatePercent))
+      ? roundMoney2(Math.max(0, Number(input.vatRatePercent)))
+      : defaultVatRateForLessor(input.lessor);
+  if (vatRatePercent < 0 || vatRatePercent > 100) throw new Error('อัตรา VAT ไม่ถูกต้อง');
+
   const rentedItemDescription =
     leaseKind === 'VEHICLE'
       ? `รถยนต์ ${input.vehicleBrand!.trim()} ทะเบียน ${input.vehiclePlateNo!.trim()}`
@@ -166,7 +244,10 @@ export async function createRentalContract(
     endDate: input.endDate,
     paymentDayOfMonth,
     withholdingTaxRatePercent: rate,
+    vatRatePercent,
+    vatSource,
     status: 'DRAFT',
+    revision: 0,
     ...(input.madeAtLocation?.trim() ? { madeAtLocation: input.madeAtLocation.trim() } : {}),
     ...(input.contractDate?.trim() ? { contractDate: input.contractDate.trim() } : {}),
     ...(input.propertyAddress?.trim() ? { propertyAddress: input.propertyAddress.trim() } : {}),
@@ -202,7 +283,7 @@ export async function createRentalContract(
     entityLabel: contractNo,
     sourceModule: 'accounting',
     sourcePath: `/accounting/rental-contracts/${ref.id}`,
-    afterSummary: `สร้างสัญญาเช่า ${contractNo} · ${input.lessor.vendorName} · ${monthlyRentAmount.toFixed(2)} บาท/เดือน`,
+    afterSummary: `สร้างสัญญาเช่า ${contractNo} · ${input.lessor.vendorName} · ${monthlyRentAmount.toFixed(2)} บาท/เดือน · VAT ${vatRatePercent}%`,
     changedFields: ['status'],
     linkedIds: [ref.id, input.lessor.id],
   });
@@ -353,9 +434,11 @@ export async function generateDueRentalPayables(
     const id = rentalPayableId(contract.id, month);
     const payableRef = doc(db, 'rental_payables', id);
     const apRef = doc(db, 'accounts_payable', id);
-    const gross = roundMoney2(contract.monthlyRentAmount);
-    const wht = roundMoney2((gross * contract.withholdingTaxRatePercent) / 100);
-    const net = roundMoney2(gross - wht);
+    const amounts = computeRentalMonthAmounts({
+      monthlyRentAmount: contract.monthlyRentAmount,
+      vatRatePercent: resolveContractVatRatePercent(contract),
+      withholdingTaxRatePercent: contract.withholdingTaxRatePercent,
+    });
     const wasCreated = await runTransaction(db, async (tx) => {
       const existing = await tx.get(payableRef);
       if (existing.exists()) return false;
@@ -369,10 +452,13 @@ export async function generateDueRentalPayables(
         periodMonth: month,
         dueDate,
         description: `ค่าเช่า ${contract.rentedItemDescription} ประจำเดือน ${month}`,
-        grossAmount: gross,
-        withholdingTaxRatePercent: contract.withholdingTaxRatePercent,
-        withholdingTaxAmount: wht,
-        netPayableAmount: net,
+        baseRentAmount: amounts.baseRentAmount,
+        vatRatePercent: amounts.vatRatePercent,
+        vatAmount: amounts.vatAmount,
+        grossAmount: amounts.grossAmount,
+        withholdingTaxRatePercent: amounts.withholdingTaxRatePercent,
+        withholdingTaxAmount: amounts.withholdingTaxAmount,
+        netPayableAmount: amounts.netPayableAmount,
         status: 'PENDING',
         apEntryId: id,
         createdAt: now,
@@ -386,9 +472,9 @@ export async function generateDueRentalPayables(
         referenceId: id,
         billDate: dueDate,
         dueDate,
-        debitAmount: gross,
+        debitAmount: amounts.grossAmount,
         creditAmount: 0,
-        outstandingAmount: gross,
+        outstandingAmount: amounts.grossAmount,
         status: dueDate < todayYmd ? 'OVERDUE' : 'OPEN',
         origin: 'RENTAL_CONTRACT',
         rentalPayableId: id,
@@ -413,6 +499,18 @@ export async function payRentalPayable(
     bankAccountId: string;
     paymentMethod: PaymentMethod;
     entryDate: string;
+    /** หลักฐานโอนเงิน — บังคับเหมือนใบวางบิล */
+    paymentProofUrl: string;
+    paymentProofFileName: string;
+    whtPaymentProofUrl?: string;
+    whtPaymentProofFileName?: string;
+    vendorPayeeBankAccountId?: string;
+    vendorPayeeBankName?: string;
+    vendorPayeeBankAccountName?: string;
+    vendorPayeeBankAccountNumber?: string;
+    supportingDeliveryNote?: VendorBillSupportingDocumentLink;
+    supportingTaxInvoice?: VendorBillSupportingDocumentLink;
+    supportingMoneyReceipt?: VendorBillSupportingDocumentLink;
   },
 ): Promise<{ cashbookEntryNo: string; whtCertificateId?: string }> {
   if (!canExecuteBankCashbookPayments(user)) {
@@ -422,6 +520,9 @@ export async function payRentalPayable(
   if (contract.status !== 'ACTIVE' && contract.status !== 'EXPIRED') throw new Error('สัญญาไม่อยู่ในสถานะทำจ่าย');
   if (payable.status !== 'PENDING' || payable.cashbookEntryId) throw new Error('รายการนี้ถูกจ่ายหรือยกเลิกแล้ว');
   if (!params.entryDate) throw new Error('กรุณาระบุวันที่ทำรายการ');
+  if (!params.paymentProofUrl?.trim() || !params.paymentProofFileName?.trim()) {
+    throw new Error('กรุณาแนบหลักฐานโอนเงิน');
+  }
   const [bankSnap, companySnap] = await Promise.all([
     getDoc(doc(db, 'bank_accounts', params.bankAccountId)),
     getDoc(doc(db, 'system', 'company_profile')),
@@ -440,7 +541,22 @@ export async function payRentalPayable(
   const payableRef = doc(db, 'rental_payables', payable.id);
   const apRef = doc(db, 'accounts_payable', payable.apEntryId || payable.id);
   const amountFromBank = roundMoney2(payable.netPayableAmount);
+  const baseRent = roundMoney2(
+    payable.baseRentAmount != null && payable.baseRentAmount > 0
+      ? payable.baseRentAmount
+      : payable.grossAmount - (Number(payable.vatAmount) || 0),
+  );
+  const vatAmount = roundMoney2(
+    payable.vatAmount != null
+      ? payable.vatAmount
+      : Math.max(0, payable.grossAmount - baseRent),
+  );
+  const vatRate = resolveContractVatRatePercent({
+    vatRatePercent: payable.vatRatePercent ?? contract.vatRatePercent,
+  });
   const description = `จ่ายค่าเช่า ${payable.vendorName} · ${contract.rentedItemDescription} · ${payable.periodMonth}${
+    vatAmount > 0.005 ? ` · VAT ${vatAmount.toFixed(2)}` : ''
+  }${
     payable.withholdingTaxAmount > 0 ? ` · หัก ณ ที่จ่าย ${payable.withholdingTaxAmount.toFixed(2)} บาท` : ''
   }`;
   const cashbookShape: CashbookEntry = {
@@ -463,6 +579,39 @@ export async function payRentalPayable(
     updatedAt: now,
   };
 
+  const payablePaidPatch: Record<string, unknown> = {
+    status: 'PAID',
+    paidAt: now,
+    paidByUid: user.id,
+    paidByName: actor,
+    bankAccountId: params.bankAccountId,
+    paymentMethod: params.paymentMethod,
+    cashbookEntryId: cashbookRef.id,
+    cashbookEntryNo: entryNo,
+    paymentProofUrl: params.paymentProofUrl.trim(),
+    paymentProofFileName: params.paymentProofFileName.trim(),
+    updatedAt: now,
+  };
+  if (params.whtPaymentProofUrl?.trim()) {
+    payablePaidPatch.whtPaymentProofUrl = params.whtPaymentProofUrl.trim();
+    payablePaidPatch.whtPaymentProofFileName = (params.whtPaymentProofFileName || '').trim() || null;
+  }
+  if (params.vendorPayeeBankAccountId || params.vendorPayeeBankName || params.vendorPayeeBankAccountNumber) {
+    payablePaidPatch.vendorPayeeBankAccountId = params.vendorPayeeBankAccountId || null;
+    payablePaidPatch.vendorPayeeBankName = params.vendorPayeeBankName || null;
+    payablePaidPatch.vendorPayeeBankAccountName = params.vendorPayeeBankAccountName || null;
+    payablePaidPatch.vendorPayeeBankAccountNumber = params.vendorPayeeBankAccountNumber || null;
+  }
+  if (params.supportingDeliveryNote) {
+    payablePaidPatch.supportingDeliveryNote = params.supportingDeliveryNote;
+  }
+  if (params.supportingTaxInvoice) {
+    payablePaidPatch.supportingTaxInvoice = params.supportingTaxInvoice;
+  }
+  if (params.supportingMoneyReceipt) {
+    payablePaidPatch.supportingMoneyReceipt = params.supportingMoneyReceipt;
+  }
+
   const batch = writeBatch(db);
   batch.set(cashbookRef, {
     ...cashbookShape,
@@ -473,17 +622,7 @@ export async function payRentalPayable(
     currentBalance: increment(-amountFromBank),
     updatedAt: now,
   });
-  batch.update(payableRef, {
-    status: 'PAID',
-    paidAt: now,
-    paidByUid: user.id,
-    paidByName: actor,
-    bankAccountId: params.bankAccountId,
-    paymentMethod: params.paymentMethod,
-    cashbookEntryId: cashbookRef.id,
-    cashbookEntryNo: entryNo,
-    updatedAt: now,
-  });
+  batch.update(payableRef, payablePaidPatch as any);
   batch.set(
     apRef,
     {
@@ -507,7 +646,7 @@ export async function payRentalPayable(
       vendorBillId: payable.id,
       receiptNo: `${contract.contractNo}/${payable.periodMonth}`,
       grossPaymentAmount: payable.grossAmount,
-      baseBeforeVat: payable.grossAmount,
+      baseBeforeVat: baseRent,
       whtAmount: payable.withholdingTaxAmount,
       ratePercent: payable.withholdingTaxRatePercent,
       status: 'OUTSTANDING',
@@ -529,10 +668,10 @@ export async function payRentalPayable(
       plannedPaymentDate: payable.dueDate,
       status: 'PAID',
       billAmount: payable.grossAmount,
-      billVatTreatment: 'NONE',
+      billVatTreatment: vatRate > 0 ? 'VAT_7' : 'NONE',
       supplierWithholdingEnabledBill: true,
       supplierWithholdingRatePercentBill: payable.withholdingTaxRatePercent,
-      supplierWithholdingTaxBaseBill: payable.grossAmount,
+      supplierWithholdingTaxBaseBill: baseRent,
       vendorBillWhtPresetCategory: 'RENT',
       notes: payable.description,
       createdAt: payable.createdAt,
@@ -542,8 +681,8 @@ export async function payRentalPayable(
       id: contract.id,
       purchaseNo: contract.contractNo,
       totalAmount: payable.grossAmount,
-      amountBeforeTax: payable.grossAmount,
-      taxAmount: 0,
+      amountBeforeTax: baseRent,
+      taxAmount: vatAmount,
       purchaseLineMode: 'SERVICE',
       supplierWithholdingEnabled: true,
       supplierWithholdingRatePercent: payable.withholdingTaxRatePercent,
@@ -623,8 +762,305 @@ export async function payRentalPayable(
     sourcePath: `/accounting/rental-contracts/${contract.id}`,
     beforeSummary: 'PENDING',
     afterSummary: `PAID · ${entryNo} · สุทธิจ่าย ${amountFromBank.toFixed(2)} บาท`,
-    changedFields: ['status', 'cashbookEntryId', 'paidAt', 'whtCertificateDocumentId'],
+    changedFields: [
+      'status',
+      'cashbookEntryId',
+      'paidAt',
+      'paymentProofUrl',
+      'whtCertificateDocumentId',
+      'supportingMoneyReceipt',
+    ],
     linkedIds: [contract.id, payable.id, cashbookRef.id, ...(whtCertificateId ? [whtCertificateId] : [])],
   });
   return { cashbookEntryNo: entryNo, whtCertificateId };
+}
+
+/** อัปเดตเอกสารประกอบของรอบค่าเช่า (ใบส่งของ / ใบกำกับ / ใบเสร็จ) — ใช้ได้หลังจ่ายแล้ว */
+export async function updateRentalPayableSupportingDocuments(
+  db: Firestore,
+  user: User,
+  payable: RentalPayable,
+  docs: {
+    supportingDeliveryNote?: VendorBillSupportingDocumentLink;
+    supportingTaxInvoice?: VendorBillSupportingDocumentLink;
+    supportingMoneyReceipt?: VendorBillSupportingDocumentLink;
+  },
+): Promise<void> {
+  if (!isSystemAdmin(user) && !isAccountingManager(user) && !isAccountingOfficer(user)) {
+    throw new Error('บันทึกเอกสารประกอบได้เฉพาะแผนกบัญชีหรือ Admin');
+  }
+  if (payable.status === 'VOID') throw new Error('รายการถูกยกเลิกแล้ว');
+  const now = Date.now();
+  await updateDoc(doc(db, 'rental_payables', payable.id), {
+    ...(docs.supportingDeliveryNote !== undefined
+      ? { supportingDeliveryNote: docs.supportingDeliveryNote }
+      : {}),
+    ...(docs.supportingTaxInvoice !== undefined
+      ? { supportingTaxInvoice: docs.supportingTaxInvoice }
+      : {}),
+    ...(docs.supportingMoneyReceipt !== undefined
+      ? { supportingMoneyReceipt: docs.supportingMoneyReceipt }
+      : {}),
+    updatedAt: now,
+  });
+  await writeAuditLog(db, user, {
+    actionType: 'UPDATE',
+    entityType: 'RentalPayable',
+    entityId: payable.id,
+    entityLabel: `${payable.contractNo}/${payable.periodMonth}`,
+    sourceModule: 'accounting',
+    sourcePath: `/accounting/rental-contracts/${payable.contractId}`,
+    beforeSummary: JSON.stringify({
+      supportingDeliveryNote: payable.supportingDeliveryNote ?? null,
+      supportingTaxInvoice: payable.supportingTaxInvoice ?? null,
+      supportingMoneyReceipt: payable.supportingMoneyReceipt ?? null,
+    }),
+    afterSummary: JSON.stringify(docs),
+    changedFields: Object.keys(docs),
+    linkedIds: [payable.contractId, payable.id],
+  });
+}
+
+const RENTAL_EDITABLE_FIELDS = [
+  'monthlyRentAmount',
+  'vatRatePercent',
+  'vatSource',
+  'withholdingTaxRatePercent',
+  'paymentDayOfMonth',
+  'startDate',
+  'endDate',
+  'notes',
+  'madeAtLocation',
+  'contractDate',
+  'propertyAddress',
+  'propertyCategory',
+  'vehicleBrand',
+  'vehiclePlateNo',
+  'leaseDurationMonths',
+  'advanceRentMonths',
+  'securityDepositAmount',
+  'rentedItemDescription',
+] as const;
+
+export type RentalContractEditableField = (typeof RENTAL_EDITABLE_FIELDS)[number];
+
+export type RentalContractEditPatch = Partial<
+  Pick<RentalContract, RentalContractEditableField>
+>;
+
+function snapshotEditable(contract: RentalContract): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of RENTAL_EDITABLE_FIELDS) {
+    out[key] = (contract as unknown as Record<string, unknown>)[key] ?? null;
+  }
+  return out;
+}
+
+/** อัปเดตรอบ PENDING ให้ตรงจำนวนเงินใหม่หลังแก้สัญญา */
+export async function refreshPendingRentalPayablesAmounts(
+  db: Firestore,
+  contract: RentalContract,
+): Promise<number> {
+  const snap = await getDocs(
+    query(
+      collection(db, 'rental_payables'),
+      where('contractId', '==', contract.id),
+      where('status', '==', 'PENDING'),
+    ),
+  );
+  if (snap.empty) return 0;
+  const amounts = computeRentalMonthAmounts({
+    monthlyRentAmount: contract.monthlyRentAmount,
+    vatRatePercent: resolveContractVatRatePercent(contract),
+    withholdingTaxRatePercent: contract.withholdingTaxRatePercent,
+  });
+  const batch = writeBatch(db);
+  const now = Date.now();
+  let n = 0;
+  for (const d of snap.docs) {
+    const payable = d.data() as RentalPayable;
+    batch.update(d.ref, {
+      baseRentAmount: amounts.baseRentAmount,
+      vatRatePercent: amounts.vatRatePercent,
+      vatAmount: amounts.vatAmount,
+      grossAmount: amounts.grossAmount,
+      withholdingTaxRatePercent: amounts.withholdingTaxRatePercent,
+      withholdingTaxAmount: amounts.withholdingTaxAmount,
+      netPayableAmount: amounts.netPayableAmount,
+      description: `ค่าเช่า ${contract.rentedItemDescription} ประจำเดือน ${payable.periodMonth}`,
+      updatedAt: now,
+    });
+    const apId = payable.apEntryId || payable.id;
+    batch.set(
+      doc(db, 'accounts_payable', apId),
+      {
+        debitAmount: amounts.grossAmount,
+        outstandingAmount: amounts.grossAmount,
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+    n += 1;
+  }
+  await batch.commit();
+  return n;
+}
+
+/**
+ * แก้ไขหัวสัญญา + บันทึกประวัติ (change_logs + audit_logs)
+ * ถ้าแก้จำนวนเงิน/VAT/หัก ณ ที่จ่าย จะอัปเดตรอบ PENDING ให้ตรง (ไม่แตะรอบที่จ่ายแล้ว)
+ */
+export async function updateRentalContract(
+  db: Firestore,
+  user: User,
+  contract: RentalContract,
+  patch: RentalContractEditPatch,
+): Promise<{ changedFields: string[]; pendingPayablesUpdated: number }> {
+  assertCanEditRentalContract(user, contract);
+  if (
+    contract.status === 'CANCELLED' ||
+    contract.status === 'EXPIRED' ||
+    contract.status === 'PENDING_APPROVAL'
+  ) {
+    throw new Error('ไม่สามารถแก้ไขสัญญาในสถานะนี้ได้ — รออนุมัติหรือสัญญาที่ปิดแล้วแก้ไม่ได้');
+  }
+
+  const before = snapshotEditable(contract);
+  const next: RentalContract = { ...contract };
+
+  if (patch.monthlyRentAmount != null) {
+    const v = roundMoney2(patch.monthlyRentAmount);
+    if (v <= 0) throw new Error('ค่าเช่าต่อเดือนต้องมากกว่า 0');
+    next.monthlyRentAmount = v;
+  }
+  if (patch.withholdingTaxRatePercent != null) {
+    const v = roundMoney2(patch.withholdingTaxRatePercent);
+    if (v < 0 || v > 100) throw new Error('อัตราหัก ณ ที่จ่ายไม่ถูกต้อง');
+    next.withholdingTaxRatePercent = v;
+  }
+  if (patch.vatRatePercent != null) {
+    const v = roundMoney2(patch.vatRatePercent);
+    if (v < 0 || v > 100) throw new Error('อัตรา VAT ไม่ถูกต้อง');
+    next.vatRatePercent = v;
+  }
+  if (patch.vatSource === 'AUTO_BY_LESSOR' || patch.vatSource === 'MANUAL') {
+    next.vatSource = patch.vatSource;
+  }
+  if (patch.paymentDayOfMonth != null) {
+    const d = Math.trunc(patch.paymentDayOfMonth);
+    if (d < 1 || d > 31) throw new Error('วันที่จ่ายต้องอยู่ระหว่าง 1–31');
+    next.paymentDayOfMonth = d;
+  }
+  if (patch.startDate != null) next.startDate = patch.startDate;
+  if (patch.endDate != null) next.endDate = patch.endDate;
+  if (next.endDate < next.startDate) throw new Error('ช่วงวันที่สัญญาไม่ถูกต้อง');
+
+  const stringFields = [
+    'notes',
+    'madeAtLocation',
+    'contractDate',
+    'propertyAddress',
+    'vehicleBrand',
+    'vehiclePlateNo',
+    'rentedItemDescription',
+  ] as const;
+  for (const key of stringFields) {
+    if (patch[key] !== undefined) {
+      const raw = String(patch[key] ?? '').trim();
+      (next as unknown as Record<string, unknown>)[key] = raw || undefined;
+    }
+  }
+  if (patch.propertyCategory !== undefined) next.propertyCategory = patch.propertyCategory;
+  if (patch.leaseDurationMonths !== undefined) {
+    next.leaseDurationMonths = Math.max(0, Math.trunc(Number(patch.leaseDurationMonths) || 0));
+  }
+  if (patch.advanceRentMonths !== undefined) {
+    next.advanceRentMonths = Math.max(0, Math.trunc(Number(patch.advanceRentMonths) || 0));
+  }
+  if (patch.securityDepositAmount !== undefined) {
+    next.securityDepositAmount = roundMoney2(Math.max(0, Number(patch.securityDepositAmount) || 0));
+  }
+
+  if (next.leaseKind === 'VEHICLE' || contract.leaseKind === 'VEHICLE') {
+    const brand = (next.vehicleBrand || '').trim();
+    const plate = (next.vehiclePlateNo || '').trim();
+    if (brand && plate) {
+      next.rentedItemDescription = `รถยนต์ ${brand} ทะเบียน ${plate}`;
+    }
+  }
+
+  const after = snapshotEditable(next);
+  const changedFields = RENTAL_EDITABLE_FIELDS.filter(
+    (k) => JSON.stringify(before[k] ?? null) !== JSON.stringify(after[k] ?? null),
+  ) as string[];
+  if (changedFields.length === 0) {
+    throw new Error('ไม่มีการเปลี่ยนแปลงข้อมูล');
+  }
+
+  const moneyChanged = changedFields.some((f) =>
+    ['monthlyRentAmount', 'vatRatePercent', 'withholdingTaxRatePercent'].includes(f),
+  );
+
+  const now = Date.now();
+  const actor = actorName(user);
+  const revision = Math.max(0, Number(contract.revision) || 0) + 1;
+
+  const updatePayload: Record<string, unknown> = {
+    updatedAt: now,
+    revision,
+    lastEditedAt: now,
+    lastEditedByUid: user.id,
+    lastEditedByName: actor,
+  };
+  for (const key of changedFields) {
+    const val = after[key];
+    updatePayload[key] = val === undefined ? null : val;
+  }
+
+  await updateDoc(doc(db, 'rental_contracts', contract.id), updatePayload as any);
+
+  const beforeSubset: Record<string, unknown> = {};
+  const afterSubset: Record<string, unknown> = {};
+  for (const k of changedFields) {
+    beforeSubset[k] = before[k];
+    afterSubset[k] = after[k];
+  }
+
+  await addDoc(collection(db, 'rental_contracts', contract.id, 'change_logs'), {
+    actionType: 'UPDATE_CONTRACT_HEADER',
+    changedFields,
+    beforeSummary: JSON.stringify(beforeSubset),
+    afterSummary: JSON.stringify(afterSubset),
+    actorUserId: user.id,
+    actorName: actor,
+    actorRoleKey: user.role || user.accessGroup || '',
+    eventAt: now,
+  });
+
+  await writeAuditLog(db, user, {
+    actionType: 'UPDATE',
+    entityType: 'RentalContract',
+    entityId: contract.id,
+    entityLabel: contract.contractNo,
+    sourceModule: 'accounting',
+    sourcePath: `/accounting/rental-contracts/${contract.id}`,
+    beforeSummary: JSON.stringify(beforeSubset),
+    afterSummary: JSON.stringify(afterSubset),
+    changedFields,
+    linkedIds: [contract.id],
+  });
+
+  let pendingPayablesUpdated = 0;
+  if (moneyChanged) {
+    pendingPayablesUpdated = await refreshPendingRentalPayablesAmounts(db, {
+      ...next,
+      revision,
+      lastEditedAt: now,
+      lastEditedByUid: user.id,
+      lastEditedByName: actor,
+      updatedAt: now,
+    });
+  }
+
+  return { changedFields, pendingPayablesUpdated };
 }

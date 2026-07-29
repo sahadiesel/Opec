@@ -45,8 +45,12 @@ function buildPropertyPrintHtml(contract: RentalContract, vendor: Vendor): strin
   const terms = [
     `ผู้ให้เช่าตกลงให้เช่าและผู้เช่าตกลงเช่า “${item}”`,
     `กำหนดระยะเวลาเช่าตั้งแต่วันที่ ${contract.startDate} ถึงวันที่ ${contract.endDate}`,
-    `ค่าเช่าเดือนละ ${money(contract.monthlyRentAmount)} บาท (${amountToThaiBahtText(contract.monthlyRentAmount)}) โดยครบกำหนดชำระวันที่ ${contract.paymentDayOfMonth} ของทุกเดือน`,
-    `ผู้เช่าจะหักภาษี ณ ที่จ่ายในอัตรา ${money(contract.withholdingTaxRatePercent)}% ตามกฎหมาย และออกหนังสือรับรองให้ผู้ให้เช่า`,
+    `ค่าเช่าเดือนละ ${money(contract.monthlyRentAmount)} บาท (${amountToThaiBahtText(contract.monthlyRentAmount)}) โดยครบกำหนดชำระวันที่ ${contract.paymentDayOfMonth} ของทุกเดือน${
+      Number(contract.vatRatePercent) > 0
+        ? ` พร้อมภาษีมูลค่าเพิ่มในอัตรา ${money(Number(contract.vatRatePercent))}% ของค่าเช่า`
+        : ''
+    }`,
+    `ผู้เช่าจะหักภาษี ณ ที่จ่ายในอัตรา ${money(contract.withholdingTaxRatePercent)}% ของค่าเช่าก่อนภาษีมูลค่าเพิ่ม ตามกฎหมาย และออกหนังสือรับรองให้ผู้ให้เช่า`,
     'ผู้ให้เช่ารับรองว่าทรัพย์สินที่ให้เช่าอยู่ในสภาพพร้อมใช้งาน และมีสิทธิให้เช่าโดยชอบด้วยกฎหมาย',
     'ผู้เช่าจะใช้ทรัพย์สินตามวัตถุประสงค์ ดูแลรักษาตามสมควร และไม่ดัดแปลงโดยไม่ได้รับความยินยอมเป็นหนังสือ',
     'ค่าใช้จ่ายในการซ่อมแซมจากการใช้งานตามปกติเป็นหน้าที่ของผู้ให้เช่า ส่วนความเสียหายจากความผิดของผู้เช่าเป็นหน้าที่ของผู้เช่า',
@@ -124,13 +128,18 @@ function buildVehiclePrintHtml(contract: RentalContract, vendor: Vendor): string
         นับตั้งแต่วันที่ ${esc(contract.startDate)} ถึงวันที่ ${esc(contract.endDate)}</p>
       <p class="term"><strong>ข้อ 2.</strong> ผู้เช่าตกลงชำระค่าเช่าให้แก่ผู้ให้เช่าในอัตราเดือนละ
         ${esc(money(contract.monthlyRentAmount))} บาท (${esc(rentWords)})
+        ${
+          Number(contract.vatRatePercent) > 0
+            ? ` พร้อมภาษีมูลค่าเพิ่มในอัตรา ${esc(money(Number(contract.vatRatePercent)))}% ของค่าเช่า`
+            : ''
+        }
         โดยชำระค่าเช่าล่วงหน้า ${esc(advance)} เดือน ในวันที่ทำสัญญานี้ และชำระค่าเช่ารายเดือนถัดไปภายในวันที่
         ${esc(contract.paymentDayOfMonth)} ของทุกเดือน พร้อมวางเงินประกันการเช่าจำนวน
         ${esc(money(deposit))} บาท (${esc(depositWords)})
         ซึ่งผู้ให้เช่าจะคืนให้เมื่อสิ้นสุดสัญญาและไม่มีค่าเสียหายค้างชำระ
         ${
           contract.withholdingTaxRatePercent > 0
-            ? ` ผู้เช่าจะหักภาษี ณ ที่จ่ายในอัตรา ${esc(money(contract.withholdingTaxRatePercent))}% ตามกฎหมาย`
+            ? ` ผู้เช่าจะหักภาษี ณ ที่จ่ายในอัตรา ${esc(money(contract.withholdingTaxRatePercent))}% ของค่าเช่าก่อนภาษีมูลค่าเพิ่ม ตามกฎหมาย`
             : ''
         }</p>
       <p class="term"><strong>ข้อ 3.</strong> การชำระค่าเช่าตามสัญญานี้ ให้ชำระ ณ ภูมิลำเนาของผู้ให้เช่า หรือตามที่ผู้ให้เช่ากำหนด</p>

@@ -11,6 +11,8 @@ type RentalContractRow = {
   endDate: string;
   paymentDayOfMonth: number;
   withholdingTaxRatePercent: number;
+  /** ไม่ระบุ = 0 (สัญญาเก่า) */
+  vatRatePercent?: number;
   status: string;
 };
 
@@ -102,8 +104,11 @@ export async function runRentalContractDailyJob(db: Firestore): Promise<{
               const existing = await tx.get(payableRef);
               if (existing.exists) return false;
               const now = Date.now();
-              const gross = round2(contract.monthlyRentAmount);
-              const wht = round2((gross * contract.withholdingTaxRatePercent) / 100);
+              const base = round2(contract.monthlyRentAmount);
+              const vatRate = round2(Math.max(0, Number(contract.vatRatePercent) || 0));
+              const vatAmount = round2((base * vatRate) / 100);
+              const gross = round2(base + vatAmount);
+              const wht = round2((base * contract.withholdingTaxRatePercent) / 100);
               tx.set(payableRef, {
                 id,
                 contractId: contract.id,
@@ -113,6 +118,9 @@ export async function runRentalContractDailyJob(db: Firestore): Promise<{
                 periodMonth: month,
                 dueDate: due,
                 description: `ค่าเช่า ${contract.rentedItemDescription} ประจำเดือน ${month}`,
+                baseRentAmount: base,
+                vatRatePercent: vatRate,
+                vatAmount,
                 grossAmount: gross,
                 withholdingTaxRatePercent: contract.withholdingTaxRatePercent,
                 withholdingTaxAmount: wht,

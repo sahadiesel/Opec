@@ -204,8 +204,10 @@ export function RentalPayablesPayoutSection({ enabled }: { enabled: boolean }) {
                     <TableHead className="pl-6">เอกสาร</TableHead>
                     <TableHead>สัญญา / งวด</TableHead>
                     <TableHead>ผู้ให้เช่า</TableHead>
-                    <TableHead className="text-right">ยอด (ก่อนหัก)</TableHead>
-                    <TableHead className="text-right">สุทธิจ่าย</TableHead>
+                    <TableHead className="text-right">ก่อนภาษี</TableHead>
+                    <TableHead className="text-right">VAT</TableHead>
+                    <TableHead className="text-right">รวมในใบ</TableHead>
+                    <TableHead className="text-right">สุทธิโอน</TableHead>
                     <TableHead>วันครบกำหนด</TableHead>
                     <TableHead>สถานะ</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
@@ -228,6 +230,17 @@ export function RentalPayablesPayoutSection({ enabled }: { enabled: boolean }) {
                           </div>
                         </TableCell>
                         <TableCell>{p.vendorName || '—'}</TableCell>
+                        <TableCell className="text-right font-mono text-sm">
+                          ฿{(
+                            Number(p.baseRentAmount) ||
+                            Math.max(0, (Number(p.grossAmount) || 0) - (Number(p.vatAmount) || 0))
+                          ).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-sm">
+                          ฿{(Number(p.vatAmount) || 0).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                          })}
+                        </TableCell>
                         <TableCell className="text-right font-mono text-sm">
                           ฿{(Number(p.grossAmount) || 0).toLocaleString(undefined, {
                             minimumFractionDigits: 2,
@@ -254,7 +267,7 @@ export function RentalPayablesPayoutSection({ enabled }: { enabled: boolean }) {
                   })}
                   {filtered.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
+                      <TableCell colSpan={10} className="text-center py-12 text-muted-foreground">
                         ไม่มีรอบค่าเช่ารอจ่ายใน{' '}
                         {describeYearMonthScopeFilter(yearFilterCe, monthScope)}
                         {(pendingPayables?.length ?? 0) > 0
@@ -268,7 +281,7 @@ export function RentalPayablesPayoutSection({ enabled }: { enabled: boolean }) {
               {filtered.length > 0 ? (
                 <div className="border-t px-6 py-3 bg-muted/25 text-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                   <span className="text-muted-foreground">
-                    ยอดก่อนหักรวม ({filtered.length} รายการ) ·{' '}
+                    รวมในใบ (ก่อนหัก ณ ที่จ่าย) {filtered.length} รายการ ·{' '}
                     {describeYearMonthScopeFilter(yearFilterCe, monthScope)}
                   </span>
                   <span className="font-mono font-bold tabular-nums">

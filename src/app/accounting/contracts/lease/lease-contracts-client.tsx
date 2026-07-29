@@ -29,7 +29,12 @@ import { useCollection, useFirestore, useMemoFirebase } from '@/firebase';
 import { canView } from '@/lib/permissions';
 import { isAccountingManager, isAccountingOfficer, isSystemAdmin } from '@/lib/permission-core';
 import type { LeaseContractKind, RentalContract, RentalContractStatus, User, Vendor } from '@/lib/types';
-import { createRentalContract } from '@/lib/services/rental-contract-service';
+import {
+  computeRentalMonthAmounts,
+  createRentalContract,
+  defaultVatRateForLessor,
+} from '@/lib/services/rental-contract-service';
+import { useEffect } from 'react';
 
 function statusBadge(status: RentalContractStatus) {
   const label: Record<RentalContractStatus, string> = {
@@ -108,7 +113,29 @@ export function LeaseContractsClient({ leaseKind }: { leaseKind: LeaseContractKi
   const [endDate, setEndDate] = useState('');
   const [paymentDay, setPaymentDay] = useState('1');
   const [whtRate, setWhtRate] = useState('5');
+  const [vatRate, setVatRate] = useState('0');
+  const [vatManual, setVatManual] = useState(false);
   const [notes, setNotes] = useState('');
+
+  const selectedLessor = useMemo(
+    () => (vendors ?? []).find((v) => v.id === vendorId) ?? null,
+    [vendors, vendorId],
+  );
+
+  useEffect(() => {
+    if (!vendorId || vatManual) return;
+    setVatRate(String(defaultVatRateForLessor(selectedLessor)));
+  }, [vendorId, selectedLessor, vatManual]);
+
+  const createPreview = useMemo(() => {
+    const base = Number(monthlyRent) || 0;
+    if (base <= 0) return null;
+    return computeRentalMonthAmounts({
+      monthlyRentAmount: base,
+      vatRatePercent: Number(vatRate) || 0,
+      withholdingTaxRatePercent: Number(whtRate) || 0,
+    });
+  }, [monthlyRent, vatRate, whtRate]);
 
   const visible = useMemo(() => {
     const scoped = (contracts ?? []).filter((row) => matchesLeaseKind(row, leaseKind));
@@ -148,6 +175,8 @@ export function LeaseContractsClient({ leaseKind }: { leaseKind: LeaseContractKi
     setEndDate('');
     setPaymentDay('1');
     setWhtRate('5');
+    setVatRate('0');
+    setVatManual(false);
     setNotes('');
   };
 
@@ -178,6 +207,8 @@ export function LeaseContractsClient({ leaseKind }: { leaseKind: LeaseContractKi
         endDate,
         paymentDayOfMonth: Number(paymentDay),
         withholdingTaxRatePercent: Number(whtRate),
+        vatRatePercent: Number(vatRate) || 0,
+        vatSource: vatManual ? 'MANUAL' : 'AUTO_BY_LESSOR',
         notes,
       });
       setOpen(false);
@@ -331,7 +362,13 @@ export function LeaseContractsClient({ leaseKind }: { leaseKind: LeaseContractKi
             </div>
             <div className="space-y-2 sm:col-span-2">
               <Label>ผู้ให้เช่า (เลือกจากคู่ค้า)</Label>
-              <Select value={vendorId} onValueChange={setVendorId}>
+              <Select
+                value={vendorId}
+                onValueChange={(v) => {
+                  setVendorId(v);
+                  setVatManual(false);
+                }}
+              >
                 <SelectTrigger><SelectValue placeholder="เลือกคู่ค้า ACTIVE" /></SelectTrigger>
                 <SelectContent>
                   {(vendors ?? []).filter((v) => v.status === 'ACTIVE').map((v) => (
@@ -390,13 +427,58 @@ export function LeaseContractsClient({ leaseKind }: { leaseKind: LeaseContractKi
             )}
 
             <div className="space-y-2">
-              <Label>ราคาเช่าต่อเดือน</Label>
+              <Label>ราคาเช่าต่อเดือน (ก่อน VAT)</Label>
               <Input type="number" min="0" step="0.01" value={monthlyRent} onChange={(e) => setMonthlyRent(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>ภาษีมูลค่าเพิ่ม (%)</Label>
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={vatRate}
+                onChange={(e) => {
+                  setVatManual(true);
+                  setVatRate(e.target.value);
+                }}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                นิติบุคคลแนะนำ 7% · บุคคลธรรมดา 0%
+                {selectedLessor
+                  ? ` · ผู้ให้เช่านี้เป็น${selectedLessor.vendorLegalForm === 'NATURAL' ? 'บุคคลธรรมดา' : 'นิติบุคคล'}`
+                  : ''}
+                {vatManual ? ' · แก้ด้วยมือแล้ว' : ''}
+              </p>
             </div>
             <div className="space-y-2">
               <Label>หัก ณ ที่จ่าย (%)</Label>
               <Input type="number" min="0" max="100" step="0.01" value={whtRate} onChange={(e) => setWhtRate(e.target.value)} />
+              <p className="text-[11px] text-muted-foreground">คิดบนฐานค่าเช่าก่อน VAT</p>
             </div>
+            {createPreview ? (
+              <div className="sm:col-span-2 rounded-md border bg-muted/30 px-3 py-2 text-xs space-y-0.5">
+                <p>
+                  VAT {createPreview.vatRatePercent}% = ฿
+                  {createPreview.vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {' · '}รวมก่อนหัก = ฿
+                  {createPreview.grossAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </p>
+                <p>
+                  หัก ณ ที่จ่าย = ฿
+                  {createPreview.withholdingTaxAmount.toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                  })}
+                  {' · '}
+                  <strong>
+                    สุทธิโอน ฿
+                    {createPreview.netPayableAmount.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                    })}
+                  </strong>
+                </p>
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label>เริ่มเช่า</Label>
               <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />

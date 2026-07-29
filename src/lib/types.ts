@@ -1918,6 +1918,13 @@ export interface RentalContract {
   /** วันที่ครบกำหนดของแต่ละเดือน (1–31; เกินวันสุดท้ายจะใช้วันสุดท้ายของเดือน) */
   paymentDayOfMonth: number;
   withholdingTaxRatePercent: number;
+  /**
+   * VAT % บนฐานค่าเช่า — นิติบุคคลมัก 7 · บุคคลธรรมดา 0
+   * ไม่ระบุ = 0 (สัญญาเก่าก่อนรองรับ VAT)
+   */
+  vatRatePercent?: number;
+  /** ที่มาของ VAT — AUTO ตามประเภทผู้ให้เช่า หรือ MANUAL */
+  vatSource?: 'AUTO_BY_LESSOR' | 'MANUAL';
   status: RentalContractStatus;
   /** ทำสัญญาที่ */
   madeAtLocation?: string;
@@ -1955,6 +1962,11 @@ export interface RentalContract {
   cancelledByUid?: string;
   cancelledByName?: string;
   cancellationReason?: string;
+  /** นับรอบการแก้ไขหัวสัญญา */
+  revision?: number;
+  lastEditedAt?: number;
+  lastEditedByUid?: string;
+  lastEditedByName?: string;
 }
 
 /** ค่าเช่ารายเดือนที่รอฝ่ายบัญชีทำจ่าย — collection `rental_payables` */
@@ -1967,9 +1979,18 @@ export interface RentalPayable {
   periodMonth: string;
   dueDate: string;
   description: string;
+  /** ฐานค่าเช่าก่อน VAT (snapshot จากสัญญา) */
+  baseRentAmount?: number;
+  /** VAT % ที่ใช้ตอนสร้างรอบ */
+  vatRatePercent?: number;
+  /** จำนวน VAT */
+  vatAmount?: number;
+  /** ยอดรวม VAT (ก่อนหัก ณ ที่จ่าย) — ใช้เป็น debit AP / gross ใน cashbook */
   grossAmount: number;
   withholdingTaxRatePercent: number;
+  /** หัก ณ ที่จ่าย — คิดบนฐานก่อน VAT */
   withholdingTaxAmount: number;
+  /** สุทธิโอน = grossAmount − withholdingTaxAmount */
   netPayableAmount: number;
   status: RentalPayableStatus;
   apEntryId: string;
@@ -1983,6 +2004,24 @@ export interface RentalPayable {
   cashbookEntryId?: string;
   cashbookEntryNo?: string;
   whtCertificateDocumentId?: string;
+  /** หลักฐานโอนเงิน (รูปแบบเดียวกับใบวางบิล) */
+  paymentProofUrl?: string;
+  paymentProofFileName?: string;
+  /** หลักฐานหัก ณ ที่จ่าย (ถ้าแนบแยก) */
+  whtPaymentProofUrl?: string;
+  whtPaymentProofFileName?: string;
+  /** บัญชีรับเงินของผู้ให้เช่าตอนจ่าย */
+  vendorPayeeBankAccountId?: string;
+  vendorPayeeBankName?: string;
+  vendorPayeeBankAccountName?: string;
+  vendorPayeeBankAccountNumber?: string;
+  /**
+   * เอกสารประกอบ — รูปแบบเดียวกับใบวางบิล
+   * (ใบส่งของ / ใบกำกับภาษี / ใบเสร็จรับเงิน)
+   */
+  supportingDeliveryNote?: VendorBillSupportingDocumentLink;
+  supportingTaxInvoice?: VendorBillSupportingDocumentLink;
+  supportingMoneyReceipt?: VendorBillSupportingDocumentLink;
   voidedAt?: number;
   voidReason?: string;
 }
