@@ -1,7 +1,19 @@
 import {
   DEFAULT_MONTHLY_WORK_NORM,
+  absenceLatePayrollRates,
+  evaluateOfficeScanInForPayrollHalf,
+  officeShiftMinuteBounds,
   type MonthlyWorkNormPolicyConfig,
 } from '@/lib/hr/monthly-work-norm-policy';
+import {
+  isBangkokWeeklyRestDayYmd,
+  type WeeklyRestPatternForCalendar,
+} from '@/lib/attendance/bangkok-calendar';
+import { isHrSettingsCalendarHolidayYmd } from '@/lib/payroll/worker-global-labor-policy';
+import type { CalendarHolidayEntry } from '@/lib/contract-position-rate-extras';
+import type { AttendanceDayEffectiveRow } from '@/lib/attendance/correction-merge';
+import type { OfficeStaff } from '@/lib/types';
+import { normalizeStaffDateYmd } from '@/lib/payroll/office-staff-date-ymd';
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -38,13 +50,91 @@ function resolveMonthlyWorkNormHoursPerDay(norm: MonthlyWorkNormPolicyConfig): n
   return DEFAULT_MONTHLY_WORK_NORM.normalWorkingHoursPerDay;
 }
 
-function resolveOfficeOvertimeMultiplier(norm: MonthlyWorkNormPolicyConfig): number {
+/** ตัวคูณ OT ชั่วโมงที่อนุมัติ — ใช้ช่อง OT เสมอ (รวม OT ในวันอาทิตย์/วันหยุด) */
+export function resolveOfficeOvertimeHourMultiplier(norm: MonthlyWorkNormPolicyConfig): number {
   const multiplier = Number(norm.officeOvertimeHourMultiplier);
   if (Number.isFinite(multiplier) && multiplier > 0) return Math.min(10, multiplier);
   return DEFAULT_MONTHLY_WORK_NORM.officeOvertimeHourMultiplier ?? 1.5;
 }
 
-/** ค่า OT พนักงานออฟฟิศ = (เงินเดือน ÷ วันทำงาน/เดือน ÷ ชม./วัน) × ตัวคูณ × ชม.ที่อนุมัติ — ตาม HR Settings */
+/** ตัวคูณค่าลงเวลาวันหยุด — ค่าเริ่มต้น 1.0 */
+export function resolveOfficeHolidayWorkMultiplier(norm: MonthlyWorkNormPolicyConfig): number {
+  const multiplier = Number(norm.officeHolidayHourMultiplier);
+  if (Number.isFinite(multiplier) && multiplier > 0) return Math.min(10, multiplier);
+  return DEFAULT_MONTHLY_WORK_NORM.officeHolidayHourMultiplier ?? 1;
+}
+
+/** วันหยุดประจำสัปดาห์หรือวันหยุดในปฏิทิน HR */
+export function isOfficeRestOrHolidayDay(
+  ymd: string,
+  weeklyRestPattern: WeeklyRestPatternForCalendar,
+  calendarHolidays: CalendarHolidayEntry[] | null | undefined,
+): boolean {
+  const d = ymd.slice(0, 10);
+  if (isBangkokWeeklyRestDayYmd(d, weeklyRestPattern)) return true;
+  if (isHrSettingsCalendarHolidayYmd(d, calendarHolidays)) return true;
+  return false;
+}
+
+function bangkokMinutesFromMidnight(ms: number): number {
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Bangkok',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(new Date(ms));
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
+  return h * 60 + m;
+}
+
+/**
+ * สัดส่วนวันทำงานจากสแกนเข้า–ออกบนวันหยุด
+ * - เช้าอย่างเดียว (เข้า–ออกก่อนจบช่วงเช้า) = 0.5
+ * - บ่ายอย่างเดียว (เข้าหลังจบช่วงเช้า) = 0.5
+ * - ทั้งวัน (เข้าช่วงเช้า) = 1
+ * - เข้าหลังเลิกงาน = 0
+ */
+export function officeRestDayWorkedFractionFromScan(
+  effectiveInMs: number | null | undefined,
+  effectiveOutMs: number | null | undefined,
+  norm: MonthlyWorkNormPolicyConfig,
+): number {
+  if (effectiveInMs == null || !Number.isFinite(effectiveInMs)) return 0;
+  const inMin = bangkokMinutesFromMidnight(effectiveInMs);
+  const bounds = officeShiftMinuteBounds(norm);
+  if (!bounds) {
+    const ev = evaluateOfficeScanInForPayrollHalf(inMin, norm, 'FULL');
+    return Math.max(0, Math.min(1, 1 - ev.absenceDayFraction));
+  }
+
+  if (inMin > bounds.afternoonEndMin) return 0;
+
+  const outMin =
+    effectiveOutMs != null && Number.isFinite(effectiveOutMs)
+      ? bangkokMinutesFromMidnight(effectiveOutMs)
+      : null;
+
+  // เช้าอย่างเดียว: เข้าเช้าและออกไม่เกินจบช่วงเช้า
+  if (
+    inMin <= bounds.morningEndMin &&
+    outMin != null &&
+    outMin <= bounds.morningEndMin
+  ) {
+    return 0.5;
+  }
+
+  // บ่ายอย่างเดียว: เข้าหลังจบช่วงเช้า
+  if (inMin > bounds.morningEndMin) {
+    return 0.5;
+  }
+
+  // เข้าช่วงเช้า (มีหรือไม่มีออกหลังบ่าย) = ทั้งวัน
+  return 1;
+}
+
+/** ค่า OT พนักงานออฟฟิศ = (เงินเดือน ÷ วันทำงาน/เดือน ÷ ชม./วัน) × ตัวคูณ OT × ชม.ที่อนุมัติ */
 export function computeOfficeOvertimePayAmount(
   monthlySalary: number,
   norm: MonthlyWorkNormPolicyConfig,
@@ -54,14 +144,21 @@ export function computeOfficeOvertimePayAmount(
   const hours = Math.max(0, Number(approvedHours) || 0);
   const days = resolveMonthlyWorkNormDays(norm);
   const hoursPerDay = resolveMonthlyWorkNormHoursPerDay(norm);
-  const multiplier = resolveOfficeOvertimeMultiplier(norm);
+  const multiplier = resolveOfficeOvertimeHourMultiplier(norm);
   const dailyRate = round2(salary / days);
   const hourlyRate = round2(dailyRate / hoursPerDay);
   const amount = round2(hourlyRate * multiplier * hours);
-  return { monthlySalary: salary, dailyRate, hourlyRate, multiplier, approvedHours: hours, amount };
+  return {
+    monthlySalary: salary,
+    dailyRate,
+    hourlyRate,
+    multiplier,
+    approvedHours: hours,
+    amount,
+  };
 }
 
-/** รวมยอด OT ที่อนุมัติแล้วในช่วงงวดจ่าย — คำนวณใหม่จากชม.ที่อนุมัติ + นโยบาย HR ปัจจุบัน (ไม่ใช้ snapshot เก่า) */
+/** รวมยอด OT ที่อนุมัติแล้วในช่วงงวดจ่าย — ใช้ตัวคูณ OT เสมอ (รวมวันอาทิตย์) */
 export function sumApprovedOfficeOvertimePayInPeriod(
   staffId: string,
   periodStart: string,
@@ -100,4 +197,63 @@ export function sumApprovedOfficeOvertimePayInPeriod(
     total += breakdown.amount;
   }
   return round2(total);
+}
+
+export type OfficeRestDayWorkedPayResult = {
+  days: number;
+  amount: number;
+};
+
+/**
+ * ค่าทำงานวันหยุดจากสแกน (วันอาทิตย์/วันหยุดปฏิทิน)
+ * = (เงินเดือน ÷ วันมาตรฐาน/เดือน) × ตัวคูณวันหยุด × สัดส่วนวันจากสแกน
+ */
+export function sumOfficeRestDayWorkedPayInPeriod(
+  staff: Pick<OfficeStaff, 'id' | 'startDate' | 'employmentEndDate' | 'excludeFromPayrollRuns' | 'salaryType'>,
+  periodStart: string,
+  periodEnd: string,
+  attendanceDayRows: AttendanceDayEffectiveRow[],
+  computeOpts: {
+    monthlySalary: number;
+    monthlyWorkNorm: MonthlyWorkNormPolicyConfig;
+    weeklyRestPattern: WeeklyRestPatternForCalendar;
+    calendarHolidays: CalendarHolidayEntry[];
+  },
+): OfficeRestDayWorkedPayResult {
+  if (staff.excludeFromPayrollRuns) return { days: 0, amount: 0 };
+  if (staff.salaryType && staff.salaryType !== 'MONTHLY') return { days: 0, amount: 0 };
+
+  const ps = periodStart.slice(0, 10);
+  const pe = periodEnd.slice(0, 10);
+  const staffStart = normalizeStaffDateYmd(staff.startDate);
+  const staffEnd = normalizeStaffDateYmd(staff.employmentEndDate);
+  const rates = absenceLatePayrollRates(computeOpts.monthlySalary, computeOpts.monthlyWorkNorm);
+  const mult = resolveOfficeHolidayWorkMultiplier(computeOpts.monthlyWorkNorm);
+
+  let days = 0;
+  let amount = 0;
+  for (const row of attendanceDayRows) {
+    const ymd = row.ymd.slice(0, 10);
+    if (ymd < ps || ymd > pe) continue;
+    if (staffStart && ymd < staffStart) continue;
+    if (staffEnd && ymd > staffEnd) continue;
+    if (
+      !isOfficeRestOrHolidayDay(
+        ymd,
+        computeOpts.weeklyRestPattern,
+        computeOpts.calendarHolidays,
+      )
+    ) {
+      continue;
+    }
+    const fraction = officeRestDayWorkedFractionFromScan(
+      row.effectiveInMs,
+      row.effectiveOutMs,
+      computeOpts.monthlyWorkNorm,
+    );
+    if (fraction <= 0) continue;
+    days += fraction;
+    amount += rates.perDay * mult * fraction;
+  }
+  return { days: round2(days), amount: round2(amount) };
 }

@@ -2457,6 +2457,8 @@ export interface OfficePayrollLine {
   /** OT / income อื่น (ถ้ามี) — รวมใน gross ตอน D8 */
   overtimeAmount?: number;
   otherIncome?: number;
+  /** ค่าทำงานวันหยุดจากสแกน (อาทิตย์/ปฏิทิน) — รวมใน otherIncome ตอน D8 */
+  restDayWorkedAmount?: number;
   deductions: number;
   tax: number;
   socialSecurity: number;
@@ -2530,6 +2532,10 @@ export interface OfficePayrollLineAttendanceSummary {
   postEmploymentDays?: number;
   preEmploymentDeductionAmount?: number;
   postEmploymentDeductionAmount?: number;
+  /** วันทำงานบนวันหยุด (จากสแกน) — สัดส่วนวัน เช่น 0.5 / 1 */
+  restDayWorkedDays?: number;
+  /** ยอดค่าทำงานวันหยุด */
+  restDayWorkedPayAmount?: number;
 }
 
 /** งวดเงินเดือนผู้บริหาร — โครงเดียวกับ office แต่คนละคอลเลกชันและสิทธิ์เฉพาะบัญชี */

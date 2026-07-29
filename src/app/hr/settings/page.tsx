@@ -12,7 +12,6 @@ import { Input } from '@/components/ui/input';
 import {
   ArrowLeft,
   CalendarDays,
-  Clock,
   Info,
   Landmark,
   Percent,
@@ -60,11 +59,15 @@ import { CalendarHolidayEditor } from '@/app/main-contracts/[id]/_components/cal
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   DEFAULT_MONTHLY_WORK_NORM,
+  absenceLatePayrollRates,
   monthlyWorkNormFromUnknownConfig,
   validateMonthlyWorkNormForSave,
   type MonthlyWorkNormPolicyConfig,
 } from '@/lib/hr/monthly-work-norm-policy';
-import { MonthlyWorkNormPolicyFields } from '@/components/hr/monthly-work-norm-policy-fields';
+import {
+  MonthlyWorkNormAbsenceDemo,
+  MonthlyWorkNormPolicyFields,
+} from '@/components/hr/monthly-work-norm-policy-fields';
 import type { PayrollPolicyRecord } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -216,6 +219,9 @@ export default function HrSettingsPage() {
   const [officeOvertimeHourMultiplier, setOfficeOvertimeHourMultiplier] = useState(
     DEFAULT_MONTHLY_WORK_NORM.officeOvertimeHourMultiplier ?? 1.5,
   );
+  const [officeHolidayHourMultiplier, setOfficeHolidayHourMultiplier] = useState(
+    DEFAULT_MONTHLY_WORK_NORM.officeHolidayHourMultiplier ?? 1.0,
+  );
   /** เงินเดือนสมมุติเพื่อแสดงตัวอย่างหักรายวัน/รายนาที (ไม่บันทึก) */
   const [absenceDemoSalary, setAbsenceDemoSalary] = useState(26000);
 
@@ -268,6 +274,9 @@ export default function HrSettingsPage() {
         setBreakStartTime(cfg.breakStartTime ?? '12:00');
         setLateGraceMinutes(cfg.lateGraceMinutes ?? 5);
         setOfficeOvertimeHourMultiplier(cfg.officeOvertimeHourMultiplier ?? 1.5);
+        setOfficeHolidayHourMultiplier(
+          cfg.officeHolidayHourMultiplier ?? 1.0,
+        );
       }
       const wlRec = policies.find((p) => p.id === HR_WORKER_GLOBAL_LABOR_POLICY_ID);
       setWorkerLaborDraft(workerGlobalLaborContextFromPolicy(wlRec ?? null));
@@ -395,6 +404,7 @@ export default function HrSettingsPage() {
       breakStartTime: breakStartTime?.trim() || undefined,
       lateGraceMinutes: Math.max(0, Math.round(Number(lateGraceMinutes) || 0)),
       officeOvertimeHourMultiplier: Math.max(0.5, Math.min(10, Number(officeOvertimeHourMultiplier) || 1.5)),
+      officeHolidayHourMultiplier: Math.max(0.5, Math.min(10, Number(officeHolidayHourMultiplier) || 1)),
     };
     const mwErr = validateMonthlyWorkNormForSave(monthlyWorkCfg);
     if (mwErr) {
@@ -480,6 +490,7 @@ export default function HrSettingsPage() {
           breakStartTime: monthlyWorkCfg.breakStartTime ?? '12:00',
           lateGraceMinutes: monthlyWorkCfg.lateGraceMinutes ?? 0,
           officeOvertimeHourMultiplier: monthlyWorkCfg.officeOvertimeHourMultiplier ?? 1.5,
+          officeHolidayHourMultiplier: monthlyWorkCfg.officeHolidayHourMultiplier ?? 1,
         },
         updatedAt: now,
         createdAt: mwCreated,
@@ -602,7 +613,7 @@ export default function HrSettingsPage() {
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="max-w-5xl mx-auto space-y-8 pb-16">
+      <div className="mx-auto w-full max-w-7xl space-y-8 pb-16">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" asChild>
@@ -664,54 +675,18 @@ export default function HrSettingsPage() {
           </CardContent>
         </Card>
 
-        <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.65fr)_minmax(18rem,1fr)] lg:items-start">
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
-                <Landmark className="h-5 w-5 text-primary" /> ประกันสังคม และตั้งค่าเวลางานออฟฟิศ
+                <ClipboardList className="h-5 w-5 text-primary" /> ตั้งค่าเวลางานออฟฟิศ
               </CardTitle>
               <CardDescription>
-                ด้านบน: SSO ฝั่งลูกจ้าง — ด้านล่าง: จำนวนวันทำงานต่อเดือนและเวลาทำงานปกติ (เก็บใน{' '}
+                จำนวนวันทำงานต่อเดือนและเวลาทำงานปกติ (เก็บใน{' '}
                 <code className="text-xs bg-muted px-1 rounded">payroll_policies</code>)
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6 text-sm">
-              <div className="rounded-lg border bg-muted/10 p-4 space-y-4">
-                <p className="text-xs font-semibold text-muted-foreground tracking-wide">ประกันสังคม (ฝั่งลูกจ้าง)</p>
-                <p className="text-xs text-muted-foreground -mt-2">ใช้กับทุก scope ที่คำนวณ SSO — ปรับตามประกาศ กสร.</p>
-                <div className="grid gap-2">
-                  <Label className="text-muted-foreground flex items-center gap-2">
-                    <Percent className="h-4 w-4" /> อัตราหัก (ลูกจ้าง) %
-                  </Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={0.1}
-                    disabled={!canEdit || loading}
-                    value={ssoRate}
-                    onChange={(e) => setSsoRate(Number(e.target.value))}
-                    className="font-mono max-w-[200px]"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label className="text-muted-foreground">เพดานค่าจ้างคำนวณต่อเดือน (บาท)</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    step={100}
-                    disabled={!canEdit || loading}
-                    value={ssoCeiling}
-                    onChange={(e) => setSsoCeiling(Number(e.target.value))}
-                    className="font-mono max-w-[240px]"
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground flex gap-2">
-                  <Info className="h-4 w-4 shrink-0 mt-0.5" />
-                  ไม่ต้องตั้งซ้ำรายคน — รัน payroll จะดึงจากนโยบาย SSO ที่บันทึกที่นี่
-                </p>
-              </div>
-
               <MonthlyWorkNormPolicyFields
                 disabled={!canEdit || loading}
                 workDaysPerMonth={workDaysPerMonth}
@@ -728,126 +703,252 @@ export default function HrSettingsPage() {
                 onLateGraceMinutes={setLateGraceMinutes}
                 officeOvertimeHourMultiplier={officeOvertimeHourMultiplier}
                 onOfficeOvertimeHourMultiplier={setOfficeOvertimeHourMultiplier}
+                officeHolidayHourMultiplier={officeHolidayHourMultiplier}
+                onOfficeHolidayHourMultiplier={setOfficeHolidayHourMultiplier}
                 absenceDemoSalary={absenceDemoSalary}
                 onAbsenceDemoSalary={setAbsenceDemoSalary}
+                hideAbsenceDemo
+                showThreePeriodRules
                 footerNote={
                   <>
                     บันทึกใน <code className="text-[11px] bg-muted px-1 rounded">payroll_policies</code> (kind=
-                    <code>monthly_work_norm</code>) — ใช้คำนวณสลิปพนักงานออฟฟิศและอัตราหักสาย/ขาด
+                    <code>monthly_work_norm</code>) — เมื่อรัน payroll หักจากเวลาสแกน/ลาจะถูกหัก
+                    <strong className="text-foreground">ก่อน</strong>คำนวณ ภงด.1 ส่วนประกันสังคมยังใช้ฐานเงินได้เต็มงวด
                   </>
                 }
               />
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
-                <div className="min-w-0">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Scale className="h-5 w-5 text-primary shrink-0" /> ทดสอบสูตรภาษี (ตัวอย่าง)
-                  </CardTitle>
-                  <CardDescription className="mt-1.5">
-                    หักประกันสังคม (อัตรา/เพดานตามกล่อง ปสง. ฝั่งนี้) จากฐานรายเดือนก่อน แล้ว (ฐาน ภงด. ต่อเดือน × 12) −
-                    ลดหย่อนรายปี → ขั้นบันได → หาร 12 เป็น ภงด.1 ต่อเดือน
-                  </CardDescription>
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Landmark className="h-5 w-5 text-primary" /> ประกันสังคม (ฝั่งลูกจ้าง)
+                </CardTitle>
+                <CardDescription>
+                  ใช้กับทุก scope ที่คำนวณ SSO — ปรับตามประกาศ กสร. (เก็บใน{' '}
+                  <code className="text-xs bg-muted px-1 rounded">payroll_policies</code>)
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm">
+                <div className="rounded-lg border bg-muted/10 p-4 space-y-4">
+                  <div className="grid gap-2">
+                    <Label className="text-muted-foreground flex items-center gap-2">
+                      <Percent className="h-4 w-4" /> อัตราหัก (ลูกจ้าง) %
+                    </Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={0.1}
+                      disabled={!canEdit || loading}
+                      value={ssoRate}
+                      onChange={(e) => setSsoRate(Number(e.target.value))}
+                      className="font-mono max-w-[200px]"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label className="text-muted-foreground">เพดานค่าจ้างคำนวณต่อเดือน (บาท)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      step={100}
+                      disabled={!canEdit || loading}
+                      value={ssoCeiling}
+                      onChange={(e) => setSsoCeiling(Number(e.target.value))}
+                      className="font-mono max-w-[240px]"
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground flex gap-2">
+                    <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                    ไม่ต้องตั้งซ้ำรายคน — รัน payroll จะดึงจากนโยบาย SSO ที่บันทึกที่นี่
+                  </p>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 shrink-0 self-end sm:self-start"
-                  onClick={handlePrintPitDemo}
-                  disabled={loading}
-                >
-                  <Printer className="h-4 w-4" />
-                  พิมพ์เอกสาร
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-2 sm:grid-cols-2 sm:gap-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">ฐานเงินได้รายเดือน (บาท) — สำหรับประมาณการ ภงด.1</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step={100}
-                    disabled={loading}
-                    value={demoMonthlyGross}
-                    onChange={(e) => setDemoMonthlyGross(Number(e.target.value))}
-                    className="font-mono"
-                  />
+              </CardContent>
+            </Card>
+
+            <MonthlyWorkNormAbsenceDemo
+              disabled={!canEdit || loading}
+              workDaysPerMonth={workDaysPerMonth}
+              absenceDemoSalary={absenceDemoSalary}
+              onAbsenceDemoSalary={setAbsenceDemoSalary}
+              absenceDemoRates={absenceLatePayrollRates(absenceDemoSalary, {
+                standardWorkingDaysPerMonth: workDaysPerMonth,
+                normalWorkingHoursPerDay: normalWorkHoursPerDay,
+                breakHoursPerDay,
+                workStartTime,
+                breakStartTime,
+                lateGraceMinutes,
+                officeOvertimeHourMultiplier,
+                officeHolidayHourMultiplier,
+              })}
+            />
+
+            <Card>
+              <CardHeader className="border-b bg-muted/20">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <ClipboardList className="h-5 w-5 text-primary" />
+                  การตั้งค่าสิทธิ์วันลา (พนักงานออฟฟิศ)
+                </CardTitle>
+                <CardDescription>
+                  จำนวนวันต่อปีสำหรับลากิจ ลาป่วย และลาพักร้อน — ใช้เป็นฐานเมื่อเปิดเมนูจัดการวันลา
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-4">
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-2 min-w-0">
+                    <Label>วันลากิจ / ปี</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      disabled={loading || !canEdit}
+                      value={officeLeavePersonal}
+                      onChange={(e) => setOfficeLeavePersonal(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                    />
+                  </div>
+                  <div className="space-y-2 min-w-0">
+                    <Label>วันลาป่วย / ปี</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      disabled={loading || !canEdit}
+                      value={officeLeaveSick}
+                      onChange={(e) => setOfficeLeaveSick(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                    />
+                  </div>
+                  <div className="space-y-2 min-w-0">
+                    <Label>วันลาพักร้อน / ปี</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      disabled={loading || !canEdit}
+                      value={officeLeaveAnnual}
+                      onChange={(e) => setOfficeLeaveAnnual(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs text-muted-foreground">
-                    ลดหย่อนรายปี (บาท) — ค่าเดียวกับช่องบันทึกนโยบาย (เดือน × 12 − ลดหย่อน)
-                  </Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step={1000}
-                    disabled={!canEdit || loading}
-                    value={annualAllowance}
-                    onChange={(e) => setAnnualAllowance(Number(e.target.value))}
-                    className="font-mono"
-                  />
-                </div>
-              </div>
-              <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground space-y-1">
-                <p>
-                  รายได้รวม/ปี (เดือน × 12, ก่อน ปสง.):{' '}
-                  <span className="font-mono text-foreground">
-                    {pitDemoCalc.annualGrossFromWage.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                <p className="text-xs text-muted-foreground">
+                  เก็บใน Firestore ที่{' '}
+                  <span className="font-mono">
+                    {HR_CONFIGURATION_COLLECTION}/{HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID}
                   </span>
                 </p>
-                <p>
-                  ประกันสังคม ต่อเดือน:{' '}
-                  <span className="font-mono text-foreground">
-                    {pitDemoCalc.monthlySSO.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
-                  </span>
-                </p>
-                <p>
-                  ฐาน ภงด.1 ต่อเดือน (รายได้ − ปสง.):{' '}
-                  <span className="font-mono text-foreground">
-                    {pitDemoCalc.monthlyPitBase.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
-                  </span>
-                </p>
-                <p>
-                  ฐานภาษีรวม/ปี (ฐาน ภงด./เดือน × 12):{' '}
-                  <span className="font-mono text-foreground">
-                    {pitDemoCalc.annualPitGross.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
-                  </span>
-                </p>
-                <p>
-                  เงินได้สุทธิรายปี (หลังลดหย่อน):{' '}
-                  <span className="font-mono text-foreground">
-                    {pitDemoCalc.netAnnual.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
-                  </span>
-                </p>
-                <p>
-                  ภาษีรายปี (รวมจากขั้นบันได):{' '}
-                  <span className="font-mono text-foreground">
-                    {pitDemoCalc.annualTax.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
-                  </span>
-                </p>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                หมายเหตุ: กล่องนี้เทียบ “ฐานหลังหัก ปสง. รายเดือน” ก่อน × 12 — เมื่อมีหักขาด/สาย/ลาก่อนภาษีในงวดจริง D8 จะใช้ฐานหลังหักยอดเหล่านั้นก่อนคิด ภงด.1 และ ปสง. (ตั้งค่าได้ในการ์ดเวลางานด้านล่าง)
-              </p>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1">ภาษีหัก ณ ที่จ่าย ภงด.1 ต่อเดือน (นำส่ง)</p>
-                <p className="text-3xl font-black text-primary tabular-nums">
-                  {pitDemoCalc.monthlyPit.toLocaleString('th-TH', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}{' '}
-                  บาท
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </div>
         </div>
+
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+              <div className="min-w-0">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Scale className="h-5 w-5 text-primary shrink-0" /> ทดสอบสูตรภาษี (ตัวอย่าง)
+                </CardTitle>
+                <CardDescription className="mt-1.5">
+                  หักประกันสังคม (อัตรา/เพดานตามกล่อง ปสง. ด้านบน) จากฐานรายเดือนก่อน แล้ว (ฐาน ภงด. ต่อเดือน × 12) −
+                  ลดหย่อนรายปี → ขั้นบันได → หาร 12 เป็น ภงด.1 ต่อเดือน
+                </CardDescription>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2 shrink-0 self-end sm:self-start"
+                onClick={handlePrintPitDemo}
+                disabled={loading}
+              >
+                <Printer className="h-4 w-4" />
+                พิมพ์เอกสาร
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-2 sm:grid-cols-2 sm:gap-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">ฐานเงินได้รายเดือน (บาท) — สำหรับประมาณการ ภงด.1</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={100}
+                  disabled={loading}
+                  value={demoMonthlyGross}
+                  onChange={(e) => setDemoMonthlyGross(Number(e.target.value))}
+                  className="font-mono"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">
+                  ลดหย่อนรายปี (บาท) — ค่าเดียวกับช่องบันทึกนโยบาย (เดือน × 12 − ลดหย่อน)
+                </Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={1000}
+                  disabled={!canEdit || loading}
+                  value={annualAllowance}
+                  onChange={(e) => setAnnualAllowance(Number(e.target.value))}
+                  className="font-mono"
+                />
+              </div>
+            </div>
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground space-y-1">
+              <p>
+                รายได้รวม/ปี (เดือน × 12, ก่อน ปสง.):{' '}
+                <span className="font-mono text-foreground">
+                  {pitDemoCalc.annualGrossFromWage.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                </span>
+              </p>
+              <p>
+                ประกันสังคม ต่อเดือน:{' '}
+                <span className="font-mono text-foreground">
+                  {pitDemoCalc.monthlySSO.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                </span>
+              </p>
+              <p>
+                ฐาน ภงด.1 ต่อเดือน (รายได้ − ปสง.):{' '}
+                <span className="font-mono text-foreground">
+                  {pitDemoCalc.monthlyPitBase.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                </span>
+              </p>
+              <p>
+                ฐานภาษีรวม/ปี (ฐาน ภงด./เดือน × 12):{' '}
+                <span className="font-mono text-foreground">
+                  {pitDemoCalc.annualPitGross.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                </span>
+              </p>
+              <p>
+                เงินได้สุทธิรายปี (หลังลดหย่อน):{' '}
+                <span className="font-mono text-foreground">
+                  {pitDemoCalc.netAnnual.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                </span>
+              </p>
+              <p>
+                ภาษีรายปี (รวมจากขั้นบันได):{' '}
+                <span className="font-mono text-foreground">
+                  {pitDemoCalc.annualTax.toLocaleString('th-TH', { maximumFractionDigits: 2 })} บาท
+                </span>
+              </p>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              หมายเหตุ: กล่องนี้เทียบ “ฐานหลังหัก ปสง. รายเดือน” ก่อน × 12 — เมื่อมีหักขาด/สาย/ลาก่อนภาษีในงวดจริง D8 จะใช้ฐานหลังหักยอดเหล่านั้นก่อนคิด ภงด.1 และ ปสง. (ตั้งค่าได้ในการ์ดเวลางานด้านบน)
+            </p>
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-1">ภาษีหัก ณ ที่จ่าย ภงด.1 ต่อเดือน (นำส่ง)</p>
+              <p className="text-3xl font-black text-primary tabular-nums">
+                {pitDemoCalc.monthlyPit.toLocaleString('th-TH', {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}{' '}
+                บาท
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
@@ -977,7 +1078,7 @@ export default function HrSettingsPage() {
 
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-foreground">ตัวคูณฝั่งต้นทุน (ลูกจ้าง): OT / Holiday / Public Holiday / Sunday / Sunday OT</Label>
-              <div className="grid grid-cols-5 gap-2 max-w-3xl">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 {(
                   [
                     ['otAfterShift', 'OT หลังกะ'],
@@ -1008,7 +1109,7 @@ export default function HrSettingsPage() {
 
             <div className="space-y-2">
               <Label className="text-xs font-semibold text-foreground">Standby / Mob / Demob / Travel</Label>
-              <div className="grid grid-cols-4 gap-2 max-w-3xl">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {(
                   [
                     ['standby', 'Standby'],
@@ -1036,7 +1137,7 @@ export default function HrSettingsPage() {
               </div>
             </div>
 
-            <div className="space-y-2 max-w-md">
+            <div className="space-y-2 max-w-xl">
               <Label>รูปแบบวันหยุดประจำสัปดาห์ (ค่าจ้าง)</Label>
               <Select
                 disabled={loading || !canEdit}
@@ -1072,99 +1173,6 @@ export default function HrSettingsPage() {
                 }))
               }
             />
-          </CardContent>
-        </Card>
-
-        <Card className="border-primary/25 shadow-sm">
-          <CardHeader className="border-b bg-muted/20">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Clock className="h-5 w-5 text-primary" />
-              เวลาทำงาน · การคิดสาย · ฐานวันทำงาน (พนักงานออฟฟิศ)
-            </CardTitle>
-            <CardDescription>
-              ชุดเดียวกับการ์ด &quot;ประกันสังคม และตั้งค่าเวลางานออฟฟิศ&quot; ด้านบน — แก้ที่นี่หรือด้านบนก็ได้ กดบันทึกครั้งเดียวจะเขียนไฟล์{' '}
-              <code className="text-xs bg-muted px-1 rounded">payroll_policies</code> ชุดเดียวกัน
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4 pt-6">
-            <MonthlyWorkNormPolicyFields
-              disabled={!canEdit || loading}
-              workDaysPerMonth={workDaysPerMonth}
-              onWorkDaysPerMonth={setWorkDaysPerMonth}
-              normalWorkHoursPerDay={normalWorkHoursPerDay}
-              onNormalWorkHoursPerDay={setNormalWorkHoursPerDay}
-              breakHoursPerDay={breakHoursPerDay}
-              onBreakHoursPerDay={setBreakHoursPerDay}
-              workStartTime={workStartTime}
-              onWorkStartTime={setWorkStartTime}
-              breakStartTime={breakStartTime}
-              onBreakStartTime={setBreakStartTime}
-              lateGraceMinutes={lateGraceMinutes}
-              onLateGraceMinutes={setLateGraceMinutes}
-              officeOvertimeHourMultiplier={officeOvertimeHourMultiplier}
-              onOfficeOvertimeHourMultiplier={setOfficeOvertimeHourMultiplier}
-              absenceDemoSalary={absenceDemoSalary}
-              onAbsenceDemoSalary={setAbsenceDemoSalary}
-              showThreePeriodRules
-              footerNote={
-                <>
-                  เมื่อรัน payroll หักจากเวลาสแกน/ลา (และยอดอื่นที่กำหนด) จะถูกหัก<strong className="text-foreground">ก่อน</strong>คำนวณ ภงด.1 — ประกันสังคมยังใช้ฐานเงินได้เต็มงวดตามเดิม — สะท้อนใน snapshot บรรทัดงวด
-                </>
-              }
-            />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="border-b bg-muted/20">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <ClipboardList className="h-5 w-5 text-primary" />
-              การตั้งค่าสิทธิ์วันลา (พนักงานออฟฟิศ)
-            </CardTitle>
-            <CardDescription>
-              จำนวนวันต่อปีสำหรับลากิจ ลาป่วย และลาพักร้อน — ใช้เป็นฐานเมื่อเปิดเมนูจัดการวันลา (รอบถัดไป)
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4 pt-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl">
-              <div className="space-y-2">
-                <Label>วันลากิจ / ปี</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step={1}
-                  disabled={loading || !canEdit}
-                  value={officeLeavePersonal}
-                  onChange={(e) => setOfficeLeavePersonal(Math.max(0, Math.round(Number(e.target.value) || 0)))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>วันลาป่วย / ปี</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step={1}
-                  disabled={loading || !canEdit}
-                  value={officeLeaveSick}
-                  onChange={(e) => setOfficeLeaveSick(Math.max(0, Math.round(Number(e.target.value) || 0)))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>วันลาพักร้อน / ปี</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  step={1}
-                  disabled={loading || !canEdit}
-                  value={officeLeaveAnnual}
-                  onChange={(e) => setOfficeLeaveAnnual(Math.max(0, Math.round(Number(e.target.value) || 0)))}
-                />
-              </div>
-            </div>
-            <p className="text-xs text-muted-foreground max-w-2xl">
-              เก็บใน Firestore ที่ <span className="font-mono">{HR_CONFIGURATION_COLLECTION}/{HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID}</span>{' '}
-              — เฉพาะผู้มีสิทธิ์แก้หน้านี้จึงจะบันทึกได้ (สอดคล้องกฎ Firestore)
-            </p>
           </CardContent>
         </Card>
       </div>

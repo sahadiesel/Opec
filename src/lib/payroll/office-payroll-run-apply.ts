@@ -21,7 +21,7 @@ import {
 import { assertOfficeStaffListPayrollIdentityComplete } from '@/lib/payroll/office-staff-payroll-identity';
 import { computeOfficePayrollPeriodAdjustments } from '@/lib/payroll/office-payroll-period-deductions';
 import { resolveOfficePayrollEffectiveBaseSalary } from '@/lib/payroll/office-payroll-partial-month';
-import { sumApprovedOfficeOvertimePayInPeriod } from '@/lib/payroll/office-overtime-pay';
+import { sumApprovedOfficeOvertimePayInPeriod, sumOfficeRestDayWorkedPayInPeriod } from '@/lib/payroll/office-overtime-pay';
 import { loadOfficePayrollRunComputationContext } from '@/lib/payroll/office-payroll-run-context';
 import {
   listScanAttendanceBlockersForOfficePayroll,
@@ -179,6 +179,19 @@ export async function applyStandardOfficeRunLines(
       },
     );
 
+    const restDayWorked = sumOfficeRestDayWorkedPayInPeriod(
+      staff,
+      run.payrollPeriodStart,
+      run.payrollPeriodEnd,
+      payrollCtx.attendanceRowsByStaffId.get(staff.id) ?? [],
+      {
+        monthlySalary: contractBaseSalary,
+        monthlyWorkNorm: payrollCtx.monthlyWorkNorm,
+        weeklyRestPattern: payrollCtx.weeklyRestPattern,
+        calendarHolidays: payrollCtx.calendarHolidays,
+      },
+    );
+
     const { effectiveBaseSalary, payrollPreStatutoryDeductions } = resolveOfficePayrollEffectiveBaseSalary(
       contractBaseSalary,
       periodAdj.preStatutoryDeductions,
@@ -191,9 +204,33 @@ export async function applyStandardOfficeRunLines(
       allowance,
       bonus,
       overtimeAmount,
-      otherIncome: 0,
+      otherIncome: restDayWorked.amount,
       preStatutoryDeductions: payrollPreStatutoryDeductions,
     });
+
+    const attendanceSummary = periodAdj.attendanceSummary
+      ? {
+          ...periodAdj.attendanceSummary,
+          ...(restDayWorked.days > 0 || restDayWorked.amount > 0
+            ? {
+                restDayWorkedDays: restDayWorked.days,
+                restDayWorkedPayAmount: restDayWorked.amount,
+              }
+            : {}),
+        }
+      : restDayWorked.days > 0 || restDayWorked.amount > 0
+        ? {
+            scanDeductionsApplied: false,
+            lateMinutes: 0,
+            scanAbsenceDays: 0,
+            unpaidLeaveDays: 0,
+            lateDeductionAmount: 0,
+            scanAbsenceDeductionAmount: 0,
+            unpaidLeaveDeductionAmount: 0,
+            restDayWorkedDays: restDayWorked.days,
+            restDayWorkedPayAmount: restDayWorked.amount,
+          }
+        : null;
 
     const newLine: OfficePayrollLine = {
       id: lineId,
@@ -208,7 +245,8 @@ export async function applyStandardOfficeRunLines(
       allowance,
       bonus,
       overtimeAmount,
-      otherIncome: 0,
+      otherIncome: restDayWorked.amount,
+      restDayWorkedAmount: restDayWorked.amount > 0 ? restDayWorked.amount : undefined,
       deductions: d8.deductions,
       tax: d8.tax,
       socialSecurity: d8.socialSecurity,
@@ -216,7 +254,7 @@ export async function applyStandardOfficeRunLines(
       netPay: d8.netPay,
       d8Snapshot: d8.snapshot,
       leaveSummary: periodAdj.leaveSummary.length ? periodAdj.leaveSummary : undefined,
-      attendanceSummary: periodAdj.attendanceSummary,
+      attendanceSummary,
       periodPreStatutoryDeductions: payrollPreStatutoryDeductions.length
         ? payrollPreStatutoryDeductions
         : undefined,

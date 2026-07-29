@@ -27,8 +27,12 @@ export type MonthlyWorkNormPolicyFieldsProps = {
   onLateGraceMinutes: (v: number) => void;
   officeOvertimeHourMultiplier: number;
   onOfficeOvertimeHourMultiplier: (v: number) => void;
+  officeHolidayHourMultiplier: number;
+  onOfficeHolidayHourMultiplier: (v: number) => void;
   absenceDemoSalary: number;
   onAbsenceDemoSalary: (v: number) => void;
+  /** ซ่อนกล่องตัวอย่างการคำนวณ (แสดงที่อื่นแทน) */
+  hideAbsenceDemo?: boolean;
   /** แสดงคำอธิบายกติกา 3 ช่วง (สแกนเข้าหลังช่วงที่ 1 / 2) */
   showThreePeriodRules?: boolean;
   /** หมายเหตุด้านล่าง (เช่น ที่เก็บใน Firestore) */
@@ -51,8 +55,11 @@ export function MonthlyWorkNormPolicyFields({
   onLateGraceMinutes,
   officeOvertimeHourMultiplier,
   onOfficeOvertimeHourMultiplier,
+  officeHolidayHourMultiplier,
+  onOfficeHolidayHourMultiplier,
   absenceDemoSalary,
   onAbsenceDemoSalary,
+  hideAbsenceDemo,
   showThreePeriodRules,
   footerNote,
 }: MonthlyWorkNormPolicyFieldsProps) {
@@ -64,6 +71,7 @@ export function MonthlyWorkNormPolicyFields({
     breakStartTime,
     lateGraceMinutes,
     officeOvertimeHourMultiplier,
+    officeHolidayHourMultiplier,
   };
   const computedWorkEndLabel = computeWorkDayEndDisplay(preview);
   const shiftWindows = computeShiftWindowsLabels(preview);
@@ -179,21 +187,42 @@ export function MonthlyWorkNormPolicyFields({
             className="font-mono max-w-[120px]"
           />
         </div>
-        <div className="grid gap-2 sm:col-span-2 rounded-md border border-dashed bg-muted/40 px-3 py-3">
-          <Label className="text-muted-foreground">กำหนดค่าตัวคูณชั่วโมง OT (พนักงานออฟฟิศ)</Label>
-          <Input
-            type="number"
-            min={0.5}
-            max={10}
-            step={0.1}
-            disabled={disabled}
-            value={officeOvertimeHourMultiplier}
-            onChange={(e) => onOfficeOvertimeHourMultiplier(Number(e.target.value))}
-            className="font-mono max-w-[120px] bg-muted"
-          />
-          <p className="text-[11px] text-muted-foreground leading-snug">
-            ค่า OT = (เงินเดือน ÷ {workDaysPerMonth} ÷ {normalWorkHoursPerDay}) × ตัวคูณ {officeOvertimeHourMultiplier} × ชั่วโมงที่อนุมัติ
-          </p>
+        <div className="grid gap-3 sm:col-span-2 rounded-md border border-dashed bg-muted/40 px-3 py-3 sm:grid-cols-2">
+          <div className="grid gap-2">
+            <Label className="text-muted-foreground">ตัวคูณชั่วโมง OT</Label>
+            <Input
+              type="number"
+              min={0.5}
+              max={10}
+              step={0.1}
+              disabled={disabled}
+              value={officeOvertimeHourMultiplier}
+              onChange={(e) => onOfficeOvertimeHourMultiplier(Number(e.target.value))}
+              className="font-mono max-w-[120px] bg-muted"
+            />
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              ใช้กับคำขอ OT ที่อนุมัติทุกวัน (รวมอาทิตย์/วันหยุด) = (เงินเดือน ÷ {workDaysPerMonth} ÷{' '}
+              {normalWorkHoursPerDay}) × {officeOvertimeHourMultiplier} × ชม.ที่อนุมัติ
+            </p>
+          </div>
+          <div className="grid gap-2">
+            <Label className="text-muted-foreground">ตัวคูณค่าทำงานวันหยุด</Label>
+            <Input
+              type="number"
+              min={0.5}
+              max={10}
+              step={0.1}
+              disabled={disabled}
+              value={officeHolidayHourMultiplier}
+              onChange={(e) => onOfficeHolidayHourMultiplier(Number(e.target.value))}
+              className="font-mono max-w-[120px] bg-muted"
+            />
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              เมื่อลงเวลาในวันหยุดประจำสัปดาห์/ปฏิทิน (เช่น อาทิตย์) = (เงินเดือน ÷ {workDaysPerMonth}) ×{' '}
+              {officeHolidayHourMultiplier} × สัดส่วนวันจากสแกน (เช้า/บ่าย/ทั้งวัน) · ค่าเริ่มต้น 1.0 =
+              เท่าวันทำงานปกติ
+            </p>
+          </div>
         </div>
       </div>
 
@@ -231,51 +260,15 @@ export function MonthlyWorkNormPolicyFields({
         </ul>
       </div>
 
-      <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2">
-        <p className="text-xs font-semibold text-foreground flex items-center gap-2">
-          <Scale className="h-4 w-4 text-primary" /> ตัวอย่างการคำนวณหัก (รายวัน / รายนาที)
-        </p>
-        <div className="grid gap-2 sm:grid-cols-3 items-end">
-          <div className="space-y-1">
-            <Label className="text-[11px] text-muted-foreground">เงินเดือนสมมุติ (บาท)</Label>
-            <Input
-              type="number"
-              min={0}
-              step={500}
-              disabled={disabled}
-              value={absenceDemoSalary}
-              onChange={(e) => onAbsenceDemoSalary(Number(e.target.value))}
-              className="font-mono"
-            />
-          </div>
-          <div className="space-y-1 text-xs">
-            <p className="text-muted-foreground">รายวัน (เงินเดือน ÷ {workDaysPerMonth})</p>
-            <p className="font-mono text-base font-bold tabular-nums text-primary">
-              {absenceDemoRates.perDay.toLocaleString('th-TH', {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}{' '}
-              บาท/วัน
-            </p>
-          </div>
-          <div className="space-y-1 text-xs">
-            <p className="text-muted-foreground">
-              รายนาที (รายวัน ÷ {absenceDemoRates.dailyMinutes} นาที — ทศนิยม 2 จุด)
-            </p>
-            <p className="font-mono text-base font-bold tabular-nums text-primary">
-              {absenceDemoRates.perMinute.toLocaleString('th-TH', {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}{' '}
-              บาท/นาที
-            </p>
-          </div>
-        </div>
-        <p className="text-[11px] text-muted-foreground leading-snug">
-          ขาดงาน / ลาไม่จ่าย → หัก <span className="font-mono">รายวัน × จำนวนวัน</span> · สายในกรอบช่วง → หัก{' '}
-          <span className="font-mono">รายนาที × นาทีที่สาย</span> (รวมกับกติกาขาดครึ่งวัน/ทั้งวันตามด้านบน)
-        </p>
-      </div>
+      {!hideAbsenceDemo ? (
+        <MonthlyWorkNormAbsenceDemo
+          disabled={disabled}
+          workDaysPerMonth={workDaysPerMonth}
+          absenceDemoSalary={absenceDemoSalary}
+          onAbsenceDemoSalary={onAbsenceDemoSalary}
+          absenceDemoRates={absenceDemoRates}
+        />
+      ) : null}
 
       {footerNote && (
         <p className="text-xs text-muted-foreground flex gap-2">
@@ -283,6 +276,77 @@ export function MonthlyWorkNormPolicyFields({
           <span>{footerNote}</span>
         </p>
       )}
+    </div>
+  );
+}
+
+export function MonthlyWorkNormAbsenceDemo({
+  disabled,
+  workDaysPerMonth,
+  absenceDemoSalary,
+  onAbsenceDemoSalary,
+  absenceDemoRates,
+}: {
+  disabled: boolean;
+  workDaysPerMonth: number;
+  absenceDemoSalary: number;
+  onAbsenceDemoSalary: (v: number) => void;
+  absenceDemoRates?: ReturnType<typeof absenceLatePayrollRates>;
+}) {
+  const rates =
+    absenceDemoRates ??
+    absenceLatePayrollRates(absenceDemoSalary, {
+      standardWorkingDaysPerMonth: workDaysPerMonth,
+      normalWorkingHoursPerDay: 8,
+      breakHoursPerDay: 1,
+      workStartTime: '08:00',
+    });
+
+  return (
+    <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-2 h-fit">
+      <p className="text-xs font-semibold text-foreground flex items-center gap-2">
+        <Scale className="h-4 w-4 text-primary" /> ตัวอย่างการคำนวณหัก (รายวัน / รายนาที)
+      </p>
+      <div className="space-y-3">
+        <div className="space-y-1">
+          <Label className="text-[11px] text-muted-foreground">เงินเดือนสมมุติ (บาท)</Label>
+          <Input
+            type="number"
+            min={0}
+            step={500}
+            disabled={disabled}
+            value={absenceDemoSalary}
+            onChange={(e) => onAbsenceDemoSalary(Number(e.target.value))}
+            className="font-mono"
+          />
+        </div>
+        <div className="space-y-1 text-xs">
+          <p className="text-muted-foreground">รายวัน (เงินเดือน ÷ {workDaysPerMonth})</p>
+          <p className="font-mono text-base font-bold tabular-nums text-primary">
+            {rates.perDay.toLocaleString('th-TH', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}{' '}
+            บาท/วัน
+          </p>
+        </div>
+        <div className="space-y-1 text-xs">
+          <p className="text-muted-foreground">
+            รายนาที (รายวัน ÷ {rates.dailyMinutes} นาที — ทศนิยม 2 จุด)
+          </p>
+          <p className="font-mono text-base font-bold tabular-nums text-primary">
+            {rates.perMinute.toLocaleString('th-TH', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}{' '}
+            บาท/นาที
+          </p>
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground leading-snug">
+        ขาดงาน / ลาไม่จ่าย → หัก <span className="font-mono">รายวัน × จำนวนวัน</span> · สายในกรอบช่วง → หัก{' '}
+        <span className="font-mono">รายนาที × นาทีที่สาย</span>
+      </p>
     </div>
   );
 }

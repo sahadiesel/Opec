@@ -15,6 +15,12 @@ export type MonthlyWorkNormPolicyConfig = {
   lateGraceMinutes?: number;
   /** ตัวคูณค่าจ้าง OT ต่อชั่วโมง (พนักงานออฟฟิศ) — ค่าจ้าง/ชม. × ตัวคูณ × ชม.ที่อนุมัติ */
   officeOvertimeHourMultiplier?: number;
+  /**
+   * ตัวคูณค่าทำงานในวันหยุด (พนักงานออฟฟิศ) — เมื่อลงเวลาในวันหยุดประจำสัปดาห์/ปฏิทิน
+   * ค่าเริ่มต้น 1.0 = ได้ค่าแรงเท่าวันทำงานปกติ (คิดตามช่วงที่สแกน)
+   * หมายเหตุ: ค่า OT ที่ขอในวันหยุดใช้ {@link officeOvertimeHourMultiplier} ไม่ใช่ช่องนี้
+   */
+  officeHolidayHourMultiplier?: number;
 };
 
 export const DEFAULT_MONTHLY_WORK_NORM: MonthlyWorkNormPolicyConfig = {
@@ -25,6 +31,7 @@ export const DEFAULT_MONTHLY_WORK_NORM: MonthlyWorkNormPolicyConfig = {
   breakStartTime: '12:00',
   lateGraceMinutes: 5,
   officeOvertimeHourMultiplier: 1.5,
+  officeHolidayHourMultiplier: 1.0,
 };
 
 /** จำนวนนาทีต่อวันทำงานปกติ — ใช้หารรายวัน → นาที (ไม่รวมพัก) */
@@ -57,6 +64,11 @@ export function monthlyWorkNormFromUnknownConfig(raw: Record<string, unknown> | 
   const otMultRaw = Number(raw.officeOvertimeHourMultiplier);
   const officeOvertimeHourMultiplier =
     Number.isFinite(otMultRaw) && otMultRaw > 0 ? Math.min(10, Math.round(otMultRaw * 100) / 100) : (d.officeOvertimeHourMultiplier ?? 1.5);
+  const holidayMultRaw = Number(raw.officeHolidayHourMultiplier);
+  const officeHolidayHourMultiplier =
+    Number.isFinite(holidayMultRaw) && holidayMultRaw > 0
+      ? Math.min(10, Math.round(holidayMultRaw * 100) / 100)
+      : (d.officeHolidayHourMultiplier ?? 1);
   return {
     standardWorkingDaysPerMonth: days,
     normalWorkingHoursPerDay: workH,
@@ -65,6 +77,7 @@ export function monthlyWorkNormFromUnknownConfig(raw: Record<string, unknown> | 
     breakStartTime: breakStart,
     lateGraceMinutes: lateGrace,
     officeOvertimeHourMultiplier,
+    officeHolidayHourMultiplier,
   };
 }
 

@@ -137,7 +137,7 @@ export default function AttendanceOvertimeApprovalPage() {
       await batch.commit();
       toast({
         title: 'อนุมัติ OT แล้ว',
-        description: `${breakdown.approvedHours} ชม. · ประมาณ ${breakdown.amount.toLocaleString('th-TH')} บาท (รวมในงวดเงินเดือนเมื่อคำนวณใหม่)`,
+        description: `${breakdown.approvedHours} ชม. · ตัวคูณ OT ${breakdown.multiplier} · ประมาณ ${breakdown.amount.toLocaleString('th-TH')} บาท (รวมในงวดเงินเดือนเมื่อคำนวณใหม่)`,
       });
     } catch (e) {
       toast({

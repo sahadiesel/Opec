@@ -562,7 +562,9 @@ export function buildPayslipFromOfficeLine(
 ): PayslipViewModel {
   const { companyNameTh, companyNameEn } = resolvePayslipCompanyNames(companyProfile);
   const ot = Number(line.overtimeAmount ?? 0);
-  const otherInc = Number(line.otherIncome ?? 0);
+  const restDayWorked = Number(line.restDayWorkedAmount ?? line.attendanceSummary?.restDayWorkedPayAmount ?? 0);
+  const otherIncRaw = Number(line.otherIncome ?? 0);
+  const otherInc = Math.max(0, round2(otherIncRaw - restDayWorked));
   const bonus = Number(line.bonus ?? 0);
   const allowance = Number(line.allowance ?? 0);
   const base = Number(line.baseSalary ?? 0);
@@ -574,6 +576,9 @@ export function buildPayslipFromOfficeLine(
   const incomeLines: PayslipLineItem[] = [];
   if (base > 0) incomeLines.push({ label: 'เงินเดือนฐาน', amount: round2(base) });
   if (ot > 0) incomeLines.push({ label: 'ค่าล่วงเวลา (OT)', amount: round2(ot) });
+  if (restDayWorked > 0) {
+    incomeLines.push({ label: 'ค่าทำงานวันหยุด (จากสแกน)', amount: round2(restDayWorked) });
+  }
   if (allowance > 0) incomeLines.push({ label: 'เบี้ยเลี้ยง / Allowance', amount: round2(allowance) });
   if (bonus > 0) incomeLines.push({ label: 'โบนัส', amount: round2(bonus) });
   if (otherInc > 0) incomeLines.push({ label: 'รายได้อื่น', amount: round2(otherInc) });
