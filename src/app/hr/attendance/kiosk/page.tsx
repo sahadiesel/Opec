@@ -15,12 +15,10 @@ import {
 import {
   getAttendanceMobileQrBaseUrl,
   hasConfiguredPublicAppOrigin,
-  kioskHostnameUnlikelyReachableFromOtherDevices,
 } from '@/lib/attendance/kiosk-public-url';
 import type { AttendanceKioskSessionDoc } from '@/lib/attendance/types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { ArrowLeft, CheckCircle2, Copy, Loader2, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -54,8 +52,6 @@ export default function HrAttendanceKioskPage() {
     u.searchParams.set('t', token);
     return u.toString();
   }, [token]);
-
-  const showKioskHostWarning = kioskHostnameUnlikelyReachableFromOtherDevices() && !hasConfiguredPublicAppOrigin();
 
   useEffect(() => {
     if (!mobileUrl) {
@@ -197,27 +193,6 @@ export default function HrAttendanceKioskPage() {
             ) : null}
           </div>
         </div>
-
-        {showKioskHostWarning && (
-          <Alert variant="destructive">
-            <AlertTitle>มือถือสแกนแล้วเปิดไม่ได้ / ไม่ตรงเครื่อง Kiosk</AlertTitle>
-            <AlertDescription className="text-sm space-y-2">
-              <p>
-                ตอนนี้หน้า Kiosk เปิดด้วย <strong>localhost</strong> หรือ <strong>127.0.0.1</strong> — QR จะชี้มาที่เครื่องมือถือเอง
-                ไม่ใช่เครื่องนี้
-              </p>
-              <p className="font-medium">แก้ได้ 2 แบบ (เลือกอย่างใดอย่างหนึ่ง)</p>
-              <ul className="list-disc pl-4 space-y-1">
-                <li>
-                  ตั้งค่า <span className="font-mono">NEXT_PUBLIC_APP_ORIGIN</span> เป็น URL ที่มือถือเข้าถึงได้
-                  (เช่น <span className="font-mono">https://โดเมนจริง</span> หรือ{' '}
-                  <span className="font-mono">http://192.168.x.x:พอร์ต</span> ใน LAN) แล้ว build/deploy ใหม่
-                </li>
-                <li>หรือเปิดหน้า Kiosk ในเบราว์เซอร์ด้วย IP/LAN ของเครื่องนี้แทน localhost</li>
-              </ul>
-            </AlertDescription>
-          </Alert>
-        )}
 
         <Card className="shadow-md">
           <CardHeader className="text-center border-b bg-muted/20">

@@ -1,4 +1,5 @@
 import { formatPayrollYearMonthThaiBE } from '@/lib/date-thai';
+import { describeYearMonthScopeFilter } from '@/lib/date/year-month-scope-filter';
 import { escapeHtmlDoc } from '@/lib/documents/standard-document-print';
 import type { CashAdvanceStatus } from '@/lib/types';
 
@@ -13,7 +14,11 @@ export type CashAdvanceListPrintRow = {
 };
 
 export type CashAdvanceListPrintFilterSummary = {
-  monthYyyyMm: string;
+  searchQuery?: string;
+  yearCe?: number;
+  monthScope?: string;
+  /** @deprecated ใช้ yearCe + monthScope — ยังรองรับค่าเดิม */
+  monthYyyyMm?: string;
 };
 
 const PRINT_ROW_LIMIT = 500;
@@ -34,10 +39,15 @@ export function cashAdvanceStatusLabelTh(status: CashAdvanceStatus | string): st
 }
 
 export function describeCashAdvanceListPrintFilters(f: CashAdvanceListPrintFilterSummary): string[] {
-  if (f.monthYyyyMm.trim() && f.monthYyyyMm !== 'ALL') {
-    return [`เดือนสร้างคำขอ: ${formatPayrollYearMonthThaiBE(f.monthYyyyMm)}`];
+  const lines: string[] = [];
+  const q = f.searchQuery?.trim();
+  if (q) lines.push(`ค้นหา: ${q}`);
+  if (f.yearCe != null && f.monthScope) {
+    lines.push(`ช่วง: ${describeYearMonthScopeFilter(f.yearCe, f.monthScope)}`);
+  } else if (f.monthYyyyMm?.trim() && f.monthYyyyMm !== 'ALL') {
+    lines.push(`เดือนสร้างคำขอ: ${formatPayrollYearMonthThaiBE(f.monthYyyyMm)}`);
   }
-  return [];
+  return lines;
 }
 
 export function buildCashAdvanceListPrintHtml(params: {

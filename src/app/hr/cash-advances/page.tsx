@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import {
   Table,
   TableBody,
@@ -24,21 +25,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Plus, ChevronRight, Loader2, Printer } from 'lucide-react';
+import { Plus, ChevronRight, Loader2, Printer, Search } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, orderBy, query, where } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useToast } from '@/hooks/use-toast';
 import { canView } from '@/lib/permissions';
 import { getEffectiveSimpleRole } from '@/lib/simple-tier-model';
-import { formatDateThaiBE, formatPayrollYearMonthThaiBE } from '@/lib/date-thai';
+import { formatDateThaiBE } from '@/lib/date-thai';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  describeYearMonthScopeFilter,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import type { CashAdvanceRequest, CashAdvanceStatus, User } from '@/lib/types';
 import {
   buildCashAdvanceListPrintHtml,
@@ -110,7 +112,9 @@ function HrCashAdvancesPageContent() {
     [searchParams, isEmployeeSelfPortal],
   );
 
-  const [monthFilter, setMonthFilter] = useState<string>('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
 
@@ -134,6 +138,8 @@ function HrCashAdvancesPageContent() {
     return Array.from(set).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
   }, [rows]);
 
+  const yearOptionsCe = useMemo(() => buildYearCeOptions(monthOptions), [monthOptions]);
+
   const rowsAfterFocus = useMemo(() => {
     const r = rows ?? [];
     if (!focusManager) return r;
@@ -142,13 +148,34 @@ function HrCashAdvancesPageContent() {
     return [...pending, ...rest];
   }, [rows, focusManager]);
 
+  const rowsBySearch = useMemo(() => {
+    const t = searchQuery.trim().toLowerCase();
+    if (!t) return rowsAfterFocus;
+    return rowsAfterFocus.filter((r) => {
+      const name = (r.subjectNameSnapshot || '').toLowerCase();
+      const reqNo = (r.requestNo || '').toLowerCase();
+      const reason = (r.reason || '').toLowerCase();
+      const createdBy = (r.createdByName || '').toLowerCase();
+      return name.includes(t) || reqNo.includes(t) || reason.includes(t) || createdBy.includes(t);
+    });
+  }, [rowsAfterFocus, searchQuery]);
+
   const displayRows = useMemo(() => {
-    if (monthFilter === 'ALL') return rowsAfterFocus;
-    return rowsAfterFocus.filter((r) => cashAdvanceRowMonthYm(r) === monthFilter);
-  }, [rowsAfterFocus, monthFilter]);
+    return rowsBySearch.filter((r) =>
+      ymMatchesYearMonthScope(cashAdvanceRowMonthYm(r), yearFilterCe, monthScope),
+    );
+  }, [rowsBySearch, yearFilterCe, monthScope]);
 
   const allRowCount = rowsAfterFocus.length;
   const filteredRowCount = displayRows.length;
+  const filterSummary = useMemo(
+    () => ({ searchQuery, yearCe: yearFilterCe, monthScope }),
+    [searchQuery, yearFilterCe, monthScope],
+  );
+  const filterLines = useMemo(
+    () => describeCashAdvanceListPrintFilters(filterSummary),
+    [filterSummary],
+  );
 
   const runCashAdvanceListPrint = useCallback(
     async (scope: 'filtered' | 'all') => {
@@ -159,7 +186,7 @@ function HrCashAdvancesPageContent() {
           title: 'ไม่มีรายการให้พิมพ์',
           description:
             scope === 'filtered'
-              ? 'ไม่พบข้อมูลตามเดือนที่เลือก — เลือกทุกเดือนหรือพิมพ์ทั้งหมด'
+              ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับค้นหา/เดือน หรือพิมพ์ทั้งหมด'
               : 'ยังไม่มีรายการเบิกเงินล่วงหน้า',
         });
         return;
@@ -173,15 +200,13 @@ function HrCashAdvancesPageContent() {
           dateStyle: 'medium',
           timeStyle: 'short',
         });
-        const filterLines =
-          scope === 'filtered' ? describeCashAdvanceListPrintFilters({ monthYyyyMm: monthFilter }) : [];
         const scopeTitle =
           scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
 
         const body = buildCashAdvanceListPrintHtml({
           rows: capped,
           scopeTitle,
-          filterLines,
+          filterLines: scope === 'filtered' ? filterLines : [],
           generatedAt,
           printedBy: currentUser?.displayName,
           truncated,
@@ -207,7 +232,7 @@ function HrCashAdvancesPageContent() {
         setPrintBusy(false);
       }
     },
-    [displayRows, rowsAfterFocus, monthFilter, currentUser?.displayName, toast],
+    [displayRows, rowsAfterFocus, filterLines, currentUser?.displayName, toast],
   );
 
   if (userLoading || !currentUser) return null;
@@ -261,38 +286,52 @@ function HrCashAdvancesPageContent() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">คิวงาน</CardTitle>
-            <CardDescription>คลิกแถวเพื่อเปิดรายละเอียดและดำเนินการตามขั้น</CardDescription>
+            <CardTitle className="text-base">ค้นหาและกรองเดือน</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="pt-0">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <Select value={monthFilter} onValueChange={setMonthFilter}>
-                <SelectTrigger
-                  className="h-10 w-[min(100%,13rem)] shrink-0 bg-background"
-                  aria-label="กรองตามเดือนสร้างคำขอ"
-                >
-                  <SelectValue placeholder="เลือกเดือน" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">ทุกเดือน</SelectItem>
-                  {monthOptions.map((ym) => (
-                    <SelectItem key={ym} value={ym}>
-                      {formatPayrollYearMonthThaiBE(ym)} ({ym})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-md">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="h-10 pl-9"
+                    placeholder="พิมพ์คำค้น..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    aria-label="ค้นหาชื่อผู้เบิกหรือเลขที่คำขอ"
+                  />
+                </div>
+                <YearMonthScopeSelects
+                  idPrefix="cash-advance"
+                  yearCe={yearFilterCe}
+                  monthScope={monthScope}
+                  yearOptionsCe={yearOptionsCe}
+                  onYearCeChange={setYearFilterCe}
+                  onMonthScopeChange={setMonthScope}
+                />
+              </div>
               <Button
                 type="button"
                 variant="outline"
-                className="h-10 shrink-0 gap-2"
+                className="h-10 shrink-0 gap-2 whitespace-nowrap"
                 disabled={isLoading || allRowCount === 0}
                 onClick={() => setPrintDialogOpen(true)}
               >
-                <Printer className="h-4 w-4" /> พิมพ์รายการ
+                <Printer className="h-4 w-4 shrink-0" /> พิมพ์รายการ
               </Button>
             </div>
+          </CardContent>
+        </Card>
 
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">คิวงาน</CardTitle>
+            <CardDescription>
+              คลิกแถวเพื่อเปิดรายละเอียดและดำเนินการตามขั้น · แสดง {filteredRowCount} จาก {allRowCount} รายการ
+              {filterLines.length > 0 ? ` (${filterLines.join(' · ')})` : ''}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
             {isLoading ? (
               <div className="flex justify-center py-16">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -342,7 +381,7 @@ function HrCashAdvancesPageContent() {
                         <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
                           {rowsAfterFocus.length === 0
                             ? 'ยังไม่มีรายการ'
-                            : 'ไม่พบรายการในเดือนที่เลือก'}
+                            : `ไม่พบรายการตามตัวกรอง (${describeYearMonthScopeFilter(yearFilterCe, monthScope)})`}
                         </TableCell>
                       </TableRow>
                     )}
@@ -363,12 +402,10 @@ function HrCashAdvancesPageContent() {
               <div className="rounded-md border bg-muted/30 p-3 space-y-1">
                 <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
                 <ul className="list-disc list-inside text-xs text-muted-foreground">
-                  {describeCashAdvanceListPrintFilters({ monthYyyyMm: monthFilter }).length > 0 ? (
-                    describeCashAdvanceListPrintFilters({ monthYyyyMm: monthFilter }).map((line) => (
-                      <li key={line}>{line}</li>
-                    ))
+                  {filterLines.length > 0 ? (
+                    filterLines.map((line) => <li key={line}>{line}</li>)
                   ) : (
-                    <li>ทุกเดือน</li>
+                    <li>ไม่ระบุคำค้น · {describeYearMonthScopeFilter(yearFilterCe, monthScope)}</li>
                   )}
                 </ul>
                 <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredRowCount} รายการ</p>

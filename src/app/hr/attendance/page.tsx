@@ -72,11 +72,19 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
   ArrowLeft,
   ChevronDown,
   Loader2,
+  Pencil,
   Printer,
   RotateCcw,
+  Timer,
 } from 'lucide-react';
 import { formatDateThaiBE, formatPayrollYearMonthThaiBE } from '@/lib/date-thai';
 import type { AttendanceDayEffectiveRow } from '@/lib/attendance/correction-merge';
@@ -824,17 +832,18 @@ export default function HrAttendanceManagePage() {
                         </TableRow>
                         {isOpen && (
                           <TableRow className="bg-muted/10 hover:bg-muted/10 border-b">
-                            <TableCell colSpan={5} className="p-3">
-                              <Table className="table-fixed w-full">
+                            <TableCell colSpan={5} className="p-2">
+                              <TooltipProvider delayDuration={300}>
+                              <Table className="table-fixed w-full text-[13px]">
                                 <TableHeader>
                                   <TableRow>
-                                    <TableHead className="w-[10%] text-center">วันที่</TableHead>
-                                    <TableHead className="w-[20%] text-center">ประเภทวัน</TableHead>
-                                    <TableHead className="w-[12.5%] whitespace-nowrap text-center">เข้างาน</TableHead>
-                                    <TableHead className="w-[12.5%] whitespace-nowrap text-center">ออกงาน</TableHead>
-                                    <TableHead className="w-[12.5%] whitespace-nowrap text-center">ชม. OT</TableHead>
-                                    <TableHead className="w-[12.5%] text-center">จัดการ</TableHead>
-                                    <TableHead className="w-[20%] text-center">หมายเหตุ</TableHead>
+                                    <TableHead className="h-9 w-[10%] px-2 text-center text-xs">วันที่</TableHead>
+                                    <TableHead className="h-9 w-[20%] px-2 text-center text-xs">ประเภทวัน</TableHead>
+                                    <TableHead className="h-9 w-[12.5%] whitespace-nowrap px-2 text-center text-xs">เข้างาน</TableHead>
+                                    <TableHead className="h-9 w-[12.5%] whitespace-nowrap px-2 text-center text-xs">ออกงาน</TableHead>
+                                    <TableHead className="h-9 w-[12.5%] whitespace-nowrap px-2 text-center text-xs">ชม. OT</TableHead>
+                                    <TableHead className="h-9 w-[12.5%] px-2 text-center text-xs">จัดการ</TableHead>
+                                    <TableHead className="h-9 w-[20%] px-2 text-center text-xs">หมายเหตุ</TableHead>
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -867,18 +876,18 @@ export default function HrAttendanceManagePage() {
                                           d.override && 'border-l-2 border-l-primary',
                                         )}
                                       >
-                                        <TableCell className="font-mono text-sm whitespace-nowrap text-center align-middle">
+                                        <TableCell className="p-2 font-mono whitespace-nowrap text-center align-middle">
                                           {formatDateThaiBE(d.ymd)}
                                         </TableCell>
-                                        <TableCell className="text-center align-middle">
+                                        <TableCell className="p-2 text-center align-middle">
                                           {dayKindBadges(d.ymd, weeklyRestPattern, calendarHolidayLabel)}
                                         </TableCell>
-                                        <TableCell className="font-mono text-sm text-center align-middle">
+                                        <TableCell className="p-2 font-mono text-center align-middle">
                                           {d.effectiveInMs != null ? (
-                                            <span className="inline-flex items-center justify-center gap-2">
+                                            <span className="inline-flex items-center justify-center gap-1">
                                               {formatBangkokHmFromUtcMs(d.effectiveInMs)}
                                               {inCorrectedBadge ? (
-                                                <Badge variant="secondary" className="text-[9px]">
+                                                <Badge variant="secondary" className="h-4 px-1 text-[8px] leading-none">
                                                   หลังแก้
                                                 </Badge>
                                               ) : null}
@@ -887,12 +896,12 @@ export default function HrAttendanceManagePage() {
                                             <span className="text-muted-foreground">—</span>
                                           )}
                                         </TableCell>
-                                        <TableCell className="font-mono text-sm text-center align-middle">
+                                        <TableCell className="p-2 font-mono text-center align-middle">
                                           {d.effectiveOutMs != null ? (
-                                            <span className="inline-flex items-center justify-center gap-2">
+                                            <span className="inline-flex items-center justify-center gap-1">
                                               {formatBangkokHmFromUtcMs(d.effectiveOutMs)}
                                               {outCorrectedBadge ? (
-                                                <Badge variant="secondary" className="text-[9px]">
+                                                <Badge variant="secondary" className="h-4 px-1 text-[8px] leading-none">
                                                   หลังแก้
                                                 </Badge>
                                               ) : null}
@@ -901,95 +910,117 @@ export default function HrAttendanceManagePage() {
                                             <span className="text-muted-foreground">—</span>
                                           )}
                                         </TableCell>
-                                        <TableCell className="font-mono text-sm text-center align-middle tabular-nums">
+                                        <TableCell className="p-2 font-mono text-center align-middle tabular-nums">
                                           {otDisplay.hours != null ? (
                                             formatAttendanceOvertimeHours(otDisplay.hours)
                                           ) : (
                                             <span className="text-muted-foreground">—</span>
                                           )}
                                         </TableCell>
-                                        <TableCell className="text-center align-middle">
+                                        <TableCell className="p-2 text-center align-middle">
                                           {canRequestCorrection || canAdminReset ? (
-                                            <div className="mx-auto inline-flex w-max flex-col items-stretch gap-1">
-                                              {canRequestCorrection ? (
-                                                <>
-                                                  <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="h-8 w-full"
-                                                    onClick={() =>
-                                                      openCorrection({
-                                                        subjectType: 'office_staff',
-                                                        subjectId: row.staffId,
-                                                        subjectNameSnapshot: row.name,
-                                                        workDateYmd: d.ymd,
-                                                        previousInAtMs: d.effectiveInMs,
-                                                        previousOutAtMs: d.effectiveOutMs,
-                                                        previousInPunchId: d.rawFirstIn?.id ?? null,
-                                                        previousOutPunchId: d.rawLastOut?.id ?? null,
-                                                      })
-                                                    }
-                                                  >
-                                                    ขอแก้ไข
-                                                  </Button>
-                                                  <Button
-                                                    type="button"
-                                                    variant="secondary"
-                                                    size="sm"
-                                                    className="h-8 w-full"
-                                                    onClick={() =>
-                                                      openOvertimeRequest({
-                                                        subjectType: 'office_staff',
-                                                        subjectId: row.staffId,
-                                                        subjectNameSnapshot: row.name,
-                                                        workDateYmd: d.ymd,
-                                                        previousOtHours: otDisplay.hours,
-                                                        pendingRequestId:
-                                                          otDisplay.status === 'PENDING_MANAGER_APPROVAL'
-                                                            ? (overtimeBySubjectDay.get(dayKey)?.id ?? null)
-                                                            : null,
-                                                      })
-                                                    }
-                                                  >
-                                                    {otDisplay.hours != null ? 'แก้ไข OT' : 'ขอ OT'}
-                                                  </Button>
-                                                </>
-                                              ) : null}
-                                              {canAdminReset && hasEffectiveTime ? (
-                                                <Button
-                                                  type="button"
-                                                  variant="destructive"
-                                                  size="sm"
-                                                  className="h-8 w-full"
-                                                  disabled={resetBusy}
-                                                  onClick={() =>
-                                                    openResetConfirm({
-                                                      staffId: row.staffId,
-                                                      staffName: row.name,
-                                                      workDateYmd: d.ymd,
-                                                    })
-                                                  }
-                                                >
-                                                  {resetBusy ? (
-                                                    <>
-                                                      <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
-                                                      Reset
-                                                    </>
-                                                  ) : (
-                                                    <>
-                                                      <RotateCcw className="h-3.5 w-3.5 mr-1" />
-                                                      Reset
-                                                    </>
-                                                  )}
-                                                </Button>
-                                              ) : null}
-                                            </div>
+                                              <div className="mx-auto inline-flex flex-row items-center justify-center gap-0.5">
+                                                {canRequestCorrection ? (
+                                                  <>
+                                                    <Tooltip>
+                                                      <TooltipTrigger asChild>
+                                                        <Button
+                                                          type="button"
+                                                          variant="outline"
+                                                          size="icon"
+                                                          className="h-7 w-7 shrink-0"
+                                                          onClick={() =>
+                                                            openCorrection({
+                                                              subjectType: 'office_staff',
+                                                              subjectId: row.staffId,
+                                                              subjectNameSnapshot: row.name,
+                                                              workDateYmd: d.ymd,
+                                                              previousInAtMs: d.effectiveInMs,
+                                                              previousOutAtMs: d.effectiveOutMs,
+                                                              previousInPunchId: d.rawFirstIn?.id ?? null,
+                                                              previousOutPunchId: d.rawLastOut?.id ?? null,
+                                                            })
+                                                          }
+                                                        >
+                                                          <Pencil className="h-3 w-3" />
+                                                          <span className="sr-only">ขอแก้ไขเวลา</span>
+                                                        </Button>
+                                                      </TooltipTrigger>
+                                                      <TooltipContent side="top">
+                                                        <p>ขอแก้ไขเวลา</p>
+                                                      </TooltipContent>
+                                                    </Tooltip>
+                                                    <Tooltip>
+                                                      <TooltipTrigger asChild>
+                                                        <Button
+                                                          type="button"
+                                                          variant="secondary"
+                                                          size="icon"
+                                                          className="h-7 w-7 shrink-0"
+                                                          onClick={() =>
+                                                            openOvertimeRequest({
+                                                              subjectType: 'office_staff',
+                                                              subjectId: row.staffId,
+                                                              subjectNameSnapshot: row.name,
+                                                              workDateYmd: d.ymd,
+                                                              previousOtHours: otDisplay.hours,
+                                                              pendingRequestId:
+                                                                otDisplay.status === 'PENDING_MANAGER_APPROVAL'
+                                                                  ? (overtimeBySubjectDay.get(dayKey)?.id ?? null)
+                                                                  : null,
+                                                            })
+                                                          }
+                                                        >
+                                                          <Timer className="h-3 w-3" />
+                                                          <span className="sr-only">
+                                                            {otDisplay.hours != null ? 'ขอแก้ไข OT' : 'ขอเพิ่ม OT'}
+                                                          </span>
+                                                        </Button>
+                                                      </TooltipTrigger>
+                                                      <TooltipContent side="top">
+                                                        <p>
+                                                          {otDisplay.hours != null ? 'ขอแก้ไข OT' : 'ขอเพิ่ม OT'}
+                                                        </p>
+                                                      </TooltipContent>
+                                                    </Tooltip>
+                                                  </>
+                                                ) : null}
+                                                {canAdminReset && hasEffectiveTime ? (
+                                                  <Tooltip>
+                                                    <TooltipTrigger asChild>
+                                                      <Button
+                                                        type="button"
+                                                        variant="destructive"
+                                                        size="icon"
+                                                        className="h-7 w-7 shrink-0"
+                                                        disabled={resetBusy}
+                                                        onClick={() =>
+                                                          openResetConfirm({
+                                                            staffId: row.staffId,
+                                                            staffName: row.name,
+                                                            workDateYmd: d.ymd,
+                                                          })
+                                                        }
+                                                      >
+                                                        {resetBusy ? (
+                                                          <Loader2 className="h-3 w-3 animate-spin" />
+                                                        ) : (
+                                                          <RotateCcw className="h-3 w-3" />
+                                                        )}
+                                                        <span className="sr-only">รีเซ็ท ล้างค่าลงเวลา</span>
+                                                      </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent side="top">
+                                                      <p>รีเซ็ท ล้างค่าลงเวลา</p>
+                                                    </TooltipContent>
+                                                  </Tooltip>
+                                                ) : null}
+                                              </div>
                                           ) : (
                                             <span className="text-[11px] text-muted-foreground">—</span>
                                           )}
                                         </TableCell>
-                                        <TableCell className="text-center align-middle text-xs leading-snug">
+                                        <TableCell className="p-2 text-center align-middle text-xs leading-snug">
                                           {pendingNotes.length > 0 ? (
                                             <div className="flex flex-col items-center gap-1">
                                               {pendingNotes.map((note) => (
@@ -1010,6 +1041,7 @@ export default function HrAttendanceManagePage() {
                                   })}
                                 </TableBody>
                               </Table>
+                              </TooltipProvider>
                             </TableCell>
                           </TableRow>
                         )}
