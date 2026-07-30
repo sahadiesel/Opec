@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -14,7 +14,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Plus, ChevronRight, FileText, Loader2, PackageSearch, Search, Trash2 } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, FileText, Loader2, PackageSearch, Search, Trash2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import {
@@ -82,6 +82,8 @@ import {
   describeYearMonthScopeFilter,
   ymMatchesYearMonthScope,
 } from '@/lib/date/year-month-scope-filter';
+
+const VENDOR_BILLS_PAGE_SIZE = 20;
 
 function vendorBillCreatedYm(bill: PurchaseVendorBill): string | null {
   const d = new Date(bill.createdAt);
@@ -169,6 +171,7 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
   const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
   const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [billVendorId, setBillVendorId] = useState<string>('all');
+  const [listPage, setListPage] = useState(1);
 
   const billsQuery = useMemoFirebase(() => {
     if (!firestore || !ok) return null;
@@ -230,6 +233,21 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
     });
     return list;
   }, [bills, tab, billSearch, yearFilterCe, monthScope, billVendorId, vendors]);
+
+  useEffect(() => {
+    setListPage(1);
+  }, [tab, billSearch, yearFilterCe, monthScope, billVendorId]);
+
+  const billsTotalPages = Math.max(1, Math.ceil(billsFiltered.length / VENDOR_BILLS_PAGE_SIZE));
+
+  useEffect(() => {
+    if (listPage > billsTotalPages) setListPage(billsTotalPages);
+  }, [listPage, billsTotalPages]);
+
+  const billsPageRows = useMemo(() => {
+    const start = (listPage - 1) * VENDOR_BILLS_PAGE_SIZE;
+    return billsFiltered.slice(start, start + VENDOR_BILLS_PAGE_SIZE);
+  }, [billsFiltered, listPage]);
 
   const billsFilteredBillAmountSum = useMemo(() => {
     return billsFiltered.reduce((sum, b) => sum + (Number(b.billAmount) || 0), 0);
@@ -508,24 +526,24 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
               <div className="py-16 text-center text-muted-foreground">กำลังโหลด…</div>
             ) : (
               <>
-                <Table>
+                <Table className="text-[13px]">
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="pl-6">เลขที่ใบรับวางบิล</TableHead>
-                      <TableHead>ใบสั่งซื้อ</TableHead>
-                      <TableHead>คู่ค้า</TableHead>
-                      <TableHead>ยอดในใบ</TableHead>
-                      <TableHead>วันรับวางบิล</TableHead>
-                      <TableHead>วันจ่าย (แผน)</TableHead>
-                      <TableHead>สถานะ</TableHead>
+                      <TableHead className="h-9 py-2 pl-4 text-xs">เลขที่ใบรับวางบิล</TableHead>
+                      <TableHead className="h-9 py-2 text-xs">ใบสั่งซื้อ</TableHead>
+                      <TableHead className="h-9 py-2 text-xs">คู่ค้า</TableHead>
+                      <TableHead className="h-9 py-2 text-xs">ยอดในใบ</TableHead>
+                      <TableHead className="h-9 py-2 text-xs">วันรับวางบิล</TableHead>
+                      <TableHead className="h-9 py-2 text-xs">วันจ่าย (แผน)</TableHead>
+                      <TableHead className="h-9 py-2 text-xs">สถานะ</TableHead>
                       {showBillDeleteColumn && (
-                        <TableHead className="w-14 px-2 text-center text-muted-foreground">ลบ</TableHead>
+                        <TableHead className="h-9 w-14 px-2 py-2 text-center text-xs text-muted-foreground">ลบ</TableHead>
                       )}
-                      <TableHead className="text-right pr-6">จัดการ</TableHead>
+                      <TableHead className="h-9 py-2 pr-4 text-right text-xs">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {billsFiltered.map((b) => {
+                    {billsPageRows.map((b) => {
                       const v = vendors?.find((x) => x.id === b.vendorId);
                       const billTrashVisible = showBillDeleteColumn && b.status === 'DRAFT';
                       const detailHref = `${detailBasePath}/${b.id}`;
@@ -535,12 +553,12 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                           className="cursor-pointer hover:bg-muted/40"
                           onClick={() => router.push(detailHref)}
                         >
-                          <TableCell className="pl-6 font-mono font-bold text-primary">{b.receiptNo}</TableCell>
-                          <TableCell className="font-mono text-sm font-bold text-primary">
+                          <TableCell className="py-2.5 pl-4 font-mono text-xs font-bold text-primary">{b.receiptNo}</TableCell>
+                          <TableCell className="py-2.5 font-mono text-xs font-bold text-primary">
                             {b.purchaseNo || b.purchaseId}
                           </TableCell>
-                          <TableCell>{v?.vendorName || '—'}</TableCell>
-                          <TableCell className="text-right text-sm">
+                          <TableCell className="py-2.5 text-sm">{v?.vendorName || '—'}</TableCell>
+                          <TableCell className="py-2.5 text-right text-sm">
                             {b.billAmount != null && b.billAmount > 0 ? (
                               <span className="font-mono font-medium">
                                 ฿{b.billAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -549,29 +567,29 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                               <span className="text-muted-foreground italic">ตาม PO</span>
                             )}
                           </TableCell>
-                          <TableCell>{formatYmdLocalThaiBE(b.billingReceivedDate)}</TableCell>
-                          <TableCell>{formatYmdLocalThaiBE(b.plannedPaymentDate)}</TableCell>
-                          <TableCell>{statusBadge(b)}</TableCell>
+                          <TableCell className="py-2.5 text-sm">{formatYmdLocalThaiBE(b.billingReceivedDate)}</TableCell>
+                          <TableCell className="py-2.5 text-sm">{formatYmdLocalThaiBE(b.plannedPaymentDate)}</TableCell>
+                          <TableCell className="py-2.5">{statusBadge(b)}</TableCell>
                           {showBillDeleteColumn && (
-                            <TableCell className="w-14 px-2 text-center" onClick={(e) => e.stopPropagation()}>
+                            <TableCell className="w-14 px-2 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
                               {billTrashVisible ? (
                                 <Button
                                   type="button"
                                   variant="ghost"
                                   size="icon"
-                                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                  className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
                                   title={showAdminDelete ? 'ลบใบรับวางบิลฉบับร่าง (ผู้ดูแลระบบ)' : 'ลบใบรับวางบิลฉบับร่าง'}
                                   onClick={() => setDeleteTarget(b)}
                                 >
-                                  <Trash2 className="h-5 w-5" />
+                                  <Trash2 className="h-4 w-4" />
                                 </Button>
                               ) : null}
                             </TableCell>
                           )}
-                          <TableCell className="text-right pr-6" onClick={(e) => e.stopPropagation()}>
-                            <Button type="button" variant="ghost" size="icon" asChild>
+                          <TableCell className="py-2.5 pr-4 text-right" onClick={(e) => e.stopPropagation()}>
+                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" asChild>
                               <Link href={detailHref}>
-                                <ChevronRight className="h-5 w-5" />
+                                <ChevronRight className="h-4 w-4" />
                               </Link>
                             </Button>
                           </TableCell>
@@ -582,7 +600,7 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                       <TableRow>
                         <TableCell
                           colSpan={showBillDeleteColumn ? 9 : 8}
-                          className="text-center py-16 text-muted-foreground"
+                          className="text-center py-12 text-muted-foreground"
                         >
                           ยังไม่มีรายการในชุดนี้
                         </TableCell>
@@ -591,17 +609,72 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                   </TableBody>
                 </Table>
                 {billsFiltered.length > 0 ? (
-                  <div className="border-t px-6 py-3 bg-muted/25 text-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <span className="text-muted-foreground leading-snug">
-                      ยอดรวมฟิลด์ «ยอดในใบ» ในรายการที่แสดง ({billsFiltered.length} ใบ)
-                      {` · เดือนสร้าง ${describeYearMonthScopeFilter(yearFilterCe, monthScope)}`}
-                      {billVendorId !== 'all'
-                        ? ` · คู่ค้า: ${vendors?.find((v) => v.id === billVendorId)?.vendorName ?? ''}`
-                        : ''}
-                    </span>
-                    <span className="font-mono font-bold text-base tabular-nums">
-                      ฿{billsFilteredBillAmountSum.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </span>
+                  <div className="border-t px-4 py-2.5 bg-muted/25 text-sm flex flex-col gap-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <span className="text-muted-foreground leading-snug">
+                        ยอดรวมฟิลด์ «ยอดในใบ» ตามตัวกรอง ({billsFiltered.length} ใบ)
+                        {` · เดือนสร้าง ${describeYearMonthScopeFilter(yearFilterCe, monthScope)}`}
+                        {billVendorId !== 'all'
+                          ? ` · คู่ค้า: ${vendors?.find((v) => v.id === billVendorId)?.vendorName ?? ''}`
+                          : ''}
+                      </span>
+                      <span className="font-mono font-bold text-base tabular-nums">
+                        ฿{billsFilteredBillAmountSum.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    {billsFiltered.length > VENDOR_BILLS_PAGE_SIZE ? (
+                      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 border-t pt-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2 justify-self-start">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs font-semibold"
+                            disabled={listPage <= 1}
+                            onClick={() => setListPage(1)}
+                          >
+                            หน้าแรก
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            disabled={listPage <= 1}
+                            onClick={() => setListPage((p) => Math.max(1, p - 1))}
+                            aria-label="หน้าก่อน"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <span className="text-xs text-muted-foreground tabular-nums text-center whitespace-nowrap px-1">
+                          หน้า {listPage} / {billsTotalPages} · แสดง {billsPageRows.length} จาก {billsFiltered.length}
+                        </span>
+                        <div className="flex min-w-0 flex-wrap items-center gap-2 justify-self-end">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            disabled={listPage >= billsTotalPages}
+                            onClick={() => setListPage((p) => Math.min(billsTotalPages, p + 1))}
+                            aria-label="หน้าถัดไป"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs font-semibold"
+                            disabled={listPage >= billsTotalPages}
+                            onClick={() => setListPage(billsTotalPages)}
+                          >
+                            หน้าสุดท้าย
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </>

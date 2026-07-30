@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { collection, deleteField, doc, getDocs, limit, orderBy, query, updateDoc } from 'firebase/firestore';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
@@ -62,6 +63,7 @@ import {
   ArrowRight,
   Building2,
   CheckCircle2,
+  ChevronRight,
   Coins,
   Loader2,
   Printer,
@@ -73,7 +75,7 @@ import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine, buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { cn } from '@/lib/utils';
-import { formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
+import { formatPayrollYearMonthEnAbbrev, formatPayrollYearMonthMmYyyyThaiBE } from '@/lib/date-thai';
 import { runStatusToD8Lifecycle } from '@/lib/payroll/d8';
 import { workerPayrollBatchStatusLabelTh } from '@/lib/payroll/worker-batch-status-display';
 import {
@@ -145,6 +147,7 @@ export function PayrollApprovalCenterD6({
   /** จาก /hr/payroll-approval?run= ให้โฟกัสงวด office นั้น */
   initialOfficeRunId?: string;
 }) {
+  const router = useRouter();
   const firestore = useFirestore();
   const { profile: companyProfile } = useCompanyDocumentProfile();
   const { toast } = useToast();
@@ -855,12 +858,13 @@ export function PayrollApprovalCenterD6({
                         <TableHead>สถานะ</TableHead>
                         <TableHead className="text-right">คน</TableHead>
                         <TableHead className="text-right">สุทธิ</TableHead>
+                        <TableHead className="w-[56px] text-center">จัดการ</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {officeRunsFiltered.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
+                          <TableCell colSpan={6} className="text-center text-muted-foreground py-10">
                             {officeRuns.length === 0
                               ? 'ยังไม่มีงวดที่ฝ่ายเงินเดือนส่งอนุมัติ — หรือไม่ตรงตัวกรอง/ค้นหา'
                               : 'ไม่ตรงตัวกรองหรือคำค้น — ลองเคลียร์การค้นหา/เดือน'}
@@ -871,18 +875,14 @@ export function PayrollApprovalCenterD6({
                           <TableRow
                             key={r.id}
                             className={cn(
-                              'cursor-pointer',
-                              selectedRunId === r.id && 'bg-muted/50',
-                              isOfficeRunPendingManagerApproval(r.status) && 'bg-amber-50/70 hover:bg-amber-50'
+                              'cursor-pointer hover:bg-muted/50',
+                              isOfficeRunPendingManagerApproval(r.status) && 'bg-amber-50/70 hover:bg-amber-50',
                             )}
-                            onClick={() => {
-                              setSelectedRunId(r.id);
-                              setOfficeLines(null);
-                            }}
+                            onClick={() => router.push(`/office-payroll/${r.id}?from=approval`)}
                           >
                             <TableCell className="font-mono text-xs">{r.payrollRunNo}</TableCell>
                             <TableCell>
-                              {formatPayrollYearMonthEnAbbrev(r.payrollMonth)} <span className="text-muted-foreground">({r.payrollMonth})</span>
+                              {formatPayrollYearMonthMmYyyyThaiBE(r.payrollMonth)}
                             </TableCell>
                             <TableCell>
                               <Badge
@@ -898,6 +898,9 @@ export function PayrollApprovalCenterD6({
                             </TableCell>
                             <TableCell className="text-right tabular-nums">{r.staffCount}</TableCell>
                             <TableCell className="text-right tabular-nums">{moneyTH(r.netAmount)}</TableCell>
+                            <TableCell className="text-center">
+                              <ChevronRight className="mx-auto h-4 w-4 text-muted-foreground" />
+                            </TableCell>
                           </TableRow>
                         ))
                       )}
@@ -908,12 +911,6 @@ export function PayrollApprovalCenterD6({
 
               {selectedRun && (
                 <div className="space-y-4">
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href={`/office-payroll/${selectedRun.id}`}>
-                      เปิดหน้างวดเต็ม <ArrowRight className="ml-1 h-3 w-3" />
-                    </Link>
-                  </Button>
-
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-base">A. Summary</CardTitle>
@@ -922,8 +919,7 @@ export function PayrollApprovalCenterD6({
                       <div>
                         <div className="text-muted-foreground text-xs uppercase">งวด</div>
                         <div className="font-medium">
-                          {formatPayrollYearMonthEnAbbrev(selectedRun.payrollMonth)}{' '}
-                          <span className="text-muted-foreground">({selectedRun.payrollMonth})</span>
+                          {formatPayrollYearMonthMmYyyyThaiBE(selectedRun.payrollMonth)}
                         </div>
                       </div>
                       <div>
@@ -980,6 +976,83 @@ export function PayrollApprovalCenterD6({
                           <AlertTitle>อนุมัติไม่ได้</AlertTitle>
                           <AlertDescription>มีข้อแดงจากทะเบียนพนักงาน / บรรทัดงวด</AlertDescription>
                         </Alert>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">รายการจ่ายเงินพนักงาน (รายคน)</CardTitle>
+                      <CardDescription>
+                        กดแถวหรือลูกศรเพื่อเปิดรายละเอียดรายคนก่อนอนุมัติ — เหมือนหน้างวด Internal Settlement
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      {linesLoading && (
+                        <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground text-sm">
+                          <Loader2 className="h-4 w-4 animate-spin" /> กำลังโหลดรายคน…
+                        </div>
+                      )}
+                      {!linesLoading && officeLines && officeLines.length === 0 && (
+                        <p className="py-10 text-center text-sm text-muted-foreground">ยังไม่มีบรรทัดรายคนในงวดนี้</p>
+                      )}
+                      {!linesLoading && officeLinesSortedForSlips && officeLinesSortedForSlips.length > 0 && (
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>พนักงาน & ตำแหน่ง</TableHead>
+                              <TableHead className="text-right">ฐานเงินเดือน</TableHead>
+                              <TableHead className="text-right">ยอดรวม</TableHead>
+                              <TableHead className="text-right">รายการหัก</TableHead>
+                              <TableHead className="text-right font-bold">สุทธิ</TableHead>
+                              <TableHead className="w-[72px] text-center">จัดการ</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {officeLinesSortedForSlips.map((line) => {
+                              const detailHref = `/office-payroll/${selectedRun.id}/staff/${encodeURIComponent(line.staffId)}?from=approval`;
+                              return (
+                                <TableRow
+                                  key={line.id}
+                                  className="cursor-pointer hover:bg-muted/40"
+                                  onClick={() => {
+                                    router.push(detailHref);
+                                  }}
+                                >
+                                  <TableCell>
+                                    <div className="flex flex-col">
+                                      <span className="font-semibold text-sm text-primary">{line.staffName}</span>
+                                      <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                        <Building2 className="h-2.5 w-2.5 shrink-0" />
+                                        {line.department} | {line.positionTitle}
+                                      </span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="text-right tabular-nums text-sm">
+                                    {moneyTH(line.baseSalary)}
+                                  </TableCell>
+                                  <TableCell className="text-right tabular-nums text-sm">
+                                    {moneyTH(line.grossPay)}
+                                  </TableCell>
+                                  <TableCell className="text-right tabular-nums text-sm text-red-600">
+                                    -{moneyTH(line.deductions)}
+                                  </TableCell>
+                                  <TableCell className="text-right tabular-nums text-sm font-bold text-green-700">
+                                    {moneyTH(line.netPay)}
+                                  </TableCell>
+                                  <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8" asChild>
+                                      <Link href={detailHref} title="ดูรายละเอียดรายคน">
+                                        <ChevronRight className="h-4 w-4" />
+                                        <span className="sr-only">ดูรายละเอียด</span>
+                                      </Link>
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
                       )}
                     </CardContent>
                   </Card>

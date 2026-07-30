@@ -1,8 +1,8 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -37,9 +37,10 @@ import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
 import { OfficePayrollLine, OfficePayrollPitMode, OfficePayrollRun, User } from '@/lib/types';
-import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
+import { formatDateTimeThaiBE, formatPayrollYearMonthMmYyyyThaiBE } from '@/lib/date-thai';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
+import { canApproveOfficePayrollAsManager } from '@/lib/permission-core';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -72,7 +73,24 @@ function snapshotDeductionLabel(
   return key.replace(/_/g, ' ');
 }
 
-export default function OfficePayrollStaffLinePage({
+const OFFICE_PAYROLL_LIST_HREF = '/office-payroll';
+const OFFICE_PAYROLL_APPROVAL_HREF = '/hr/payroll-approval';
+
+function officePayrollReturnHref(from: string | null | undefined, runId?: string): string {
+  if (from === 'approval') {
+    return runId
+      ? `${OFFICE_PAYROLL_APPROVAL_HREF}?run=${encodeURIComponent(runId)}`
+      : OFFICE_PAYROLL_APPROVAL_HREF;
+  }
+  return OFFICE_PAYROLL_LIST_HREF;
+}
+
+function withOfficePayrollFromQuery(path: string, from: string | null | undefined): string {
+  if (from !== 'approval') return path;
+  return path.includes('?') ? `${path}&from=approval` : `${path}?from=approval`;
+}
+
+function OfficePayrollStaffLinePageInner({
   params,
 }: {
   params: Promise<{ id: string; staffId: string }>;
@@ -80,13 +98,20 @@ export default function OfficePayrollStaffLinePage({
   const { id: runId, staffId: staffIdParam } = use(params);
   const staffId = decodeURIComponent(staffIdParam);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromParam = searchParams.get('from');
+  const runBackHref = withOfficePayrollFromQuery(`/office-payroll/${runId}`, fromParam);
+  const listOrApprovalHref = officePayrollReturnHref(fromParam, runId);
   const { toast } = useToast();
   const { currentUser, isLoading: userLoading } = useAppUser();
   const { payroll } = usePermissions(currentUser);
   const firestore = useFirestore();
   const { profile: companyProfile } = useCompanyDocumentProfile();
 
-  const isAuthorized = useMemo(() => canView(currentUser, 'office_payroll'), [currentUser]);
+  const isAuthorized = useMemo(
+    () => canView(currentUser, 'office_payroll') || canApproveOfficePayrollAsManager(currentUser),
+    [currentUser],
+  );
 
   const runRef = useMemoFirebase(
     () => (firestore && isAuthorized ? doc(firestore, 'office_payroll_runs', runId) : null),
@@ -242,8 +267,8 @@ export default function OfficePayrollStaffLinePage({
       <AppShell user={currentUser} onLogout={() => {}}>
         <p className="text-center text-muted-foreground py-20">ไม่พบงวดเงินเดือน</p>
         <div className="text-center">
-          <Button variant="outline" onClick={() => router.push('/office-payroll')}>
-            กลับรายการ
+          <Button variant="outline" onClick={() => router.push(listOrApprovalHref)}>
+            {fromParam === 'approval' ? 'กลับหน้าอนุมัติ' : 'กลับรายการ'}
           </Button>
         </div>
       </AppShell>
@@ -258,7 +283,7 @@ export default function OfficePayrollStaffLinePage({
         <div className="max-w-lg mx-auto space-y-4 py-12 text-center">
           <p className="text-muted-foreground">ไม่พบรายการจ่ายของพนักงานนี้ในงวดนี้ หรือรหัสพนักงานไม่ตรง</p>
           <Button asChild>
-            <Link href={`/office-payroll/${runId}`}>
+            <Link href={runBackHref}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               กลับงวดเงินเดือน
             </Link>
@@ -287,14 +312,14 @@ export default function OfficePayrollStaffLinePage({
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="flex flex-wrap items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.push(`/office-payroll/${runId}`)}>
+          <Button variant="ghost" size="icon" onClick={() => router.push(runBackHref)} aria-label="กลับงวด">
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
             <PayrollScopeTag scope="office" showHint={false} />
             <h1 className="text-xl font-bold">รายละเอียดจ่ายเงินพนักงาน (รายคน)</h1>
             <p className="text-sm text-muted-foreground font-mono">
-              {run.payrollRunNo} · {formatDateThaiBE(run.payrollMonth + '-01')}
+              {run.payrollRunNo} · {formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth)}
             </p>
           </div>
         </div>
@@ -658,5 +683,21 @@ export default function OfficePayrollStaffLinePage({
         </Card>
       </div>
     </AppShell>
+  );
+}
+
+export default function OfficePayrollStaffLinePage({
+  params,
+}: {
+  params: Promise<{ id: string; staffId: string }>;
+}) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">กำลังโหลด…</div>
+      }
+    >
+      <OfficePayrollStaffLinePageInner params={params} />
+    </Suspense>
   );
 }

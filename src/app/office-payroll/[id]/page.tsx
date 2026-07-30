@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use, useMemo, useEffect, useRef, useCallback } from 'react';
+import { useState, use, useMemo, useEffect, useRef, useCallback, Suspense } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -49,7 +49,7 @@ import { formatDateThaiBE, formatDateTimeThaiBE, formatPayrollYearMonthEnAbbrev 
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { canView, canExecuteBankCashbookPayments } from '@/lib/permissions';
@@ -78,9 +78,30 @@ import {
   capOfficePayrollLinePrintRows,
 } from '@/lib/documents/office-payroll-lines-list-print';
 import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
-export default function OfficePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
+
+const OFFICE_PAYROLL_LIST_HREF = '/office-payroll';
+const OFFICE_PAYROLL_APPROVAL_HREF = '/hr/payroll-approval';
+
+function officePayrollReturnHref(from: string | null | undefined, runId?: string): string {
+  if (from === 'approval') {
+    return runId
+      ? `${OFFICE_PAYROLL_APPROVAL_HREF}?run=${encodeURIComponent(runId)}`
+      : OFFICE_PAYROLL_APPROVAL_HREF;
+  }
+  return OFFICE_PAYROLL_LIST_HREF;
+}
+
+function withOfficePayrollFromQuery(path: string, from: string | null | undefined): string {
+  if (from !== 'approval') return path;
+  return path.includes('?') ? `${path}&from=approval` : `${path}?from=approval`;
+}
+
+function OfficePayrollDetailPageInner({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromParam = searchParams.get('from');
+  const backHref = officePayrollReturnHref(fromParam, id);
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -399,7 +420,7 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
       <div className="max-w-[1600px] mx-auto space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={() => router.push('/office-payroll')}>
+            <Button variant="ghost" size="icon" onClick={() => router.push(backHref)} aria-label="กลับ">
               <ArrowLeft className="h-5 w-5" />
             </Button>
             <div className="space-y-2">
@@ -646,7 +667,10 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
                               <div className="flex justify-center">
                                 <Button variant="ghost" size="icon" asChild title="รายละเอียดรายคน">
                                 <Link
-                                  href={`/office-payroll/${id}/staff/${encodeURIComponent(line.staffId)}`}
+                                  href={withOfficePayrollFromQuery(
+                                    `/office-payroll/${id}/staff/${encodeURIComponent(line.staffId)}`,
+                                    fromParam,
+                                  )}
                                 >
                                   <ChevronRight className="h-4 w-4" />
                                 </Link>
@@ -900,8 +924,8 @@ export default function OfficePayrollDetailPage({ params }: { params: Promise<{ 
             </div>
           </div>
           {!isLocked && (
-            <Button variant="outline" className="gap-2" onClick={() => router.push('/office-payroll')}>
-              กลับไปหน้ารายการ <ChevronRight className="h-4 w-4" />
+            <Button variant="outline" className="gap-2" onClick={() => router.push(backHref)}>
+              {fromParam === 'approval' ? 'กลับหน้าอนุมัติ' : 'กลับไปหน้ารายการ'} <ChevronRight className="h-4 w-4" />
             </Button>
           )}
         </div>
@@ -922,5 +946,17 @@ function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
         <p className="text-[10px] font-medium text-muted-foreground mt-1">{sub}</p>
       </CardContent>
     </Card>
+  );
+}
+
+export default function OfficePayrollDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center text-muted-foreground text-sm">กำลังโหลด…</div>
+      }
+    >
+      <OfficePayrollDetailPageInner params={params} />
+    </Suspense>
   );
 }
