@@ -45,7 +45,7 @@ import {
   User,
 } from '@/lib/types';
 import { executivePayrollLineDocumentId } from '@/lib/payroll/executive-payroll-line-id';
-import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
+import { formatDateTimeThaiBE, formatPayrollYearMonthMmYyyyThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canEdit, canView } from '@/lib/permissions';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
@@ -324,7 +324,7 @@ export default function ExecutivePayrollRunStaffLinePage({
             </Badge>
             <h1 className="text-xl font-bold">รายละเอียดจ่ายเงินผู้บริหาร (รายคน)</h1>
             <p className="text-sm text-muted-foreground font-mono">
-              {run.payrollRunNo} · {formatDateThaiBE(run.payrollMonth + '-01')}
+              {run.payrollRunNo} · {formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth)}
             </p>
           </div>
         </div>
@@ -440,7 +440,7 @@ export default function ExecutivePayrollRunStaffLinePage({
             <CardHeader>
               <CardTitle className="text-base">Snapshot การคำนวณ (D8)</CardTitle>
               <CardDescription>
-                อ้างอิง {snap.asOfDate} · {formatDateTimeThaiBE(snap.frozenAt)}
+                อ้างอิง {formatYmdLocalThaiBE(snap.asOfDate)} · {formatDateTimeThaiBE(snap.frozenAt)}
               </CardDescription>
             </CardHeader>
             <CardContent className="text-sm space-y-3">

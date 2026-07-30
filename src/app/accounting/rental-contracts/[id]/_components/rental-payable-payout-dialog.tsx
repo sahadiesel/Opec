@@ -18,7 +18,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { formatPayrollYearMonthMmYyyyThaiBE, formatYmdLocalThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { useFirebaseApp, useFirestore } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
 import type {
@@ -142,7 +142,7 @@ function SupportingDocReadOnly({
     <p className="text-sm">
       <span className="font-medium">{title}:</span> เลขที่{' '}
       <span className="font-mono font-semibold">{link.documentNo?.trim() || '—'}</span>
-      {' · '}วันที่ {link.documentDate?.trim() || '—'}
+      {' · '}วันที่ {link.documentDate?.trim() ? formatYmdLocalThaiBE(link.documentDate) : '—'}
     </p>
   );
 }
@@ -339,7 +339,7 @@ export function RentalPayablePayoutDialog({
       <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
-            {isPending ? 'ทำจ่ายค่าเช่า' : 'รายละเอียดการจ่ายค่าเช่า'} {payable.periodMonth}
+            {isPending ? 'ทำจ่ายค่าเช่า' : 'รายละเอียดการจ่ายค่าเช่า'} {formatPayrollYearMonthMmYyyyThaiBE(payable.periodMonth)}
           </DialogTitle>
           <DialogDescription>
             รูปแบบเดียวกับใบวางบิล — บันทึก cashbook · หลักฐานโอน · หัก ณ ที่จ่าย · เอกสารประกอบ (ใบเสร็จ)
@@ -366,7 +366,7 @@ export function RentalPayablePayoutDialog({
                 <tbody>
                   <tr className="border-b border-muted/60">
                     <td className="py-2 px-3 font-mono">1</td>
-                    <td className="py-2 px-3">งวด {payable.periodMonth}</td>
+                    <td className="py-2 px-3">งวด {formatPayrollYearMonthMmYyyyThaiBE(payable.periodMonth)}</td>
                     <td className="py-2 px-3 text-right font-mono font-semibold">
                       ฿{money(payable.grossAmount)}
                     </td>
@@ -427,8 +427,8 @@ export function RentalPayablePayoutDialog({
               </div>
               <div className="rounded-md border bg-muted/20 px-3 py-2">
                 <p className="text-muted-foreground text-xs font-medium mb-1">งวด / ครบกำหนด</p>
-                <p className="font-mono font-semibold text-base">{payable.periodMonth}</p>
-                <p className="text-xs text-muted-foreground mt-1">ครบกำหนด {payable.dueDate}</p>
+                <p className="font-mono font-semibold text-base">{formatPayrollYearMonthMmYyyyThaiBE(payable.periodMonth)}</p>
+                <p className="text-xs text-muted-foreground mt-1">ครบกำหนด {formatYmdLocalThaiBE(payable.dueDate)}</p>
               </div>
             </div>
 

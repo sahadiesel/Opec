@@ -27,7 +27,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { formatYmdLocalThaiBE } from '@/lib/date-thai';
+import { formatPayrollYearMonthMmYyyyThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import {
   buildYearCeOptions,
   currentMonthMm,
@@ -1669,7 +1669,7 @@ export default function AccountingWithholdingPayrollHubPage() {
                             <div className="font-mono truncate" title={run.payrollRunNo || run.id}>
                               {run.payrollRunNo || run.id}
                             </div>
-                            <div className="truncate text-muted-foreground">{run.payrollMonth || '—'}</div>
+                            <div className="truncate text-muted-foreground">{formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth)}</div>
                           </TableCell>
                           <TableCell className="max-w-0">
                             <div className="truncate font-medium" title={line.staffName || '—'}>
@@ -1827,7 +1827,7 @@ export default function AccountingWithholdingPayrollHubPage() {
                             <div className="font-mono truncate" title={run.payrollRunNo || run.id}>
                               {run.payrollRunNo || run.id}
                             </div>
-                            <div className="truncate text-muted-foreground">{run.payrollMonth || '—'}</div>
+                            <div className="truncate text-muted-foreground">{formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth)}</div>
                           </TableCell>
                           <TableCell className="max-w-0">
                             <div className="truncate font-medium" title={line.staffName || '—'}>

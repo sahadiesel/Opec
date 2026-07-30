@@ -34,6 +34,7 @@ import {
   createRentalContract,
   defaultVatRateForLessor,
 } from '@/lib/services/rental-contract-service';
+import { formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { useEffect } from 'react';
 
 function statusBadge(status: RentalContractStatus) {
@@ -315,7 +316,7 @@ export function LeaseContractsClient({ leaseKind }: { leaseKind: LeaseContractKi
                       <TableCell className="text-right tabular-nums">
                         {row.monthlyRentAmount.toLocaleString('th-TH', { minimumFractionDigits: 2 })}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap">{row.startDate} — {row.endDate}</TableCell>
+                      <TableCell className="whitespace-nowrap">{formatYmdRangeThaiBE(row.startDate, row.endDate)}</TableCell>
                       <TableCell className="text-center">{row.paymentDayOfMonth}</TableCell>
                       <TableCell className="text-center">{row.withholdingTaxRatePercent}%</TableCell>
                       <TableCell>{statusBadge(row.status)}</TableCell>

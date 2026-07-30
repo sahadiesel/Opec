@@ -37,7 +37,7 @@ import { useFirestore, useCollection, useMemoFirebase, useFirebaseApp } from '@/
 import { useAppUser } from '@/hooks/use-app-user';
 import { useToast } from '@/hooks/use-toast';
 import { ExternalLink, Loader2, Search, Briefcase, Printer, Banknote, Paperclip } from 'lucide-react';
-import { formatYmdLocalThaiBE } from '@/lib/date-thai';
+import { formatPayrollYearMonthMmYyyyThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import type {
   User,
   OfficePayrollRun,
@@ -139,7 +139,7 @@ function buildExecutivePrintRows(
       wageStatus: officeWageStatusLabel(run.status),
       taxStatus: whtTaxStatusLabel(wagePaid, isOfficePayrollWhtTaxPaid(line)),
       runLabel: run.payrollRunNo || run.id,
-      payrollMonth: run.payrollMonth || '—',
+      payrollMonth: formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth),
       earnerName: line.staffName || '—',
       earnerId: resolveStaffNationalId(line.staffId, nationalIdByStaffId),
       paymentDate: formatYmdLocalThaiBE(paymentYmd),
@@ -936,7 +936,7 @@ export default function AccountingWithholdingPayrollExecutivePage() {
                             <div className="font-mono truncate" title={run.payrollRunNo || run.id}>
                               {run.payrollRunNo || run.id}
                             </div>
-                            <div className="truncate text-muted-foreground">{run.payrollMonth || '—'}</div>
+                            <div className="truncate text-muted-foreground">{formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth)}</div>
                           </TableCell>
                           <TableCell className="max-w-0">
                             <div className="truncate font-medium" title={line.staffName || '—'}>

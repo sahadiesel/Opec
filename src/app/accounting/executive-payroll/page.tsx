@@ -22,7 +22,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { formatPayrollYearMonthMmYyyyThaiBE } from '@/lib/date-thai';
+import { formatPayrollYearMonthMmYyyyThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { ExecutivePayrollStaff, OfficePayrollRun, PayrollRunStatus, User } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -359,7 +359,7 @@ export default function ExecutivePayrollPage() {
                   <span className="font-medium text-foreground">ช่วงเวลางวด (คำนวณอัตโนมัติ)</span>
                   <p className="mt-1 font-mono text-xs">
                     {newRun.payrollPeriodStart && newRun.payrollPeriodEnd
-                      ? `${newRun.payrollPeriodStart} ถึง ${newRun.payrollPeriodEnd}`
+                      ? formatYmdRangeThaiBE(newRun.payrollPeriodStart, newRun.payrollPeriodEnd)
                       : '—'}
                   </p>
                 </div>
@@ -414,7 +414,7 @@ export default function ExecutivePayrollPage() {
                     >
                       <TableCell className="py-4 font-bold text-primary font-mono">{run.payrollRunNo}</TableCell>
                       <TableCell className="font-medium">{formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth)}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{run.payrollPeriodStart} ถึง {run.payrollPeriodEnd}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{formatYmdRangeThaiBE(run.payrollPeriodStart, run.payrollPeriodEnd)}</TableCell>
                       <TableCell className="text-center font-bold">{run.staffCount} คน</TableCell>
                       <TableCell className="text-right font-black text-primary">
                         ฿{run.netAmount.toLocaleString()}

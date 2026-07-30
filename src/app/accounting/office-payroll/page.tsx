@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ChevronRight, Coins, Info, Loader2, Search, ShieldAlert } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
+import { formatPayrollYearMonthEnAbbrev, formatPayrollYearMonthMmYyyyThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { OfficePayrollRun } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
@@ -145,11 +145,10 @@ export default function AccountingOfficePayrollQueuePage() {
                     >
                       <TableCell className="font-mono font-bold text-primary">{run.payrollRunNo}</TableCell>
                       <TableCell>
-                        {formatPayrollYearMonthEnAbbrev(run.payrollMonth)}
-                        <span className="ml-1 text-xs text-muted-foreground">({run.payrollMonth})</span>
+                        {formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth)}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {run.payrollPeriodStart} – {run.payrollPeriodEnd}
+                        {formatYmdRangeThaiBE(run.payrollPeriodStart, run.payrollPeriodEnd)}
                       </TableCell>
                       <TableCell className="text-center font-semibold">{run.staffCount}</TableCell>
                       <TableCell className="text-right font-black text-primary">฿{run.netAmount.toLocaleString()}</TableCell>

@@ -47,7 +47,7 @@ import {
   ExecutivePayrollStaff,
   OfficeStaff,
 } from '@/lib/types';
-import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
+import { formatDateThaiBE, formatDateTimeThaiBE, formatPayrollYearMonthMmYyyyThaiBE, formatYmdLocalThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
@@ -119,7 +119,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
 
   const executiveWhtPeriodLabel = useMemo(() => {
     if (!run) return '';
-    return `${run.payrollPeriodStart} → ${run.payrollPeriodEnd} (${run.payrollMonth})`;
+    return `${formatYmdRangeThaiBE(run.payrollPeriodStart, run.payrollPeriodEnd)} (${formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth)})`;
   }, [run]);
 
   const canExecutiveWhtPreview =
@@ -386,7 +386,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
               <div className="text-sm text-muted-foreground flex items-center gap-2">
                 <span className="font-mono font-bold text-primary">{run.payrollRunNo}</span>
                 <Separator orientation="vertical" className="h-3" />
-                <span>งวดเดือน: {formatDateThaiBE(run.payrollMonth + '-01')}</span>
+                <span>งวดเดือน: {formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth)}</span>
               </div>
             </div>
           </div>
@@ -738,15 +738,15 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs uppercase text-muted-foreground">ประจำเดือน:</Label>
-                    <p className="font-bold">{formatDateThaiBE(run.payrollMonth + '-01')}</p>
+                    <p className="font-bold">{formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth)}</p>
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs uppercase text-muted-foreground">วันที่เริ่มงวด:</Label>
-                    <p className="font-bold">{run.payrollPeriodStart}</p>
+                    <p className="font-bold">{formatYmdLocalThaiBE(run.payrollPeriodStart)}</p>
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs uppercase text-muted-foreground">วันที่สิ้นงวด:</Label>
-                    <p className="font-bold">{run.payrollPeriodEnd}</p>
+                    <p className="font-bold">{formatYmdLocalThaiBE(run.payrollPeriodEnd)}</p>
                   </div>
                 </div>
                 <Separator />

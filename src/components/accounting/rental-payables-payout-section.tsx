@@ -27,6 +27,7 @@ import {
   ymMatchesYearMonthScope,
 } from '@/lib/date/year-month-scope-filter';
 import { useToast } from '@/hooks/use-toast';
+import { formatPayrollYearMonthMmYyyyThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 
 function rentalDueYm(p: RentalPayable): string | null {
   const d = (p.dueDate || '').trim().slice(0, 7);
@@ -220,7 +221,7 @@ export function RentalPayablesPayoutSection({ enabled }: { enabled: boolean }) {
                       <TableRow key={p.id} className="hover:bg-muted/40">
                         <TableCell className="pl-6 font-mono text-xs font-bold text-primary">
                           <Link href={href} className="underline-offset-2 hover:underline">
-                            {p.contractNo}/{p.periodMonth}
+                            {p.contractNo}/{formatPayrollYearMonthMmYyyyThaiBE(p.periodMonth)}
                           </Link>
                         </TableCell>
                         <TableCell className="text-sm">
@@ -251,7 +252,7 @@ export function RentalPayablesPayoutSection({ enabled }: { enabled: boolean }) {
                             minimumFractionDigits: 2,
                           })}
                         </TableCell>
-                        <TableCell className="font-mono text-sm">{p.dueDate}</TableCell>
+                        <TableCell className="font-mono text-sm">{formatYmdLocalThaiBE(p.dueDate)}</TableCell>
                         <TableCell>
                           <Badge className="bg-amber-600">รอจ่าย</Badge>
                         </TableCell>

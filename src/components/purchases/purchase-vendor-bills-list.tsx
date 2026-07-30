@@ -74,6 +74,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import { RentalPayablesPayoutSection } from '@/components/accounting/rental-payables-payout-section';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import {
   buildYearCeOptions,
   currentMonthMm,
@@ -548,8 +549,8 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                               <span className="text-muted-foreground italic">ตาม PO</span>
                             )}
                           </TableCell>
-                          <TableCell>{b.billingReceivedDate}</TableCell>
-                          <TableCell>{b.plannedPaymentDate}</TableCell>
+                          <TableCell>{formatYmdLocalThaiBE(b.billingReceivedDate)}</TableCell>
+                          <TableCell>{formatYmdLocalThaiBE(b.plannedPaymentDate)}</TableCell>
                           <TableCell>{statusBadge(b)}</TableCell>
                           {showBillDeleteColumn && (
                             <TableCell className="w-14 px-2 text-center" onClick={(e) => e.stopPropagation()}>

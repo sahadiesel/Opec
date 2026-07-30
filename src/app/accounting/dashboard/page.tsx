@@ -23,6 +23,7 @@ import {
   Building2,
   FileText
 } from 'lucide-react';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { 
   User, 
   CommercialInvoice,
@@ -237,7 +238,7 @@ export default function AccountingDashboardPage() {
                       <div key={item.id} className="p-3 flex items-center justify-between text-xs">
                         <div className="space-y-0.5">
                           <p className="font-bold">{item.documentNo}</p>
-                          <p className="text-muted-foreground font-mono">Due: {item.dueDate}</p>
+                          <p className="text-muted-foreground font-mono">Due: {formatYmdLocalThaiBE(item.dueDate)}</p>
                         </div>
                         <div className="text-right">
                           <p className="font-black text-blue-700">฿{item.outstandingAmount.toLocaleString()}</p>
@@ -262,7 +263,7 @@ export default function AccountingDashboardPage() {
                       <div key={item.id} className="p-3 flex items-center justify-between text-xs">
                         <div className="space-y-0.5">
                           <p className="font-bold">{item.documentNo}</p>
-                          <p className="text-muted-foreground font-mono">Due: {item.dueDate}</p>
+                          <p className="text-muted-foreground font-mono">Due: {formatYmdLocalThaiBE(item.dueDate)}</p>
                         </div>
                         <div className="text-right">
                           <p className="font-black text-red-600">฿{item.outstandingAmount.toLocaleString()}</p>

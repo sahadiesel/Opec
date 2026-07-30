@@ -24,6 +24,7 @@ import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@
 import { doc, collection, updateDoc } from 'firebase/firestore';
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { APBill, APBillStatus, User, Vendor, Purchase } from '@/lib/types';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { Label } from '@/components/ui/label';
@@ -118,11 +119,11 @@ export default function APBillDetailPage({ params }: { params: Promise<{ id: str
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">วันที่ในใบแจ้งหนี้:</Label>
-                  <p className="font-medium">{bill.invoiceDate}</p>
+                  <p className="font-medium">{formatYmdLocalThaiBE(bill.invoiceDate)}</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">วันครบกำหนด:</Label>
-                  <p className="font-bold text-red-600">{bill.dueDate}</p>
+                  <p className="font-bold text-red-600">{formatYmdLocalThaiBE(bill.dueDate)}</p>
                 </div>
               </div>
               

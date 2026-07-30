@@ -32,7 +32,7 @@ import { canPreviewOfficePayrollWht } from '@/lib/payroll/payroll-office-wht-per
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { collection, doc, query, updateDoc, where, type DocumentData } from 'firebase/firestore';
 import { OfficePayrollLine, OfficePayrollRun, BankAccount, PayrollRunStatus, User as AppUser } from '@/lib/types';
-import { formatDateThaiBE, formatDateTimeThaiBE, formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
+import { formatDateThaiBE, formatDateTimeThaiBE, formatPayrollYearMonthEnAbbrev, formatPayrollYearMonthMmYyyyThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -99,7 +99,7 @@ export default function AccountingOfficePayrollPayoutPage({ params }: { params: 
 
   const officeWhtPeriodLabel = useMemo(() => {
     if (!run) return '';
-    return `${run.payrollPeriodStart} → ${run.payrollPeriodEnd} (${run.payrollMonth})`;
+    return `${formatYmdRangeThaiBE(run.payrollPeriodStart, run.payrollPeriodEnd)} (${formatPayrollYearMonthMmYyyyThaiBE(run.payrollMonth)})`;
   }, [run]);
 
   const canOfficeWhtPreview =
@@ -514,7 +514,7 @@ export default function AccountingOfficePayrollPayoutPage({ params }: { params: 
           </CardHeader>
           <CardContent className="text-sm space-y-2 text-muted-foreground">
             <p>
-              ช่วง: {run.payrollPeriodStart} – {run.payrollPeriodEnd}
+              ช่วง: {formatYmdRangeThaiBE(run.payrollPeriodStart, run.payrollPeriodEnd)}
             </p>
             <p>อัปเดตล่าสุด: {formatDateTimeThaiBE(run.updatedAt)}</p>
             {run.notes ? <p>หมายเหตุ: {run.notes}</p> : null}

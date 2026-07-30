@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { formatYmdLocalThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import {
   Purchase,
   PurchaseType,
@@ -729,7 +729,7 @@ export default function PurchasesPage() {
                         <TableCell>
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <Calendar className="h-3 w-3" />
-                            {p.purchaseDate}
+                            {formatYmdLocalThaiBE(p.purchaseDate)}
                           </div>
                         </TableCell>
                         <TableCell><Badge variant="outline">{p.purchaseType}</Badge></TableCell>

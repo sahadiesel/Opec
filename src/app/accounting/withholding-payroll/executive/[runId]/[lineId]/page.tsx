@@ -17,13 +17,13 @@ import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { usePermissions } from '@/hooks/use-permissions';
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
 import type { OfficePayrollLine, OfficePayrollRun, User } from '@/lib/types';
+import { formatPayrollYearMonthMmYyyyThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 
 function executivePayrollPeriodLabel(run: OfficePayrollRun): string {
   const m = run.payrollMonth?.trim();
-  if (m) return m;
-  const a = run.payrollPeriodStart?.trim();
-  const b = run.payrollPeriodEnd?.trim();
-  if (a && b) return `${a} – ${b}`;
+  if (m) return formatPayrollYearMonthMmYyyyThaiBE(m);
+  const range = formatYmdRangeThaiBE(run.payrollPeriodStart, run.payrollPeriodEnd, '');
+  if (range) return range;
   return run.payrollRunNo || run.id;
 }
 

@@ -25,7 +25,7 @@ import { canView } from '@/lib/permissions';
 import { collection, query, orderBy, doc, getDoc, where } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { formatStoredDateThaiBE } from '@/lib/date-thai';
+import { formatStoredDateThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import {
   buildYearCeOptions,
   currentMonthMm,
@@ -542,7 +542,7 @@ export default function AccountsReceivablePage() {
                         <TableCell>
                           <div className="flex flex-col text-[10px]">
                             <span className="flex items-center gap-1 text-muted-foreground"><Calendar className="h-2.5 w-2.5" /> {formatStoredDateThaiBE(item.issueDate)}</span>
-                            <span className="flex items-center gap-1 font-bold text-red-600"><Clock className="h-2.5 w-2.5" /> Due: {item.dueDate}</span>
+                            <span className="flex items-center gap-1 font-bold text-red-600"><Clock className="h-2.5 w-2.5" /> Due: {formatYmdLocalThaiBE(item.dueDate)}</span>
                           </div>
                         </TableCell>
                         <TableCell className="text-right text-sm tabular-nums">฿ {item.debitAmount.toLocaleString()}</TableCell>

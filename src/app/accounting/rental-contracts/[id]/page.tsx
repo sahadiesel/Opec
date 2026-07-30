@@ -36,6 +36,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useToast } from '@/hooks/use-toast';
+import { formatDateTimeThaiBE, formatPayrollYearMonthMmYyyyThaiBE, formatYmdLocalThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { useCollection, useDoc, useFirestore, useMemoFirebase } from '@/firebase';
 import { canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { isAccountingManager, isAccountingOfficer, isSystemAdmin } from '@/lib/permission-core';
@@ -379,7 +380,7 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
                     <div><p className="text-xs text-muted-foreground">ทำสัญญาที่</p><p>{contract.madeAtLocation}</p></div>
                   ) : null}
                   {contract.contractDate ? (
-                    <div><p className="text-xs text-muted-foreground">วันที่ทำสัญญา</p><p>{contract.contractDate}</p></div>
+                    <div><p className="text-xs text-muted-foreground">วันที่ทำสัญญา</p><p>{formatYmdLocalThaiBE(contract.contractDate)}</p></div>
                   ) : null}
                   {contract.leaseKind === 'VEHICLE' ? (
                     <>
@@ -446,12 +447,12 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
                       </p>
                     ) : null}
                   </div>
-                  <div><p className="text-xs text-muted-foreground">ระยะเวลา</p><p>{contract.startDate} — {contract.endDate}</p></div>
+                  <div><p className="text-xs text-muted-foreground">ระยะเวลา</p><p>{formatYmdRangeThaiBE(contract.startDate, contract.endDate)}</p></div>
                   <div><p className="text-xs text-muted-foreground">ครบกำหนดจ่าย</p><p>วันที่ {contract.paymentDayOfMonth} ของทุกเดือน</p></div>
                   {contract.notes ? <div className="sm:col-span-2"><p className="text-xs text-muted-foreground">หมายเหตุ</p><p>{contract.notes}</p></div> : null}
                   {contract.lastEditedAt ? (
                     <div className="sm:col-span-2 text-xs text-muted-foreground">
-                      แก้ไขล่าสุด: {new Date(contract.lastEditedAt).toLocaleString('th-TH')}
+                      แก้ไขล่าสุด: {formatDateTimeThaiBE(contract.lastEditedAt)}
                       {contract.lastEditedByName ? ` โดย ${contract.lastEditedByName}` : ''}
                       {contract.revision ? ` · รอบที่ ${contract.revision}` : ''}
                     </div>
@@ -553,8 +554,8 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
                     <TableBody>
                       {payables.map((row) => (
                         <TableRow key={row.id}>
-                          <TableCell className="font-mono">{row.periodMonth}</TableCell>
-                          <TableCell>{row.dueDate}</TableCell>
+                          <TableCell className="font-mono">{formatPayrollYearMonthMmYyyyThaiBE(row.periodMonth)}</TableCell>
+                          <TableCell>{formatYmdLocalThaiBE(row.dueDate)}</TableCell>
                           <TableCell className="text-right font-mono font-semibold tabular-nums">
                             ฿{money(row.grossAmount)}
                           </TableCell>

@@ -24,7 +24,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import { collection, query, orderBy } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { formatPayrollYearMonthThaiBE } from '@/lib/date-thai';
+import { formatPayrollYearMonthThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
 import {
   Dialog,
@@ -133,8 +133,8 @@ export default function AccountsPayablePage() {
         return {
           vendorName: vendor?.vendorName || 'N/A',
           documentNo: item.documentNo || '—',
-          billDate: item.billDate || '—',
-          dueDate: item.dueDate || '—',
+          billDate: formatYmdLocalThaiBE(item.billDate),
+          dueDate: formatYmdLocalThaiBE(item.dueDate),
           debitLabel: formatApMoney(item.debitAmount ?? 0),
           creditLabel: formatApMoney(item.creditAmount ?? 0),
           outstandingLabel: formatApMoney(item.outstandingAmount ?? 0),
@@ -423,8 +423,8 @@ export default function AccountsPayablePage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-col text-[10px]">
-                            <span className="flex items-center gap-1 text-muted-foreground"><Calendar className="h-2.5 w-2.5" /> {item.billDate}</span>
-                            <span className="flex items-center gap-1 font-bold text-red-600"><Clock className="h-2.5 w-2.5" /> Due: {item.dueDate}</span>
+                            <span className="flex items-center gap-1 text-muted-foreground"><Calendar className="h-2.5 w-2.5" /> {formatYmdLocalThaiBE(item.billDate)}</span>
+                            <span className="flex items-center gap-1 font-bold text-red-600"><Clock className="h-2.5 w-2.5" /> Due: {formatYmdLocalThaiBE(item.dueDate)}</span>
                           </div>
                         </TableCell>
                         <TableCell className="text-right text-sm">฿ {item.debitAmount.toLocaleString()}</TableCell>

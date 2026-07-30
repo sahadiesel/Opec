@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
-import { formatPayrollYearMonthThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { formatPayrollYearMonthThaiBE, formatStoredDateThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { CashbookEntry, User, BankAccount } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -516,7 +516,7 @@ export default function CashbookPage() {
                           <div className="flex flex-col gap-1">
                             <span className="font-mono font-bold text-primary">{entry.entryNo || entry.id.substring(0,8)}</span>
                             <span className="flex items-center gap-1 text-muted-foreground">
-                              <Calendar className="h-3 w-3" /> {entry.entryDate}
+                              <Calendar className="h-3 w-3" /> {formatStoredDateThaiBE(entry.entryDate)}
                             </span>
                           </div>
                         </TableCell>
