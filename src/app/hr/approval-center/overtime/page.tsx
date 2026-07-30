@@ -6,6 +6,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   query,
   where,
   orderBy,
@@ -41,6 +42,7 @@ import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import type { OfficeStaff, User } from '@/lib/types';
 import type { AttendanceOvertimeRequestDoc } from '@/lib/attendance/types';
 import { ATTENDANCE_OVERTIME_REQUESTS_COLLECTION } from '@/lib/attendance/constants';
+import { formatAttendanceOvertimeHours } from '@/lib/attendance/overtime-display';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { loadPayrollPoliciesFromFirestore, resolvePayrollPoliciesForDate } from '@/lib/payroll/d8';
 import { monthlyWorkNormFromPolicyRecord } from '@/lib/payroll/office-payroll-period-deductions';
@@ -134,6 +136,28 @@ export default function AttendanceOvertimeApprovalPage() {
         reviewedByName: currentUser.displayName || currentUser.email || currentUser.id,
         reviewedAt: now,
       });
+
+      // แทนที่ OT ที่อนุมัติไว้แล้วในวันเดียวกัน (กรณีขอแก้ไขชั่วโมง)
+      const priorApproved = await getDocs(
+        query(
+          collection(firestore, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION),
+          where('subjectKey', '==', row.subjectKey),
+          where('workDateYmd', '==', row.workDateYmd),
+          where('status', '==', 'APPROVED'),
+          limit(20),
+        ),
+      );
+      for (const snap of priorApproved.docs) {
+        if (snap.id === row.id) continue;
+        batch.update(snap.ref, {
+          status: 'SUPERSEDED',
+          reviewedByUid: currentUser.id,
+          reviewedByName: currentUser.displayName || currentUser.email || currentUser.id,
+          reviewedAt: now,
+          rejectReason: `ถูกแทนที่ด้วยคำขอแก้ไข OT (${breakdown.approvedHours} ชม.)`,
+        });
+      }
+
       await batch.commit();
       toast({
         title: 'อนุมัติ OT แล้ว',
@@ -255,8 +279,19 @@ export default function AttendanceOvertimeApprovalPage() {
 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="rounded-md bg-muted/50 p-3 text-sm">
-                      <div className="text-xs font-semibold text-muted-foreground">ขอ OT</div>
-                      <div className="font-mono text-lg font-bold">{row.requestedOtHours} ชม.</div>
+                      <div className="text-xs font-semibold text-muted-foreground">
+                        {row.previousOtHours != null && Number(row.previousOtHours) > 0
+                          ? 'ขอแก้ไข OT'
+                          : 'ขอ OT'}
+                      </div>
+                      {row.previousOtHours != null && Number(row.previousOtHours) > 0 ? (
+                        <div className="font-mono text-lg font-bold">
+                          {formatAttendanceOvertimeHours(Number(row.previousOtHours))} →{' '}
+                          {formatAttendanceOvertimeHours(Number(row.requestedOtHours))} ชม.
+                        </div>
+                      ) : (
+                        <div className="font-mono text-lg font-bold">{row.requestedOtHours} ชม.</div>
+                      )}
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor={`ot-approve-${row.id}`} className="text-xs">

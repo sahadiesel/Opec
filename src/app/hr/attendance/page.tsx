@@ -38,7 +38,7 @@ import {
   attendanceOvertimeHoursForRequest,
   formatAttendanceOvertimeHours,
   latestOvertimeRequestBySubjectDay,
-  sumApprovedOvertimeHoursForSubject,
+  sumShownOvertimeHoursForSubjectDays,
 } from '@/lib/attendance/overtime-display';
 import {
   attendanceDayPendingNotes,
@@ -310,6 +310,8 @@ export default function HrAttendanceManagePage() {
     subjectId: string;
     subjectNameSnapshot: string;
     workDateYmd: string;
+    previousOtHours: number | null;
+    pendingRequestId: string | null;
   } | null>(null);
 
   const [resetOpen, setResetOpen] = useState(false);
@@ -478,7 +480,11 @@ export default function HrAttendanceManagePage() {
       const subjectOverrides = overridesBySubject.get(key) ?? [];
       const dayRows = buildAttendanceDayRows(ymDs, punches as AttendancePunchDoc[], subjectOverrides);
       const daysRecorded = countDaysWithEffectiveRecord(dayRows);
-      const approvedOtHoursTotal = sumApprovedOvertimeHoursForSubject(key, overtimeRequestRows ?? []);
+      const approvedOtHoursTotal = sumShownOvertimeHoursForSubjectDays(
+        key,
+        ymDs,
+        overtimeBySubjectDay,
+      );
       return {
         key,
         staff,
@@ -494,7 +500,7 @@ export default function HrAttendanceManagePage() {
     });
     entries.sort((a, b) => a.name.localeCompare(b.name, 'th'));
     return entries;
-  }, [activeOfficeStaff, grouped, ymDs, overridesBySubject, workingDaysInCalendarMonth, overtimeRequestRows]);
+  }, [activeOfficeStaff, grouped, ymDs, overridesBySubject, workingDaysInCalendarMonth, overtimeBySubjectDay]);
 
   const summaryRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -938,10 +944,15 @@ export default function HrAttendanceManagePage() {
                                                         subjectId: row.staffId,
                                                         subjectNameSnapshot: row.name,
                                                         workDateYmd: d.ymd,
+                                                        previousOtHours: otDisplay.hours,
+                                                        pendingRequestId:
+                                                          otDisplay.status === 'PENDING_MANAGER_APPROVAL'
+                                                            ? (overtimeBySubjectDay.get(dayKey)?.id ?? null)
+                                                            : null,
                                                       })
                                                     }
                                                   >
-                                                    ขอ OT
+                                                    {otDisplay.hours != null ? 'แก้ไข OT' : 'ขอ OT'}
                                                   </Button>
                                                 </>
                                               ) : null}
@@ -1094,6 +1105,8 @@ export default function HrAttendanceManagePage() {
           subjectNameSnapshot={otCtx.subjectNameSnapshot}
           payrollMonth={payrollMonth}
           workDateYmd={otCtx.workDateYmd}
+          previousOtHours={otCtx.previousOtHours}
+          pendingRequestId={otCtx.pendingRequestId}
         />
       ) : null}
 

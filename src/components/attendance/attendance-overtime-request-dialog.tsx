@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { addDoc, collection, getDocs, limit, query, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDocs, limit, query, updateDoc, where } from 'firebase/firestore';
 import type { Firestore } from 'firebase/firestore';
 import {
   Dialog,
@@ -19,6 +19,7 @@ import { useToast } from '@/hooks/use-toast';
 import type { User } from '@/lib/types';
 import type { AttendanceSubjectType } from '@/lib/attendance/types';
 import { ATTENDANCE_OVERTIME_REQUESTS_COLLECTION } from '@/lib/attendance/constants';
+import { formatAttendanceOvertimeHours } from '@/lib/attendance/overtime-display';
 import { formatDateThaiBE } from '@/lib/date-thai';
 
 export function AttendanceOvertimeRequestDialog({
@@ -31,6 +32,10 @@ export function AttendanceOvertimeRequestDialog({
   subjectNameSnapshot,
   payrollMonth,
   workDateYmd,
+  /** ชั่วโมง OT ที่มีอยู่แล้วในวันนี้ — ถ้ามี = โหมดขอแก้ไข */
+  previousOtHours = null,
+  /** ถ้ามีคำขอรออนุมัติ — อัปเดตคำขอนั้นแทนการสร้างใหม่ */
+  pendingRequestId = null,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -41,6 +46,8 @@ export function AttendanceOvertimeRequestDialog({
   subjectNameSnapshot: string;
   payrollMonth: string;
   workDateYmd: string;
+  previousOtHours?: number | null;
+  pendingRequestId?: string | null;
 }) {
   const { toast } = useToast();
   const [otHours, setOtHours] = useState('');
@@ -48,12 +55,19 @@ export function AttendanceOvertimeRequestDialog({
   const [submitting, setSubmitting] = useState(false);
 
   const subjectKey = useMemo(() => `${subjectType}:${subjectId}`, [subjectType, subjectId]);
+  const isAmend =
+    previousOtHours != null && Number.isFinite(previousOtHours) && previousOtHours > 0;
+  const previousLabel = isAmend ? formatAttendanceOvertimeHours(Number(previousOtHours)) : null;
 
   useEffect(() => {
     if (!open) return;
-    setOtHours('');
+    if (isAmend) {
+      setOtHours(String(Number(previousOtHours)));
+    } else {
+      setOtHours('');
+    }
     setReason('');
-  }, [open, workDateYmd]);
+  }, [open, workDateYmd, isAmend, previousOtHours]);
 
   const handleSubmit = async () => {
     if (!firestore) return;
@@ -71,9 +85,42 @@ export function AttendanceOvertimeRequestDialog({
       });
       return;
     }
+    if (isAmend && Math.abs(hours - Number(previousOtHours)) < 0.001) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่เปลี่ยนชั่วโมง',
+        description: `กรุณาระบุชั่วโมงใหม่ที่ต่างจากเดิม (${previousLabel} ชม.)`,
+      });
+      return;
+    }
 
     setSubmitting(true);
     try {
+      const roundedHours = Math.round(hours * 100) / 100;
+      const now = Date.now();
+
+      // มีคำขอค้าง — แก้ตัวเลข/เหตุผลบนคำขอเดิม
+      if (pendingRequestId) {
+        await updateDoc(doc(firestore, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION, pendingRequestId), {
+          requestedOtHours: roundedHours,
+          reason: r,
+          requestedByUid: currentUser.id,
+          requestedByName: currentUser.displayName || currentUser.email || currentUser.id,
+          requestedAt: now,
+          ...(isAmend
+            ? { previousOtHours: Math.round(Number(previousOtHours) * 100) / 100 }
+            : {}),
+        });
+        toast({
+          title: 'อัปเดตคำขอ OT แล้ว',
+          description: isAmend
+            ? `จาก ${previousLabel} → ${formatAttendanceOvertimeHours(roundedHours)} ชม. · ยังรอผู้จัดการอนุมัติ`
+            : 'ยังรอผู้จัดการอนุมัติที่ศูนย์อนุมัติ',
+        });
+        onOpenChange(false);
+        return;
+      }
+
       const dup = await getDocs(
         query(
           collection(firestore, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION),
@@ -92,7 +139,6 @@ export function AttendanceOvertimeRequestDialog({
         return;
       }
 
-      const now = Date.now();
       await addDoc(collection(firestore, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION), {
         subjectType,
         subjectId,
@@ -100,7 +146,10 @@ export function AttendanceOvertimeRequestDialog({
         subjectKey,
         payrollMonth,
         workDateYmd,
-        requestedOtHours: Math.round(hours * 100) / 100,
+        requestedOtHours: roundedHours,
+        ...(isAmend
+          ? { previousOtHours: Math.round(Number(previousOtHours) * 100) / 100 }
+          : {}),
         reason: r,
         status: 'PENDING_MANAGER_APPROVAL',
         requestedByUid: currentUser.id,
@@ -108,7 +157,12 @@ export function AttendanceOvertimeRequestDialog({
         requestedAt: now,
       });
 
-      toast({ title: 'ส่งคำขอ OT แล้ว', description: 'รอผู้จัดการ HR / ปฏิบัติการอนุมัติที่ศูนย์อนุมัติ' });
+      toast({
+        title: isAmend ? 'ส่งคำขอแก้ไข OT แล้ว' : 'ส่งคำขอ OT แล้ว',
+        description: isAmend
+          ? `จาก ${previousLabel} → ${formatAttendanceOvertimeHours(roundedHours)} ชม. · รอผู้จัดการอนุมัติ`
+          : 'รอผู้จัดการ HR / ปฏิบัติการอนุมัติที่ศูนย์อนุมัติ',
+      });
       onOpenChange(false);
     } catch (e) {
       toast({
@@ -125,25 +179,38 @@ export function AttendanceOvertimeRequestDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>ขออนุมัติ OT (ล่วงเวลา)</DialogTitle>
+          <DialogTitle>{isAmend ? 'ขอแก้ไขชั่วโมง OT' : 'ขออนุมัติ OT (ล่วงเวลา)'}</DialogTitle>
           <DialogDescription>
             {subjectNameSnapshot} · {formatDateThaiBE(workDateYmd)}
-            <span className="block text-xs mt-1 text-muted-foreground">
-              ผู้จัดการจะปรับจำนวนชั่วโมงที่อนุมัติได้ — ค่า OT คำนวณจากเงินเดือนรายวันและตัวคูณใน HR Settings
-            </span>
+            {isAmend ? (
+              <span className="block text-xs mt-1 text-muted-foreground">
+                วันนี้มี OT อยู่แล้ว <span className="font-mono font-semibold text-foreground">{previousLabel}</span>{' '}
+                ชม. — ระบุชั่วโมงใหม่และเหตุผลเหมือนการขอปกติ แล้วรอผู้จัดการอนุมัติ
+              </span>
+            ) : (
+              <span className="block text-xs mt-1 text-muted-foreground">
+                ผู้จัดการจะปรับจำนวนชั่วโมงที่อนุมัติได้ — ค่า OT คำนวณจากเงินเดือนรายวันและตัวคูณใน HR Settings
+              </span>
+            )}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3 py-2">
+          {isAmend ? (
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
+              <span className="text-muted-foreground">ชั่วโมงเดิม: </span>
+              <span className="font-mono font-semibold">{previousLabel} ชม.</span>
+            </div>
+          ) : null}
           <div className="space-y-1.5">
-            <Label htmlFor="ot-hours">จำนวนชั่วโมง OT ที่ขอ</Label>
+            <Label htmlFor="ot-hours">{isAmend ? 'ชั่วโมง OT ใหม่ที่ขอ' : 'จำนวนชั่วโมง OT ที่ขอ'}</Label>
             <Input
               id="ot-hours"
               type="number"
               min={0.25}
               max={24}
               step={0.25}
-              placeholder="เช่น 2"
+              placeholder={isAmend ? `เดิม ${previousLabel}` : 'เช่น 2'}
               value={otHours}
               onChange={(e) => setOtHours(e.target.value)}
               className="font-mono"
@@ -154,7 +221,11 @@ export function AttendanceOvertimeRequestDialog({
             <Textarea
               id="ot-reason"
               rows={3}
-              placeholder="เช่น ทำงานล่วงเวลาเพื่อปิดงานด่วน"
+              placeholder={
+                isAmend
+                  ? 'เช่น ปรับชั่วโมง OT จากที่ขอไว้ เพราะงานเสร็จช้ากว่าแผน'
+                  : 'เช่น ทำงานล่วงเวลาเพื่อปิดงานด่วน'
+              }
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />
@@ -166,7 +237,7 @@ export function AttendanceOvertimeRequestDialog({
             ยกเลิก
           </Button>
           <Button type="button" onClick={() => void handleSubmit()} disabled={submitting}>
-            {submitting ? 'กำลังส่ง…' : 'ส่งคำขอ'}
+            {submitting ? 'กำลังส่ง…' : isAmend ? 'ส่งคำขอแก้ไข' : 'ส่งคำขอ'}
           </Button>
         </DialogFooter>
       </DialogContent>

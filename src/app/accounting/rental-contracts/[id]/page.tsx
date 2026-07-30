@@ -97,6 +97,11 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
     [payableRows],
   );
 
+  const [busy, setBusy] = useState(false);
+  const [reasonMode, setReasonMode] = useState<'reject' | 'cancel' | null>(null);
+  const [reason, setReason] = useState('');
+  const [payTarget, setPayTarget] = useState<RentalPayable | null>(null);
+
   useEffect(() => {
     if (!payTarget) return;
     const fresh = payables.find((p) => p.id === payTarget.id);
@@ -127,11 +132,6 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
     [firestore, canPay],
   );
   const { data: banks } = useCollection<BankAccount>(bankQuery as never);
-
-  const [busy, setBusy] = useState(false);
-  const [reasonMode, setReasonMode] = useState<'reject' | 'cancel' | null>(null);
-  const [reason, setReason] = useState('');
-  const [payTarget, setPayTarget] = useState<RentalPayable | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [vatManual, setVatManual] = useState(false);
   const [editForm, setEditForm] = useState({

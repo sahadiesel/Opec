@@ -7,7 +7,10 @@ export type AttendanceCorrectionRequestStatus =
   | 'APPROVED'
   | 'REJECTED';
 
-export type AttendanceOvertimeRequestStatus = AttendanceCorrectionRequestStatus;
+/** OT ใช้สถานะเดียวกับ correction + SUPERSEDED เมื่อถูกแทนที่ด้วยคำขอแก้ไข */
+export type AttendanceOvertimeRequestStatus =
+  | AttendanceCorrectionRequestStatus
+  | 'SUPERSEDED';
 
 /** Stored at `attendance_overtime_requests/{id}` */
 export type AttendanceOvertimeRequestDoc = {
@@ -20,6 +23,11 @@ export type AttendanceOvertimeRequestDoc = {
   workDateYmd: string;
   /** ชั่วโมง OT ที่ขอ */
   requestedOtHours: number;
+  /**
+   * ชั่วโมง OT เดิมที่มีอยู่ก่อนคำขอแก้ไข (ถ้ามี)
+   * — null/undefined = คำขอ OT ใหม่ ไม่ใช่การแก้ตัวเลขเดิม
+   */
+  previousOtHours?: number | null;
   /** ชั่วโมง OT ที่ผู้จัดการอนุมัติ */
   approvedOtHours?: number | null;
   /** snapshot ตอนอนุมัติ */

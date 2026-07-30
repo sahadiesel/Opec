@@ -32,6 +32,8 @@ type ApprovedOvertimeRequestForPay = {
   subjectId: string;
   workDateYmd: string;
   status: string;
+  requestedAt?: number | null;
+  reviewedAt?: number | null;
   requestedOtHours?: number | null;
   approvedOtHours?: number | null;
   monthlySalarySnapshot?: number | null;
@@ -158,7 +160,9 @@ export function computeOfficeOvertimePayAmount(
   };
 }
 
-/** รวมยอด OT ที่อนุมัติแล้วในช่วงงวดจ่าย — ใช้ตัวคูณ OT เสมอ (รวมวันอาทิตย์) */
+/** รวมยอด OT ที่อนุมัติแล้วในช่วงงวดจ่าย — ใช้ตัวคูณ OT เสมอ (รวมวันอาทิตย์)
+ * นับเฉพาะคำขอล่าสุดต่อคนต่อวัน (กันซ้ำเมื่อขอแก้ไขแล้วอนุมัติใหม่)
+ */
 export function sumApprovedOfficeOvertimePayInPeriod(
   staffId: string,
   periodStart: string,
@@ -171,12 +175,24 @@ export function sumApprovedOfficeOvertimePayInPeriod(
 ): number {
   const ps = periodStart.slice(0, 10);
   const pe = periodEnd.slice(0, 10);
-  let total = 0;
+  const latestByDay = new Map<string, ApprovedOvertimeRequestForPay>();
   for (const r of requests) {
     if (r.subjectId !== staffId || r.status !== 'APPROVED') continue;
     const ymd = r.workDateYmd.slice(0, 10);
     if (ymd < ps || ymd > pe) continue;
+    const cur = latestByDay.get(ymd);
+    const rAt = Number(r.requestedAt) || 0;
+    const cAt = cur ? Number(cur.requestedAt) || 0 : 0;
+    // Prefer reviewedAt when present (amend / re-approve), then requestedAt
+    const rReviewed = Number(r.reviewedAt) || 0;
+    const cReviewed = cur ? Number(cur.reviewedAt) || 0 : 0;
+    const rScore = Math.max(rReviewed, rAt);
+    const cScore = Math.max(cReviewed, cAt);
+    if (!cur || rScore >= cScore) latestByDay.set(ymd, r);
+  }
 
+  let total = 0;
+  for (const r of latestByDay.values()) {
     const approvedHours = Number(r.approvedOtHours ?? r.requestedOtHours);
     if (!Number.isFinite(approvedHours) || approvedHours <= 0) continue;
 
