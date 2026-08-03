@@ -62,6 +62,7 @@ import {
   reconcileTaxInvoiceArIfPaid,
 } from '@/lib/services/reconcile-stale-ar-from-receipts';
 import { recordTaxInvoiceBillingCustomerApproval } from '@/lib/services/tax-invoice-billing-approval-service';
+import { cancelTaxInvoiceAsAccounting } from '@/lib/services/tax-invoice-delete-service';
 import {
   Dialog,
   DialogContent,
@@ -403,8 +404,35 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
       return;
     }
+    if (newStatus === 'CANCELLED') {
+      void handleCancelTaxInvoice();
+      return;
+    }
     updateDocumentNonBlocking(invRef, { status: newStatus, updatedAt: Date.now() });
     toast({ title: 'อัปเดตสถานะสำเร็จ', description: `เปลี่ยนสถานะเป็น ${newStatus}` });
+  };
+
+  const handleCancelTaxInvoice = async () => {
+    if (!firestore || !invoice || !currentUser) return;
+    if (!isAccountingActor) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
+      return;
+    }
+    try {
+      await cancelTaxInvoiceAsAccounting(firestore, invoice.id, currentUser);
+      toast({
+        title: 'ยกเลิกใบกำกับภาษีแล้ว',
+        description: invoice.sourceCommercialInvoiceId
+          ? 'ปลดลิงก์จากใบแจ้งหนี้แล้ว — ยกเลิกใบแจ้งหนี้ได้จากหน้ารายละเอียดใบเรียกเก็บ'
+          : 'สถานะ CANCELLED',
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ยกเลิกใบกำกับไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
   };
 
   const handlePickFiles = () => fileInputRef.current?.click();

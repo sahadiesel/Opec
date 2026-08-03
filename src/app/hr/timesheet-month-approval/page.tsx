@@ -55,12 +55,40 @@ import {
   ensureCommercialDraftInvoiceAfterPoMonthApproval,
   createCommercialDraftInvoiceForPoMonth,
 } from '@/lib/services/commercial-invoice-service';
+import { resolveBillingMode } from '@/lib/commercial/resolve-billing-mode';
 import { Checkbox } from '@/components/ui/checkbox';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import { normalizeWorkerIdSet } from '@/lib/commercial/partial-po-month-billing';
 import { CheckCircle2, XCircle, ChevronLeft, ExternalLink, FileText, Images } from 'lucide-react';
 import { waveRoundMonthLabel } from '@/lib/constants/timesheet-ui';
 import { isWaveMonthAttachmentPdf } from '@/lib/timesheet/wave-month-utils';
+import type { Firestore } from 'firebase/firestore';
+
+function getTodayHtmlDateString(): string {
+  return timestampToHtmlDateValue(Date.now());
+}
+
+/** อนุมัติ timesheet แล้วพยายามสร้างใบ Monthly — ข้ามเมื่อสัญญาเป็น Trip */
+async function tryCreateMonthlyInvoiceAfterTimesheetApproval(
+  db: Firestore,
+  po: PurchaseOrder | undefined,
+  args: Parameters<typeof createCommercialDraftInvoiceForPoMonth>[1],
+): Promise<{ kind: 'created'; invoiceNo: string } | { kind: 'skipped_trip' } | { kind: 'error'; message: string }> {
+  if (po) {
+    const mode = await resolveBillingMode(db, po);
+    if (mode === 'TRIP') return { kind: 'skipped_trip' };
+  }
+  try {
+    const billing = await createCommercialDraftInvoiceForPoMonth(db, args);
+    return { kind: 'created', invoiceNo: billing.invoiceNo };
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    if (/โหมดวางบิลแบบ Trip|เมนู «ทำใบแจ้งหนี้แบบ Trip»|โหมด TRIP/i.test(message)) {
+      return { kind: 'skipped_trip' };
+    }
+    return { kind: 'error', message };
+  }
+}
 
 function formatThaiCalendarMonthYearFromYm(ym: string): string | null {
   if (!/^\d{4}-\d{2}$/.test(ym)) return null;
@@ -70,10 +98,6 @@ function formatThaiCalendarMonthYearFromYm(ym: string): string | null {
 
 function getNowMs(): number {
   return Date.now();
-}
-
-function getTodayHtmlDateString(): string {
-  return timestampToHtmlDateValue(Date.now());
 }
 
 export default function TimesheetMonthApprovalQueuePage() {
@@ -341,7 +365,8 @@ export default function TimesheetMonthApprovalQueuePage() {
         const { start, end } = resolvePoMonthPeriodBounds(row);
         const workerIds = [closure.workerId];
         const issueDate = getTodayHtmlDateString();
-        const billing = await createCommercialDraftInvoiceForPoMonth(firestore, {
+        const po = poById.get(row.poId);
+        const billing = await tryCreateMonthlyInvoiceAfterTimesheetApproval(firestore, po, {
           poId: row.poId,
           periodStart: start,
           periodEnd: end,
@@ -352,8 +377,12 @@ export default function TimesheetMonthApprovalQueuePage() {
           notes: closure.workerName ? `Partial: ${closure.workerName}` : undefined,
         });
 
-        const billingLine = ` — สร้างใบแจ้งหนี้ ${billing.invoiceNo} (1 คน)`;
-        const po = poById.get(row.poId);
+        const billingLine =
+          billing.kind === 'created'
+            ? ` — สร้างใบแจ้งหนี้ ${billing.invoiceNo} (1 คน)`
+            : billing.kind === 'skipped_trip'
+              ? ' — สัญญาโหมด Trip: ไม่ออกใบ Monthly (ใช้เมนู «ทำใบแจ้งหนี้แบบ Trip»)'
+              : ` — ใบแจ้งหนี้: ${billing.message}`;
         toast({
           title: 'อนุมัติรายคนแล้ว',
           description: `${closure.workerName ?? closure.workerId} · ${row.yearMonth} · ${po?.poCode ?? row.poId} — ตั้งพร้อมจ่าย payroll ${payrollUpdated} ใบงาน${billingLine}`,
@@ -414,7 +443,8 @@ export default function TimesheetMonthApprovalQueuePage() {
         .filter(Boolean)
         .join(', ');
 
-      const billing = await createCommercialDraftInvoiceForPoMonth(firestore, {
+      const po = poById.get(row.poId);
+      const billing = await tryCreateMonthlyInvoiceAfterTimesheetApproval(firestore, po, {
         poId: row.poId,
         periodStart: start,
         periodEnd: end,
@@ -422,13 +452,18 @@ export default function TimesheetMonthApprovalQueuePage() {
         actor: currentUser,
         sourcePoMonthReviewId: row.id,
         workerIds,
-        notes: workerNames ? `Partial billing (อนุมัติรายคน): ${workerNames}` : undefined,
+        notes: workerNames ? `Partial billing (per-worker approval): ${workerNames}` : undefined,
       });
 
-      const po = poById.get(row.poId);
+      const billingLine =
+        billing.kind === 'created'
+          ? ` — สร้างใบแจ้งหนี้ ${billing.invoiceNo} แล้ว`
+          : billing.kind === 'skipped_trip'
+            ? ' — สัญญาโหมด Trip: ไม่ออกใบ Monthly (ใช้เมนู «ทำใบแจ้งหนี้แบบ Trip»)'
+            : ` — ใบแจ้งหนี้: ${billing.message}`;
       toast({
         title: 'อนุมัติรายการที่เลือกแล้ว',
-        description: `อนุมัติ ${selectedInRow.length} คน · ${row.yearMonth} · ${po?.poCode ?? row.poId} — ตั้งพร้อมจ่าย payroll ${payrollUpdated} ใบงาน — สร้างใบแจ้งหนี้ ${billing.invoiceNo} แล้ว`,
+        description: `อนุมัติ ${selectedInRow.length} คน · ${row.yearMonth} · ${po?.poCode ?? row.poId} — ตั้งพร้อมจ่าย payroll ${payrollUpdated} ใบงาน${billingLine}`,
       });
 
       setSelectedClosureIds((prev) => {

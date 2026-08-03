@@ -51,7 +51,7 @@ import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
 import { amountToEnglishBahtText } from '@/lib/documents/english-baht-text';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
-import { translateCommercialLineDescriptionToEn, translateCommercialWaveCodeToEn } from '@/lib/documents/commercial-line-description-en';
+import { translateCommercialLineDescriptionToEn, translateCommercialNotesToEn, translateCommercialWaveCodeToEn } from '@/lib/documents/commercial-line-description-en';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { sumLineAmounts } from '@/lib/purchase/pr-totals';
 
@@ -1311,12 +1311,16 @@ export function buildCommercialInvoicePrintHtml(params: {
       ${lineRows || `<tr><td colspan="5" style="text-align:center;color:#737373">${escapeHtmlDoc(emptyLines)}</td></tr>`}
     </tbody>
   </table>`;
+  const notesForPrint =
+    L === 'en' && invoice.notes?.trim()
+      ? translateCommercialNotesToEn(invoice.notes)
+      : invoice.notes;
   const totalsHtml = buildStandardTotalsWithNotesRowHtml({
     totalsParams: {
       rows: totalRows,
       amountInWords: totalWords,
     },
-    notes: invoice.notes,
+    notes: notesForPrint,
     notesTitle: printT(L, 'termsNotes'),
   });
   const statusNote =

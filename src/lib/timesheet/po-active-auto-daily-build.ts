@@ -226,6 +226,13 @@ export function buildPoActiveAutoDailyRowPayload(p: PoActiveAutoDailyRowParams):
   const contractId = (a.contractId || po.contractId || '').trim();
   const siteId = effectiveWaveIdForPoActiveAuto(a) || '';
   const nh = normalHoursFromPoLine(line);
+  const workMode = resolveWorkModeForPoContext(po, a.workMode);
+  const pkg = defaultPackageHoursForWorkMode(a.workMode ?? workMode);
+  const chargeFields = buildTimesheetFieldsFromMobCharges(
+    { kind: 'WORKING', hours: nh || pkg },
+    { kind: 'WORKING', hours: nh || pkg },
+    pkg,
+  );
 
   return {
     workerId: a.workerId,
@@ -240,7 +247,8 @@ export function buildPoActiveAutoDailyRowPayload(p: PoActiveAutoDailyRowParams):
     customerId: po.customerId,
     siteId,
     positionId: a.positionId,
-    workMode: resolveWorkModeForPoContext(po, a.workMode),
+    workMode,
+    ...chargeFields,
     eventType: 'work_day',
     shiftType: 'DAY',
     normalHours: nh,
@@ -260,8 +268,18 @@ export function buildPoActiveAutoDailyRowPayload(p: PoActiveAutoDailyRowParams):
 /** แถว SB อัตโนมัติช่วงหยุดแบบ standby — แก้มือได้เหมือนแถว auto อื่น */
 export function buildPoActiveAutoStandbyRowPayload(p: PoActiveAutoDailyRowParams): Partial<DailyTimesheet> {
   const row = buildPoActiveAutoDailyRowPayload(p);
+  const pkg = defaultPackageHoursForWorkMode(
+    p.assignment.workMode ?? (p.line.normalWorkHoursSnapshot === 12 ? 'OFFSHORE' : 'ONSHORE'),
+  );
+  /** SB มาตรฐาน 8 ชม. (สอดคล้อง Pre-Mob) — บังคับ charge ให้ตรง eventType กันค้าง WORKING แล้วบิลเป็นวันทำงาน */
+  const chargeFields = buildTimesheetFieldsFromMobCharges(
+    { kind: 'STANDBY', hours: 8 },
+    { kind: 'STANDBY', hours: 8 },
+    pkg,
+  );
   return {
     ...row,
+    ...chargeFields,
     eventType: 'standby_day',
     shiftType: 'STANDBY',
     remark: 'Auto — PO Active standby stop',
@@ -288,8 +306,14 @@ export function buildPoActiveAutoDemobRowPayload(p: PoActiveAutoDailyRowParams):
     };
   }
   const nh = normalHoursFromPoLine(p.line);
+  const chargeFields = buildTimesheetFieldsFromMobCharges(
+    { kind: 'D1', hours: nh || pkg },
+    { kind: 'D1', hours: nh || pkg },
+    pkg,
+  );
   return {
     ...row,
+    ...chargeFields,
     eventType: 'demobilization_day',
     shiftType: 'DAY',
     normalHours: nh,

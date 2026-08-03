@@ -9,7 +9,30 @@ export function translateCommercialWaveCodeToEn(text: string): string {
 
   s = s.replace(/รอบเดินทาง/g, 'Trip cycle');
   s = s.replace(/PO\+งวด\s*\(\s*รวม\s*wave\s*\)/gi, 'PO+month (all waves)');
+  // PO+งวด (บางส่วน · 4 คน · รอบ 1) / (บางส่วน - 4 คน)
+  s = s.replace(
+    /PO\+งวด\s*\(\s*บางส่วน\s*[·\-–—]\s*(\d+)\s*คน(?:\s*[·\-–—]\s*รอบ\s*(\d+))?\s*\)/gi,
+    (_m, workers: string, batch?: string) =>
+      batch
+        ? `PO+month (partial · ${workers} workers · round ${batch})`
+        : `PO+month (partial · ${workers} workers)`,
+  );
+  s = s.replace(/PO\+งวด/g, 'PO+month');
+  s = s.replace(/บางส่วน/g, 'partial');
+  s = s.replace(/รอบ\s+(\d+)/g, 'round $1');
   s = s.replace(/(\d+)\s*คน\b/g, '$1 workers');
+  return s;
+}
+
+/** Notes / TERMS on commercial invoice print — Thai phrases → English */
+export function translateCommercialNotesToEn(text: string): string {
+  let s = text;
+  if (!s) return s;
+
+  s = s.replace(/Partial billing\s*\(\s*อนุมัติรายคน\s*\)\s*:/gi, 'Partial billing (per-worker approval):');
+  s = s.replace(/Partial billing\s*รอบ\s*(\d+)\s*:/gi, 'Partial billing round $1:');
+  s = s.replace(/อนุมัติรายคน/g, 'per-worker approval');
+  s = s.replace(/รอบ\s+(\d+)/g, 'round $1');
   return s;
 }
 

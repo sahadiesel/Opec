@@ -25,7 +25,7 @@ import type {
   PositionRate,
 } from '@/lib/types';
 import { isYmdWithinAssignmentMobTimesheetWindow } from '@/lib/constants/timesheet-ui';
-import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
+import { normalizeTimesheetsForBillingLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 import {
   resolveBillingMatrixEventDayRate,
   resolveBillingSellOtHourlyRate,
@@ -822,7 +822,8 @@ export async function generateBillingLines(
     mobById.set(d.id, { ...(d.data() as Assignment), id: d.id });
   }
 
-  const normalized = normalizeTimesheetsForPayrollLine(timesheetsRaw);
+  /** อย่าใช้ normalize แบบ payroll (W ทับ SB คน+วัน) — จะทำให้บรรทัด standby หาย */
+  const normalized = normalizeTimesheetsForBillingLine(timesheetsRaw);
   const inMobWindow = normalized.filter((ts) => {
     const aid = String(ts.assignmentId || '').trim();
     if (!aid) return true;
@@ -862,7 +863,7 @@ export async function generateBillingLines(
   const payrollMobDropped = timesheetsRaw.length - inMobWindow.length;
   if (payrollMobDropped > 0) {
     warnings.push(
-      `ตัด ${payrollMobDropped} แถว timesheet ก่อนรวมยอดวางบิล (ซ้ำตามกฎ payroll หรือวันที่อยู่นอกหน้าต่าง mobilization ของมอบหมาย)`,
+      `ตัด ${payrollMobDropped} แถว timesheet ก่อนรวมยอดวางบิล (id/มอบหมายซ้ำ หรือวันที่อยู่นอกหน้าต่าง mobilization)`,
     );
   }
   if (billingDeduped > 0) {
@@ -930,6 +931,11 @@ export async function generateBillingLines(
 
     const billingCharge = resolveTimesheetBillingCharge(ts);
     const effectiveEvent = mobDayChargeKindToEventType(billingCharge.kind);
+    if (ts.eventType === 'standby_day' && billingCharge.kind === 'WORKING') {
+      warnings.push(
+        `${ts.date}: เซลล์ SB แต่ตั้งวางบิลเป็น Working — นับในบรรทัดค่าแรงวันทำงาน (ไม่สร้างบรรทัดสแตนด์บาย)`,
+      );
+    }
     const projected: DailyTimesheet = {
       ...ts,
       eventType: effectiveEvent,

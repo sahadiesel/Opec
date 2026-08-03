@@ -61,6 +61,18 @@ function omitUndefined<T extends Record<string, unknown>>(obj: T): T {
   return out;
 }
 
+/** ล้าง override บาท M1/D1 เมื่อแถว auto เป็น W/SB (กันค้างจากวัน Mob แล้วบิลผิด) */
+function clearMobAmountOverridesIfNotTripCharge(
+  payload: Partial<DailyTimesheet>,
+): Record<string, unknown> {
+  const kind = payload.mobBillingChargeKind;
+  if (kind === 'M1' || kind === 'D1') return {};
+  return {
+    mobBillingM1AmountOverride: deleteField(),
+    mobPayrollM1AmountOverride: deleteField(),
+  };
+}
+
 export { poActiveDailyTimesheetDocId };
 
 function isTimesheetFinanciallyImmutable(status: string | undefined): boolean {
@@ -258,6 +270,7 @@ export async function syncPoActiveAutoDailyForAssignment(
         dRef,
         omitUndefined({
           ...basePayload,
+          ...clearMobAmountOverridesIfNotTripCharge(basePayload),
           updatedAt: now,
           officeEnteredBy: user.displayName,
           officeEnteredAt: now,
@@ -462,6 +475,7 @@ export async function applyPoActiveStandbyStopWindow(
         dRef,
         omitUndefined({
           ...basePayload,
+          ...clearMobAmountOverridesIfNotTripCharge(basePayload),
           updatedAt: now,
           officeEnteredBy: user.displayName,
           officeEnteredAt: now,
@@ -603,6 +617,7 @@ export async function upsertPoActiveStopTodayEvent(
       dRef,
       omitUndefined({
         ...basePayload,
+        ...clearMobAmountOverridesIfNotTripCharge(basePayload),
         updatedAt: now,
         officeEnteredBy: user.displayName,
         officeEnteredAt: now,
@@ -658,12 +673,13 @@ export async function togglePoActiveSbWStopMode(
       if (!isTimesheetFinanciallyImmutable(cur.status) && cur.poActiveAutoDaily === true) {
         batch.update(
           dRef,
-          omitUndefined({
-            ...workPayload,
-            updatedAt: now,
-            officeEnteredBy: user.displayName,
-            officeEnteredAt: now,
-          } as Record<string, unknown>) as DocumentData,
+        omitUndefined({
+          ...workPayload,
+          ...clearMobAmountOverridesIfNotTripCharge(workPayload),
+          updatedAt: now,
+          officeEnteredBy: user.displayName,
+          officeEnteredAt: now,
+        } as Record<string, unknown>) as DocumentData,
         );
       }
     } else {
@@ -805,6 +821,7 @@ async function applyPoActiveStandbyStopWindowOpenEnded(
         dRef,
         omitUndefined({
           ...basePayload,
+          ...clearMobAmountOverridesIfNotTripCharge(basePayload),
           updatedAt: now,
           officeEnteredBy: user.displayName,
           officeEnteredAt: now,

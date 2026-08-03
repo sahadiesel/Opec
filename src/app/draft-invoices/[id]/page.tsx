@@ -904,6 +904,38 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   ให้ผู้มีสิทธิ์เมนูใบกำกับภาษีสร้างจากใบเรียกเก็บนี้ (หรือขอสิทธิ์บัญชี)
                 </p>
               )}
+              {canAdminVoid && (
+                <div className="pt-2">
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button type="button" variant="destructive" className="gap-2" disabled={voidBusy}>
+                        {voidBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
+                        ยกเลิกใบนี้ (VOID)
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>ยกเลิกใบแจ้งหนี้นี้?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          เฉพาะผู้ดูแลระบบ — ใช้เมื่อยอดยืนยันแล้วแต่ยังไม่ถูกต้อง สถานะจะเป็น VOID และสร้างใบใหม่จากงวด / PO ได้
+                          {invoice.linkedTaxInvoiceId
+                            ? ' · ถ้ามีใบกำกับภาษีที่ยังใช้งานอยู่ ต้องยกเลิกใบกำกับภาษีก่อน'
+                            : ' · ยังไม่มีใบกำกับภาษีผูก — ยกเลิกได้ทันที'}
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>ไม่</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          onClick={() => void handleVoid()}
+                        >
+                          ยืนยันยกเลิก
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              )}
             </AlertDescription>
           </Alert>
         )}
@@ -1092,7 +1124,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                     <AlertDialogTitle>ยกเลิกใบแจ้งหนี้นี้?</AlertDialogTitle>
                     <AlertDialogDescription>
                       เฉพาะผู้ดูแลระบบ — ใช้เมื่อรายการหรือการคำนวณไม่ถูกต้อง สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO
-                      ได้อีกครั้ง (ไม่ลบประวัติเอกสาร) · ใบที่ลูกค้า/ฝ่ายยืนยันแล้ว (ISSUED) ยกเลิกไม่ได้
+                      ได้อีกครั้ง (ไม่ลบประวัติเอกสาร) · ใบที่ยืนยันแล้ว (ISSUED) ยกเลิกได้ถ้ายังไม่มีใบกำกับภาษีที่ใช้งาน
+                      หรือยกเลิกใบกำกับภาษีก่อน
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -1153,7 +1186,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                           <AlertDialogTitle>ยกเลิกใบแจ้งหนี้นี้?</AlertDialogTitle>
                           <AlertDialogDescription>
                             เฉพาะผู้ดูแลระบบ — ใช้เมื่อรายการหรือการคำนวณไม่ถูกต้อง สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO
-                            ได้อีกครั้ง (ไม่ลบประวัติเอกสาร) · ใบที่ลูกค้า/ฝ่ายยืนยันแล้ว (ISSUED) ยกเลิกไม่ได้
+                            ได้อีกครั้ง (ไม่ลบประวัติเอกสาร) · ใบที่ยืนยันแล้ว (ISSUED) ยกเลิกได้ถ้ายังไม่มีใบกำกับภาษีที่ใช้งาน
+                            หรือยกเลิกใบกำกับภาษีก่อน
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>

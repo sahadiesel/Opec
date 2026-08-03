@@ -48,6 +48,12 @@ export function partialPoMonthInvoiceLabel(batchNo: number | undefined, workerCo
   return `PO+งวด (บางส่วน · ${workerCount} คน${batch})`;
 }
 
+/** English label for partial PO+month invoices (print / EN locale) */
+export function partialPoMonthInvoiceLabelEn(batchNo: number | undefined, workerCount: number): string {
+  const batch = batchNo != null && batchNo > 0 ? ` · round ${batchNo}` : '';
+  return `PO+month (partial · ${workerCount} workers${batch})`;
+}
+
 /** แจ้งเตือนเมื่อรอ timesheet เกินกี่วัน (Phase 3) */
 export const DEFERRED_SHIP_TIMESHEET_ALERT_DAYS = 7;
 

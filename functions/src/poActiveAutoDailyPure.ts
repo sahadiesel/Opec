@@ -249,6 +249,13 @@ export function buildPoActiveAutoDailyRowPayload(p: {
     sourceType: 'DIGITAL',
     poActiveAutoDaily: true,
     remark: 'Auto — PO Active workflow',
+    mobBillingChargeKind: 'WORKING',
+    mobPayrollChargeKind: 'WORKING',
+    mobBillingChargeHours: nh,
+    mobPayrollChargeHours: nh,
+    standbyUnits: 0,
+    mobUnits: 0,
+    demobUnits: 0,
     ...(laborCostContractTermId ? { laborCostContractTermId } : {}),
   };
 }
@@ -268,5 +275,12 @@ export function buildPoActiveAutoStandbyRowPayload(p: {
     eventType: 'standby_day',
     shiftType: 'STANDBY',
     remark: 'Auto — PO Active standby stop',
+    mobBillingChargeKind: 'STANDBY',
+    mobPayrollChargeKind: 'STANDBY',
+    mobBillingChargeHours: 8,
+    mobPayrollChargeHours: 8,
+    standbyUnits: 1,
+    mobUnits: 0,
+    demobUnits: 0,
   };
 }

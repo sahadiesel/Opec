@@ -4,7 +4,9 @@ import {
   Firestore,
   collection,
   doc,
+  deleteField,
   getDoc,
+  updateDoc,
   writeBatch,
 } from 'firebase/firestore';
 import type {
@@ -82,8 +84,22 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
   if (com.status !== 'ISSUED') {
     throw new Error('สร้างใบกำกับภาษีได้หลังยืนยันเรียกเก็บแล้ว (ISSUED) เท่านั้น');
   }
-  if (com.linkedTaxInvoiceId) {
-    throw new Error('มีใบกำกับภาษีอ้างอิงแล้ว — เปิดจากลิงก์ด้านบน');
+  const linkedTaxId = String(com.linkedTaxInvoiceId || '').trim();
+  if (linkedTaxId) {
+    const linkedSnap = await getDoc(doc(db, 'tax_invoices', linkedTaxId));
+    if (linkedSnap.exists()) {
+      const linked = linkedSnap.data() as { status?: string; taxInvoiceNo?: string };
+      if (linked.status !== 'CANCELLED') {
+        throw new Error(
+          `มีใบกำกับภาษีอ้างอิงแล้ว (${linked.taxInvoiceNo || linkedTaxId}) — เปิดจากลิงก์ด้านบน หรือยกเลิกใบกำกับก่อน`,
+        );
+      }
+    }
+    // ลิงก์ค้างจากใบที่ CANCELLED/ถูกลบ — เคลียร์ก่อนสร้างใหม่
+    await updateDoc(comRef, {
+      linkedTaxInvoiceId: deleteField(),
+      updatedAt: Date.now(),
+    });
   }
 
   const [{ code: billingNoteNo }, { code: taxInvoiceNo }] = await Promise.all([

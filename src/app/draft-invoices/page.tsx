@@ -6,7 +6,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, FileText, Building2, Loader2, Info, ChevronRight, ExternalLink, RefreshCw, Ban, Trash2, Printer } from 'lucide-react';
+import { Plus, FileText, Building2, Loader2, ChevronRight, ExternalLink, RefreshCw, Ban, Trash2, Printer } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
@@ -27,6 +27,7 @@ import { openStandardPrintWindow } from '@/lib/documents/standard-document-print
 import {
   CommercialInvoice,
   Customer,
+  MainContract,
   PoMonthTimesheetReview,
   PurchaseOrder,
   Wave,
@@ -60,7 +61,6 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { getPreviewPattern } from '@/lib/services/numbering-service';
 import {
   createCommercialDraftInvoice,
@@ -90,6 +90,7 @@ import {
   groupRowsByPoActiveBundle,
   poActiveBundleWorkModeShortLabel,
 } from '@/lib/ops/po-active-bundle-grouping';
+import { resolveBillingModeFromMaps } from '@/lib/commercial/resolve-billing-mode';
 
 function statusBadge(inv: CommercialInvoice) {
   const status = inv.status;
@@ -243,9 +244,35 @@ export default function DraftInvoicesPage() {
   );
   const { data: allPos } = useCollection<PurchaseOrder>(posLookupQuery as any);
 
+  const contractsLookupQuery = useMemoFirebase(
+    () => (firestore && isAuthorized ? collection(firestore, 'main_contracts') : null),
+    [firestore, isAuthorized],
+  );
+  const { data: allContracts } = useCollection<MainContract>(contractsLookupQuery as any);
+
+  const contractsById = useMemo(() => {
+    const m = new Map<string, MainContract>();
+    for (const c of allContracts ?? []) m.set(c.id, c);
+    return m;
+  }, [allContracts]);
+
+  const poById = useMemo(() => {
+    const m = new Map<string, PurchaseOrder>();
+    for (const p of allPos ?? []) m.set(p.id, p);
+    return m;
+  }, [allPos]);
+
+  const isMonthlyBillingPo = useCallback(
+    (poId: string) => resolveBillingModeFromMaps(poById.get(poId), contractsById) !== 'TRIP',
+    [poById, contractsById],
+  );
+
   const missingReviews = useMemo(
-    () => filterWaveMonthReviewsMissingCommercialDraft(approvedReviews ?? [], invoices ?? []),
-    [approvedReviews, invoices]
+    () =>
+      filterWaveMonthReviewsMissingCommercialDraft(approvedReviews ?? [], invoices ?? []).filter((r) =>
+        isMonthlyBillingPo(r.poId),
+      ),
+    [approvedReviews, invoices, isMonthlyBillingPo],
   );
 
   const missingPoMonthReviews = useMemo(
@@ -254,14 +281,15 @@ export default function DraftInvoicesPage() {
         approvedPoMonthReviews ?? [],
         invoices ?? [],
         workerClosuresByReviewId,
-      ),
-    [approvedPoMonthReviews, invoices, workerClosuresByReviewId],
+      ).filter((r) => isMonthlyBillingPo(r.poId)),
+    [approvedPoMonthReviews, invoices, workerClosuresByReviewId, isMonthlyBillingPo],
   );
 
   const partialBillingCandidates = useMemo(() => {
     const inv = invoices ?? [];
     const out: PartialBillingCandidate[] = [];
     for (const r of approvedPoMonthReviews ?? []) {
+      if (!isMonthlyBillingPo(r.poId)) continue;
       const closures = workerClosuresByReviewId.get(r.id) ?? [];
       if (closures.length === 0) continue;
       const { start, end } = resolvePoMonthPeriodBounds(r);
@@ -278,13 +306,7 @@ export default function DraftInvoicesPage() {
       return a.id.localeCompare(b.id);
     });
     return out;
-  }, [approvedPoMonthReviews, workerClosuresByReviewId, invoices]);
-
-  const poById = useMemo(() => {
-    const m = new Map<string, PurchaseOrder>();
-    for (const p of allPos ?? []) m.set(p.id, p);
-    return m;
-  }, [allPos]);
+  }, [approvedPoMonthReviews, workerClosuresByReviewId, invoices, isMonthlyBillingPo]);
 
   const customerLabel = useMemo(() => {
     const nameById = new Map<string, string>();
@@ -409,6 +431,11 @@ export default function DraftInvoicesPage() {
     return (pos ?? []).find((p) => p.id === poId) ?? poById.get(poId);
   }, [pos, poById, poId]);
 
+  const monthlyPosForCreate = useMemo(
+    () => (pos ?? []).filter((p) => resolveBillingModeFromMaps(p, contractsById) !== 'TRIP'),
+    [pos, contractsById],
+  );
+
   const isQuotationPo = (selectedPo?.poType || 'contract') === 'quotation';
 
   const resetForm = () => {
@@ -425,6 +452,14 @@ export default function DraftInvoicesPage() {
     if (!firestore || !currentUser) return;
     if (!poId) {
       toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือก PO' });
+      return;
+    }
+    if (selectedPo && resolveBillingModeFromMaps(selectedPo, contractsById) === 'TRIP') {
+      toast({
+        variant: 'destructive',
+        title: 'PO โหมด Trip',
+        description: 'ออกใบแจ้งหนี้ที่เมนู «ทำใบแจ้งหนี้แบบ Trip» เท่านั้น',
+      });
       return;
     }
     if (!isQuotationPo && !waveId) {
@@ -659,18 +694,6 @@ export default function DraftInvoicesPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 p-4 md:p-6 max-w-6xl mx-auto">
-        <Alert className="border-primary/30 bg-primary/5">
-          <Info className="h-4 w-4" />
-          <AlertTitle>ใบแจ้งหนี้แบบ Trip (Thai Nippon / Offshore)</AlertTitle>
-          <AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            PO โหมด TRIP ให้ใช้เมนู{' '}
-            <Link href="/accounting/trip-billing" className="font-medium text-primary underline">
-              ทำใบแจ้งหนี้แบบ Trip
-            </Link>
-            — หน้านี้ใช้สำหรับ Monthly (Guangzhou / ปิด PO+เดือน) เท่านั้น
-          </AlertDescription>
-        </Alert>
-
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
             <FileText className="h-7 w-7" />
@@ -753,7 +776,7 @@ export default function DraftInvoicesPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— เลือก —</SelectItem>
-                      {(pos ?? []).map((p) => (
+                      {(monthlyPosForCreate ?? []).map((p) => (
                         <SelectItem key={p.id} value={p.id}>
                           {p.poCode || p.id}
                         </SelectItem>
@@ -1175,14 +1198,20 @@ export default function DraftInvoicesPage() {
                             </Link>
                           </Button>
                           {canAdminVoidInvoice &&
-                            (inv.status === 'DRAFT' || inv.status === 'PENDING_CUSTOMER') && (
+                            (inv.status === 'DRAFT' ||
+                              inv.status === 'PENDING_CUSTOMER' ||
+                              inv.status === 'ISSUED') && (
                               <Button
                                 type="button"
                                 variant="outline"
                                 size="sm"
                                 className="text-destructive border-destructive/30 hover:bg-destructive/10"
                                 onClick={() => setVoidTarget(inv)}
-                                title="ยกเลิกเอกสาร (VOID) — เฉพาะผู้ดูแลระบบ"
+                                title={
+                                  inv.status === 'ISSUED'
+                                    ? 'ยกเลิก (VOID) — ถ้ายืนยันแล้วต้องยังไม่มีใบกำกับภาษีที่ใช้งาน หรือยกเลิกใบกำกับก่อน'
+                                    : 'ยกเลิกเอกสาร (VOID) — เฉพาะผู้ดูแลระบบ'
+                                }
                               >
                                 <Ban className="h-3.5 w-3.5 mr-1 shrink-0" />
                                 ยกเลิก
@@ -1231,6 +1260,12 @@ export default function DraftInvoicesPage() {
               <AlertDialogTitle>ยกเลิกใบ {voidTarget?.invoiceNo ?? ''}?</AlertDialogTitle>
               <AlertDialogDescription>
                 สถานะจะเป็น VOID — สร้างใบใหม่จากงวดหรือ Wave / Timesheet ได้อีกครั้ง (ไม่ลบประวัติเอกสาร)
+                {voidTarget?.status === 'ISSUED' ? (
+                  <span className="mt-2 block">
+                    ใบนี้ยืนยันแล้ว — ยกเลิกได้เมื่อยังไม่ได้ผูกใบกำกับภาษีที่ใช้งาน
+                    หรือยกเลิกใบกำกับภาษีก่อนแล้วค่อยยกเลิกใบแจ้งหนี้
+                  </span>
+                ) : null}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

@@ -33,6 +33,7 @@ import type {
   DailyTimesheetStatus,
   MainContract,
   PoMonthTimesheetReview,
+  PayrollBatch,
   Position,
   PositionRate,
   POLine,
@@ -145,7 +146,7 @@ import {
 } from '@/lib/commercial/partial-po-month-billing';
 import { isPoMonthFullGridLock } from '@/lib/timesheet/po-month-review-status';
 import { isWorkerMonthClosureGridLocked } from '@/lib/timesheet/worker-month-closure';
-import { ensureWorkerMonthlyPayrollPeriodForYearMonth, syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews } from '@/lib/timesheet/po-month-timesheet-bridge';
+import { ensureWorkerMonthlyPayrollPeriodForYearMonth, syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews, workerPayrollPeriodIdForYearMonth } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import {
@@ -769,6 +770,30 @@ export default function WaveMonthTimesheetSummaryPage() {
     for (const r of poMonthRows ?? []) m.set(r.poId, r);
     return m;
   }, [poMonthRows]);
+
+  const payrollPeriodIdForMonth = useMemo(
+    () => (/^\d{4}-\d{2}$/.test(monthYm) ? workerPayrollPeriodIdForYearMonth(monthYm) : ''),
+    [monthYm],
+  );
+  const payrollBatchesQuery = useMemoFirebase(
+    () =>
+      firestore && canViewTs && payrollPeriodIdForMonth
+        ? query(
+            collection(firestore, 'payroll_batches'),
+            where('payrollPeriodId', '==', payrollPeriodIdForMonth),
+          )
+        : null,
+    [firestore, canViewTs, payrollPeriodIdForMonth],
+  );
+  const { data: payrollBatchesForMonth } = useCollection<PayrollBatch>(payrollBatchesQuery as any);
+  const hasPayrollBatchForMonth = useMemo(
+    () => (payrollBatchesForMonth ?? []).some((b) => (Number(b.totalWorkers) || 0) > 0),
+    [payrollBatchesForMonth],
+  );
+  const existingPayrollBatchId = useMemo(() => {
+    const hit = (payrollBatchesForMonth ?? []).find((b) => (Number(b.totalWorkers) || 0) > 0);
+    return hit?.id ?? null;
+  }, [payrollBatchesForMonth]);
 
   const [workerClosureRows, setWorkerClosureRows] = useState<WorkerMonthTimesheetClosure[]>([]);
   const [workerClosureLoading, setWorkerClosureLoading] = useState(false);
@@ -1467,8 +1492,8 @@ export default function WaveMonthTimesheetSummaryPage() {
       }
       await refreshWorkerClosures();
       toast({
-        title: `ส่งอนุมัติ ${sent} คน`,
-        description: 'ผู้จัดการอนุมัติรายคนที่เมนู อนุมัติ → Timesheet รอบเดือน',
+        title: `ส่งอนุมัติเพื่อออกใบวางบิล ${sent} คน`,
+        description: 'ผู้จัดการอนุมัติรายคนที่เมนู อนุมัติ → Timesheet รอบเดือน (คิว Invoice — ไม่ใช่จ่ายค่าจ้าง)',
       });
     } catch (e: unknown) {
       toast({
@@ -2165,7 +2190,7 @@ export default function WaveMonthTimesheetSummaryPage() {
               compact
               title="คีย์การใช้งาน"
               tips={[
-                'ปิดงวดสร้าง Payroll / ส่งอนุมัติ Timesheet / แนบรูป—PDF: การ์ดรวมต่อชุด PO Active ด้านบนตาราง — สถานะและไฟล์แนบไม่รวมข้ามสัญญา',
+                'ปิดงวดสร้าง Payroll (จ่ายค่าจ้าง) / ส่งอนุมัติ Timesheet เพื่อออกใบวางบิล / แนบรูป—PDF: การ์ดรวมต่อชุด PO Active ด้านบนตาราง — สถานะและไฟล์แนบไม่รวมข้ามสัญญา',
                 'เลือกลูกค้า/ชุด PO Active และเดือนที่ตัวกรองด้านขวา — แนบรูป/PDF คู่ชุด PO+เดือนนั้น (สูงสุด 4 ไฟล์ต่อ PO · รวมแสดงในการ์ดเดียว)',
                 'รหัสประเภทวัน: ดู tooltip; สี/ขอบตามสถานะ (ดูท้ายตาราง)',
                 'ตัวอักษรในเซลล์ = ประเภทวัน (W/SB/…) · « - » = ว่างหรือไม่จ่าย · คอลัมน์รวม = ชม.ทำงานสะสมในเดือน',
@@ -2257,7 +2282,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                                 onClick={() => poMonthPanelRef.current?.openSubmitDialog(snap.poId)}
                               >
                                 <Send className="h-3.5 w-3.5" />
-                                ส่งอนุมัติ Timesheet
+                                ส่งอนุมัติ Timesheet เพื่อออกใบวางบิล
                               </Button>
                             ) : null}
                             {currentUser && isSystemAdmin(currentUser) && !snap.unlockHidden ? (
@@ -2494,11 +2519,12 @@ export default function WaveMonthTimesheetSummaryPage() {
                               className="h-8 gap-1"
                               disabled={partialWorkflowBusy || partialCloseStats.entryLocked === 0}
                               onClick={() => void handleSendPartialForReview()}
+                              title="ส่งผู้จัดการตรวจ timesheet เพื่อออกใบวางบิล/Invoice — ไม่ใช่คิวอนุมัติจ่ายค่าจ้าง"
                             >
                               <Send className="h-3.5 w-3.5" />
-                              ส่งอนุมัติคนที่ปิดแล้ว ({partialCloseStats.entryLocked})
+                              ส่งอนุมัติเพื่อออกใบวางบิล ({partialCloseStats.entryLocked})
                             </Button>
-                            {partialCloseStats.entryLocked > 0 ? (
+                            {partialCloseStats.entryLocked > 0 && !hasPayrollBatchForMonth ? (
                               <Button
                                 type="button"
                                 size="sm"
@@ -2506,14 +2532,28 @@ export default function WaveMonthTimesheetSummaryPage() {
                                 className="h-8 gap-1"
                                 disabled={partialWorkflowBusy}
                                 onClick={() => void handleSyncPayrollReadyFlags()}
+                                title="ตั้ง readyForPayroll ให้ไปสร้าง Payroll Batch ได้ — ใช้เมื่อ Batch ยังไม่มีคน"
                               >
                                 <RefreshCw className="h-3.5 w-3.5" />
                                 ซิงก์พร้อมจ่าย Payroll
                               </Button>
                             ) : null}
+                            {hasPayrollBatchForMonth && existingPayrollBatchId ? (
+                              <Button type="button" size="sm" variant="outline" className="h-8 gap-1" asChild>
+                                <Link href={`/payroll/batches/${existingPayrollBatchId}`}>
+                                  มี Payroll Batch แล้ว
+                                </Link>
+                              </Button>
+                            ) : null}
                           </div>
                           <p className="text-[10px] text-muted-foreground">
-                            ติ๊กเลือกคนที่ timesheet ครบ → ปิดงวด → ไป Payroll Batch ได้ทันที · กดซิงก์พร้อมจ่ายถ้า Batch ยังเห็น 0 คน · ส่งผู้จัดการอนุมัติเมื่อต้องการ · คนที่ปิดแล้ว: เมนูสถานะ → «ยกเลิกปิดงวด — กลับมาแก้ไข» (ได้จนกว่าใบงานจะถูกล็อกในชุดจ่าย)
+                            ติ๊กเลือกคนที่ timesheet ครบ → ปิดงวด → ไป Payroll Batch ได้ทันที
+                            {hasPayrollBatchForMonth
+                              ? ' · มี Batch แล้วจึงซ่อนปุ่มซิงก์พร้อมจ่าย'
+                              : ' · กดซิงก์พร้อมจ่ายถ้า Batch ยังเห็น 0 คน'}
+                            {' · '}
+                            <strong className="text-foreground">ส่งอนุมัติเพื่อออกใบวางบิล</strong> = คิวผู้จัดการตรวจ timesheet → Invoice (ไม่ใช่อนุมัติจ่ายค่าจ้าง)
+                            {' · '}คนที่ปิดแล้ว: เมนูสถานะ → «ยกเลิกปิดงวด — กลับมาแก้ไข»
                           </p>
                           {overdueDeferredClosures.length > 0 ? (
                             <Alert variant="destructive" className="py-2">

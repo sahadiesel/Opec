@@ -1,6 +1,21 @@
 import { doc, getDoc, type Firestore } from 'firebase/firestore';
 import type { ContractBillingMode, MainContract, PurchaseOrder } from '@/lib/types';
 
+/** PO override → สัญญาหลัก (จาก map) → default MONTHLY — ใช้กรอง UI โดยไม่รอ async */
+export function resolveBillingModeFromMaps(
+  po: Pick<PurchaseOrder, 'contractId' | 'billingMode'> | undefined | null,
+  contractsById?: Map<string, Pick<MainContract, 'billingMode'>>,
+): ContractBillingMode {
+  if (!po) return 'MONTHLY';
+  if (po.billingMode === 'TRIP' || po.billingMode === 'MONTHLY') return po.billingMode;
+  const contractId = String(po.contractId || '').trim();
+  if (contractId && contractsById) {
+    const mc = contractsById.get(contractId);
+    if (mc?.billingMode === 'TRIP' || mc?.billingMode === 'MONTHLY') return mc.billingMode;
+  }
+  return 'MONTHLY';
+}
+
 /** PO override → สัญญาหลัก → default MONTHLY (Guangzhou / legacy) */
 export async function resolveBillingMode(
   db: Firestore,

@@ -40,6 +40,7 @@ import {
 import type {
   Customer,
   MainContract,
+  PayrollBatch,
   PoLocationMonthTimesheet,
   PoMonthTimesheetPhotoBundle,
   PoMonthTimesheetReview,
@@ -63,6 +64,7 @@ import {
   poMonthTimesheetReviewDocId,
   syncReadyPayrollFlagsForPoMonth,
   syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews,
+  workerPayrollPeriodIdForYearMonth,
 } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { poMonthReviewStatusLabelTh } from '@/lib/timesheet/po-month-review-status';
 import { isSystemAdmin } from '@/lib/permission-core';
@@ -186,6 +188,8 @@ function buildPoToolbarSnapshot(
     uploadingPhotoPoId: string | null;
     payrollSyncPoId: string | null;
     currentUser: User | null;
+    /** มี Payroll Batch ของเดือนนี้แล้ว — ซ่อนปุ่มซิงก์พร้อมจ่าย */
+    hasPayrollBatchForMonth: boolean;
   },
 ): TimesheetPoMonthToolbarSnapshot {
   const photoReadOnly = isAttachmentReadonly(r);
@@ -201,6 +205,7 @@ function buildPoToolbarSnapshot(
     !!r &&
     (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved');
   const canPayrollSync =
+    !args.hasPayrollBatchForMonth &&
     !!r &&
     (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved');
 
@@ -252,6 +257,7 @@ function buildBundlePoToolbarSnapshot(
     uploadingPhotoPoId: string | null;
     payrollSyncPoId: string | null;
     currentUser: User | null;
+    hasPayrollBatchForMonth: boolean;
   },
 ): TimesheetPoMonthToolbarSnapshot {
   const anchor = posRows[0]!;
@@ -299,13 +305,15 @@ function buildBundlePoToolbarSnapshot(
       );
     });
 
-  const canPayrollSync = posRows.some((po) => {
-    const r = reviewByPoId.get(po.id);
-    return (
-      !!r &&
-      (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved')
-    );
-  });
+  const canPayrollSync =
+    !args.hasPayrollBatchForMonth &&
+    posRows.some((po) => {
+      const r = reviewByPoId.get(po.id);
+      return (
+        !!r &&
+        (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved')
+      );
+    });
 
   const anchorR = reviewByPoId.get(anchor.id);
   const anchorReadOnly = isAttachmentReadonly(anchorR);
@@ -365,7 +373,7 @@ export type TimesheetPoMonthToolbarSnapshot = {
   attachUploading: boolean;
   attachments: TimesheetPoMonthToolbarAttachment[];
   busyPoId: string | null;
-  /** แสดงปุ่มซิงก์พร้อมจ่าย (หลังปิดงวดแล้วแต่ payroll ยังไม่เห็นคน) */
+  /** แสดงปุ่มซิงก์พร้อมจ่าย — ซ่อนเมื่อมี Payroll Batch ของเดือนนี้แล้ว */
   payrollSyncHidden: boolean;
   payrollSyncDisabled: boolean;
   payrollSyncBusy: boolean;
@@ -540,6 +548,28 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
     [firestore, canViewTs, monthYm]
   );
   const { data: monthRows, isLoading: reviewsLoading } = useCollection<PoMonthTimesheetReview>(monthReviewsQuery as any);
+
+  const payrollPeriodId = useMemo(
+    () => (/^\d{4}-\d{2}$/.test(monthYm) ? workerPayrollPeriodIdForYearMonth(monthYm) : ''),
+    [monthYm],
+  );
+  const payrollBatchesQuery = useMemoFirebase(
+    () =>
+      firestore && canViewTs && payrollPeriodId
+        ? query(collection(firestore, 'payroll_batches'), where('payrollPeriodId', '==', payrollPeriodId))
+        : null,
+    [firestore, canViewTs, payrollPeriodId],
+  );
+  const { data: payrollBatchesForMonth } = useCollection<PayrollBatch>(payrollBatchesQuery as any);
+  /** มี Batch จ่ายค่าจ้างของเดือนนี้แล้ว — ไม่โชว์ปุ่มซิงก์พร้อมจ่าย (กันงงหลังสร้าง Batch) */
+  const hasPayrollBatchForMonth = useMemo(
+    () => (payrollBatchesForMonth ?? []).some((b) => (Number(b.totalWorkers) || 0) > 0),
+    [payrollBatchesForMonth],
+  );
+  const existingPayrollBatchId = useMemo(() => {
+    const hit = (payrollBatchesForMonth ?? []).find((b) => (Number(b.totalWorkers) || 0) > 0);
+    return hit?.id ?? null;
+  }, [payrollBatchesForMonth]);
 
   const monthlyAttachReadonly = useMemo(() => {
     return (monthRows ?? []).some(
@@ -923,8 +953,8 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
             title: 'ปิดงวดสร้าง Payroll แล้ว',
             description:
               readyCount > 0
-                ? `แก้รายวันไม่ได้ — ตั้งพร้อมจ่าย ${readyCount} ใบงาน — ครอบคลุม ${syncedPos} PO ที่ทับเดือน (เอกสารปิดงวดในเดือนนี้ ${gatedDocs} ฉบับ) · ไปทำ Payroll ได้ทันทีโดยไม่ต้องรอผู้จัดการอนุมัติ timesheet · กด «ส่งอนุมัติ Timesheet» เมื่อต้องการส่งคิวผู้จัดการเพื่อ Invoice`
-                : 'แก้รายวันไม่ได้เมื่อเอกสารถูกปิดงวด — หาก payroll ยังไม่เห็นคน ให้กด «ซิงก์พร้อมจ่าย» ที่การ์ด PO · กด «ส่งอนุมัติ Timesheet» เมื่อต้องการส่งผู้จัดการ',
+                ? `แก้รายวันไม่ได้ — ตั้งพร้อมจ่าย ${readyCount} ใบงาน — ครอบคลุม ${syncedPos} PO ที่ทับเดือน (เอกสารปิดงวดในเดือนนี้ ${gatedDocs} ฉบับ) · ไปทำ Payroll ได้ทันทีโดยไม่ต้องรอผู้จัดการอนุมัติ timesheet · กด «ส่งอนุมัติ Timesheet เพื่อออกใบวางบิล» เมื่อต้องการส่งคิวผู้จัดการเพื่อ Invoice`
+                : 'แก้รายวันไม่ได้เมื่อเอกสารถูกปิดงวด — หาก payroll ยังไม่เห็นคน ให้กด «ซิงก์พร้อมจ่าย» ที่การ์ด PO · กด «ส่งอนุมัติ Timesheet เพื่อออกใบวางบิล» เมื่อต้องการส่งผู้จัดการ',
           });
         } else if (status === 'pending_manager_review' && !opts?.silentOutcomeToast) {
           let readyCountPm = 0;
@@ -941,7 +971,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
             console.error('[po-month] payroll bridge after submit', e);
           }
           toast({
-            title: 'ส่งอนุมัติ Timesheet แล้ว',
+            title: 'ส่งอนุมัติ Timesheet เพื่อออกใบวางบิลแล้ว',
             description:
               readyCountPm > 0
                 ? `รอผู้จัดการที่เมนูอนุมัติ — คิวนี้ใช้สำหรับตรวจและออก Invoice ตาม SB/W ใน timesheet · ระบบซิงก์ธงพร้อมจ่าย ${readyCountPm} ใบงาน (ครอบคลุม ${syncedPosPm} PO ในเดือนปฏิทิน ตามนโยบายเดิม)`
@@ -1035,7 +1065,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
         await writePoMonthReview(po, 'pending_manager_review', { silentOutcomeToast: true });
       }
       toast({
-        title: 'ส่งอนุมัติ Timesheet ชุด PO Active แล้ว',
+        title: 'ส่งอนุมัติ Timesheet ชุด PO Active เพื่อออกใบวางบิลแล้ว',
         description: `ส่ง ${toSubmit.length} PO (${toSubmit.map((p) => p.poCode).join(', ')}) — รอผู้จัดการที่เมนูอนุมัติ`,
       });
       setSubmitDialogPo(null);
@@ -1531,6 +1561,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
               uploadingPhotoPoId,
               payrollSyncPoId,
               currentUser,
+              hasPayrollBatchForMonth,
             }),
           ]
         : posRows.map((po) =>
@@ -1540,6 +1571,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
               uploadingPhotoPoId,
               payrollSyncPoId,
               currentUser,
+              hasPayrollBatchForMonth,
             }),
           );
     onEmbeddedToolbarSnapshot?.(snapshots);
@@ -1554,6 +1586,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
     uploadingPhotoPoId,
     payrollSyncPoId,
     currentUser,
+    hasPayrollBatchForMonth,
     onEmbeddedToolbarSnapshot,
   ]);
 
@@ -1565,6 +1598,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
       uploadingPhotoPoId,
       payrollSyncPoId,
       currentUser,
+      hasPayrollBatchForMonth,
     });
   }, [
     bundleToolbarMode,
@@ -1576,6 +1610,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
     uploadingPhotoPoId,
     payrollSyncPoId,
     currentUser,
+    hasPayrollBatchForMonth,
   ]);
 
   if (userLoading || !currentUser) return null;
@@ -1734,7 +1769,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
               title="ขั้นตอน"
               tips={[
                 'ตั้ง "วันสุดท้ายของงวด" ตามรอบปิดจริง แล้วกด ปิดงวดสร้าง Payroll — จากนั้นแนบรูป/PDF คู่เลข TS- ได้สูงสุด 4 ไฟล์ (รูปใหญ่กว่า ~500KB จะบีบอัตโนมัติ, PDF สูงสุด 10MB)',
-                'กด ส่งอนุมัติ Timesheet ให้ผู้จัดการ (เมนู HR) — หลังอนุมัติใช้เป็นฐานออก Invoice ตาม SB/W และราคาต่อตำแหน่ง (การคำนวณเดิม)',
+                'กด ส่งอนุมัติ Timesheet เพื่อออกใบวางบิล ให้ผู้จัดการ (เมนู HR) — หลังอนุมัติใช้เป็นฐานออก Invoice · จ่ายค่าจ้างคนละคิวที่เมนูงวดจ่ายลูกจ้าง',
                 'ดูสรุปกริดรายเดือน: เลื่อนลงไปที่ตารางสรุปรายเดือน — ปิดงวด/ส่งอนุมัติทำที่การ์ด PO ในส่วนนี้',
                 'เลือกสถานที่จาก dropdown หรือพารามิเตอร์ URL locationKey — พิมพ์มุมมองนี้ได้เมื่อกรองแล้ว (หรือทั้งหมด)',
               ]}
@@ -1961,23 +1996,42 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
                   )}
                 </CardDescription>
               </div>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="shrink-0 gap-1.5"
-                disabled={!canEditTs || payrollSyncBusy || !/^\d{4}-\d{2}$/.test(monthYm)}
-                onClick={() => void runPayrollSyncForMonth()}
-              >
-                {payrollSyncBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                ซิงก์พร้อมจ่ายทั้งเดือน
-              </Button>
+              {hasPayrollBatchForMonth && existingPayrollBatchId ? (
+                <Button type="button" variant="outline" size="sm" className="shrink-0 gap-1.5" asChild>
+                  <Link href={`/payroll/batches/${existingPayrollBatchId}`}>
+                    มี Payroll Batch แล้ว — เปิดงวดจ่าย
+                  </Link>
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="shrink-0 gap-1.5"
+                  disabled={!canEditTs || payrollSyncBusy || !/^\d{4}-\d{2}$/.test(monthYm)}
+                  onClick={() => void runPayrollSyncForMonth()}
+                >
+                  {payrollSyncBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                  ซิงก์พร้อมจ่ายทั้งเดือน
+                </Button>
+              )}
             </div>
             <p className="text-xs text-muted-foreground rounded-md border border-dashed border-amber-300/60 bg-amber-50/50 dark:bg-amber-950/20 px-3 py-2">
-              <strong className="text-foreground">ปิดงวดสร้าง Payroll แล้ว — ปุ่มปิดงวดถูกปิดใช้ตามปกติ</strong>
-              เมื่อมีอย่างน้อยหนึ่ง PO+เดือนที่ปิดงวดในเดือนนี้ การกด{' '}
-              <span className="font-semibold">ซิงก์พร้อมจ่ายทั้งเดือน</span> จะตั้งพร้อมจ่ายให้ทุก PO active ที่ทับเดือนปฏิทิน — ไม่ต้องล็อกทุก PO — แล้วไป{' '}
-              <span className="font-semibold">การจ่ายค่าจ้าง → งวดจ่ายลูกจ้าง</span> เพื่อ Pre-check / สร้าง Batch
+              {hasPayrollBatchForMonth ? (
+                <>
+                  <strong className="text-foreground">มี Payroll Batch ของเดือนนี้แล้ว</strong>
+                  {' — '}ปุ่มซิงก์พร้อมจ่ายถูกซ่อนเพื่อไม่ให้ซ้ำ · ตรวจ/ส่งขออนุมัติจ่ายที่เมนู{' '}
+                  <span className="font-semibold">การจ่ายค่าจ้าง → งวดจ่ายลูกจ้าง</span>
+                  {' · '}ปุ่ม「ส่งอนุมัติ Timesheet เพื่อออกใบวางบิล」ด้านล่างเป็นคนละคิว (ผู้จัดการตรวจ timesheet → Invoice)
+                </>
+              ) : (
+                <>
+                  <strong className="text-foreground">ปิดงวดสร้าง Payroll แล้ว — ปุ่มปิดงวดถูกปิดใช้ตามปกติ</strong>
+                  เมื่อมีอย่างน้อยหนึ่ง PO+เดือนที่ปิดงวดในเดือนนี้ การกด{' '}
+                  <span className="font-semibold">ซิงก์พร้อมจ่ายทั้งเดือน</span> จะตั้งพร้อมจ่ายให้ทุก PO active ที่ทับเดือนปฏิทิน — ไม่ต้องล็อกทุก PO — แล้วไป{' '}
+                  <span className="font-semibold">การจ่ายค่าจ้าง → งวดจ่ายลูกจ้าง</span> เพื่อ Pre-check / สร้าง Batch
+                </>
+              )}
             </p>
           </CardHeader>
           <CardContent className="p-0">
@@ -2045,7 +2099,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
                           }}
                         >
                           <Send className="h-3.5 w-3.5" />
-                          ส่งอนุมัติ Timesheet
+                          ส่งอนุมัติ Timesheet เพื่อออกใบวางบิล
                         </Button>
                       ) : null}
                     </div>
@@ -2182,7 +2236,7 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
                             onClick={() => setSubmitDialogPo(po)}
                           >
                             <Send className="h-3.5 w-3.5" />
-                            ส่งอนุมัติ Timesheet
+                            ส่งอนุมัติ Timesheet เพื่อออกใบวางบิล
                           </Button>
                         ) : null}
                         {isSystemAdmin(currentUser) &&
@@ -2313,12 +2367,13 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
       >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>ยืนยันส่งอนุมัติ Timesheet</DialogTitle>
+            <DialogTitle>ยืนยันส่งอนุมัติ Timesheet เพื่อออกใบวางบิล</DialogTitle>
             <DialogDescription>
               เลขเอกสารรายเดือน:{' '}
               <span className="font-mono font-semibold text-foreground">{monthlyTimesheetNo ?? '—'}</span>
               {' · '}
-              งวด {monthYm} — หลังผู้จัดการอนุมัติ ใช้เป็นฐานออก Invoice ตาม SB/W และราคาต่อตำแหน่งใน timesheet (ตามระบบเดิม)
+              งวด {monthYm} — คิวนี้ออกใบวางบิล/Invoice ตาม SB/W หลังผู้จัดการอนุมัติ{' '}
+              <strong className="text-foreground">ไม่ใช่</strong> คิวอนุมัติจ่ายค่าจ้าง (จ่ายค่าจ้างอยู่ที่เมนูงวดจ่ายลูกจ้าง)
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">

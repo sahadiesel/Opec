@@ -82,3 +82,12 @@ export function collapseDuplicateWorkerDayTimesheets(tsList: readonly DailyTimes
 export function normalizeTimesheetsForPayrollLine(tsList: readonly DailyTimesheet[]): DailyTimesheet[] {
   return collapseDuplicateWorkerDayTimesheets(dedupeDailyTimesheetsForPayroll(tsList));
 }
+
+/**
+ * ก่อนวางบิลลูกค้า — ตัด id/logical ซ้ำ แต่**ไม่**ยุบคน+วันข้าม eventType
+ * (กฎ payroll เลือก W ทับ SB ทำให้บรรทัด standby หายจากใบแจ้งหนี้)
+ * แถวซ้ำคน+วัน+ตำแหน่ง+ประเภทวัน ตัดทีหลังใน `dedupeTimesheetsForBilling`
+ */
+export function normalizeTimesheetsForBillingLine(tsList: readonly DailyTimesheet[]): DailyTimesheet[] {
+  return dedupeDailyTimesheetsForPayroll(tsList);
+}

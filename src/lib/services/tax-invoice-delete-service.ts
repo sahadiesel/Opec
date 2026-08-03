@@ -20,6 +20,97 @@ import {
   assertTaxInvoiceAllowsRemovingLinkedAr,
   deleteTaxInvoiceLinkedArIfPresent,
 } from '@/lib/services/accounts-receivable-delete-service';
+import { sanitizeFirestorePayload } from '@/lib/utils';
+
+/**
+ * ยกเลิกใบกำกับภาษี (DRAFT / ISSUED → CANCELLED)
+ * — ล้างลิงก์บนใบแจ้งหนี้ · ลบลูกหนี้ที่ผูกถ้ายังไม่มีใบเสร็จ/ยืนยันรับเงิน
+ * หลังจากนี้ยกเลิกใบแจ้งหนี้ (VOID) ได้ตามปกติ
+ */
+export async function cancelTaxInvoiceAsAccounting(
+  db: Firestore,
+  taxInvoiceId: string,
+  actor: User,
+): Promise<void> {
+  const taxRef = doc(db, 'tax_invoices', taxInvoiceId);
+  const taxSnap = await getDoc(taxRef);
+  if (!taxSnap.exists()) throw new Error('ไม่พบใบกำกับภาษี');
+  const invoice = { id: taxSnap.id, ...taxSnap.data() } as TaxInvoice;
+
+  if (invoice.status === 'CANCELLED') {
+    if (invoice.sourceCommercialInvoiceId) {
+      await clearCommercialLinkedTaxIfMatches(db, invoice.sourceCommercialInvoiceId, invoice.id, actor);
+    }
+    return;
+  }
+
+  assertTaxInvoiceAllowsRemovingLinkedAr(invoice);
+  await deleteTaxInvoiceLinkedArIfPresent(db, invoice, actor);
+
+  const now = Date.now();
+  await updateDoc(
+    taxRef,
+    sanitizeFirestorePayload({
+      status: 'CANCELLED' as const,
+      arEntryId: deleteField(),
+      updatedAt: now,
+    }),
+  );
+
+  if (invoice.billingNoteId) {
+    const bnRef = doc(db, 'billing_notes', invoice.billingNoteId);
+    const bnSnap = await getDoc(bnRef);
+    if (bnSnap.exists()) {
+      const bn = bnSnap.data() as BillingNote;
+      if (bn.status === 'INVOICED' || bn.status === 'SUBMITTED') {
+        await updateDoc(bnRef, {
+          status: 'CANCELLED' as const,
+          updatedAt: now,
+          updatedBy: actor.displayName || actor.email || actor.id,
+        });
+      }
+    }
+  }
+
+  if (invoice.sourceCommercialInvoiceId) {
+    await clearCommercialLinkedTaxIfMatches(db, invoice.sourceCommercialInvoiceId, invoice.id, actor);
+  }
+
+  await writeAuditLog(db, actor, {
+    actionType: 'UPDATE',
+    entityType: 'TaxInvoice',
+    entityId: invoice.id,
+    entityLabel: `${invoice.taxInvoiceNo} → CANCELLED`,
+    sourceModule: 'tax_invoices',
+    linkedIds: [
+      invoice.customerId,
+      invoice.billingNoteId,
+      ...(invoice.sourceCommercialInvoiceId ? [invoice.sourceCommercialInvoiceId] : []),
+    ],
+    taxInvoiceId: invoice.id,
+    billingNoteId: invoice.billingNoteId,
+    afterSummary: 'ยกเลิกใบกำกับภาษี — ปลดลิงก์ใบแจ้งหนี้ / ลบลูกหนี้เมื่อปลอดภัย',
+  });
+}
+
+async function clearCommercialLinkedTaxIfMatches(
+  db: Firestore,
+  commercialInvoiceId: string,
+  taxInvoiceId: string,
+  actor: User,
+): Promise<void> {
+  const comRef = doc(db, 'commercial_invoices', commercialInvoiceId);
+  const comSnap = await getDoc(comRef);
+  if (!comSnap.exists()) return;
+  const linked = String((comSnap.data() as { linkedTaxInvoiceId?: string }).linkedTaxInvoiceId || '').trim();
+  if (linked && linked !== taxInvoiceId) return;
+  await updateDoc(comRef, {
+    linkedTaxInvoiceId: deleteField(),
+    updatedAt: Date.now(),
+    updatedByUid: actor.id,
+    updatedByName: actor.displayName || actor.email || actor.id,
+  });
+}
 
 export async function deleteTaxInvoiceBundleAsAdmin(
   db: Firestore,

@@ -76,8 +76,8 @@ export const TRIP_BILLING_WAVE_PLACEHOLDER = '__trip_batch__';
  * - **ลงเวลาจริง** มาจาก `daily_timesheets` รายวันต่อ assignment+wave; PO เป็น “โควต้า/สั่งงาน” คนมาไม่พร้อมกัน
  * - เมื่อ**ในเดือนเดียวกันภายใต้ PO มีมากกว่า 1 wave** (คน mobilize คนล่ะชุด) จะ**อ้าง “wave ฉบับเดียว” บนใบแจ้งหนี้เดียวไม่ครอบยอดเดือน** — ใบที่ถูกต้องสำหรับเรียกเก็บรวมเดือน =
  *   เอกสาร **PO+เดือน** หลัง manager approve + `sourcePoMonthReviewId` (บรรทัดใบยึด `timesheetIds` จากทุก wave ในช่วง)
- * - Path **wave+เดือน** / `sourceWaveMonthReviewId` ยังใช้ได้เมื่องวดนั้น “มี effective wave ตัวเดียว” หรือเป็น history — **ห้ามแก้**ใบ
- *   `ISSUED` / ที่ลูกค้า approve แล้ว; ราย DRAFT อาจ void แล้วสร้างใหม่จาก PO+เดือนตาม runbook
+ * - Path **wave+เดือน** / `sourceWaveMonthReviewId` ยังใช้ได้เมื่องวดนั้น “มี effective wave ตัวเดียว” หรือเป็น history — ใบ
+ *   `ISSUED` ยกเลิก (VOID) ได้เมื่อยังไม่มีใบกำกับภาษีที่ใช้งาน หรือยกเลิกใบกำกับแล้ว; ราย DRAFT อาจ void แล้วสร้างใหม่จาก PO+เดือนตาม runbook
  */
 function newLineId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID
@@ -663,6 +663,78 @@ export async function ensureCommercialDraftInvoiceAfterPoMonthApproval(
   }
 }
 
+function commercialInvoicePeriodsOverlap(
+  aStart: string,
+  aEnd: string,
+  bStart: string,
+  bEnd: string,
+): boolean {
+  const as = String(aStart || '').slice(0, 10);
+  const ae = String(aEnd || '').slice(0, 10);
+  const bs = String(bStart || '').slice(0, 10);
+  const be = String(bEnd || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(as) || !/^\d{4}-\d{2}-\d{2}$/.test(ae)) return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(bs) || !/^\d{4}-\d{2}-\d{2}$/.test(be)) return false;
+  return as <= be && bs <= ae;
+}
+
+async function resolveTripCommercialInvoiceWorkerIds(
+  db: Firestore,
+  inv: CommercialInvoice,
+): Promise<Set<string>> {
+  const fromCovered = normalizeWorkerIdSet(inv.coveredWorkerIds ?? []);
+  if (fromCovered.length > 0) return new Set(fromCovered);
+  const batchId = String(inv.sourceTripBillingBatchId || '').trim();
+  if (!batchId) return new Set();
+  const snap = await getDoc(doc(db, 'trip_billing_batches', batchId));
+  if (!snap.exists()) return new Set();
+  const batch = snap.data() as TripBillingBatch;
+  return new Set(normalizeWorkerIdSet(batch.memberWorkerIds ?? []));
+}
+
+/**
+ * สัญญา/PO โหมด TRIP ออกใบได้เฉพาะ Trip Billing
+ * — และกันคนที่อยู่ในใบ Trip ทับช่วงวันที่แล้ว มาออก Monthly ซ้ำ
+ */
+async function assertPoAllowsMonthlyCommercialInvoice(
+  db: Firestore,
+  po: PurchaseOrder,
+  opts?: { workerIds?: readonly string[]; periodStart?: string; periodEnd?: string },
+): Promise<void> {
+  const mode = await resolveBillingMode(db, po);
+  if (mode === 'TRIP') {
+    throw new Error(
+      'สัญญา/PO นี้ตั้งโหมดวางบิลแบบ Trip (M1→D1) — ออกใบแจ้งหนี้ได้เฉพาะเมนู «ทำใบแจ้งหนี้แบบ Trip» ไม่ใช่แบบ Monthly',
+    );
+  }
+
+  const workerIds = normalizeWorkerIdSet(opts?.workerIds ?? []);
+  const periodStart = String(opts?.periodStart || '').slice(0, 10);
+  const periodEnd = String(opts?.periodEnd || '').slice(0, 10);
+  if (workerIds.length === 0 || !periodStart || !periodEnd) return;
+
+  const q = query(
+    collection(db, 'commercial_invoices'),
+    where('poId', '==', po.id),
+    where('waveId', '==', TRIP_BILLING_WAVE_PLACEHOLDER),
+  );
+  const snap = await getDocs(q);
+  for (const d of snap.docs) {
+    const inv = { id: d.id, ...(d.data() as object) } as CommercialInvoice;
+    if (inv.status === 'VOID') continue;
+    if (!commercialInvoicePeriodsOverlap(inv.periodStart, inv.periodEnd, periodStart, periodEnd)) {
+      continue;
+    }
+    const tripWorkers = await resolveTripCommercialInvoiceWorkerIds(db, inv);
+    const hit = workerIds.filter((w) => tripWorkers.has(w));
+    if (hit.length > 0) {
+      throw new Error(
+        `มีใบวางบิลแบบ Trip แล้ว (${inv.invoiceNo || inv.id}) ทับช่วงวันที่ — ไม่สามารถออกใบ Monthly ซ้ำสำหรับคนงานชุดนี้`,
+      );
+    }
+  }
+}
+
 /**
  * สร้างใบแจ้งหนี้จาก timesheet ในช่วงงวด PO+เดือน
  * — ดึงทุก `daily_timesheets` ที่ `readyForBilling` ใต้ PO ในช่วงงวด (ไม่กรอง wave)
@@ -691,6 +763,15 @@ export async function createCommercialDraftInvoiceForPoMonth(
   const workerIds = normalizeWorkerIdSet(params.workerIds ?? []);
   const isPartial = workerIds.length > 0;
 
+  const poSnapGate = await getDoc(doc(db, 'purchase_orders', poId));
+  if (!poSnapGate.exists()) throw new Error('ไม่พบ PO');
+  const poGate = { ...poSnapGate.data(), id: poSnapGate.id } as PurchaseOrder;
+  await assertPoAllowsMonthlyCommercialInvoice(db, poGate, {
+    workerIds: isPartial ? workerIds : undefined,
+    periodStart,
+    periodEnd,
+  });
+
   const gen = await generateBillingLines(db, poId, periodStart, periodEnd, undefined, {
     workerIds: isPartial ? workerIds : undefined,
     excludeWorkerIds: !isPartial ? params.excludeWorkerIds : undefined,
@@ -701,9 +782,7 @@ export async function createCommercialDraftInvoiceForPoMonth(
     );
   }
 
-  const [poSnap] = await Promise.all([getDoc(doc(db, 'purchase_orders', poId))]);
-  if (!poSnap.exists()) throw new Error('ไม่พบ PO');
-  const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
+  const po = poGate;
   const waveCodeLabel = isPartial
     ? partialPoMonthInvoiceLabel(params.partialPoMonthBatchNo, workerIds.length)
     : 'PO+งวด (รวม wave)';
@@ -865,7 +944,7 @@ export async function tryEnsurePartialCommercialDraftForCompletedBatch(
         sourcePoMonthReviewId: reviewId,
         workerIds,
         partialPoMonthBatchNo: batchNo,
-        notes: workerNames ? `Partial billing รอบ ${batchNo}: ${workerNames}` : undefined,
+        notes: workerNames ? `Partial billing round ${batchNo}: ${workerNames}` : undefined,
       });
       return { kind: 'created', id, invoiceNo, workerCount: workerIds.length };
     } catch (e: unknown) {
@@ -998,6 +1077,12 @@ export async function createCommercialDraftInvoiceForTripBatch(
   const poSnapEarly = await getDoc(doc(db, 'purchase_orders', batch.poId));
   if (!poSnapEarly.exists()) throw new Error('ไม่พบ PO');
   const poEarly = { ...poSnapEarly.data(), id: poSnapEarly.id } as PurchaseOrder;
+  const tripMode = await resolveBillingMode(db, poEarly);
+  if (tripMode !== 'TRIP') {
+    throw new Error(
+      `สัญญา/PO นี้ตั้งโหมดวางบิลแบบ ${tripMode === 'MONTHLY' ? 'Monthly' : tripMode} — ออกใบแจ้งหนี้ Trip ไม่ได้ ใช้เมนู «ทำใบแจ้งหนี้แบบ Monthly»`,
+    );
+  }
 
   let tripMobDemobLocationKey = (options?.tripMobDemobLocationKey || '').trim() || undefined;
   const { isStandbyOnlyClosedTripBatch } = await import('@/lib/services/trip-billing-service');
@@ -1105,6 +1190,7 @@ export async function createCommercialDraftInvoiceForTripBatch(
     sourceTripBillingBatchId: batch.id,
     memberMobCycleIds: batch.memberMobCycleIds,
     memberWorkerNames: batch.memberWorkerNames,
+    coveredWorkerIds: normalizeWorkerIdSet(batch.memberWorkerIds ?? []),
     ...(tripMobDemobLocationKey ? { tripMobDemobLocationKey } : {}),
     createdAt: now,
     createdByUid: actor.id,
@@ -1187,6 +1273,14 @@ export async function createCommercialDraftInvoice(
   const { poId, waveId, periodStart, periodEnd, issueDate, actor } = params;
   const currency = params.currency || 'THB';
 
+  const [poSnapGate, waveSnapGate] = await Promise.all([
+    getDoc(doc(db, 'purchase_orders', poId)),
+    getDoc(doc(db, 'waves', waveId)),
+  ]);
+  if (!poSnapGate.exists()) throw new Error('ไม่พบ PO');
+  const poGate = { ...poSnapGate.data(), id: poSnapGate.id } as PurchaseOrder;
+  await assertPoAllowsMonthlyCommercialInvoice(db, poGate, { periodStart, periodEnd });
+
   const gen = await generateBillingLines(db, poId, periodStart, periodEnd, waveId);
   if (gen.lines.length === 0) {
     throw new Error(
@@ -1194,12 +1288,8 @@ export async function createCommercialDraftInvoice(
     );
   }
 
-  const [poSnap, waveSnap] = await Promise.all([
-    getDoc(doc(db, 'purchase_orders', poId)),
-    getDoc(doc(db, 'waves', waveId)),
-  ]);
-  if (!poSnap.exists()) throw new Error('ไม่พบ PO');
-  const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
+  const po = poGate;
+  const waveSnap = waveSnapGate;
   const waveCode = waveSnap.exists() ? String((waveSnap.data() as { waveCode?: string }).waveCode || '') : '';
 
   const vatPercent = await resolveVatPercent(db, po.customerId, po.contractId);
@@ -1495,8 +1585,19 @@ export async function voidCommercialInvoice(
   if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
   const cur = snap.data() as CommercialInvoice;
   if (cur.status === 'VOID') return;
-  if (cur.status === 'ISSUED') {
-    throw new Error('ไม่สามารถยกเลิกใบที่ยืนยันเรียกเก็บแล้ว');
+
+  const taxId = String(cur.linkedTaxInvoiceId || '').trim();
+  if (taxId) {
+    const taxSnap = await getDoc(doc(db, 'tax_invoices', taxId));
+    if (taxSnap.exists()) {
+      const tax = taxSnap.data() as { status?: string; taxInvoiceNo?: string };
+      if (tax.status !== 'CANCELLED') {
+        const no = String(tax.taxInvoiceNo || taxId).trim();
+        throw new Error(
+          `ต้องยกเลิกใบกำกับภาษี ${no} ก่อน แล้วจึงยกเลิกใบแจ้งหนี้ได้`,
+        );
+      }
+    }
   }
 
   const now = Date.now();
@@ -1504,6 +1605,7 @@ export async function voidCommercialInvoice(
     ref,
     sanitizeFirestorePayload({
       status: 'VOID' as const,
+      linkedTaxInvoiceId: deleteField(),
       updatedAt: now,
       updatedByUid: actor.id,
       updatedByName: actor.displayName || actor.email || actor.id,
@@ -1517,7 +1619,10 @@ export async function voidCommercialInvoice(
     entityLabel: `${cur.invoiceNo} → ยกเลิก`,
     sourceModule: 'commercial_invoices',
     linkedIds: [cur.customerId, cur.poId, cur.waveId],
-    afterSummary: 'ยกเลิกใบแจ้งหนี้ (รอสร้างใหม่จากงวด / PO)',
+    afterSummary:
+      cur.status === 'ISSUED'
+        ? 'ยกเลิกใบแจ้งหนี้ที่ยืนยันแล้ว (ยังไม่มีใบกำกับภาษีที่ใช้งาน / ยกเลิกใบกำกับแล้ว)'
+        : 'ยกเลิกใบแจ้งหนี้ (รอสร้างใหม่จากงวด / PO)',
   });
 
   if (cur.sourceTripBillingBatchId) {
