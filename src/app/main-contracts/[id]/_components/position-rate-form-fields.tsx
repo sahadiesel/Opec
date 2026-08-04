@@ -215,18 +215,20 @@ export function PositionRateFormFields({
       <PositionRateMatrixFields
         rateMatrix={newRate.rateMatrix}
         onChange={(rateMatrix) => {
-          const onshoreVal = rateMatrix.sell?.onshore?.workingDay;
-          const offshoreVal = rateMatrix.sell?.offshore?.workingDay;
-          setNewRate({
-            ...newRate,
-            rateMatrix,
-            sellRateOnshore: onshoreVal,
-            sellRateOffshore: offshoreVal,
-            sellRate: legacySellRateMirror({
-              ...newRate,
+          setNewRate((prev) => {
+            const onshoreVal = rateMatrix.sell?.onshore?.workingDay;
+            const offshoreVal = rateMatrix.sell?.offshore?.workingDay;
+            return {
+              ...prev,
+              rateMatrix,
               sellRateOnshore: onshoreVal,
               sellRateOffshore: offshoreVal,
-            }),
+              sellRate: legacySellRateMirror({
+                ...prev,
+                sellRateOnshore: onshoreVal,
+                sellRateOffshore: offshoreVal,
+              }),
+            };
           });
         }}
         mobDemobLocations={mobDemobLocations}

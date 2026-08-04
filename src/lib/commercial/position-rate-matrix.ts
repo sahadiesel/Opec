@@ -43,10 +43,15 @@ function sanitizeOffshoreSide(side: PositionRateOffshoreSide | undefined): Posit
   const workingDay = parsePositive(side.workingDay);
   const standbyDay = parsePositive(side.standbyDay);
   const otPerHour = parsePositive(side.otPerHour);
-  const m1PerTrip = parsePositive(side.m1PerTrip);
-  const d1PerTrip = parsePositive(side.d1PerTrip);
+  let m1PerTrip = parsePositive(side.m1PerTrip);
+  let d1PerTrip = parsePositive(side.d1PerTrip);
   const mobDemobRoundTrip = sanitizeMobDemobRoundTrip(side.mobDemobRoundTrip);
-  if (workingDay != null) out.workingDay = workingDay;
+  if (workingDay != null) {
+    out.workingDay = workingDay;
+    // UI default 0.5x — persist baht amounts whenever Working exists
+    if (m1PerTrip == null) m1PerTrip = Math.round(workingDay * 0.5 * 100) / 100;
+    if (d1PerTrip == null) d1PerTrip = Math.round(workingDay * 0.5 * 100) / 100;
+  }
   if (standbyDay != null) out.standbyDay = standbyDay;
   if (otPerHour != null) out.otPerHour = otPerHour;
   if (m1PerTrip != null) out.m1PerTrip = m1PerTrip;
@@ -326,18 +331,36 @@ export function readRateSheetCell(
     }
   }
 
-  if (side === 'cost' && context?.position) {
-    const pid = rate.positionId;
+  const pid = rate.positionId;
+  let costBaselineWorking: number | undefined;
+  if (side === 'cost') {
     if (col.category === 'onshore_working_day') {
-      const raw = context.contract?.laborCostBaselinesByPositionId?.[pid]?.onshore;
+      const raw = context?.contract?.laborCostBaselinesByPositionId?.[pid]?.onshore;
       const n = Number(raw);
       return Number.isFinite(n) && n > 0 ? n : undefined;
     }
     if (col.category === 'offshore_working_day') {
-      const raw = context.contract?.laborCostBaselinesByPositionId?.[pid]?.offshore;
+      const raw = context?.contract?.laborCostBaselinesByPositionId?.[pid]?.offshore;
       const n = Number(raw);
       return Number.isFinite(n) && n > 0 ? n : undefined;
     }
+    const rawOff = context?.contract?.laborCostBaselinesByPositionId?.[pid]?.offshore;
+    const nOff = Number(rawOff);
+    if (Number.isFinite(nOff) && nOff > 0) costBaselineWorking = nOff;
+  }
+
+  // M1/D1 default = 0.5 × Working when matrix trip fields are empty
+  if (col.category === 'offshore_m1_per_trip' || col.category === 'offshore_d1_per_trip') {
+    const bundle = side === 'sell' ? rate.rateMatrix?.sell : rate.rateMatrix?.cost;
+    const wd =
+      parsePositive(bundle?.offshore?.workingDay) ??
+      (side === 'sell'
+        ? (() => {
+            const v = effectiveSellOffshore(rate);
+            return v > 0 ? v : undefined;
+          })()
+        : costBaselineWorking);
+    if (wd != null && wd > 0) return Math.round(wd * 0.5 * 100) / 100;
   }
 
   return undefined;
