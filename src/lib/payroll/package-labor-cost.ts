@@ -247,9 +247,11 @@ function computeBaseWorkAmount(
  * - กรอบ 8 ชม.แรกจาก normalHours × ฐานชม.
  * - normalHours เกิน 8: ส่วนเกิน × ฐาน × ตัวคูณ OT สัญญา/PO (โครงเดิมเมื่อไม่แยก tier)
  * - ot15 / ot20 / ot30: × 1.5 / × 2 / × 3 ของฐานชม. (ไม่ซ้อนกับตัวคูณ OT สัญญา — tier เป็นตัวกำหนดอัตราแล้ว)
- * - วันหยุดในปฏิทิน / เสาร์–อาทิตย์ (ฝั่งต้นทุน): ขยายฐานชม.ด้วยตัวคูณสัญญา แล้วคิด 8 ชม. + ส่วนเกินใน normalHours
- *   ที่ **อัตราเดียวกัน** — ไม่ซ้อน otContract กับตัวคูณวันหยุด (กันยอด 4 ชม.ถูกคูณ 1.5 ซ้ำ)
- *   ตัวอย่าง: แพ็ก 12 ชม. ฐาน 100, OT สัญญา 1.5 → วันธรรมดา 1400; อาทิตย์ ×1.5 → 150/ชม. ×12 = 1800
+ * - วันหยุดประจำสัปดาห์ (อาทิตย์/เสาร์): ขยายฐานชม.ด้วยตัวคูณ sunday แล้วคิดทุกชม.ที่อัตรานั้นแบนๆ
+ *   (รวม OT) — ไม่ซ้อน tier 1.5 ทับอัตราที่คูณ sunday แล้ว
+ *   ตัวอย่าง: แพ็ก 12 ชม. ฿2,000 → ชม.≈142.86 · อาทิตย์ ×1.5 → 214.29/ชม. ×18 = ฿3,857.14
+ * - วันหยุดในปฏิทิน: ขยายฐานชม.ด้วยตัวคูณสัญญา แล้วคิด 8 ชม. + ส่วนเกินใน normalHours
+ *   ที่ **อัตราเดียวกัน** — ไม่ซ้อน otContract กับตัวคูณวันหยุด
  */
 export interface WorkDayPayslipAmountParts {
   gross: number;
@@ -312,11 +314,16 @@ function resolveWorkDayHourlyAndParts(
     };
   }
   const sm = Math.max(0, rest.weeklyNormalMult ?? 1);
-  const som = Math.max(0, rest.weeklyOtMult ?? otContract);
+  /**
+   * วันหยุดประจำสัปดาห์ (อาทิตย์/เสาร์): ใช้ฐานชม.ที่คูณ sunday แล้วคิดทุกชม.แบนๆ
+   * — ไม่ใช้ sundayOt มาแยกอัตรา OT และไม่ซ้อน tier 1.5/2/3 ทับอีก
+   *   (เช่น ฐาน 142.86 ×1.5 = 214.29 → 18 ชม. = 214.29×18 ไม่ใช่ 214.29×6×1.5)
+   */
+  const flatSundayH = baseH * sm;
   return {
     baseH,
-    effectiveNormalH: baseH * sm,
-    effectiveOtH: baseH * som,
+    effectiveNormalH: flatSundayH,
+    effectiveOtH: flatSundayH,
     w,
     rest,
     mode: 'weekly_rest_split',
@@ -330,16 +337,27 @@ export const OFFSHORE_PACKAGE_HOURS = 12 as const;
 export function computeWorkDayPayslipAmountParts(
   input: WorkDayPackageCostInput,
 ): WorkDayPayslipAmountParts {
-  const { effectiveNormalH, effectiveOtH, w, rest } =
+  const { effectiveNormalH, effectiveOtH, w, rest, mode } =
     resolveWorkDayHourlyAndParts(input);
   const { normalPart, overflowPart } = computeBaseWorkAmount(
     effectiveNormalH,
     effectiveOtH,
     w,
   );
-  const ot15Amount = roundMoney(effectiveNormalH * w.o15 * PACKAGE_OT_TIER_MULT.OT_1_5);
-  const ot20Amount = roundMoney(effectiveNormalH * w.o20 * PACKAGE_OT_TIER_MULT.OT_2_0);
-  const ot30Amount = roundMoney(effectiveNormalH * w.o30 * PACKAGE_OT_TIER_MULT.OT_3_0);
+  /**
+   * วันหยุดประจำสัปดาห์: อัตราชม.ถูกคูณ sunday แล้ว — ชม. OT จ่ายที่อัตรานั้นแบนๆ ไม่ซ้อน tier 1.5/2/3
+   * วันธรรมดา: OT tier ตามเดิม (×1.5 / ×2 / ×3 ของฐานชม.)
+   */
+  const flatRestOt = mode === 'weekly_rest_split';
+  const ot15Amount = roundMoney(
+    effectiveNormalH * w.o15 * (flatRestOt ? 1 : PACKAGE_OT_TIER_MULT.OT_1_5),
+  );
+  const ot20Amount = roundMoney(
+    effectiveNormalH * w.o20 * (flatRestOt ? 1 : PACKAGE_OT_TIER_MULT.OT_2_0),
+  );
+  const ot30Amount = roundMoney(
+    effectiveNormalH * w.o30 * (flatRestOt ? 1 : PACKAGE_OT_TIER_MULT.OT_3_0),
+  );
 
   let baseAmount: number;
   let overflowOtAmount = 0;
