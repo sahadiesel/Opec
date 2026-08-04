@@ -50,6 +50,43 @@ function workerLaborCostPolicy(ctx: WorkerGlobalLaborContext): GlobalCostMultipl
   return ctx.cost;
 }
 
+/**
+ * สัดส่วน M1 / D1 / SB จากตารางต้นทุนสัญญา (เช่น M1÷Working = 0.5)
+ * แล้วนำไปคูณฐานค่าแรงรายคน — ไม่ใช้ยอดบาทคงที่จากตารางโดยตรง
+ * (กันกรณี override ค่าแรงคนแล้ว M1/D1 ยังติดเลขเก่าจากตาราง)
+ */
+function resolveStandbyLikeCostMultiplier(input: {
+  eventType: DailyTimesheet['eventType'];
+  mode: 'onshore' | 'offshore';
+  contractPositionRate: PositionRate | undefined;
+  policyStandby: number;
+}): number {
+  const fallback = Number(input.policyStandby);
+  const policyMult = Number.isFinite(fallback) && fallback >= 0 ? fallback : 0.5;
+  const rate = input.contractPositionRate;
+  if (!rate) return policyMult;
+
+  const workingCat = input.mode === 'offshore' ? 'offshore_working_day' : 'onshore_working_day';
+  const working = resolveMatrixCostRate(rate, workingCat);
+
+  let flat: number | null = null;
+  if (input.eventType === 'mobilization_day' && input.mode === 'offshore') {
+    flat = resolveMatrixCostRate(rate, 'offshore_m1_per_trip');
+  } else if (input.eventType === 'demobilization_day' && input.mode === 'offshore') {
+    flat = resolveMatrixCostRate(rate, 'offshore_d1_per_trip');
+  } else if (input.eventType === 'standby_day') {
+    flat = resolveMatrixCostRate(
+      rate,
+      input.mode === 'offshore' ? 'offshore_standby_day' : 'onshore_standby_day',
+    );
+  }
+
+  if (flat != null && flat > 0 && working != null && working > 0) {
+    return flat / working;
+  }
+  return policyMult;
+}
+
 function resolvePolicyFallbackCost(
   ts: DailyTimesheet,
   baseCost: number,
@@ -140,40 +177,6 @@ export function computeRegistryWorkerTimesheetGross(
   );
   const mode = timesheetToLaborWorkMode(payTs, input.poWorkModeByPoId);
 
-  /** จ่ายลูกจ้างใช้ Cost เท่านั้น — ห้าม fallback ไป Sell เมื่อ Cost ว่าง */
-  let resolvedMatrixRate: number | null = null;
-  if (contractPositionRate) {
-    if (payTs.eventType === 'mobilization_day' && mode === 'offshore') {
-      const costRate = resolveMatrixCostRate(contractPositionRate, 'offshore_m1_per_trip');
-      resolvedMatrixRate = costRate !== null && costRate > 0 ? costRate : null;
-    } else if (payTs.eventType === 'demobilization_day' && mode === 'offshore') {
-      const costRate = resolveMatrixCostRate(contractPositionRate, 'offshore_d1_per_trip');
-      resolvedMatrixRate = costRate !== null && costRate > 0 ? costRate : null;
-    } else if (payTs.eventType === 'standby_day') {
-      const cat = mode === 'offshore' ? 'offshore_standby_day' : 'onshore_standby_day';
-      const costRate = resolveMatrixCostRate(contractPositionRate, cat);
-      resolvedMatrixRate = costRate !== null && costRate > 0 ? costRate : null;
-    }
-  }
-
-  if (resolvedMatrixRate !== null && resolvedMatrixRate > 0) {
-    let units = 1;
-    if (payTs.eventType === 'mobilization_day') {
-      units = Math.max(1, Number(payTs.mobUnits ?? 1));
-    } else if (payTs.eventType === 'demobilization_day') {
-      units = Math.max(1, Number(payTs.demobUnits ?? 1));
-    } else if (payTs.eventType === 'standby_day') {
-      units = Math.max(1, Number(payTs.standbyUnits ?? 1));
-    }
-    const gross = Math.round(resolvedMatrixRate * units * 100) / 100;
-    return {
-      gross,
-      usedPackageLaborCost: false,
-      usedPolicyFallback: true,
-      fromPositionModel: true,
-    };
-  }
-
   const { baseCost, fromPositionModel } = resolveBaseCostForPayrollTimesheet({
     worker: input.worker,
     linePosition: input.linePosition,
@@ -195,13 +198,27 @@ export function computeRegistryWorkerTimesheetGross(
     1.5;
 
   if (isPayrollCostStandbyPackageEvent(payTs.eventType) && baseCost > 0) {
-    const gross = computeStandbyDayCostFromPackage({
+    const standbyCostMultiplier = resolveStandbyLikeCostMultiplier({
+      eventType: payTs.eventType,
+      mode,
+      contractPositionRate,
+      policyStandby: Number(policy.standby ?? 0.5),
+    });
+    const oneUnit = computeStandbyDayCostFromPackage({
       timesheet: payTs,
       costPackagePerDay: baseCost,
       statedHours,
       otAfterShiftMultiplier: otMult,
-      standbyCostMultiplier: Number(policy.standby ?? 0.5),
+      standbyCostMultiplier,
     });
+    /** M1/D1: คูณจำนวนเที่ยว — SB ใช้ standbyUnits ในสูตรชม.อยู่แล้ว */
+    let tripUnits = 1;
+    if (payTs.eventType === 'mobilization_day') {
+      tripUnits = Math.max(1, Number(payTs.mobUnits ?? 1));
+    } else if (payTs.eventType === 'demobilization_day') {
+      tripUnits = Math.max(1, Number(payTs.demobUnits ?? 1));
+    }
+    const gross = Math.round(oneUnit * tripUnits * 100) / 100;
     return {
       gross,
       usedPackageLaborCost: true,

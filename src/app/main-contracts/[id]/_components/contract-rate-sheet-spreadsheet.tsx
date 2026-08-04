@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -246,15 +246,19 @@ export function ContractRateSheetSpreadsheet({
         {!canMutate && ' (โหมดดูอย่างเดียว)'}
       </p>
 
-      <div className="overflow-x-auto rounded-lg border max-h-[min(70vh,900px)]">
-        <Table>
-          <TableHeader className="sticky top-0 z-20 bg-background shadow-sm">
-            <TableRow>
-              <TableHead className="sticky left-0 z-30 bg-background min-w-[10rem] border-r">ตำแหน่ง</TableHead>
+      <div className="max-h-[min(70vh,900px)] overflow-auto rounded-lg border">
+        <table className="w-full caption-bottom text-sm border-separate border-spacing-0">
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead
+                className="sticky top-0 left-0 z-40 min-w-[10rem] border-b border-r bg-background shadow-[0_1px_0_0_hsl(var(--border))]"
+              >
+                ตำแหน่ง
+              </TableHead>
               {showOffshore && offshoreCols.length > 0 && (
                 <TableHead
                   colSpan={offshoreCols.length}
-                  className="text-center bg-sky-50/80 text-sky-900 border-x text-xs font-semibold"
+                  className="sticky top-0 z-30 border-b border-x bg-sky-50 text-center text-xs font-semibold text-sky-900 shadow-[0_1px_0_0_hsl(var(--border))]"
                 >
                   Offshore Daily Rate ({contract.currency})
                 </TableHead>
@@ -262,29 +266,33 @@ export function ContractRateSheetSpreadsheet({
               {showOnshore && onshoreCols.length > 0 && (
                 <TableHead
                   colSpan={onshoreCols.length}
-                  className="text-center bg-emerald-50/80 text-emerald-900 border-x text-xs font-semibold"
+                  className="sticky top-0 z-30 border-b border-x bg-emerald-50 text-center text-xs font-semibold text-emerald-900 shadow-[0_1px_0_0_hsl(var(--border))]"
                 >
                   Onshore Daily Rate ({contract.currency})
                 </TableHead>
               )}
               {onEditRate && canMutate && (
-                <TableHead className="w-10 sticky right-0 bg-background border-l" />
+                <TableHead className="sticky top-0 right-0 z-40 w-10 border-b border-l bg-background shadow-[0_1px_0_0_hsl(var(--border))]" />
               )}
             </TableRow>
-            <TableRow>
-              <TableHead className="sticky left-0 z-30 bg-muted/60 border-r text-[10px] text-center">#</TableHead>
+            <TableRow className="hover:bg-transparent">
+              <TableHead className="sticky top-12 left-0 z-40 border-b border-r bg-muted text-center text-[10px] shadow-[0_1px_0_0_hsl(var(--border))]">
+                #
+              </TableHead>
               {columns.map((col) => (
                 <TableHead
                   key={col.id}
-                  className={`text-[10px] text-center whitespace-nowrap px-1 min-w-[4.5rem] ${
-                    col.group === 'offshore' ? 'bg-sky-50/40' : 'bg-emerald-50/40'
+                  className={`sticky top-12 z-30 border-b px-1 text-center text-[10px] whitespace-nowrap min-w-[4.5rem] shadow-[0_1px_0_0_hsl(var(--border))] ${
+                    col.group === 'offshore' ? 'bg-sky-50' : 'bg-emerald-50'
                   }`}
                   title={col.label}
                 >
                   {col.shortLabel}
                 </TableHead>
               ))}
-              {onEditRate && canMutate && <TableHead className="sticky right-0 bg-muted/60 border-l text-center" />}
+              {onEditRate && canMutate && (
+                <TableHead className="sticky top-12 right-0 z-40 border-b border-l bg-muted shadow-[0_1px_0_0_hsl(var(--border))]" />
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -293,7 +301,7 @@ export function ContractRateSheetSpreadsheet({
               const label = (pos?.positionName || pos?.positionNameTh || rate.positionId).trim();
               return (
                 <TableRow key={rate.id} className={!rate.active ? 'opacity-50' : undefined}>
-                  <TableCell className="sticky left-0 z-10 bg-background border-r font-medium text-sm">
+                  <TableCell className="sticky left-0 z-10 border-r bg-background font-medium text-sm">
                     <div className="flex flex-col gap-0.5">
                       <span className="text-primary font-semibold leading-tight">{label}</span>
                       <span className="text-[10px] text-muted-foreground">#{idx + 1}</span>
@@ -322,7 +330,7 @@ export function ContractRateSheetSpreadsheet({
                     );
                   })}
                   {onEditRate && canMutate && (
-                    <TableCell className="sticky right-0 bg-background border-l p-1">
+                    <TableCell className="sticky right-0 border-l bg-background p-1">
                       <Button
                         type="button"
                         variant="ghost"
@@ -338,7 +346,7 @@ export function ContractRateSheetSpreadsheet({
               );
             })}
           </TableBody>
-        </Table>
+        </table>
       </div>
     </div>
   );

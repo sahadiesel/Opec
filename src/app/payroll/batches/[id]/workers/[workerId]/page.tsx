@@ -416,23 +416,36 @@ export default function PayrollBatchWorkerLinePage({
     setTsLoading(true);
     void (async () => {
       try {
-        let rows = await loadWorkerPayableTimesheetsForPeriod(
-          firestore,
-          workerId,
-          periodStart,
-          periodEnd,
-          { includePayrollLocked: true },
-        );
+        /**
+         * ยึดใบงานที่ batch ใช้ตอนสร้าง (`sourceTimesheetIds`) เป็นหลัก
+         * — หลังสร้างงวดใบงานมัก LOCKED / เคลียร์ readyForPayroll ทำให้ตัวกรอง
+         * `loadWorkerPayableTimesheetsForPeriod` ได้แค่บางวัน (เช่น 4 วัน) ทั้งที่ยอดใน batch
+         * มาจากทั้งเดือน → หน้า detail แสดง Gross ไม่ตรง Settlement Lines
+         */
+        const uniqueTids = [...new Set((line.sourceTimesheetIds ?? []).filter(Boolean))];
+        let rows: DailyTimesheet[] = [];
 
-        if (rows.length === 0 && line.sourceTimesheetIds?.length) {
-          const uniqueTids = [...new Set(line.sourceTimesheetIds.filter(Boolean))];
+        if (uniqueTids.length > 0) {
           const snaps = await Promise.all(
             uniqueTids.map((tid) => getDoc(doc(firestore, 'daily_timesheets', tid))),
           );
-          rows = [];
           for (const s of snaps) {
             if (s.exists()) rows.push({ id: s.id, ...(s.data() as object) } as DailyTimesheet);
           }
+          rows = rows.filter((ts) => {
+            const d = String(ts.date || '').slice(0, 10);
+            return d >= periodStart && d <= periodEnd && ts.workerId === workerId;
+          });
+        }
+
+        if (rows.length === 0) {
+          rows = await loadWorkerPayableTimesheetsForPeriod(
+            firestore,
+            workerId,
+            periodStart,
+            periodEnd,
+            { includePayrollLocked: true },
+          );
         }
 
         rows.sort((a, b) => a.date.localeCompare(b.date));

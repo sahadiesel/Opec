@@ -442,22 +442,30 @@ export function autoCalculateMatrixFields(
     
     const otPerHour = Math.round((hourlyRate * 1.5) * 100) / 100;
 
-    // Calculate M1 / D1 based on multiplier
-    const m1PerTrip = m1Multiplier != null
-      ? Math.round((workingDay * m1Multiplier) * 100) / 100
-      : currentSideData.m1PerTrip;
-      
-    const d1PerTrip = d1Multiplier != null
-      ? Math.round((workingDay * d1Multiplier) * 100) / 100
-      : currentSideData.d1PerTrip;
+    // M1 / D1: explicit multiplier wins; else keep existing >0; else default 0.5× Working
+    // (matches the Rate Sheet UI which shows 0.5x when the field is empty)
+    const existingM1 = Number(currentSideData.m1PerTrip);
+    const existingD1 = Number(currentSideData.d1PerTrip);
+    const m1PerTrip =
+      m1Multiplier != null
+        ? Math.round(workingDay * m1Multiplier * 100) / 100
+        : Number.isFinite(existingM1) && existingM1 > 0
+          ? existingM1
+          : Math.round(workingDay * 0.5 * 100) / 100;
+    const d1PerTrip =
+      d1Multiplier != null
+        ? Math.round(workingDay * d1Multiplier * 100) / 100
+        : Number.isFinite(existingD1) && existingD1 > 0
+          ? existingD1
+          : Math.round(workingDay * 0.5 * 100) / 100;
 
     return {
       ...currentSideData,
       workingDay,
       standbyDay,
       otPerHour,
-      ...(m1PerTrip !== undefined ? { m1PerTrip } : {}),
-      ...(d1PerTrip !== undefined ? { d1PerTrip } : {}),
+      m1PerTrip,
+      d1PerTrip,
     };
   } else {
     const divisor = normalHours === 12 ? 14 : 8;

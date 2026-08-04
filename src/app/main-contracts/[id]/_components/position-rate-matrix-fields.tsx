@@ -31,30 +31,66 @@ function SideFields({
   const [localRaw, setLocalRaw] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    if (side === 'offshore') {
-      const wd = sideData.workingDay;
-      if (wd && wd >= 0) {
-        const m1 = (sideData as any).m1PerTrip;
-        const d1 = (sideData as any).d1PerTrip;
-        if (m1 !== undefined && m1 !== null) {
-          const ratio = m1 / wd;
-          if (Math.abs(ratio - 0.5) < 0.01) setM1Mult(0.5);
-          else if (Math.abs(ratio - 1.0) < 0.01) setM1Mult(1.0);
-          else setM1Mult('custom');
-        } else {
-          setM1Mult(0.5);
-        }
-        if (d1 !== undefined && d1 !== null) {
-          const ratio = d1 / wd;
-          if (Math.abs(ratio - 0.5) < 0.01) setD1Mult(0.5);
-          else if (Math.abs(ratio - 1.0) < 0.01) setD1Mult(1.0);
-          else setD1Mult('custom');
-        } else {
-          setD1Mult(0.5);
-        }
-      }
+    if (side !== 'offshore') return;
+    const wd = sideData.workingDay;
+    if (wd == null || !(wd > 0)) return;
+
+    const m1 = (sideData as PositionRateOffshoreSide).m1PerTrip;
+    const d1 = (sideData as PositionRateOffshoreSide).d1PerTrip;
+
+    if (m1 != null && m1 > 0) {
+      const ratio = m1 / wd;
+      if (Math.abs(ratio - 0.5) < 0.01) setM1Mult(0.5);
+      else if (Math.abs(ratio - 1.0) < 0.01) setM1Mult(1.0);
+      else setM1Mult('custom');
+    } else {
+      setM1Mult(0.5);
     }
-  }, [sideData.workingDay, side, sideData]);
+
+    if (d1 != null && d1 > 0) {
+      const ratio = d1 / wd;
+      if (Math.abs(ratio - 0.5) < 0.01) setD1Mult(0.5);
+      else if (Math.abs(ratio - 1.0) < 0.01) setD1Mult(1.0);
+      else setD1Mult('custom');
+    } else {
+      setD1Mult(0.5);
+    }
+  }, [side, sideData.workingDay, (sideData as PositionRateOffshoreSide).m1PerTrip, (sideData as PositionRateOffshoreSide).d1PerTrip]);
+
+  // UI shows 0.5x when empty, but that used to be display-only — write the baht amount
+  // so Save persists M1/D1. Skip when user chose "คีย์".
+  useEffect(() => {
+    if (side !== 'offshore') return;
+    const wd = sideData.workingDay;
+    if (wd == null || !(wd > 0)) return;
+
+    const m1 = (sideData as PositionRateOffshoreSide).m1PerTrip;
+    const d1 = (sideData as PositionRateOffshoreSide).d1PerTrip;
+    const patch: Partial<PositionRateOffshoreSide> = {};
+    if (!(m1 != null && m1 > 0) && m1Mult !== 'custom') {
+      const mult = typeof m1Mult === 'number' ? m1Mult : 0.5;
+      patch.m1PerTrip = Math.round(wd * mult * 100) / 100;
+    }
+    if (!(d1 != null && d1 > 0) && d1Mult !== 'custom') {
+      const mult = typeof d1Mult === 'number' ? d1Mult : 0.5;
+      patch.d1PerTrip = Math.round(wd * mult * 100) / 100;
+    }
+    if (Object.keys(patch).length === 0) return;
+
+    onChange({
+      ...matrix,
+      [bundleKey]: {
+        ...bundle,
+        [side]: { ...sideData, ...patch },
+      },
+    });
+    setLocalRaw((prev) => ({
+      ...prev,
+      ...(patch.m1PerTrip != null ? { m1PerTrip: String(patch.m1PerTrip) } : {}),
+      ...(patch.d1PerTrip != null ? { d1PerTrip: String(patch.d1PerTrip) } : {}),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync empty M1/D1 to multiplier × Working
+  }, [side, sideData.workingDay, (sideData as PositionRateOffshoreSide).m1PerTrip, (sideData as PositionRateOffshoreSide).d1PerTrip, m1Mult, d1Mult]);
 
   const patchSide = (patch: Partial<PositionRateOffshoreSide & PositionRateOnshoreSide>) => {
     let updatedFields = { ...patch };
