@@ -2,7 +2,8 @@ import { escapeHtmlDoc } from '@/lib/documents/standard-document-print';
 
 export type WorkerPayrollBatchLinePrintRow = {
   workerName: string;
-  workerId: string;
+  /** ตำแหน่ง / ข้อความรองใต้ชื่อ */
+  workerSubtitle: string;
   paymentMethod: string;
   exportStatusLabel: string;
   accountingStatusLabel: string;
@@ -46,7 +47,7 @@ export function buildWorkerPayrollBatchLinesListPrintHtml(params: {
       : rows
           .map(
             (r) => `<tr>
-              <td>${escapeHtmlDoc(r.workerName)}<br /><span class="wpbl-sub">${escapeHtmlDoc(r.workerId)}</span></td>
+              <td>${escapeHtmlDoc(r.workerName)}<br /><span class="wpbl-sub">${escapeHtmlDoc(r.workerSubtitle)}</span></td>
               <td>${escapeHtmlDoc(r.paymentMethod)}</td>
               <td>${escapeHtmlDoc(r.exportStatusLabel)}</td>
               <td>${escapeHtmlDoc(r.accountingStatusLabel)}</td>

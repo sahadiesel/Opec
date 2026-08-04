@@ -29,11 +29,12 @@ import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-
 import { canPreviewWorkerPayrollWht } from '@/lib/payroll/payroll-worker-wht-permissions';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, query, where } from 'firebase/firestore';
-import { BankAccount, PayrollBatch, PayrollBatchLine, User, PayrollPeriod } from '@/lib/types';
+import { BankAccount, PayrollBatch, PayrollBatchLine, Position, User, PayrollPeriod, Worker } from '@/lib/types';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { formatDateTimeThaiBE, formatStoredDateRangeThaiBE } from '@/lib/date-thai';
+import { positionListPrimaryName } from '@/lib/position-display';
 import {
   canAccess,
   canConfirmWorkerPayrollPaid,
@@ -169,6 +170,35 @@ export function PayrollBatchDetailView({
     );
     return list;
   }, [lines]);
+
+  const workersQuery = useMemoFirebase(
+    () => (firestore && canViewBatch ? collection(firestore, 'workers') : null),
+    [firestore, canViewBatch],
+  );
+  const { data: workers } = useCollection<Worker>(workersQuery as any);
+  const positionsQuery = useMemoFirebase(
+    () => (firestore && canViewBatch ? collection(firestore, 'positions') : null),
+    [firestore, canViewBatch],
+  );
+  const { data: positions } = useCollection<Position>(positionsQuery as any);
+
+  const workerPositionLabelByWorkerId = useMemo(() => {
+    const posById = new Map<string, Position>();
+    for (const p of positions ?? []) posById.set(p.id, p);
+    const workerById = new Map<string, Worker>();
+    for (const w of workers ?? []) workerById.set(w.id, w);
+
+    const out = new Map<string, string>();
+    for (const line of linesSorted) {
+      const snapPosId = String(line.laborCostResolutionSnapshot?.positionId || '').trim();
+      const workerPosId = String(workerById.get(line.workerId)?.currentPositionId || '').trim();
+      const posId = snapPosId || workerPosId;
+      const pos = posId ? posById.get(posId) : undefined;
+      const label = pos ? positionListPrimaryName(pos) : '';
+      out.set(line.workerId, label || '—');
+    }
+    return out;
+  }, [linesSorted, workers, positions]);
 
   const accountingPaidLineCount = useMemo(
     () => linesSorted.filter((l) => !!(l as PayrollBatchLine).financePayoutCashbookEntryId).length,
@@ -312,7 +342,7 @@ export function PayrollBatchDetailView({
       }
       return {
         workerName: line.workerNameSnapshot || '—',
-        workerId: line.workerId,
+        workerSubtitle: workerPositionLabelByWorkerId.get(line.workerId) || '—',
         paymentMethod: line.workerPaymentProfileSnapshot?.paymentMethod || 'CASH',
         exportStatusLabel: payrollLineExportStatusLabelTh(line.exportStatus),
         accountingStatusLabel,
@@ -360,7 +390,7 @@ export function PayrollBatchDetailView({
     } finally {
       setListPrintBusy(false);
     }
-  }, [batch, linesSorted, period?.label, currentUser?.displayName, toast]);
+  }, [batch, linesSorted, period?.label, currentUser?.displayName, toast, workerPositionLabelByWorkerId]);
 
   const handleOfficerSubmitForPayout = useCallback(async () => {
     if (!firestore || !batch || !currentUser) return;
@@ -962,8 +992,8 @@ export function PayrollBatchDetailView({
                                 </Badge>
                               ) : null}
                             </span>
-                            <span className="text-[10px] text-muted-foreground uppercase truncate font-mono">
-                              {line.workerId}
+                            <span className="text-[10px] text-muted-foreground truncate">
+                              {workerPositionLabelByWorkerId.get(line.workerId) || '—'}
                             </span>
                           </div>
                         </TableCell>
