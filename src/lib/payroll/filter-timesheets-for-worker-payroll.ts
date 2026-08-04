@@ -47,6 +47,9 @@ export function isDailyTimesheetInPayrollMobWindow(
  * ใบงานที่ควรเข้า worker payroll — สอดคล้องกริดสรุปรายเดือน (wave-month):
  * - ไม่รวม unpaid_leave
  * - ไม่รวม SB/W หลังวันจบไซต์รอ remob แม้มี readyForPayroll ค้างจาก sync เก่า
+ *
+ * หมายเหตุ: ไม่ใช้ `readyForPayroll` เป็นเงื่อนไขที่นี่ — ใช้ตอนซิงก์เพื่อตัดสินว่าควรตั้ง flag หรือไม่
+ * (ถ้าบังคับ ready อยู่แล้ว จะซิงก์หลังลบ batch ไม่สำเร็จ เพราะ unlock เคลียร์ flag ไปแล้ว)
  */
 export function isDailyTimesheetPayableForWorkerPayroll(
   ts: Pick<DailyTimesheet, 'date' | 'assignmentId' | 'eventType' | 'readyForPayroll'>,
@@ -54,9 +57,9 @@ export function isDailyTimesheetPayableForWorkerPayroll(
 ): boolean {
   if (ts.eventType === 'unpaid_leave') return false;
   const aid = String(ts.assignmentId || '').trim();
-  if (!aid) return ts.readyForPayroll === true;
+  if (!aid) return true;
   const asgn = assignmentById.get(aid);
-  if (!asgn) return ts.readyForPayroll === true;
+  if (!asgn) return true;
   return waveMonthCellTimesheetPayable(asgn, ts.date, ts as DailyTimesheet);
 }
 

@@ -1372,6 +1372,12 @@ export default function WaveMonthTimesheetSummaryPage() {
 
   const partialCloseStats = useMemo(() => {
     const entryLocked = workerClosureRows.filter((c) => c.status === 'entry_locked').length;
+    const payrollSyncEligible = workerClosureRows.filter(
+      (c) =>
+        c.status === 'entry_locked' ||
+        c.status === 'pending_manager_review' ||
+        c.status === 'approved',
+    ).length;
     const selectable = dedupedTableRows.filter((tr) => {
       const po = tr.po;
       if (!po?.id) return false;
@@ -1380,7 +1386,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       if (closure && isWorkerMonthClosureGridLocked(closure.status)) return false;
       return true;
     }).length;
-    return { entryLocked, selectable, selected: selectedPartialKeys.size };
+    return { entryLocked, payrollSyncEligible, selectable, selected: selectedPartialKeys.size };
   }, [workerClosureRows, dedupedTableRows, workerClosureByKey, selectedPartialKeys.size]);
 
   const overdueDeferredClosures = useMemo(() => {
@@ -1455,8 +1461,8 @@ export default function WaveMonthTimesheetSummaryPage() {
         title: 'ซิงก์พร้อมจ่าย Payroll แล้ว',
         description:
           sync.updated > 0
-            ? `ตั้ง readyForPayroll ${sync.updated} ใบงาน (${sync.syncedPoCount} PO)`
-            : 'ไม่พบใบงานที่อัปเดตได้ — อาจตั้งค่าแล้วหรือถูก LOCKED',
+            ? `ตั้ง/ปลดล็อกพร้อมจ่าย ${sync.updated} ใบงาน (${sync.syncedPoCount} PO) — กลับไปสร้าง Batch ได้เลย`
+            : 'ไม่พบใบงานที่อัปเดตได้ — ถ้ายังสร้าง Batch ได้ 0 คน ตรวจว่าใบงานยังถูก LOCKED ในชุดที่จ่ายแล้วหรือยังไม่ปิดงวด',
       });
     } catch (e: unknown) {
       toast({
@@ -2539,7 +2545,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                               <Send className="h-3.5 w-3.5" />
                               ส่งอนุมัติเพื่อออกใบวางบิล ({partialCloseStats.entryLocked})
                             </Button>
-                            {partialCloseStats.entryLocked > 0 && !hasPayrollBatchForMonth ? (
+                            {partialCloseStats.payrollSyncEligible > 0 ? (
                               <Button
                                 type="button"
                                 size="sm"
@@ -2547,7 +2553,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                                 className="h-8 gap-1"
                                 disabled={partialWorkflowBusy}
                                 onClick={() => void handleSyncPayrollReadyFlags()}
-                                title="ตั้ง readyForPayroll ให้ไปสร้าง Payroll Batch ได้ — ใช้เมื่อ Batch ยังไม่มีคน"
+                                title="ตั้ง readyForPayroll ให้ไปสร้าง Payroll Batch ได้ — ใช้หลังลบ Batch หรือเมื่อสร้างใหม่ได้ 0 คน"
                               >
                                 <RefreshCw className="h-3.5 w-3.5" />
                                 ซิงก์พร้อมจ่าย Payroll
@@ -2563,9 +2569,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                           </div>
                           <p className="text-[10px] text-muted-foreground">
                             ติ๊กเลือกคนที่ timesheet ครบ → ปิดงวด → ไป Payroll Batch ได้ทันที
-                            {hasPayrollBatchForMonth
-                              ? ' · มี Batch แล้วจึงซ่อนปุ่มซิงก์พร้อมจ่าย'
-                              : ' · กดซิงก์พร้อมจ่ายถ้า Batch ยังเห็น 0 คน'}
+                            {' · กดซิงก์พร้อมจ่ายถ้าสร้าง Batch ได้ 0 คน (เช่น หลังลบ Batch)'}
                             {' · '}
                             <strong className="text-foreground">ส่งอนุมัติเพื่อออกใบวางบิล</strong> = คิวผู้จัดการตรวจ timesheet → Invoice (ไม่ใช่อนุมัติจ่ายค่าจ้าง)
                             {' · '}คนที่ปิดแล้ว: เมนูสถานะ → «ยกเลิกปิดงวด — กลับมาแก้ไข»

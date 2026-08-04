@@ -188,7 +188,7 @@ function buildPoToolbarSnapshot(
     uploadingPhotoPoId: string | null;
     payrollSyncPoId: string | null;
     currentUser: User | null;
-    /** มี Payroll Batch ของเดือนนี้แล้ว — ซ่อนปุ่มซิงก์พร้อมจ่าย */
+    /** มี Payroll Batch ของเดือนนี้แล้ว — โชว์ลิงก์เปิดงวด (ไม่บล็อกปุ่มซิงก์) */
     hasPayrollBatchForMonth: boolean;
   },
 ): TimesheetPoMonthToolbarSnapshot {
@@ -205,9 +205,7 @@ function buildPoToolbarSnapshot(
     !!r &&
     (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved');
   const canPayrollSync =
-    !args.hasPayrollBatchForMonth &&
-    !!r &&
-    (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved');
+    !!r && (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved');
 
   return {
     poId: po.id,
@@ -305,15 +303,13 @@ function buildBundlePoToolbarSnapshot(
       );
     });
 
-  const canPayrollSync =
-    !args.hasPayrollBatchForMonth &&
-    posRows.some((po) => {
-      const r = reviewByPoId.get(po.id);
-      return (
-        !!r &&
-        (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved')
-      );
-    });
+  const canPayrollSync = posRows.some((po) => {
+    const r = reviewByPoId.get(po.id);
+    return (
+      !!r &&
+      (r.status === 'entry_locked' || r.status === 'pending_manager_review' || r.status === 'approved')
+    );
+  });
 
   const anchorR = reviewByPoId.get(anchor.id);
   const anchorReadOnly = isAttachmentReadonly(anchorR);
@@ -1251,10 +1247,10 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
         title: 'ซิงก์พร้อมจ่ายแล้ว',
         description:
           updated > 0
-            ? `อัปเดต ${updated} ใบงาน — ครอบคลุม ${syncedPoCount} PO active ที่ทับเดือน ${monthYm} (มีเอกสารปิดงวดในเดือนนี้ ${gatedPoCount} ฉบับ) — ไปเมนู งวดจ่ายลูกจ้าง แล้วกดสร้าง Batch`
+            ? `อัปเดต/ปลดล็อก ${updated} ใบงาน — ครอบคลุม ${syncedPoCount} PO ในเดือน ${monthYm} (เอกสารปิดงวด ${gatedPoCount} ฉบับ) — ไปเมนู งวดจ่ายลูกจ้าง แล้วกดสร้าง Batch`
             : gatedPoCount === 0
               ? `ยังไม่มี PO+เดือนที่ล็อก/ส่งตรวจ/อนุมัติในเดือนนี้ — ล็อกอย่างน้อยหนึ่งฉบับก่อน แล้วค่อยซิงก์`
-              : `ไม่มีใบงานให้อัปเดต — ตรวจว่ามี daily_timesheets ในเดือนนี้`,
+              : `ไม่มีใบงานให้อัปเดต — อาจถูก LOCKED ในชุดที่จ่ายแล้ว หรือยังไม่มี daily_timesheets ในเดือนนี้`,
       });
     } catch (e: unknown) {
       toast({
@@ -1996,33 +1992,35 @@ export const TimesheetPoMonthPanel = forwardRef<TimesheetPoMonthPanelHandle, Tim
                   )}
                 </CardDescription>
               </div>
-              {hasPayrollBatchForMonth && existingPayrollBatchId ? (
-                <Button type="button" variant="outline" size="sm" className="shrink-0 gap-1.5" asChild>
-                  <Link href={`/payroll/batches/${existingPayrollBatchId}`}>
-                    มี Payroll Batch แล้ว — เปิดงวดจ่าย
-                  </Link>
-                </Button>
-              ) : (
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {hasPayrollBatchForMonth && existingPayrollBatchId ? (
+                  <Button type="button" variant="outline" size="sm" className="gap-1.5" asChild>
+                    <Link href={`/payroll/batches/${existingPayrollBatchId}`}>
+                      มี Payroll Batch แล้ว — เปิดงวดจ่าย
+                    </Link>
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   variant="secondary"
                   size="sm"
-                  className="shrink-0 gap-1.5"
+                  className="gap-1.5"
                   disabled={!canEditTs || payrollSyncBusy || !/^\d{4}-\d{2}$/.test(monthYm)}
                   onClick={() => void runPayrollSyncForMonth()}
+                  title="ตั้ง readyForPayroll ให้ใบงานที่ปิดงวดแล้ว — ใช้หลังลบ Batch หรือเมื่อสร้างใหม่ได้ 0 คน"
                 >
                   {payrollSyncBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                   ซิงก์พร้อมจ่ายทั้งเดือน
                 </Button>
-              )}
+              </div>
             </div>
             <p className="text-xs text-muted-foreground rounded-md border border-dashed border-amber-300/60 bg-amber-50/50 dark:bg-amber-950/20 px-3 py-2">
               {hasPayrollBatchForMonth ? (
                 <>
                   <strong className="text-foreground">มี Payroll Batch ของเดือนนี้แล้ว</strong>
-                  {' — '}ปุ่มซิงก์พร้อมจ่ายถูกซ่อนเพื่อไม่ให้ซ้ำ · ตรวจ/ส่งขออนุมัติจ่ายที่เมนู{' '}
-                  <span className="font-semibold">การจ่ายค่าจ้าง → งวดจ่ายลูกจ้าง</span>
-                  {' · '}ปุ่ม「ส่งอนุมัติ Timesheet เพื่อออกใบวางบิล」ด้านล่างเป็นคนละคิว (ผู้จัดการตรวจ timesheet → Invoice)
+                  {' — '}ถ้าลบ Batch แล้วสร้างใหม่ได้ 0 คน ให้กด{' '}
+                  <span className="font-semibold">ซิงก์พร้อมจ่ายทั้งเดือน</span>
+                  {' '}แล้วกลับไปเมนูงวดจ่ายลูกจ้าง · ปุ่ม「ส่งอนุมัติ Timesheet เพื่อออกใบวางบิล」เป็นคนละคิว (→ Invoice)
                 </>
               ) : (
                 <>

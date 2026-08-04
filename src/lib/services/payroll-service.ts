@@ -1043,10 +1043,13 @@ export class PayrollService {
       const wb = writeBatch(this.db);
       for (const id of slice) {
         const tsRef = doc(this.db, 'daily_timesheets', id);
+        /**
+         * ปลดล็อกหลังลบ/สร้าง batch ใหม่ — ต้องตั้ง readyForPayroll กลับเป็น true
+         * ไม่งั้นสร้าง batch ใหม่จะได้ 0 คน และปุ่มซิงก์อาจถูกซ่อนถ้ายังมี batch อื่นในเดือนเดียวกัน
+         */
         wb.update(tsRef, {
           status: 'VERIFIED_PAPER',
-          readyForPayroll: false,
-          readyForBilling: false,
+          readyForPayroll: true,
           lockedAt: deleteField(),
           lockedBy: deleteField(),
           updatedAt: now,
@@ -1105,6 +1108,8 @@ export class PayrollService {
         periodBounds: period
           ? { periodStartDate: period.startDate, periodEndDate: period.endDate }
           : undefined,
+        /** คง readyForPayroll — ลบ/สร้าง batch ใหม่ต้องเห็นคนทันที ไม่ต้องรอซิงก์ */
+        preserveReadyPayroll: true,
       });
     }
 

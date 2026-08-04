@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -11,7 +12,15 @@ import {
   type DocumentReference,
   type Firestore,
 } from 'firebase/firestore';
-import type { Assignment, DailyTimesheet, PayrollPeriod, PayrollPeriodStatus, PoMonthTimesheetReview, PurchaseOrder } from '@/lib/types';
+import type {
+  Assignment,
+  DailyTimesheet,
+  PayrollBatchLine,
+  PayrollPeriod,
+  PayrollPeriodStatus,
+  PoMonthTimesheetReview,
+  PurchaseOrder,
+} from '@/lib/types';
 import { partitionTimesheetsForPayrollReadiness } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
 import { resolveBillingMode } from '@/lib/commercial/resolve-billing-mode';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
@@ -202,6 +211,104 @@ export async function gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(
 }
 
 /**
+ * ใบงานที่ยังถูกอ้างใน payroll_batches ของงวดนี้ — ห้ามปลดล็อก (กันจ่ายซ้ำ)
+ */
+async function collectClaimedTimesheetIdsForPayrollYearMonth(
+  db: Firestore,
+  yearMonth: string,
+): Promise<Set<string>> {
+  const periodId = workerPayrollPeriodIdForYearMonth(yearMonth);
+  const claimed = new Set<string>();
+  const batchSnap = await getDocs(
+    query(collection(db, 'payroll_batches'), where('payrollPeriodId', '==', periodId)),
+  );
+  for (const b of batchSnap.docs) {
+    const linesSnap = await getDocs(collection(db, 'payroll_batches', b.id, 'lines'));
+    for (const ld of linesSnap.docs) {
+      const line = ld.data() as PayrollBatchLine;
+      for (const id of line.sourceTimesheetIds ?? []) {
+        const tid = String(id || '').trim();
+        if (tid) claimed.add(tid);
+      }
+    }
+  }
+  return claimed;
+}
+
+/** LOCKED ที่ไม่มี batch อ้างแล้ว (หลังลบ batch) — ปลดเพื่อซิงก์พร้อมจ่ายใหม่ */
+async function gatherLockedOrphanDailyTimesheetRefsForPoCalendarMonth(
+  db: Firestore,
+  poId: string,
+  yearMonth: string,
+  workerIds?: Set<string>,
+): Promise<DocumentReference[]> {
+  const ym = (yearMonth || '').trim();
+  const pid = (poId || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(ym) || !pid) return [];
+
+  const monthFirst = `${ym}-01`;
+  const monthLast = lastDayOfCalendarMonth(ym);
+  const claimed = await collectClaimedTimesheetIdsForPayrollYearMonth(db, ym);
+
+  const snapByPo = await getDocs(
+    query(
+      collection(db, 'daily_timesheets'),
+      where('purchaseOrderId', '==', pid),
+      where('date', '>=', monthFirst),
+      where('date', '<=', monthLast),
+    ),
+  );
+
+  const out: DocumentReference[] = [];
+  for (const d of snapByPo.docs) {
+    const data = d.data() as DailyTimesheet;
+    if (data.status !== 'LOCKED') continue;
+    if (claimed.has(d.id)) continue;
+    if (workerIds && workerIds.size > 0) {
+      const wid = String(data.workerId || '').trim();
+      if (!wid || !workerIds.has(wid)) continue;
+    }
+    out.push(d.ref);
+  }
+  return out;
+}
+
+async function unlockOrphanLockedTimesheetsForPayroll(
+  db: Firestore,
+  refs: DocumentReference[],
+  billingMode: 'MONTHLY' | 'TRIP',
+): Promise<number> {
+  if (refs.length === 0) return 0;
+  let batch = writeBatch(db);
+  let n = 0;
+  let updated = 0;
+  const ts = Date.now();
+  const flush = async () => {
+    if (n === 0) return;
+    await batch.commit();
+    batch = writeBatch(db);
+    n = 0;
+  };
+
+  for (const ref of refs) {
+    const patch: Record<string, unknown> = {
+      status: 'VERIFIED_PAPER',
+      readyForPayroll: true,
+      lockedAt: deleteField(),
+      lockedBy: deleteField(),
+      updatedAt: ts,
+    };
+    if (billingMode === 'MONTHLY') patch.readyForBilling = true;
+    batch.update(ref, patch);
+    updated++;
+    n++;
+    if (n >= FIRESTORE_BATCH_LIMIT) await flush();
+  }
+  await flush();
+  return updated;
+}
+
+/**
  * หลังล็อกงวดหรืออนุมัติ PO+เดือน — ตั้ง ready ให้ daily_timesheets ทุก wave ใต้ PO
  *
  * ใช้ขอบเขต **ทั้งเดือนปฏิทิน** (`yearMonth`) ไม่ใช่แค่ periodStart–periodEnd บนเอกสาร —
@@ -214,8 +321,6 @@ export async function markTimesheetsReadyForPayrollAfterPoMonthApproval(
 ): Promise<{ updated: number }> {
   const ym = (review.yearMonth || '').trim();
   const poId = (review.poId || '').trim();
-  const refs = await gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(db, poId, ym);
-  if (refs.length === 0) return { updated: 0 };
 
   let billingMode: 'MONTHLY' | 'TRIP' = 'MONTHLY';
   if (poId) {
@@ -225,8 +330,14 @@ export async function markTimesheetsReadyForPayrollAfterPoMonthApproval(
     }
   }
 
+  const orphanLocked = await gatherLockedOrphanDailyTimesheetRefsForPoCalendarMonth(db, poId, ym);
+  const unlocked = await unlockOrphanLockedTimesheetsForPayroll(db, orphanLocked, billingMode);
+
+  const refs = await gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(db, poId, ym);
+  if (refs.length === 0) return { updated: unlocked };
+
   const { updated } = await applyPoMonthPayrollReadyFlags(db, refs, billingMode);
-  return { updated };
+  return { updated: updated + unlocked };
 }
 
 async function filterTimesheetRefsByWorkerIds(
@@ -369,18 +480,21 @@ export async function markTimesheetsReadyForPoMonthWorkerIds(
   const allow = new Set(workerIds.map((id) => id.trim()).filter(Boolean));
   if (!pid || !/^\d{4}-\d{2}$/.test(ym) || allow.size === 0) return { updated: 0 };
 
-  const allRefs = await gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(db, pid, ym);
-  const refs = await filterTimesheetRefsByWorkerIds(db, allRefs, allow);
-  if (refs.length === 0) return { updated: 0 };
-
   let billingMode: 'MONTHLY' | 'TRIP' = 'MONTHLY';
   const poSnap = await getDoc(doc(db, 'purchase_orders', pid));
   if (poSnap.exists()) {
     billingMode = await resolveBillingMode(db, { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder);
   }
 
+  const orphanLocked = await gatherLockedOrphanDailyTimesheetRefsForPoCalendarMonth(db, pid, ym, allow);
+  const unlocked = await unlockOrphanLockedTimesheetsForPayroll(db, orphanLocked, billingMode);
+
+  const allRefs = await gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(db, pid, ym);
+  const refs = await filterTimesheetRefsByWorkerIds(db, allRefs, allow);
+  if (refs.length === 0) return { updated: unlocked };
+
   const { updated } = await applyPoMonthPayrollReadyFlags(db, refs, billingMode);
-  return { updated };
+  return { updated: updated + unlocked };
 }
 
 /**

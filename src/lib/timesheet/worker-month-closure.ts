@@ -468,6 +468,11 @@ export async function reopenWorkerMonthClosuresAfterPayrollCancel(
     workerIds: string[];
     actor: User;
     periodBounds?: { periodStartDate: string; periodEndDate: string };
+    /**
+     * true = ไม่เคลียร์ readyForPayroll (ใช้ตอนลบ/สร้าง payroll batch ใหม่)
+     * — ถ้าเคลียร์จะทำให้สร้าง batch ใหม่ได้ 0 คน จนกว่าจะซิงก์ใหม่
+     */
+    preserveReadyPayroll?: boolean;
   },
 ): Promise<{ reopened: number }> {
   const { poId, yearMonth, workerIds, actor, periodBounds } = params;
@@ -502,7 +507,9 @@ export async function reopenWorkerMonthClosuresAfterPayrollCancel(
   }
 
   if (reopenedIds.length > 0) {
-    await clearReadyPayrollFlagsForPoMonthWorkerIds(db, poId, yearMonth, reopenedIds);
+    if (!params.preserveReadyPayroll) {
+      await clearReadyPayrollFlagsForPoMonthWorkerIds(db, poId, yearMonth, reopenedIds);
+    }
     await syncPoMonthReviewFromClosures(db, poId, yearMonth, actor, periodBounds);
   }
 
