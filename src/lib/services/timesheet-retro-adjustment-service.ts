@@ -4,6 +4,7 @@ import {
   addDoc,
   collection,
   doc,
+  getDoc,
   getDocs,
   query,
   updateDoc,
@@ -364,6 +365,16 @@ export async function revertRetroAdjustmentsForPayrollBatch(
   user: User,
   payrollBatchId: string,
 ): Promise<void> {
+  const batchSnap = await getDoc(doc(db, 'payroll_batches', payrollBatchId));
+  if (batchSnap.exists()) {
+    const st = String((batchSnap.data() as { status?: string }).status || '');
+    if (['PAID', 'LOCKED', 'FINANCE_PREPARED', 'PAYMENT_EXPORTED'].includes(st)) {
+      throw new Error(
+        `ชุดจ่าย ${payrollBatchId} สถานะ ${st} — ไม่สามารถคืนสถานะตกเบิกที่จ่ายไปแล้วได้`,
+      );
+    }
+  }
+
   const q = query(
     collection(db, COLLECTION),
     where('appliedPayrollBatchId', '==', payrollBatchId)

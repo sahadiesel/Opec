@@ -180,6 +180,19 @@ export async function upsertMobClearanceDailyTimesheet(
     normalHours = built.normalHours;
     const { eventType: _e, normalHours: _n, ...rest } = built;
     chargeFields = rest;
+  } else if (kind === 'work_day') {
+    /** ทับ charge ค้างจาก standby/auto — กันจ่ายยังคิดเป็น STANDBY ทั้งที่ event เป็น work_day */
+    const packageHours = normalHoursFromPoLine(line) === 12 ? 12 : 8;
+    const hours = normalHours || packageHours;
+    const built = buildTimesheetFieldsFromMobCharges(
+      { kind: 'WORKING', hours },
+      { kind: 'WORKING', hours },
+      packageHours,
+    );
+    eventType = built.eventType;
+    normalHours = built.normalHours;
+    const { eventType: _e, normalHours: _n, ...rest } = built;
+    chargeFields = rest;
   } else if (kind === 'mobilization_day' && (!billingCharge || !payrollCharge)) {
     /** ไม่มี charge แยก — ใช้ชม.แพ็กจาก PO line (OFF 12 / ON 8) ไม่เขียน 0 */
     normalHours = normalHoursFromPoLine(line);

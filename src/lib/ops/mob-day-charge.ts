@@ -205,14 +205,24 @@ export function resolveTimesheetPayrollCharge(
 ): MobDayChargeSpec {
   const pkg = defaultPackageHoursForWorkMode(ts.workMode);
   if (ts.mobPayrollChargeKind) {
-    return normalizeMobDayChargeSpec(
-      {
-        kind: ts.mobPayrollChargeKind,
-        hours: ts.mobPayrollChargeHours ?? ts.normalHours,
-        m1AmountOverride: ts.mobPayrollM1AmountOverride,
-      },
-      pkg,
-    );
+    const et = String(ts.eventType || '');
+    /**
+     * วัน Mob-like อนุญาตให้จ่ายคนละชนิดกับ eventType (เช่น เซลล์ SB แต่จ่าย WORKING)
+     * วัน work_day ถ้า charge ค้างจากรอบ SB เก่า — ไม่เชื่อ ใช้ eventType
+     */
+    const isMobLikeEvent =
+      et === 'standby_day' || et === 'mobilization_day' || et === 'demobilization_day';
+    const chargeMatchesEvent = !et || mobDayChargeKindToEventType(ts.mobPayrollChargeKind) === et;
+    if (isMobLikeEvent || chargeMatchesEvent) {
+      return normalizeMobDayChargeSpec(
+        {
+          kind: ts.mobPayrollChargeKind,
+          hours: ts.mobPayrollChargeHours ?? ts.normalHours,
+          m1AmountOverride: ts.mobPayrollM1AmountOverride,
+        },
+        pkg,
+      );
+    }
   }
   if (ts.eventType === 'mobilization_day') {
     const h = Number(ts.normalHours);

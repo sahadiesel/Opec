@@ -761,18 +761,10 @@ export class PayrollService {
       }),
     );
 
-    const retroQuery = query(
-      collection(this.db, 'timesheet_retro_adjustments'),
-      where('applyPayrollYearMonth', '==', monthlyGate.payrollYearMonth),
-      where('status', '==', 'applied')
-    );
-    const retroSnap = await getDocs(retroQuery);
-    const retroItems = retroSnap.docs.map(d => ({ ...d.data(), id: d.id } as import('@/lib/types').TimesheetRetroAdjustment));
-    const retroByWorker = new Map<string, import('@/lib/types').TimesheetRetroAdjustment[]>();
-    for (const r of retroItems) {
-      if (!retroByWorker.has(r.workerId)) retroByWorker.set(r.workerId, []);
-      retroByWorker.get(r.workerId)!.push(r);
-    }
+    /**
+     * ตกเบิก (retro) จ่ายผ่าน SUPPLEMENTAL batch เท่านั้น
+     * — ห้ามแนบ status=applied เข้า NORMAL (เคยทำให้จ่ายซ้ำหลัง supplemental จ่ายไปแล้ว)
+     */
 
     const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, timesheets);
 
@@ -932,9 +924,6 @@ export class PayrollService {
         });
       }
 
-      const workerRetros = retroByWorker.get(workerId) ?? [];
-      const workerPriorItems = await retroAdjustmentsToPriorPeriodItemsWithPay(this.db, workerRetros);
-
       const line: PayrollBatchLine = {
         id: `${batchId}_${workerId}`,
         payrollBatchId: batchId,
@@ -956,7 +945,6 @@ export class PayrollService {
         ...(incomeSegments
           ? { incomeSegments }
           : { payslipWorkDaySplit: computeWorkDayPackagePayslipSplit(workerTs, aggDeps) }),
-        ...(workerPriorItems.length > 0 ? { hrLineAdjustments: { allowanceItems: [], deductionItems: [], priorPeriodAllowanceItems: workerPriorItems, pitWithholdingOverride: null } } : {}),
       };
 
       lines.push(line);
@@ -995,6 +983,7 @@ export class PayrollService {
 
     const lockFields = {
       status: 'LOCKED' as const,
+      readyForPayroll: false,
       lockedAt: Date.now(),
       lockedBy: user.displayName,
       updatedAt: Date.now(),
@@ -1775,11 +1764,15 @@ export class PayrollService {
       label: String(x.label || '').trim(),
       amount: Math.max(0, Number(x.amount) || 0),
     }));
-    const priorPeriodAllowanceItems = (hrStored?.priorPeriodAllowanceItems ?? []).map((x) => ({
-      sourceYearMonth: String(x.sourceYearMonth || '').trim(),
-      label: String(x.label || '').trim(),
-      amount: Math.max(0, Number(x.amount) || 0),
-    }));
+    /** NORMAL ไม่ควรมีตกเบิก — รายการค้างจากบั๊กเก่า (ดึง status=applied) ให้ตัดออกตอนคำนวณใหม่ */
+    const priorPeriodAllowanceItems =
+      batch.batchType === 'SUPPLEMENTAL'
+        ? (hrStored?.priorPeriodAllowanceItems ?? []).map((x) => ({
+            sourceYearMonth: String(x.sourceYearMonth || '').trim(),
+            label: String(x.label || '').trim(),
+            amount: Math.max(0, Number(x.amount) || 0),
+          }))
+        : [];
     const deductionItems = (hrStored?.deductionItems ?? []).map((x) => ({
       label: String(x.label || '').trim(),
       amount: Math.max(0, Number(x.amount) || 0),

@@ -64,6 +64,7 @@ import { syncPoActiveAutoDailyForAssignment, purgeStalePoActiveAutoDailyForCalen
 import { isAssignmentEligibleForPoActiveAutoDaily } from '@/lib/timesheet/po-active-auto-daily-build';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import {
+  buildTimesheetFieldsFromMobCharges,
   defaultPackageHoursForWorkMode,
   formatMobDayChargeSummary,
   normalizeMobDayChargeSpec,
@@ -2011,6 +2012,20 @@ export default function WaveMonthTimesheetSummaryPage() {
         ) {
           payload.demobUnits = Math.max(1, Number(baseTs?.demobUnits) || 1);
         }
+      } else if (isWorkDay) {
+        /** ทับ charge ค้างจาก SB — กัน payroll ยังคิด standby ทั้งที่เปลี่ยนเป็น work_day */
+        const built = buildTimesheetFieldsFromMobCharges(
+          { kind: 'WORKING', hours: nHours || pkg },
+          { kind: 'WORKING', hours: nHours || pkg },
+          pkg,
+        );
+        payload.mobBillingChargeKind = built.mobBillingChargeKind;
+        payload.mobPayrollChargeKind = built.mobPayrollChargeKind;
+        payload.mobBillingChargeHours = built.mobBillingChargeHours;
+        payload.mobPayrollChargeHours = built.mobPayrollChargeHours;
+        payload.standbyUnits = built.standbyUnits ?? 0;
+        payload.mobUnits = built.mobUnits ?? 0;
+        payload.demobUnits = built.demobUnits ?? 0;
       }
 
       if (!baseTs) {
