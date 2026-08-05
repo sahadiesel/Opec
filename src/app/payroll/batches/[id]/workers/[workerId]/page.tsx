@@ -46,7 +46,7 @@ import { PayrollService } from '@/lib/services/payroll-service';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
-import { buildPayslipFromWorkerLine, buildWorkerPayslipIncomeLinesFromTimesheets, normalizeIncomeSegments } from '@/lib/payroll/payslip-model';
+import { buildPayslipFromWorkerLine, normalizeIncomeSegments, applyLiveTimesheetIncomeToPayslip, isWorkerPayrollBatchSnapshotFrozen } from '@/lib/payroll/payslip-model';
 import type { PriorPaidPayrollSlipRef } from '@/lib/payroll/payslip-model';
 import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
@@ -257,6 +257,8 @@ export default function PayrollBatchWorkerLinePage({
     isSupplemental: batch?.batchType === 'SUPPLEMENTAL',
     includePriorPaidForNormal: batch?.batchType !== 'SUPPLEMENTAL',
     currentBatchId: batch?.id,
+    currentBatchStatus: batch?.status,
+    currentBatchChronologyMs: batch?.createdAt ?? batch?.financePreparedAt ?? null,
     workerId,
   });
 
@@ -839,6 +841,10 @@ export default function PayrollBatchWorkerLinePage({
   const slipModel = useMemo(() => {
     if (!line || !batch) return null;
     const pl = period?.label || batch.payrollPeriodId;
+    const hasEarlier = (priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0;
+    const frozen = isWorkerPayrollBatchSnapshotFrozen(batch, {
+      hasEarlierPaidInPeriod: hasEarlier,
+    });
     const model = buildPayslipFromWorkerLine(
       line,
       batch,
@@ -847,30 +853,21 @@ export default function PayrollBatchWorkerLinePage({
       normalLine,
       normalBatch,
       priorPaidRefs as PriorPaidPayrollSlipRef[],
-      poPartyLabelById,
+      frozen ? undefined : poPartyLabelById,
     );
-    if (batch.batchType !== 'SUPPLEMENTAL' && timesheets.length > 0 && grossCtx) {
-      const incomeLines = buildWorkerPayslipIncomeLinesFromTimesheets(
+    if (
+      !frozen &&
+      batch.batchType !== 'SUPPLEMENTAL' &&
+      timesheets.length > 0 &&
+      grossCtx
+    ) {
+      return applyLiveTimesheetIncomeToPayslip(
+        model,
         line,
         timesheets,
         grossCtx,
         poPartyLabelById,
       );
-      const liveGross = Math.round(incomeLines.reduce((s, x) => s + x.amount, 0) * 100) / 100;
-      /** ยอมรับผลรวมรายได้จาก timesheet แม้ต่าง snapshot เล็กน้อย — ยังหักยอดจ่ายแล้วจาก model */
-      if (incomeLines.length > 0) {
-        const nextGross = liveGross > 0.005 ? liveGross : model.grossTotal;
-        const nextDeductions = model.deductionLines;
-        const nextDedTotal = Math.round(nextDeductions.reduce((s, x) => s + x.amount, 0) * 100) / 100;
-        return {
-          ...model,
-          incomeLines,
-          grossTotal: nextGross,
-          deductionsTotal: nextDedTotal,
-          netPay: Math.round((nextGross - nextDedTotal) * 100) / 100,
-          roundingNote: false,
-        };
-      }
     }
     return model;
   }, [
@@ -887,23 +884,69 @@ export default function PayrollBatchWorkerLinePage({
     priorPaidRefs,
     poPartyLabelById,
   ]);
+
+  /**
+   * ยอดที่แสดงทั้งหน้า — ต้องชุดเดียวกับสลิป/หน้า batch
+   * งวดชุดแรกที่จ่ายแล้ว คง snapshot — ชุดหลังใช้รายได้ครบทุก PO + หักยอดจ่ายแล้ว
+   */
+  const displaySlip = useMemo(() => {
+    if (!slipModel || !line || !batch) return slipModel;
+    const hasEarlier = (priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0;
+    if (isWorkerPayrollBatchSnapshotFrozen(batch, { hasEarlierPaidInPeriod: hasEarlier })) {
+      return slipModel;
+    }
+    const allowanceExtra = allowancePreviewTotal;
+    const formulaGross = Math.round((dailyDisplay.total + allowanceExtra) * 100) / 100;
+    const snapGross = Math.round(Number(line.grossAmount) * 100) / 100;
+    const slipGross = slipModel.grossTotal;
+    const slipLooksLikeStaleSnapshot =
+      dailyDisplay.allRowsFromFormula &&
+      formulaGross > 0.005 &&
+      Math.abs(slipGross - snapGross) < 0.05 &&
+      Math.abs(formulaGross - snapGross) >= 0.02;
+
+    const grossTotal = slipLooksLikeStaleSnapshot ? formulaGross : slipGross;
+    const dedTotal =
+      Math.round(slipModel.deductionLines.reduce((s, x) => s + x.amount, 0) * 100) / 100;
+    return {
+      ...slipModel,
+      grossTotal,
+      deductionsTotal: dedTotal,
+      netPay: Math.round((grossTotal - dedTotal) * 100) / 100,
+      roundingNote: false,
+    };
+  }, [
+    slipModel,
+    line,
+    batch,
+    priorPaidRefs,
+    dailyDisplay.allRowsFromFormula,
+    dailyDisplay.total,
+    allowancePreviewTotal,
+  ]);
+
   const pitFromLine = Number(line?.deductionsBreakdown?.pit_withholding ?? 0);
 
   const poSourceLabelById = useMemo(() => {
     const m = new Map<string, string>();
+    for (const [id, party] of poPartyLabelById) {
+      if (party.trim()) m.set(id, party.trim());
+    }
     for (const seg of normalizeIncomeSegments(line?.incomeSegments)) {
       const id = String(seg.purchaseOrderId || '').trim();
-      if (!id) continue;
-      const po = seg.poCodeSnapshot?.trim() || id;
+      if (!id || m.has(id)) continue;
       const cust = seg.customerNameSnapshot?.trim();
-      m.set(id, cust ? `${po} · ${cust}` : po);
+      const po = seg.poCodeSnapshot?.trim();
+      if (cust) m.set(id, cust);
+      else if (po) m.set(id, po);
     }
     for (const [id, meta] of poMetaById) {
-      if (m.has(id) && !/^[A-Za-z0-9]{16,}$/.test(m.get(id)!)) continue;
-      m.set(id, meta.customerName ? `${meta.poCode} · ${meta.customerName}` : meta.poCode);
+      if (m.has(id)) continue;
+      if (meta.customerName?.trim()) m.set(id, meta.customerName.trim());
+      else if (meta.poCode?.trim()) m.set(id, meta.poCode.trim());
     }
     return m;
-  }, [line?.incomeSegments, poMetaById]);
+  }, [line?.incomeSegments, poMetaById, poPartyLabelById]);
 
   if (userLoading || batchLoading || lineLoading || !currentUser) {
     return (
@@ -958,7 +1001,7 @@ export default function PayrollBatchWorkerLinePage({
                 คำนวณใหม่จากใบงาน (คนนี้เท่านั้น)
               </Button>
             ) : null}
-            {slipModel ? <PayslipDialog model={slipModel} /> : null}
+            {displaySlip ? <PayslipDialog model={displaySlip} /> : null}
           </div>
         </div>
 
@@ -966,9 +1009,19 @@ export default function PayrollBatchWorkerLinePage({
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-xs uppercase text-muted-foreground">
-                Gross (รวมจากตาราง — สูตรปัจจุบัน)
+                {isWorkerPayrollBatchSnapshotFrozen(batch, {
+                  hasEarlierPaidInPeriod: (priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0,
+                })
+                  ? 'Gross (ยอดบันทึกในงวด — จ่ายแล้ว)'
+                  : 'Gross (รวมจากตาราง — สูตรปัจจุบัน)'}
               </CardTitle>
-              {dailyDisplay.snapshotMismatch ? (
+              {isWorkerPayrollBatchSnapshotFrozen(batch, {
+                hasEarlierPaidInPeriod: (priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0,
+              }) ? (
+                <CardDescription className="text-[11px] leading-snug text-muted-foreground">
+                  งวดชุดแรกที่ชำระ/ล็อกแล้ว — แสดงยอด snapshot ตามเอกสารที่จ่ายไปแล้ว ไม่ทับด้วยสูตรปัจจุบัน
+                </CardDescription>
+              ) : dailyDisplay.snapshotMismatch ? (
                 <CardDescription className="text-[11px] leading-snug text-amber-900">
                   ในงวด (snapshot ตอนสร้าง batch): ฿{line.grossAmount.toLocaleString()} — ต่างจากสูตร/PO ปัจจุบัน — ใช้ปุ่ม{' '}
                   <strong>คำนวณใหม่จากใบงาน (คนนี้เท่านั้น)</strong> เพื่ออัปเดตเฉพาะคนนี้โดยไม่ล้างการปรับยอดคนอื่น
@@ -981,7 +1034,13 @@ export default function PayrollBatchWorkerLinePage({
               )}
             </CardHeader>
             <CardContent className="text-2xl font-black text-primary">
-              ฿{dailyDisplay.total.toLocaleString()}
+              ฿
+              {(isWorkerPayrollBatchSnapshotFrozen(batch, {
+                hasEarlierPaidInPeriod: (priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0,
+              })
+                ? line.grossAmount
+                : dailyDisplay.total
+              ).toLocaleString()}
             </CardContent>
           </Card>
           <Card>
@@ -1009,10 +1068,10 @@ export default function PayrollBatchWorkerLinePage({
               </CardDescription>
             </CardHeader>
             <CardContent className="text-2xl font-black text-emerald-700 flex items-center gap-2 min-h-[2.5rem]">
-              {previewNetLoading && !slipModel ? (
+              {previewNetLoading && !displaySlip ? (
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               ) : (
-                <>฿{(slipModel?.netPay ?? previewNet ?? line.netAmount).toLocaleString()}</>
+                <>฿{(displaySlip?.netPay ?? previewNet ?? line.netAmount).toLocaleString()}</>
               )}
             </CardContent>
           </Card>
@@ -1126,7 +1185,11 @@ export default function PayrollBatchWorkerLinePage({
                           <div className="text-[10px] font-medium text-foreground/80 break-words">
                             {(() => {
                               const pid = String(ts.purchaseOrderId || '').trim();
-                              return poSourceLabelById.get(pid) || (pid ? `PO ${pid.slice(0, 12)}${pid.length > 12 ? '…' : ''}` : 'ไม่ระบุ PO');
+                              return (
+                                poSourceLabelById.get(pid) ||
+                                poPartyLabelById.get(pid) ||
+                                (pid ? `PO ${pid.slice(0, 8)}…` : 'ไม่ระบุ')
+                              );
                             })()}
                           </div>
                           <div className="truncate mt-0.5 text-muted-foreground" title={ts.remark || undefined}>
@@ -1567,7 +1630,7 @@ export default function PayrollBatchWorkerLinePage({
               <div className="flex justify-between gap-4 font-medium">
                 <span>รวมรายได้ (ตรงสลิป)</span>
                 <span className="font-mono tabular-nums text-primary">
-                  ฿{(slipModel?.grossTotal ?? dailyDisplay.total).toLocaleString()}
+                  ฿{(displaySlip?.grossTotal ?? dailyDisplay.total).toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between gap-4 font-medium">
@@ -1580,8 +1643,8 @@ export default function PayrollBatchWorkerLinePage({
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   รายการหัก (ตรงสลิป)
                 </p>
-                {(slipModel?.deductionLines?.length
-                  ? slipModel.deductionLines
+                {(displaySlip?.deductionLines?.length
+                  ? displaySlip.deductionLines
                   : deductionDisplayRows(line).map((r) => ({ label: r.label, amount: r.amount }))
                 ).map((row, i) => (
                   <div key={`${row.label}-${i}`} className="flex justify-between gap-4 text-sm">
@@ -1595,7 +1658,7 @@ export default function PayrollBatchWorkerLinePage({
                 <span className="font-mono tabular-nums">
                   ฿
                   {(
-                    slipModel?.deductionsTotal ??
+                    displaySlip?.deductionsTotal ??
                     lineDeductionsTotal(line)
                   ).toLocaleString()}
                 </span>
@@ -1603,9 +1666,19 @@ export default function PayrollBatchWorkerLinePage({
               <div className="flex justify-between gap-4 border-t border-border pt-3 font-black text-emerald-800">
                 <span>รับสุทธิ (ตรงสลิป)</span>
                 <span className="font-mono tabular-nums">
-                  ฿{(slipModel?.netPay ?? previewNet ?? line.netAmount).toLocaleString()}
+                  ฿{(displaySlip?.netPay ?? previewNet ?? line.netAmount).toLocaleString()}
                 </span>
               </div>
+              {displaySlip ? (
+                <p className="text-[11px] text-muted-foreground leading-snug pt-1">
+                  ตรวจเลข: รายได้ ฿{displaySlip.grossTotal.toLocaleString()} − หัก ฿
+                  {displaySlip.deductionsTotal.toLocaleString()} = สุทธิ ฿
+                  {displaySlip.netPay.toLocaleString()}
+                  {displaySlip.deductionLines.some((d) => d.label.includes('หักยอดที่ชำระไปแล้ว'))
+                    ? ' (หักรวมรวมยอดที่บัญชีจ่ายไปแล้วในงวดก่อนของเดือนเดียวกัน)'
+                    : ''}
+                </p>
+              ) : null}
             </div>
 
             <Button type="button" disabled={!canSaveAdjustments || saving} onClick={() => void handleSave()}>

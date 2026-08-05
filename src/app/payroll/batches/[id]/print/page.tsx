@@ -6,14 +6,20 @@ import { Button } from '@/components/ui/button';
 import { PayslipDocument } from '@/components/payroll/payslip-document';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, doc } from 'firebase/firestore';
-import type { PayrollBatch, PayrollBatchLine, PayrollPeriod, User } from '@/lib/types';
-import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
+import { buildPayslipFromWorkerLine, applyLiveTimesheetIncomeToPayslip, isWorkerPayrollBatchSnapshotFrozen } from '@/lib/payroll/payslip-model';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { sanitizePrintFileBaseName } from '@/lib/documents/standard-document-print';
 import { ArrowLeft, Loader2, Printer } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 import { usePoPartyLabels } from '@/hooks/use-po-party-labels';
+import { loadWorkerTimesheetsForPayrollLine } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
+import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
+import {
+  buildSingleTimesheetGrossContext,
+  type SingleTimesheetGrossContext,
+} from '@/lib/payroll/single-timesheet-gross';
+import type { DailyTimesheet, PayrollBatch, PayrollBatchLine, PayrollPeriod, User } from '@/lib/types';
 
 export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -57,10 +63,79 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
       isSupplemental: batch?.batchType === 'SUPPLEMENTAL',
       includePriorPaidForNormal: batch?.batchType !== 'SUPPLEMENTAL',
       currentBatchId: batch?.id,
+      currentBatchStatus: batch?.status,
+      currentBatchChronologyMs: batch?.createdAt ?? batch?.financePreparedAt ?? null,
     },
   );
 
   const poPartyLabelById = usePoPartyLabels(lines);
+  const hasEarlierPaidInPeriod = priorPaidRefs.length > 0;
+  const batchSnapshotFrozen = isWorkerPayrollBatchSnapshotFrozen(batch, {
+    hasEarlierPaidInPeriod,
+  });
+
+  const [timesheetsByWorkerId, setTimesheetsByWorkerId] = useState<Map<string, DailyTimesheet[]>>(
+    () => new Map(),
+  );
+  const [liveGrossCtx, setLiveGrossCtx] = useState<SingleTimesheetGrossContext | null>(null);
+
+  const linesLoadKey = useMemo(
+    () =>
+      (lines ?? [])
+        .map((l) => `${l.id}:${l.periodStartDate}:${l.periodEndDate}`)
+        .sort()
+        .join('|'),
+    [lines],
+  );
+
+  useEffect(() => {
+    if (!firestore || !lines?.length || batch?.batchType === 'SUPPLEMENTAL' || batchSnapshotFrozen) {
+      setTimesheetsByWorkerId(new Map());
+      setLiveGrossCtx(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const byWorker = new Map<string, DailyTimesheet[]>();
+        await Promise.all(
+          lines.map(async (line) => {
+            const start = line.periodStartDate;
+            const end = line.periodEndDate;
+            if (!start || !end) {
+              byWorker.set(line.workerId, []);
+              return;
+            }
+            const rows = await loadWorkerTimesheetsForPayrollLine(
+              firestore,
+              line.workerId,
+              start,
+              end,
+              line.sourceTimesheetIds,
+            );
+            byWorker.set(line.workerId, normalizeTimesheetsForPayrollLine(rows));
+          }),
+        );
+        if (cancelled) return;
+        setTimesheetsByWorkerId(byWorker);
+        const all = [...byWorker.values()].flat();
+        if (all.length === 0) {
+          setLiveGrossCtx(null);
+          return;
+        }
+        const ctx = await buildSingleTimesheetGrossContext(firestore, all);
+        if (!cancelled) setLiveGrossCtx(ctx);
+      } catch {
+        if (!cancelled) {
+          setTimesheetsByWorkerId(new Map());
+          setLiveGrossCtx(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, lines, batch?.batchType, batchSnapshotFrozen, linesLoadKey]);
 
   const models = useMemo(() => {
     if (!batch || !lines?.length) return [];
@@ -76,7 +151,10 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
         ? normalBatches.find((b) => b.id === normalLine.payrollBatchId)
         : undefined;
       const priorForWorker = priorPaidRefs.filter((r) => r.line.workerId === line.workerId);
-      return buildPayslipFromWorkerLine(
+      const lineFrozen = isWorkerPayrollBatchSnapshotFrozen(batch, {
+        hasEarlierPaidInPeriod: priorForWorker.length > 0,
+      });
+      let model = buildPayslipFromWorkerLine(
         line,
         batch,
         periodLabel,
@@ -84,10 +162,36 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
         normalLine,
         normalBatch,
         priorForWorker,
-        poPartyLabelById,
+        lineFrozen ? undefined : poPartyLabelById,
       );
+      if (!lineFrozen && batch.batchType !== 'SUPPLEMENTAL' && liveGrossCtx) {
+        const ts = timesheetsByWorkerId.get(line.workerId) ?? [];
+        if (ts.length > 0) {
+          model = applyLiveTimesheetIncomeToPayslip(
+            model,
+            line,
+            ts,
+            liveGrossCtx,
+            poPartyLabelById,
+          );
+        }
+      }
+      return model;
     });
-  }, [batch, lines, periodLabel, companyProfile?.companyNameTh, companyProfile?.companyNameEn, companyProfile?.documentHeaderLogoUrl, normalBatches, normalLines, priorPaidRefs, poPartyLabelById]);
+  }, [
+    batch,
+    lines,
+    periodLabel,
+    companyProfile?.companyNameTh,
+    companyProfile?.companyNameEn,
+    companyProfile?.documentHeaderLogoUrl,
+    normalBatches,
+    normalLines,
+    priorPaidRefs,
+    poPartyLabelById,
+    timesheetsByWorkerId,
+    liveGrossCtx,
+  ]);
 
   const handlePrintAll = () => window.print();
 

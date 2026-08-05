@@ -26,6 +26,33 @@ export const PAYSLIP_DEFAULT_COMPANY_TH = 'โอพีอีซี ออปส
 export const PAYSLIP_DEFAULT_COMPANY_EN = 'OPEC OpsFlow';
 
 /**
+ * งวดที่จ่าย/ล็อกแล้ว และเป็นเอกสารชุดแรกของเดือน (ไม่มีงวดก่อนหน้าให้หัก)
+ * — คง snapshot ตามที่จ่ายไปแล้ว ไม่ทับด้วยใบงานปัจจุบัน
+ *
+ * งวดชุดหลังในเดือนเดียวกัน (แม้ PAID แล้ว) ยังต้องแสดงรายได้ครบทุก PO + หักยอดที่จ่ายไปแล้ว
+ */
+export function isWorkerPayrollBatchSnapshotFrozen(
+  batch: Pick<PayrollBatch, 'status'> | null | undefined,
+  opts?: { hasEarlierPaidInPeriod?: boolean },
+): boolean {
+  const s = batch?.status;
+  if (s !== 'PAID' && s !== 'LOCKED') return false;
+  if (opts?.hasEarlierPaidInPeriod) return false;
+  return true;
+}
+
+/** ลำดับเวลางวด — ใช้กรอง «ยอดที่ชำระไปแล้ว» ให้เป็นงวดก่อนหน้าจริง ๆ */
+export function payrollBatchChronologyMs(batch: PayrollBatch): number {
+  const n =
+    batch.createdAt ??
+    batch.financePreparedAt ??
+    batch.hrApprovedAt ??
+    batch.lockedAt ??
+    0;
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
  * Firestore บางครั้งเก็บ array เป็น map — ทำให้ for…of พัง และสลิป/ตารางเสีย multi-PO
  */
 export function normalizeIncomeSegments(
@@ -521,6 +548,38 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
   return lines;
 }
 
+/**
+ * ทับรายได้บนสลิปด้วยยอดจากใบงานปัจจุบัน (หลาย PO / remob) — ให้หน้า batch ตรงหน้ารายคน
+ * คงรายการหักจาก model (รวมหักยอดที่ชำระไปแล้ว)
+ */
+export function applyLiveTimesheetIncomeToPayslip(
+  model: PayslipViewModel,
+  line: PayrollBatchLine,
+  timesheets: readonly DailyTimesheet[],
+  ctx: SingleTimesheetGrossContext,
+  poPartyLabelById?: ReadonlyMap<string, string>,
+): PayslipViewModel {
+  if (!timesheets.length) return model;
+  const incomeLines = buildWorkerPayslipIncomeLinesFromTimesheets(
+    line,
+    timesheets,
+    ctx,
+    poPartyLabelById,
+  );
+  if (incomeLines.length === 0) return model;
+  const liveGross = round2(incomeLines.reduce((s, x) => s + x.amount, 0));
+  const nextGross = liveGross > 0.005 ? liveGross : model.grossTotal;
+  const nextDedTotal = round2(model.deductionLines.reduce((s, x) => s + x.amount, 0));
+  return {
+    ...model,
+    incomeLines,
+    grossTotal: nextGross,
+    deductionsTotal: nextDedTotal,
+    netPay: round2(nextGross - nextDedTotal),
+    roundingNote: false,
+  };
+}
+
 export function buildWorkerPayslipDeductionLines(line: PayrollBatchLine): PayslipLineItem[] {
   const d = line.deductionsBreakdown || line.d8Snapshot?.deductions || {};
   const manual = line.hrLineAdjustments?.deductionItems ?? [];
@@ -618,6 +677,45 @@ export function buildPayslipFromWorkerLine(
   poPartyLabelById?: ReadonlyMap<string, string>,
 ): PayslipViewModel {
   const { companyNameTh, companyNameEn } = resolvePayslipCompanyNames(companyProfile);
+  const hasEarlierPaid = (priorPaidRefs?.length ?? 0) > 0;
+  const frozen = isWorkerPayrollBatchSnapshotFrozen(batch, {
+    hasEarlierPaidInPeriod: hasEarlierPaid,
+  });
+
+  /** งวดจ่ายแล้วชุดแรก — ใช้ยอดในงวดเท่านั้น ไม่ทับด้วยใบงานปัจจุบัน */
+  if (frozen) {
+    const deductionLines = buildWorkerPayslipDeductionLines(line);
+    const deductionsTotal = sumLines(deductionLines);
+    const grossTotal = round2(line.grossAmount);
+    const netPay = resolveLineNetForPayslip(line);
+    const incomeLines = buildWorkerPayslipIncomeLines(line, poPartyLabelById);
+    const sumIncome = sumLines(incomeLines);
+    const useDetailIncome = incomeLines.length > 0 && Math.abs(sumIncome - grossTotal) < 0.05;
+    return {
+      companyNameTh,
+      companyNameEn,
+      companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
+      employeeName: line.workerNameSnapshot || line.workerId,
+      periodLabel,
+      payrollTypeLabel: 'Worker Payroll (Timesheet batch)',
+      documentRef: batch.id,
+      paymentDateLabel: formatPaymentDate(workerPaymentTimestamp(batch)),
+      isSupplemental: batch.batchType === 'SUPPLEMENTAL',
+      normalPaymentDateLabel: undefined,
+      policyVersionLabel: formatPolicyVersionFromSnapshot(line.d8Snapshot),
+      incomeLines: useDetailIncome
+        ? incomeLines
+        : grossTotal > 0
+          ? [{ label: 'รายได้รวม (จากงวดจ่าย)', amount: grossTotal }]
+          : [],
+      grossTotal,
+      deductionLines,
+      deductionsTotal,
+      netPay,
+      roundingNote: Math.abs(round2(grossTotal - deductionsTotal) - netPay) >= 0.02,
+    };
+  }
+
   const incomeLines = buildWorkerPayslipIncomeLines(line, poPartyLabelById);
   const deductionLines = buildWorkerPayslipDeductionLines(line);
 

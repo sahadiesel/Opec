@@ -23,14 +23,29 @@ import { WorkerPayrollWhtSingleDialog } from '@/components/payroll/worker-payrol
 import { WorkerPayrollWhtBatchDialog } from '@/components/payroll/worker-payroll-wht-batch-dialog';
 import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 import { usePoPartyLabels } from '@/hooks/use-po-party-labels';
-import { buildPayslipFromWorkerLine, normalizeIncomeSegments } from '@/lib/payroll/payslip-model';
+import { buildPayslipFromWorkerLine, normalizeIncomeSegments, applyLiveTimesheetIncomeToPayslip, isWorkerPayrollBatchSnapshotFrozen } from '@/lib/payroll/payslip-model';
 import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
+import { loadWorkerTimesheetsForPayrollLine } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
+import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
+import {
+  buildSingleTimesheetGrossContext,
+  type SingleTimesheetGrossContext,
+} from '@/lib/payroll/single-timesheet-gross';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
 import { canPreviewWorkerPayrollWht } from '@/lib/payroll/payroll-worker-wht-permissions';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, query, where } from 'firebase/firestore';
-import { BankAccount, PayrollBatch, PayrollBatchLine, Position, User, PayrollPeriod, Worker } from '@/lib/types';
+import {
+  BankAccount,
+  DailyTimesheet,
+  PayrollBatch,
+  PayrollBatchLine,
+  Position,
+  User,
+  PayrollPeriod,
+  Worker,
+} from '@/lib/types';
 import { useRouter } from 'next/navigation';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -281,12 +296,86 @@ export function PayrollBatchDetailView({
       isSupplemental: batch?.batchType === 'SUPPLEMENTAL',
       includePriorPaidForNormal: batch?.batchType !== 'SUPPLEMENTAL',
       currentBatchId: batch?.id,
+      currentBatchStatus: batch?.status,
+      currentBatchChronologyMs: batch?.createdAt ?? batch?.financePreparedAt ?? null,
     },
   );
 
   const poPartyLabelById = usePoPartyLabels(linesSorted);
+  const hasEarlierPaidInPeriod = priorPaidRefs.length > 0;
+  const batchSnapshotFrozen = isWorkerPayrollBatchSnapshotFrozen(batch, {
+    hasEarlierPaidInPeriod,
+  });
 
-  /** ยอดที่แสดงบนตาราง/การ์ดสรุป — ตรงสลิป (รวมหักยอดที่ชำระไปแล้ว + รายได้หลาย PO) */
+  /** ใบงานปัจจุบันต่อคน — สลิปชุดหลังต้องรวมทุก PO (AVP + ไทยนิปปอน ฯลฯ) */
+  const [timesheetsByWorkerId, setTimesheetsByWorkerId] = useState<Map<string, DailyTimesheet[]>>(
+    () => new Map(),
+  );
+  const [liveGrossCtx, setLiveGrossCtx] = useState<SingleTimesheetGrossContext | null>(null);
+
+  const linesLoadKey = useMemo(
+    () =>
+      linesSorted
+        .map((l) => `${l.id}:${l.periodStartDate}:${l.periodEndDate}:${(l.sourceTimesheetIds || []).length}`)
+        .join('|'),
+    [linesSorted],
+  );
+
+  useEffect(() => {
+    if (
+      !firestore ||
+      batch?.batchType === 'SUPPLEMENTAL' ||
+      batchSnapshotFrozen ||
+      linesSorted.length === 0
+    ) {
+      setTimesheetsByWorkerId(new Map());
+      setLiveGrossCtx(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const byWorker = new Map<string, DailyTimesheet[]>();
+        await Promise.all(
+          linesSorted.map(async (line) => {
+            const start = line.periodStartDate;
+            const end = line.periodEndDate;
+            if (!start || !end) {
+              byWorker.set(line.workerId, []);
+              return;
+            }
+            const rows = await loadWorkerTimesheetsForPayrollLine(
+              firestore,
+              line.workerId,
+              start,
+              end,
+              line.sourceTimesheetIds,
+            );
+            byWorker.set(line.workerId, normalizeTimesheetsForPayrollLine(rows));
+          }),
+        );
+        if (cancelled) return;
+        setTimesheetsByWorkerId(byWorker);
+        const all = [...byWorker.values()].flat();
+        if (all.length === 0) {
+          setLiveGrossCtx(null);
+          return;
+        }
+        const ctx = await buildSingleTimesheetGrossContext(firestore, all);
+        if (!cancelled) setLiveGrossCtx(ctx);
+      } catch {
+        if (!cancelled) {
+          setTimesheetsByWorkerId(new Map());
+          setLiveGrossCtx(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, batch?.batchType, batchSnapshotFrozen, linesLoadKey, linesSorted]);
+
+  /** ยอดที่แสดงบนตาราง/การ์ดสรุป — งวดชุดแรกที่จ่ายแล้วใช้ snapshot; ชุดหลังใช้ใบงานครบทุก PO */
   const slipByLineId = useMemo(() => {
     const m = new Map<string, PayslipViewModel>();
     if (!batch) return m;
@@ -298,19 +387,32 @@ export function PayrollBatchDetailView({
           ? normalBatches.find((b) => b.id === normalLine.payrollBatchId)
           : undefined;
         const priorForWorker = priorPaidRefs.filter((r) => r.line.workerId === line.workerId);
-        m.set(
-          line.id,
-          buildPayslipFromWorkerLine(
-            line,
-            batch,
-            periodLabel,
-            companyProfile ?? undefined,
-            normalLine,
-            normalBatch,
-            priorForWorker,
-            poPartyLabelById,
-          ),
+        const lineFrozen = isWorkerPayrollBatchSnapshotFrozen(batch, {
+          hasEarlierPaidInPeriod: priorForWorker.length > 0,
+        });
+        let model = buildPayslipFromWorkerLine(
+          line,
+          batch,
+          periodLabel,
+          companyProfile ?? undefined,
+          normalLine,
+          normalBatch,
+          priorForWorker,
+          lineFrozen ? undefined : poPartyLabelById,
         );
+        if (!lineFrozen && batch.batchType !== 'SUPPLEMENTAL' && liveGrossCtx) {
+          const ts = timesheetsByWorkerId.get(line.workerId) ?? [];
+          if (ts.length > 0) {
+            model = applyLiveTimesheetIncomeToPayslip(
+              model,
+              line,
+              ts,
+              liveGrossCtx,
+              poPartyLabelById,
+            );
+          }
+        }
+        m.set(line.id, model);
       } catch {
         /* skip — ใช้ยอดบันทึกในงวด */
       }
@@ -325,6 +427,8 @@ export function PayrollBatchDetailView({
     priorPaidRefs,
     companyProfile,
     poPartyLabelById,
+    timesheetsByWorkerId,
+    liveGrossCtx,
   ]);
 
   const displayBatchTotals = useMemo(() => {

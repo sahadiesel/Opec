@@ -1,21 +1,25 @@
+'use client';
+
 import { useEffect, useState } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { useFirestore } from '@/firebase';
 import type { PayrollBatch, PayrollBatchLine, PayrollBatchStatus } from '@/lib/types';
-import type { PriorPaidPayrollSlipRef } from '@/lib/payroll/payslip-model';
+import {
+  payrollBatchChronologyMs,
+  type PriorPaidPayrollSlipRef,
+} from '@/lib/payroll/payslip-model';
 
-/** สถานะที่ถือว่าบัญชีจ่าย/ผูกจ่ายไปแล้ว — ใช้หักจากสลิปรอบหลัง */
+/** งวดที่จ่ายจริงแล้ว — ใช้หักจากสลิปชุดหลัง (ไม่นับแค่เตรียมจ่าย) */
 const PRIOR_PAID_BATCH_STATUSES: ReadonlySet<PayrollBatchStatus | string> = new Set([
   'PAID',
-  'PAYMENT_EXPORTED',
-  'FINANCE_PREPARED',
   'LOCKED',
 ]);
 
 /**
  * โหลดงวด NORMAL ใน payrollPeriodId เดียวกัน
  * - SUPPLEMENTAL: ใช้เป็นงวดปกติอ้างอิง
- * - NORMAL: โหลดงวดอื่นที่จ่ายแล้วของคนงาน (หักยอดที่ชำระไปแล้วบนสลิป)
+ * - NORMAL: โหลดงวดอื่นที่จ่ายแล้วของคนงาน (หักยอดที่ชำระไปแล้วบนสลิปชุดหลัง)
+ * - หักเฉพาะงวดที่เกิด/จ่ายก่อนงวดปัจจุบันเท่านั้น
  */
 export function useNormalBatchesAndLines(
   payrollPeriodId: string | undefined | null,
@@ -24,6 +28,10 @@ export function useNormalBatchesAndLines(
     /** เมื่อเป็น NORMAL — โหลดงวดอื่นที่จ่ายแล้วเพื่อหักบนสลิป */
     includePriorPaidForNormal?: boolean;
     currentBatchId?: string | null;
+    /** สถานะงวดปัจจุบัน (ไม่ใช้แช่แข็ง prior ที่นี่แล้ว — กรองตามลำดับเวลา) */
+    currentBatchStatus?: PayrollBatchStatus | string | null;
+    /** createdAt / financePreparedAt ของงวดปัจจุบัน — กรองงวดก่อนหน้า */
+    currentBatchChronologyMs?: number | null;
     workerId?: string | null;
   },
 ) {
@@ -31,6 +39,7 @@ export function useNormalBatchesAndLines(
   const isSupplemental = options?.isSupplemental === true;
   const includePriorPaid = options?.includePriorPaidForNormal === true;
   const currentBatchId = (options?.currentBatchId || '').trim();
+  const currentBatchChronologyMs = options?.currentBatchChronologyMs ?? null;
   const workerId = (options?.workerId || '').trim();
 
   const [normalBatches, setNormalBatches] = useState<PayrollBatch[]>([]);
@@ -69,6 +78,10 @@ export function useNormalBatchesAndLines(
 
         const allLines: PayrollBatchLine[] = [];
         const prior: PriorPaidPayrollSlipRef[] = [];
+        const currentMs =
+          currentBatchChronologyMs != null && Number.isFinite(currentBatchChronologyMs)
+            ? Number(currentBatchChronologyMs)
+            : null;
 
         for (const nb of batches) {
           const lq = collection(firestore!, 'payroll_batches', nb.id, 'lines');
@@ -82,6 +95,9 @@ export function useNormalBatchesAndLines(
               PRIOR_PAID_BATCH_STATUSES.has(nb.status) &&
               (!workerId || line.workerId === workerId)
             ) {
+              const priorMs = payrollBatchChronologyMs(nb);
+              /** หักเฉพาะงวดที่มาก่อนงวดปัจจุบัน — ไม่หักงวดที่สร้าง/จ่ายทีหลังย้อนเข้าสลิปเก่า */
+              if (currentMs != null && priorMs > 0 && priorMs >= currentMs) return;
               prior.push({ line, batch: nb });
             }
           });
@@ -103,7 +119,15 @@ export function useNormalBatchesAndLines(
     return () => {
       mounted = false;
     };
-  }, [firestore, payrollPeriodId, isSupplemental, includePriorPaid, currentBatchId, workerId]);
+  }, [
+    firestore,
+    payrollPeriodId,
+    isSupplemental,
+    includePriorPaid,
+    currentBatchId,
+    currentBatchChronologyMs,
+    workerId,
+  ]);
 
   return { normalBatches, normalLines, priorPaidRefs, loading };
 }
