@@ -13,6 +13,7 @@ import { sanitizePrintFileBaseName } from '@/lib/documents/standard-document-pri
 import { ArrowLeft, Loader2, Printer } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
+import { usePoPartyLabels } from '@/hooks/use-po-party-labels';
 
 export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -50,10 +51,16 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
   const periodLabel = period?.label || `${batch?.payrollPeriodId ?? ''}`;
   const { profile: companyProfile } = useCompanyDocumentProfile();
 
-  const { normalBatches, normalLines } = useNormalBatchesAndLines(
+  const { normalBatches, normalLines, priorPaidRefs } = useNormalBatchesAndLines(
     batch?.payrollPeriodId,
-    batch?.batchType === 'SUPPLEMENTAL'
+    {
+      isSupplemental: batch?.batchType === 'SUPPLEMENTAL',
+      includePriorPaidForNormal: batch?.batchType !== 'SUPPLEMENTAL',
+      currentBatchId: batch?.id,
+    },
   );
+
+  const poPartyLabelById = usePoPartyLabels(lines);
 
   const models = useMemo(() => {
     if (!batch || !lines?.length) return [];
@@ -65,17 +72,22 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
     );
     return sorted.map((line) => {
       const normalLine = normalLines.find((l) => l.workerId === line.workerId);
-      const normalBatch = normalLine ? normalBatches.find((b) => b.id === normalLine.batchId) : undefined;
+      const normalBatch = normalLine
+        ? normalBatches.find((b) => b.id === normalLine.payrollBatchId)
+        : undefined;
+      const priorForWorker = priorPaidRefs.filter((r) => r.line.workerId === line.workerId);
       return buildPayslipFromWorkerLine(
         line,
         batch,
         periodLabel,
         companyProfile ?? undefined,
         normalLine,
-        normalBatch
+        normalBatch,
+        priorForWorker,
+        poPartyLabelById,
       );
     });
-  }, [batch, lines, periodLabel, companyProfile?.companyNameTh, companyProfile?.companyNameEn, companyProfile?.documentHeaderLogoUrl, normalBatches, normalLines]);
+  }, [batch, lines, periodLabel, companyProfile?.companyNameTh, companyProfile?.companyNameEn, companyProfile?.documentHeaderLogoUrl, normalBatches, normalLines, priorPaidRefs, poPartyLabelById]);
 
   const handlePrintAll = () => window.print();
 

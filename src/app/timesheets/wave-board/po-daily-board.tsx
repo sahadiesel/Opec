@@ -510,14 +510,19 @@ export function PoDailyBoardCard({
     }
     let cancelled = false;
     void (async () => {
-      const rows = await Promise.all(
-        posList.map(async (po) => ({
-          poId: po.id,
-          poCode: po.poCode || po.id,
-          mode: await resolveBillingMode(firestore, po),
-        })),
-      );
-      if (!cancelled) setBillingModesByPo(rows);
+      try {
+        const rows = await Promise.all(
+          posList.map(async (po) => ({
+            poId: po.id,
+            poCode: po.poCode || po.id,
+            mode: await resolveBillingMode(firestore, po),
+          })),
+        );
+        if (!cancelled) setBillingModesByPo(rows);
+      } catch (err) {
+        console.warn('[po-daily-board] billing mode resolve failed', err);
+        if (!cancelled) setBillingModesByPo([]);
+      }
     })();
     return () => {
       cancelled = true;
@@ -533,23 +538,27 @@ export function PoDailyBoardCard({
     void (async () => {
       const m = new Map<string, WaveMonthTimesheetReview | null>();
       const scopeIds = [...new Set(poIds.map((pid) => poTimesheetScopeId(pid)))];
-      await Promise.all([
-        ...scopeIds.map(async (sid) => {
-          const scopeRef = doc(firestore, 'wave_month_timesheet_reviews', `${sid}_${monthYm}`);
-          const scopeSnap = await getDoc(scopeRef);
-          m.set(
-            sid,
-            scopeSnap.exists()
-              ? ({ id: scopeSnap.id, ...(scopeSnap.data() as object) } as WaveMonthTimesheetReview)
-              : null,
-          );
-        }),
-        ...waves.map(async (w) => {
-          const ref = doc(firestore, 'wave_month_timesheet_reviews', `${w.id}_${monthYm}`);
-          const snap = await getDoc(ref);
-          m.set(w.id, snap.exists() ? ({ id: snap.id, ...(snap.data() as object) } as WaveMonthTimesheetReview) : null);
-        }),
-      ]);
+      try {
+        await Promise.all([
+          ...scopeIds.map(async (sid) => {
+            const scopeRef = doc(firestore, 'wave_month_timesheet_reviews', `${sid}_${monthYm}`);
+            const scopeSnap = await getDoc(scopeRef);
+            m.set(
+              sid,
+              scopeSnap.exists()
+                ? ({ id: scopeSnap.id, ...(scopeSnap.data() as object) } as WaveMonthTimesheetReview)
+                : null,
+            );
+          }),
+          ...waves.map(async (w) => {
+            const ref = doc(firestore, 'wave_month_timesheet_reviews', `${w.id}_${monthYm}`);
+            const snap = await getDoc(ref);
+            m.set(w.id, snap.exists() ? ({ id: snap.id, ...(snap.data() as object) } as WaveMonthTimesheetReview) : null);
+          }),
+        ]);
+      } catch (err) {
+        console.warn('[po-daily-board] wave_month_timesheet_reviews read failed', err);
+      }
       if (!cancelled) setReviewByWaveId(m);
     })();
     return () => {
@@ -579,11 +588,16 @@ export function PoDailyBoardCard({
       const m = new Map<string, PositionRate[]>();
       await Promise.all(
         contractIds.map(async (cid) => {
-          const snap = await getDocs(collection(firestore, 'main_contracts', cid, 'position_rates'));
-          m.set(
-            cid,
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) } as PositionRate)),
-          );
+          try {
+            const snap = await getDocs(collection(firestore, 'main_contracts', cid, 'position_rates'));
+            m.set(
+              cid,
+              snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) } as PositionRate)),
+            );
+          } catch (err) {
+            console.warn('[po-daily-board] position_rates read failed for contract', cid, err);
+            m.set(cid, []);
+          }
         }),
       );
       if (!cancelled) setRatesByContractId(m);
@@ -666,20 +680,29 @@ export function PoDailyBoardCard({
       return;
     }
     const existing: Record<string, DailyTimesheet> = {};
-    await Promise.all(
-      poIds.map(async (pid) => {
-        const q = query(
-          collection(firestore, 'daily_timesheets'),
-          where('purchaseOrderId', '==', pid),
-          where('date', '==', targetDate),
-        );
-        const snap = await getDocs(q);
-        snap.docs.forEach((d) => {
-          const data = d.data() as DailyTimesheet;
-          existing[data.assignmentId] = data;
-        });
-      }),
-    );
+    try {
+      await Promise.all(
+        poIds.map(async (pid) => {
+          try {
+            const q = query(
+              collection(firestore, 'daily_timesheets'),
+              where('purchaseOrderId', '==', pid),
+              where('date', '==', targetDate),
+            );
+            const snap = await getDocs(q);
+            snap.docs.forEach((d) => {
+              const data = d.data() as DailyTimesheet;
+              existing[data.assignmentId] = data;
+            });
+          } catch (err) {
+            console.warn('[po-daily-board] daily_timesheets load failed for PO', pid, err);
+          }
+        }),
+      );
+    } catch (err) {
+      console.warn('[po-daily-board] loadRoster failed', err);
+      return;
+    }
     const next: Record<string, Partial<DailyTimesheet>> = {};
     const persisted = new Set<string>();
     for (const asgn of assignmentRows) {

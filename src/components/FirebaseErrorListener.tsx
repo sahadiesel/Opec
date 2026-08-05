@@ -18,7 +18,7 @@ export function FirebaseErrorListener() {
       } catch {
         /* log below */
       }
-      console.error('[Firestore permission]', err.message, err.request ?? '');
+      console.warn('[Firestore permission]', err.message, err.request ?? '');
     };
     errorEmitter.on('permission-error', handleError);
     return () => {

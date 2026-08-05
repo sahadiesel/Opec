@@ -207,35 +207,54 @@ export async function loadWorkerPayableTimesheetsForPeriod(
 
 /**
  * ตัดใบค้างก่อนรอบ M1/Final clearance ล่าสุด เมื่อมีช่องว่างปฏิทินคั่น
- * (เช่น มี 1–4/07 แล้วกระโดดไป M1 14/07 — วันที่ต้นไม่โชว์บนกระดาน/สรุปรายเดือน)
+ * — ทำแยกต่อ PO (คนละลูกค้า/PO เช่น AVP 1–4 กับ Thai Nippon M1 14 ไม่ตัดทิ้งข้าม PO)
  */
 export function excludeDisconnectedPrefixBeforeLatestMobCycle(
   tsList: readonly DailyTimesheet[],
 ): DailyTimesheet[] {
   if (tsList.length === 0) return [];
-  const sorted = [...tsList].sort((a, b) =>
-    String(a.date || '').localeCompare(String(b.date || '')),
-  );
 
-  const cycleStarts = sorted
-    .filter((t) => {
-      const et = String(t.eventType || '');
-      if (et === 'mobilization_day') return true;
-      const rmk = String(t.remark ?? '');
-      return rmk.includes('Final clearance') && (et === 'standby_day' || et === 'mobilization_day');
-    })
-    .map((t) => String(t.date || '').slice(0, 10))
-    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+  const byPo = new Map<string, DailyTimesheet[]>();
+  for (const ts of tsList) {
+    const po = String(ts.purchaseOrderId || '').trim() || '_unknown_po';
+    const list = byPo.get(po) ?? [];
+    list.push(ts);
+    byPo.set(po, list);
+  }
 
-  if (cycleStarts.length === 0) return sorted;
+  const out: DailyTimesheet[] = [];
+  for (const group of byPo.values()) {
+    const sorted = [...group].sort((a, b) =>
+      String(a.date || '').localeCompare(String(b.date || '')),
+    );
 
-  /** รอบล่าสุดในงวด (remob) */
-  const cycleStart = cycleStarts.reduce((a, b) => (a >= b ? a : b));
-  const dayBefore = addDaysToYmd(cycleStart, -1);
-  const contiguous = sorted.some((t) => String(t.date || '').slice(0, 10) === dayBefore);
-  if (contiguous) return sorted;
+    const cycleStarts = sorted
+      .filter((t) => {
+        const et = String(t.eventType || '');
+        if (et === 'mobilization_day') return true;
+        const rmk = String(t.remark ?? '');
+        return rmk.includes('Final clearance') && (et === 'standby_day' || et === 'mobilization_day');
+      })
+      .map((t) => String(t.date || '').slice(0, 10))
+      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
 
-  return sorted.filter((t) => String(t.date || '').slice(0, 10) >= cycleStart);
+    if (cycleStarts.length === 0) {
+      out.push(...sorted);
+      continue;
+    }
+
+    const cycleStart = cycleStarts.reduce((a, b) => (a >= b ? a : b));
+    const dayBefore = addDaysToYmd(cycleStart, -1);
+    const contiguous = sorted.some((t) => String(t.date || '').slice(0, 10) === dayBefore);
+    if (contiguous) {
+      out.push(...sorted);
+      continue;
+    }
+
+    out.push(...sorted.filter((t) => String(t.date || '').slice(0, 10) >= cycleStart));
+  }
+
+  return out.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
 }
 
 /**

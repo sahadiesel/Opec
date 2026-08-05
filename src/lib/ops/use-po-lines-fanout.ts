@@ -85,7 +85,9 @@ export function usePoLinesFanout(poIds: string[] | undefined | null): PoLinesFan
           setError(null);
         },
         (err) => {
+          console.warn('[usePoLinesFanout] po_lines read failed for PO', id, err);
           setError(err as Error);
+          setLinesByPo((prev) => ({ ...prev, [id]: prev[id] ?? [] }));
           setPendingPos((prev) => {
             if (!prev.has(id)) return prev;
             const next = new Set(prev);

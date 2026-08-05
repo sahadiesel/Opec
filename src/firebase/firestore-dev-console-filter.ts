@@ -20,7 +20,7 @@ const FIRESTORE_RESOURCE_EXHAUSTED =
 const FIRESTORE_INDEX_NEEDED =
   /(?:requires an index|Missing composite index|The query requires an index)/i;
 const FIREBASE_CONSOLE_INDEX_URL = /https:\/\/console\.firebase\.google\.com\/[^\s"'<>]+/gi;
-/** permission-denied จาก SDK ระหว่าง logout — Next.js dev overlay จับ console.error */
+/** permission-denied จาก SDK — Next.js dev overlay จับ console.error แล้วบังทั้งหน้า */
 const FIRESTORE_PERMISSION_DENIED =
   /Missing or insufficient permissions|FirebaseError.*permission|permission-denied/i;
 
@@ -54,7 +54,13 @@ export function installFirestoreDevConsoleFilter(): void {
           }
         })
         .join(' ');
-      if (FIRESTORE_PERMISSION_DENIED.test(text) && shouldSuppressPermissionNoise()) {
+      /**
+       * permission-denied: ระหว่าง logout หรือ query ที่ role ไม่ผ่าน —
+       * อย่าปล่อยเป็น console.error (Next.js 15 จะโชว์ Runtime overlay บังทั้งหน้า)
+       */
+      if (FIRESTORE_PERMISSION_DENIED.test(text)) {
+        if (shouldSuppressPermissionNoise()) return;
+        console.warn('[Firestore] permission-denied —', text.slice(0, 240));
         return;
       }
       if (FIRESTORE_UNREACHABLE.test(text)) {

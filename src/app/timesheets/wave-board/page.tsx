@@ -36,13 +36,17 @@ import {
 
 async function hasDailyTimesheetsForPoDate(db: Firestore, date: string, poIds: string[]): Promise<boolean> {
   for (const poId of poIds) {
-    const q = query(
-      collection(db, 'daily_timesheets'),
-      where('purchaseOrderId', '==', poId),
-      where('date', '==', date),
-    );
-    const snap = await getDocs(q);
-    if (!snap.empty) return true;
+    try {
+      const q = query(
+        collection(db, 'daily_timesheets'),
+        where('purchaseOrderId', '==', poId),
+        where('date', '==', date),
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) return true;
+    } catch (err) {
+      console.warn('[wave-board] daily_timesheets probe failed for PO', poId, err);
+    }
   }
   return false;
 }
@@ -223,22 +227,26 @@ function WaveTimesheetBoardContent() {
       if (!firestore || boardPoIds.length === 0) return;
       const ym = htmlDate.slice(0, 7);
       if (!/^\d{4}-\d{2}$/.test(ym)) return;
-      const snap = await getDocs(
-        query(collection(firestore, 'wave_month_timesheet_reviews'), where('yearMonth', '==', ym)),
-      );
-      const waveIdSet = new Set(sortedWavesForBoard.map((w) => w.id));
-      const scopeIdSet = new Set(boardPoIds.map((id) => poTimesheetScopeId(id)));
-      for (const d of snap.docs) {
-        const r = d.data() as WaveMonthTimesheetReview;
-        if (!waveIdSet.has(r.waveId) && !scopeIdSet.has(r.waveId)) continue;
-        if (r.status === 'pending_manager_review' || r.status === 'approved') {
-          toast({
-            variant: 'destructive',
-            title: 'แก้ไขไม่ได้ในช่วงนี้',
-            description: 'เดือนนี้ส่งตรวจ/อนุมัติแล้ว — ไม่สามารถแก้ไขได้',
-          });
-          return;
+      try {
+        const snap = await getDocs(
+          query(collection(firestore, 'wave_month_timesheet_reviews'), where('yearMonth', '==', ym)),
+        );
+        const waveIdSet = new Set(sortedWavesForBoard.map((w) => w.id));
+        const scopeIdSet = new Set(boardPoIds.map((id) => poTimesheetScopeId(id)));
+        for (const d of snap.docs) {
+          const r = d.data() as WaveMonthTimesheetReview;
+          if (!waveIdSet.has(r.waveId) && !scopeIdSet.has(r.waveId)) continue;
+          if (r.status === 'pending_manager_review' || r.status === 'approved') {
+            toast({
+              variant: 'destructive',
+              title: 'แก้ไขไม่ได้ในช่วงนี้',
+              description: 'เดือนนี้ส่งตรวจ/อนุมัติแล้ว — ไม่สามารถแก้ไขได้',
+            });
+            return;
+          }
         }
+      } catch (err) {
+        console.warn('[wave-board] wave_month_timesheet_reviews read failed', err);
       }
     },
     [firestore, sortedWavesForBoard, boardPoIds, toast],
@@ -258,17 +266,22 @@ function WaveTimesheetBoardContent() {
       const next = timestampToHtmlDateValue(ms);
       if (next === targetDate) return;
       void (async () => {
-        if (!firestore || boardPoIds.length === 0) {
+        try {
+          if (!firestore || boardPoIds.length === 0) {
+            await applyBoardDate(ms);
+            return;
+          }
+          const hasSaved = await hasDailyTimesheetsForPoDate(firestore, next, boardPoIds);
+          if (hasSaved) {
+            setPendingDateChangeMs(ms);
+            setDateConfirmOpen(true);
+            return;
+          }
           await applyBoardDate(ms);
-          return;
+        } catch (err) {
+          console.warn('[wave-board] date change failed', err);
+          await applyBoardDate(ms);
         }
-        const hasSaved = await hasDailyTimesheetsForPoDate(firestore, next, boardPoIds);
-        if (hasSaved) {
-          setPendingDateChangeMs(ms);
-          setDateConfirmOpen(true);
-          return;
-        }
-        await applyBoardDate(ms);
       })();
     },
     [applyBoardDate, firestore, boardPoIds, targetDate],

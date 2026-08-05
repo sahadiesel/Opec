@@ -1716,14 +1716,16 @@ export class PayrollService {
       incomeSegments = payingPoChunks.map(({ poId, chunk }) => {
         const po = poById.get(poId);
         const cid = (po?.customerId || '').trim() || undefined;
+        const listForPo = byPo.get(poId) ?? [];
         return {
           purchaseOrderId: poId,
-          customerId: cid ?? null,
-          poCodeSnapshot: po?.poCode ?? null,
-          customerNameSnapshot: cid ? customerNameById.get(cid) ?? null : null,
+          customerId: cid,
+          poCodeSnapshot: po?.poCode,
+          customerNameSnapshot: cid ? customerNameById.get(cid) : undefined,
           grossAmount: round2Payroll(chunk.gross),
           eventBreakdown: { ...chunk.eventBreakdown },
           earningsBreakdown: { ...chunk.earningsBreakdown },
+          payslipWorkDaySplit: computeWorkDayPackagePayslipSplit(listForPo, aggDeps),
         };
       });
     }

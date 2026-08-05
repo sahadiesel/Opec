@@ -46,7 +46,9 @@ import { PayrollService } from '@/lib/services/payroll-service';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
-import { buildPayslipFromWorkerLine, buildWorkerPayslipIncomeLinesFromTimesheets } from '@/lib/payroll/payslip-model';
+import { buildPayslipFromWorkerLine, buildWorkerPayslipIncomeLinesFromTimesheets, normalizeIncomeSegments } from '@/lib/payroll/payslip-model';
+import type { PriorPaidPayrollSlipRef } from '@/lib/payroll/payslip-model';
+import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import {
@@ -250,6 +252,13 @@ export default function PayrollBatchWorkerLinePage({
 
   const [normalBatch, setNormalBatch] = useState<PayrollBatch | null>(null);
   const [normalLine, setNormalLine] = useState<PayrollBatchLine | null>(null);
+
+  const { priorPaidRefs } = useNormalBatchesAndLines(batch?.payrollPeriodId, {
+    isSupplemental: batch?.batchType === 'SUPPLEMENTAL',
+    includePriorPaidForNormal: batch?.batchType !== 'SUPPLEMENTAL',
+    currentBatchId: batch?.id,
+    workerId,
+  });
 
   useEffect(() => {
     if (!firestore || !batch || batch.batchType !== 'SUPPLEMENTAL') return;
@@ -694,7 +703,7 @@ export default function PayrollBatchWorkerLinePage({
         pitAutoSalaryBaseBaht:
           workerPitMode === 'auto_salary_base' ? Math.max(0, Number(pitAutoSalaryBase) || 0) : null,
         pitWithholdingOverrideMaxMarginalRatePercent: marg,
-        notes: adjNotes.trim() ? adjNotes.trim() : null,
+        notes: adjNotes.trim() ? adjNotes.trim() : undefined,
       });
       toast({
         title: 'บันทึกการปรับยอดแล้ว',
@@ -756,6 +765,76 @@ export default function PayrollBatchWorkerLinePage({
     }
   }, [firestore, currentUser, canSaveAdjustments, batchId, workerId, toast, router]);
 
+  const [poMetaById, setPoMetaById] = useState<Map<string, { poCode: string; customerName?: string }>>(
+    () => new Map(),
+  );
+
+  useEffect(() => {
+    if (!firestore) {
+      setPoMetaById(new Map());
+      return;
+    }
+    const fromTs = timesheets.map((t) => String(t.purchaseOrderId || '').trim());
+    const fromSeg = normalizeIncomeSegments(line?.incomeSegments).map((s) =>
+      String(s.purchaseOrderId || '').trim(),
+    );
+    const ids = [...new Set([...fromTs, ...fromSeg].filter(Boolean))];
+    if (ids.length === 0) {
+      setPoMetaById(new Map());
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const m = new Map<string, { poCode: string; customerName?: string }>();
+      await Promise.all(
+        ids.map(async (pid) => {
+          try {
+            const poSnap = await getDoc(doc(firestore, 'purchase_orders', pid));
+            if (!poSnap.exists()) {
+              m.set(pid, { poCode: pid });
+              return;
+            }
+            const po = poSnap.data() as { poCode?: string; customerId?: string };
+            const poCode = (po.poCode || '').trim() || pid;
+            let customerName: string | undefined;
+            const cid = (po.customerId || '').trim();
+            if (cid) {
+              const cSnap = await getDoc(doc(firestore, 'customers', cid));
+              if (cSnap.exists()) {
+                customerName = String((cSnap.data() as { name?: string }).name || '').trim() || undefined;
+              }
+            }
+            m.set(pid, { poCode, customerName });
+          } catch {
+            m.set(pid, { poCode: pid });
+          }
+        }),
+      );
+      if (!cancelled) setPoMetaById(m);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, timesheets, line?.incomeSegments]);
+
+  /** ชื่อลูกค้า/สัญญาสำหรับสลิป — ไม่ใช้ Firestore id */
+  const poPartyLabelById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const seg of normalizeIncomeSegments(line?.incomeSegments)) {
+      const id = String(seg.purchaseOrderId || '').trim();
+      if (!id) continue;
+      const cust = seg.customerNameSnapshot?.trim();
+      const po = seg.poCodeSnapshot?.trim();
+      if (cust) m.set(id, cust);
+      else if (po) m.set(id, po);
+    }
+    for (const [id, meta] of poMetaById) {
+      if (meta.customerName?.trim()) m.set(id, meta.customerName.trim());
+      else if (!m.has(id) && meta.poCode?.trim()) m.set(id, meta.poCode.trim());
+    }
+    return m;
+  }, [line?.incomeSegments, poMetaById]);
+
   /** ต้องอยู่ก่อน early return — ห้ามเรียก hooks หลัง return แบบมีเงื่อนไข */
   const slipModel = useMemo(() => {
     if (!line || !batch) return null;
@@ -766,13 +845,31 @@ export default function PayrollBatchWorkerLinePage({
       pl,
       companyProfile ?? undefined,
       normalLine,
-      normalBatch
+      normalBatch,
+      priorPaidRefs as PriorPaidPayrollSlipRef[],
+      poPartyLabelById,
     );
     if (batch.batchType !== 'SUPPLEMENTAL' && timesheets.length > 0 && grossCtx) {
-      const incomeLines = buildWorkerPayslipIncomeLinesFromTimesheets(line, timesheets, grossCtx);
+      const incomeLines = buildWorkerPayslipIncomeLinesFromTimesheets(
+        line,
+        timesheets,
+        grossCtx,
+        poPartyLabelById,
+      );
       const liveGross = Math.round(incomeLines.reduce((s, x) => s + x.amount, 0) * 100) / 100;
-      if (incomeLines.length > 0 && Math.abs(liveGross - model.grossTotal) < 0.01) {
-        return { ...model, incomeLines };
+      /** ยอมรับผลรวมรายได้จาก timesheet แม้ต่าง snapshot เล็กน้อย — ยังหักยอดจ่ายแล้วจาก model */
+      if (incomeLines.length > 0) {
+        const nextGross = liveGross > 0.005 ? liveGross : model.grossTotal;
+        const nextDeductions = model.deductionLines;
+        const nextDedTotal = Math.round(nextDeductions.reduce((s, x) => s + x.amount, 0) * 100) / 100;
+        return {
+          ...model,
+          incomeLines,
+          grossTotal: nextGross,
+          deductionsTotal: nextDedTotal,
+          netPay: Math.round((nextGross - nextDedTotal) * 100) / 100,
+          roundingNote: false,
+        };
       }
     }
     return model;
@@ -787,8 +884,26 @@ export default function PayrollBatchWorkerLinePage({
     grossCtx,
     normalLine,
     normalBatch,
+    priorPaidRefs,
+    poPartyLabelById,
   ]);
   const pitFromLine = Number(line?.deductionsBreakdown?.pit_withholding ?? 0);
+
+  const poSourceLabelById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const seg of normalizeIncomeSegments(line?.incomeSegments)) {
+      const id = String(seg.purchaseOrderId || '').trim();
+      if (!id) continue;
+      const po = seg.poCodeSnapshot?.trim() || id;
+      const cust = seg.customerNameSnapshot?.trim();
+      m.set(id, cust ? `${po} · ${cust}` : po);
+    }
+    for (const [id, meta] of poMetaById) {
+      if (m.has(id) && !/^[A-Za-z0-9]{16,}$/.test(m.get(id)!)) continue;
+      m.set(id, meta.customerName ? `${meta.poCode} · ${meta.customerName}` : meta.poCode);
+    }
+    return m;
+  }, [line?.incomeSegments, poMetaById]);
 
   if (userLoading || batchLoading || lineLoading || !currentUser) {
     return (
@@ -884,20 +999,20 @@ export default function PayrollBatchWorkerLinePage({
             <CardHeader className="pb-2">
               <CardTitle className="text-xs uppercase text-muted-foreground">Net (ประมาณจากสูตรปัจจุบัน)</CardTitle>
               <CardDescription className="text-[11px] leading-snug">
-                คำนวณจากยอดช่อง 2 ตาม HR settings + หัก ภงด. / หักพิเศษในฟอร์ม — ยอดบันทึกในงวด: ฿
+                ตรงกับสลิป — รวมหักยอดที่ชำระไปแล้ว (ถ้ามี) · ยอดบันทึกในงวด: ฿
                 {line.netAmount.toLocaleString()}
                 {dailyDisplay.snapshotMismatch ? (
                   <span className="block mt-1 text-amber-800">
-                    หลัง Regenerate batch ยอดบันทึกจะตรงกับ preview นี้
+                    กด «คำนวณใหม่จากใบงาน» เพื่ออัปเดตยอดบันทึกในงวดให้ตรงสลิป
                   </span>
                 ) : null}
               </CardDescription>
             </CardHeader>
             <CardContent className="text-2xl font-black text-emerald-700 flex items-center gap-2 min-h-[2.5rem]">
-              {previewNetLoading ? (
+              {previewNetLoading && !slipModel ? (
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               ) : (
-                <>฿{(previewNet ?? line.netAmount).toLocaleString()}</>
+                <>฿{(slipModel?.netPay ?? previewNet ?? line.netAmount).toLocaleString()}</>
               )}
             </CardContent>
           </Card>
@@ -1008,14 +1123,13 @@ export default function PayrollBatchWorkerLinePage({
                           )}
                         </TableCell>
                         <TableCell className="text-xs max-w-[280px]">
-                          <div className="font-mono text-[10px] text-muted-foreground break-all">
-                            PO {(ts.purchaseOrderId || '—').slice(0, 12)}
-                            {ts.purchaseOrderId && ts.purchaseOrderId.length > 12 ? '…' : ''}
-                            {' · '}
-                            asg {(ts.assignmentId || '—').slice(0, 10)}
-                            {ts.assignmentId && ts.assignmentId.length > 10 ? '…' : ''}
+                          <div className="text-[10px] font-medium text-foreground/80 break-words">
+                            {(() => {
+                              const pid = String(ts.purchaseOrderId || '').trim();
+                              return poSourceLabelById.get(pid) || (pid ? `PO ${pid.slice(0, 12)}${pid.length > 12 ? '…' : ''}` : 'ไม่ระบุ PO');
+                            })()}
                           </div>
-                          <div className="truncate mt-0.5" title={ts.remark || undefined}>
+                          <div className="truncate mt-0.5 text-muted-foreground" title={ts.remark || undefined}>
                             {ts.remark || '—'}
                           </div>
                         </TableCell>
@@ -1451,6 +1565,12 @@ export default function PayrollBatchWorkerLinePage({
 
             <div className="rounded-md border bg-muted/20 p-4 text-sm space-y-3">
               <div className="flex justify-between gap-4 font-medium">
+                <span>รวมรายได้ (ตรงสลิป)</span>
+                <span className="font-mono tabular-nums text-primary">
+                  ฿{(slipModel?.grossTotal ?? dailyDisplay.total).toLocaleString()}
+                </span>
+              </div>
+              <div className="flex justify-between gap-4 font-medium">
                 <span>รวมเพิ่ม (เบี้ยเลี้ยง / รายได้พิเศษ)</span>
                 <span className="font-mono tabular-nums text-primary">
                   +฿{allowanceItemsTotal(line).toLocaleString()}
@@ -1458,9 +1578,12 @@ export default function PayrollBatchWorkerLinePage({
               </div>
               <div className="space-y-1.5 border-t border-border/60 pt-3">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  รายการหัก
+                  รายการหัก (ตรงสลิป)
                 </p>
-                {deductionDisplayRows(line).map((row, i) => (
+                {(slipModel?.deductionLines?.length
+                  ? slipModel.deductionLines
+                  : deductionDisplayRows(line).map((r) => ({ label: r.label, amount: r.amount }))
+                ).map((row, i) => (
                   <div key={`${row.label}-${i}`} className="flex justify-between gap-4 text-sm">
                     <span className="text-muted-foreground">{row.label}</span>
                     <span className="font-mono tabular-nums">−฿{row.amount.toLocaleString()}</span>
@@ -1468,8 +1591,20 @@ export default function PayrollBatchWorkerLinePage({
                 ))}
               </div>
               <div className="flex justify-between gap-4 border-t border-border pt-3 font-medium">
-                <span>หักรวม (SS + ภงด. + หักพิเศษ)</span>
-                <span className="font-mono tabular-nums">฿{lineDeductionsTotal(line).toLocaleString()}</span>
+                <span>หักรวม (รวมหักยอดที่ชำระไปแล้ว)</span>
+                <span className="font-mono tabular-nums">
+                  ฿
+                  {(
+                    slipModel?.deductionsTotal ??
+                    lineDeductionsTotal(line)
+                  ).toLocaleString()}
+                </span>
+              </div>
+              <div className="flex justify-between gap-4 border-t border-border pt-3 font-black text-emerald-800">
+                <span>รับสุทธิ (ตรงสลิป)</span>
+                <span className="font-mono tabular-nums">
+                  ฿{(slipModel?.netPay ?? previewNet ?? line.netAmount).toLocaleString()}
+                </span>
               </div>
             </div>
 

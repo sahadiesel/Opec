@@ -21,9 +21,10 @@ import {
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { WorkerPayrollWhtSingleDialog } from '@/components/payroll/worker-payroll-wht-single-dialog';
 import { WorkerPayrollWhtBatchDialog } from '@/components/payroll/worker-payroll-wht-batch-dialog';
-import { PayrollRegenerateConfirmDialog } from '@/components/payroll/payroll-regenerate-confirm-dialog';
 import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
-import { buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
+import { usePoPartyLabels } from '@/hooks/use-po-party-labels';
+import { buildPayslipFromWorkerLine, normalizeIncomeSegments } from '@/lib/payroll/payslip-model';
+import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
 import { canPreviewWorkerPayrollWht } from '@/lib/payroll/payroll-worker-wht-permissions';
@@ -63,7 +64,6 @@ import {
   loadWorkerPayrollBankCsvSources,
 } from '@/lib/payroll/worker-payroll-bank-csv';
 import { useToast } from '@/hooks/use-toast';
-import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
 import {
   buildWorkerPayrollBatchLinesListPrintHtml,
   capWorkerPayrollBatchLinePrintRows,
@@ -209,10 +209,6 @@ export function PayrollBatchDetailView({
     () => linesSorted.filter((l) => confirmLineIds.has(l.id)),
     [linesSorted, confirmLineIds],
   );
-  const confirmSelectionNetTotal = useMemo(
-    () => Math.round(confirmSelectionLines.reduce((s, l) => s + safeNum(l.netAmount), 0) * 100) / 100,
-    [confirmSelectionLines],
-  );
 
   const periodRef = useMemoFirebase(() => (firestore && batch ? doc(firestore, 'payroll_periods', batch.payrollPeriodId) : null), [firestore, batch?.payrollPeriodId]);
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
@@ -279,9 +275,84 @@ export function PayrollBatchDetailView({
     }
   }, [batch?.payoutBankAccountId, batch?.id]);
 
-  const { normalBatches, normalLines } = useNormalBatchesAndLines(
+  const { normalBatches, normalLines, priorPaidRefs } = useNormalBatchesAndLines(
     batch?.payrollPeriodId,
-    batch?.batchType === 'SUPPLEMENTAL'
+    {
+      isSupplemental: batch?.batchType === 'SUPPLEMENTAL',
+      includePriorPaidForNormal: batch?.batchType !== 'SUPPLEMENTAL',
+      currentBatchId: batch?.id,
+    },
+  );
+
+  const poPartyLabelById = usePoPartyLabels(linesSorted);
+
+  /** ยอดที่แสดงบนตาราง/การ์ดสรุป — ตรงสลิป (รวมหักยอดที่ชำระไปแล้ว + รายได้หลาย PO) */
+  const slipByLineId = useMemo(() => {
+    const m = new Map<string, PayslipViewModel>();
+    if (!batch) return m;
+    const periodLabel = period?.label || batch.payrollPeriodId;
+    for (const line of linesSorted) {
+      try {
+        const normalLine = normalLines.find((l) => l.workerId === line.workerId);
+        const normalBatch = normalLine
+          ? normalBatches.find((b) => b.id === normalLine.payrollBatchId)
+          : undefined;
+        const priorForWorker = priorPaidRefs.filter((r) => r.line.workerId === line.workerId);
+        m.set(
+          line.id,
+          buildPayslipFromWorkerLine(
+            line,
+            batch,
+            periodLabel,
+            companyProfile ?? undefined,
+            normalLine,
+            normalBatch,
+            priorForWorker,
+            poPartyLabelById,
+          ),
+        );
+      } catch {
+        /* skip — ใช้ยอดบันทึกในงวด */
+      }
+    }
+    return m;
+  }, [
+    batch,
+    linesSorted,
+    period?.label,
+    normalLines,
+    normalBatches,
+    priorPaidRefs,
+    companyProfile,
+    poPartyLabelById,
+  ]);
+
+  const displayBatchTotals = useMemo(() => {
+    let gross = 0;
+    let deductions = 0;
+    let net = 0;
+    for (const line of linesSorted) {
+      const slip = slipByLineId.get(line.id);
+      gross += safeNum(slip?.grossTotal ?? line.grossAmount);
+      deductions += safeNum(slip?.deductionsTotal ?? lineDeductionsTotal(line));
+      net += safeNum(slip?.netPay ?? line.netAmount);
+    }
+    return {
+      gross: Math.round(gross * 100) / 100,
+      deductions: Math.round(deductions * 100) / 100,
+      net: Math.round(net * 100) / 100,
+    };
+  }, [linesSorted, slipByLineId]);
+
+  const confirmSelectionNetTotal = useMemo(
+    () =>
+      Math.round(
+        confirmSelectionLines.reduce((s, l) => {
+          const slip = slipByLineId.get(l.id);
+          return s + safeNum(slip?.netPay ?? l.netAmount);
+        }, 0) * 100,
+      ) / 100,
+    [confirmSelectionLines, slipByLineId],
   );
 
   const payoutAccountLabel = useMemo(() => {
@@ -340,15 +411,16 @@ export function PayrollBatchDetailView({
       else if (batch.status === 'FINANCE_PREPARED' || batch.status === 'PAYMENT_EXPORTED') {
         accountingStatusLabel = 'รอตัด';
       }
+      const slip = slipByLineId.get(line.id);
       return {
         workerName: line.workerNameSnapshot || '—',
         workerSubtitle: workerPositionLabelByWorkerId.get(line.workerId) || '—',
         paymentMethod: line.workerPaymentProfileSnapshot?.paymentMethod || 'CASH',
         exportStatusLabel: payrollLineExportStatusLabelTh(line.exportStatus),
         accountingStatusLabel,
-        grossLabel: fmtBaht(safeNum(line.grossAmount)),
-        deductionsLabel: fmtBaht(lineDeductionsTotal(line)),
-        netLabel: fmtBaht(safeNum(line.netAmount)),
+        grossLabel: fmtBaht(safeNum(slip?.grossTotal ?? line.grossAmount)),
+        deductionsLabel: fmtBaht(safeNum(slip?.deductionsTotal ?? lineDeductionsTotal(line))),
+        netLabel: fmtBaht(safeNum(slip?.netPay ?? line.netAmount)),
       };
     });
 
@@ -390,7 +462,7 @@ export function PayrollBatchDetailView({
     } finally {
       setListPrintBusy(false);
     }
-  }, [batch, linesSorted, period?.label, currentUser?.displayName, toast, workerPositionLabelByWorkerId]);
+  }, [batch, linesSorted, period?.label, currentUser?.displayName, toast, workerPositionLabelByWorkerId, slipByLineId]);
 
   const handleOfficerSubmitForPayout = useCallback(async () => {
     if (!firestore || !batch || !currentUser) return;
@@ -612,7 +684,7 @@ export function PayrollBatchDetailView({
               <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">Gross Amount</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-black text-primary">฿{safeNum(batch.grossAmount).toLocaleString()}</div>
+              <div className="text-2xl font-black text-primary">฿{displayBatchTotals.gross.toLocaleString()}</div>
             </CardContent>
           </Card>
           <Card className="border-l-8 border-l-red-500 shadow-sm">
@@ -620,7 +692,7 @@ export function PayrollBatchDetailView({
               <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">Total Deductions</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-black text-primary">฿{safeNum(batch.totalDeductions).toLocaleString()}</div>
+              <div className="text-2xl font-black text-primary">฿{displayBatchTotals.deductions.toLocaleString()}</div>
             </CardContent>
           </Card>
           <Card className="border-l-8 border-l-green-600 shadow-sm">
@@ -628,7 +700,7 @@ export function PayrollBatchDetailView({
               <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">Net Payable</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-black text-primary">฿{safeNum(batch.netAmount).toLocaleString()}</div>
+              <div className="text-2xl font-black text-primary">฿{displayBatchTotals.net.toLocaleString()}</div>
             </CardContent>
           </Card>
         </div>
@@ -942,21 +1014,7 @@ export function PayrollBatchDetailView({
                   <TableBody>
                     {linesSorted.map((line) => {
                       const periodLabel = period?.label || batch.payrollPeriodId;
-                      let slipModel: PayslipViewModel | null = null;
-                      try {
-                        const normalLine = normalLines.find((l) => l.workerId === line.workerId);
-                        const normalBatch = normalLine ? normalBatches.find((b) => b.id === normalLine.batchId) : undefined;
-                        slipModel = buildPayslipFromWorkerLine(
-                          line,
-                          batch,
-                          periodLabel,
-                          companyProfile ?? undefined,
-                          normalLine,
-                          normalBatch
-                        );
-                      } catch {
-                        slipModel = null;
-                      }
+                      const slipModel = slipByLineId.get(line.id) ?? null;
                       return (
                       <TableRow key={line.id} className="hover:bg-muted/10">
                         {showAccountingConfirm ? (
@@ -986,7 +1044,7 @@ export function PayrollBatchDetailView({
                           <div className="flex flex-col gap-0.5 min-w-0">
                             <span className="font-bold text-sm text-primary leading-snug break-words inline-flex flex-wrap items-center gap-1">
                               {line.workerNameSnapshot}
-                              {(line.incomeSegments?.length ?? 0) > 1 ? (
+                              {normalizeIncomeSegments(line.incomeSegments).length > 1 ? (
                                 <Badge variant="secondary" className="text-[9px] font-semibold shrink-0">
                                   หลาย PO
                                 </Badge>
@@ -1029,13 +1087,13 @@ export function PayrollBatchDetailView({
                           )}
                         </TableCell>
                         <TableCell className="text-right text-xs font-medium tabular-nums align-middle py-3">
-                          ฿{safeNum(line.grossAmount).toLocaleString()}
+                          ฿{safeNum(slipModel?.grossTotal ?? line.grossAmount).toLocaleString()}
                         </TableCell>
                         <TableCell className="text-right text-xs text-red-600 tabular-nums align-middle py-3">
-                          ฿{lineDeductionsTotal(line).toLocaleString()}
+                          ฿{safeNum(slipModel?.deductionsTotal ?? lineDeductionsTotal(line)).toLocaleString()}
                         </TableCell>
                         <TableCell className="text-right font-black text-primary tabular-nums align-middle py-3 text-sm">
-                          ฿{safeNum(line.netAmount).toLocaleString()}
+                          ฿{safeNum(slipModel?.netPay ?? line.netAmount).toLocaleString()}
                         </TableCell>
                         <TableCell className="text-center align-middle py-3 px-1">
                           <WorkerPayrollWhtSingleDialog
