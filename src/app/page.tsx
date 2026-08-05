@@ -28,6 +28,8 @@ import {
   Building2,
   UserPlus,
   MailQuestion,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useFirestore, useAuth, useUser, useDoc, useMemoFirebase } from '@/firebase';
 import {
@@ -108,6 +110,7 @@ export default function Home() {
   const [authSlowHint, setAuthSlowHint] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   const [showForgotPasswordDialog, setShowForgotPasswordDialog] = useState(false);
@@ -532,7 +535,26 @@ export default function Home() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password" title="Password" className="font-bold">Password</Label>
-                <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required className="h-11" />
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    className="h-11 pr-11"
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowPassword((v) => !v)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
             </CardContent>
             <CardFooter className="flex flex-col gap-1">
