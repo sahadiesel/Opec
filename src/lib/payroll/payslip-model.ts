@@ -14,7 +14,7 @@ import { formatDateThaiBE, formatOfficePayrollRunPeriodLabelThaiBE, formatYmdRan
 import { leaveSummaryLabelTh } from '@/lib/payroll/office-payroll-period-deductions';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
 import { resolvePoLineForPayrollTimesheet } from '@/lib/payroll/timesheet-labor-base-cost';
-import { isPayrollCostStandbyPackageEvent } from '@/lib/payroll/package-labor-cost';
+import { isPayrollCostStandbyPackageEvent, payrollStandbyPackageEventUnits } from '@/lib/payroll/package-labor-cost';
 import {
   computeWorkDayPackagePayslipSplit,
   payslipWorkDaySplitTotal,
@@ -163,9 +163,31 @@ function standbyDaysFromEventBreakdown(ev: Record<string, number> | undefined): 
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+function daysForStandbyLikeEarningsKey(
+  earningsKey: string,
+  eventBreakdown: Record<string, number> | undefined,
+): number {
+  const k = earningsKey.replace(/_policy$/i, '').replace(/_package$/i, '');
+  if (k === 'mobilization_day') {
+    const n = Number(eventBreakdown?.mobilization_day) || 0;
+    return n > 0 ? n : 0;
+  }
+  if (k === 'demobilization_day') {
+    const n = Number(eventBreakdown?.demobilization_day) || 0;
+    return n > 0 ? n : 0;
+  }
+  if (k === 'standby_day') {
+    const n = Number(eventBreakdown?.standby_day) || 0;
+    // legacy batches รวม M1/D1 ไว้ใน standby_day_package — นับทุกชนิดที่เกี่ยวกับแพ็ก standby
+    if (n > 0) return n;
+    return standbyDaysFromEventBreakdown(eventBreakdown);
+  }
+  return standbyDaysFromEventBreakdown(eventBreakdown);
+}
 
-function isStandbyDayPolicyKey(key: string): boolean {
-  return key.replace(/_policy$/i, '').replace(/_package$/i, '') === 'standby_day';
+function isStandbyLikePackageOrPolicyKey(key: string): boolean {
+  const k = key.replace(/_policy$/i, '').replace(/_package$/i, '');
+  return k === 'standby_day' || k === 'mobilization_day' || k === 'demobilization_day';
 }
 
 function standbyPayslipLine(
@@ -174,7 +196,7 @@ function standbyPayslipLine(
   amount: number,
   eventBreakdown: Record<string, number> | undefined,
 ): PayslipLineItem {
-  let days = standbyDaysFromEventBreakdown(eventBreakdown);
+  let days = daysForStandbyLikeEarningsKey(earningsKey, eventBreakdown);
   if (days <= 0 && amount > 0.005) days = 1;
   const title = humanizeWorkerEarningsKey(earningsKey);
   const base = labelPrefix.trim() ? `${labelPrefix.trim()} ${title}` : title;
@@ -249,7 +271,7 @@ export function buildWorkerPayslipIncomeLines(line: PayrollBatchLine): PayslipLi
         if (k === 'work_day_package' && tryPushWorkDayPackageSplitLines(lines, amt, seg.payslipWorkDaySplit, prefix)) {
           continue;
         }
-        if (isStandbyDayPolicyKey(k)) {
+        if (isStandbyLikePackageOrPolicyKey(k)) {
           lines.push(standbyPayslipLine(prefix, k, amt, seg.eventBreakdown));
           continue;
         }
@@ -273,7 +295,7 @@ export function buildWorkerPayslipIncomeLines(line: PayrollBatchLine): PayslipLi
     if (k === 'work_day_package' && tryPushWorkDayPackageSplitLines(lines, amt, line.payslipWorkDaySplit, '')) {
       continue;
     }
-    if (isStandbyDayPolicyKey(k)) {
+    if (isStandbyLikePackageOrPolicyKey(k)) {
       lines.push(standbyPayslipLine('', k, amt, line.eventBreakdown));
       continue;
     }
@@ -311,6 +333,10 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
 
   let standbyDays = 0;
   let standbyAmount = 0;
+  let mobDays = 0;
+  let mobAmount = 0;
+  let demobDays = 0;
+  let demobAmount = 0;
   const policyAmounts: Record<string, number> = {};
 
   for (const ts of timesheets) {
@@ -329,8 +355,17 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
     if (r.gross <= 0) continue;
 
     if (isPayrollCostStandbyPackageEvent(ts.eventType) && r.usedPackageLaborCost) {
-      standbyDays += Math.max(0, Number(ts.standbyUnits ?? 1));
-      standbyAmount += r.gross;
+      const units = payrollStandbyPackageEventUnits(ts);
+      if (ts.eventType === 'mobilization_day') {
+        mobDays += units;
+        mobAmount += r.gross;
+      } else if (ts.eventType === 'demobilization_day') {
+        demobDays += units;
+        demobAmount += r.gross;
+      } else {
+        standbyDays += units;
+        standbyAmount += r.gross;
+      }
       continue;
     }
     if (ts.eventType === 'work_day' && r.usedPackageLaborCost) {
@@ -367,11 +402,23 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
       standbyPayslipLine('', 'standby_day', round2(standbyAmount), { standby_day: standbyDays }),
     );
   }
+  if (mobDays > 0 && mobAmount > 0.005) {
+    lines.push(
+      standbyPayslipLine('', 'mobilization_day', round2(mobAmount), { mobilization_day: mobDays }),
+    );
+  }
+  if (demobDays > 0 && demobAmount > 0.005) {
+    lines.push(
+      standbyPayslipLine('', 'demobilization_day', round2(demobAmount), {
+        demobilization_day: demobDays,
+      }),
+    );
+  }
 
   for (const k of Object.keys(policyAmounts).sort((a, b) => a.localeCompare(b))) {
     const amt = round2(policyAmounts[k]);
     if (Math.abs(amt) < 0.005) continue;
-    if (isStandbyDayPolicyKey(k)) {
+    if (isStandbyLikePackageOrPolicyKey(k)) {
       lines.push(standbyPayslipLine('', k, amt, line.eventBreakdown));
     } else {
       lines.push({ label: humanizeWorkerEarningsKey(k), amount: amt });

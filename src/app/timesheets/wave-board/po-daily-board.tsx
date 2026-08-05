@@ -113,6 +113,8 @@ import {
 import {
   defaultDemobDayCharges,
   defaultPackageHoursForWorkMode,
+  defaultChargesForEventType,
+  buildTimesheetFieldsFromMobCharges,
 } from '@/lib/ops/mob-day-charge';
 import { buildMobDayChargeBahtPreviewRates } from '@/lib/ops/mob-day-charge-baht-preview';
 import { MobDayChargeSideEditors } from '@/components/timesheet/mob-day-charge-side-editors';
@@ -905,7 +907,25 @@ export function PoDailyBoardCard({
           nextHours = nextHours > 0 ? nextHours : dft;
         }
         if (eventType !== 'work_day') nextOt = 0;
-        updated[asgn.id] = { ...cur, eventType, normalHours: nextHours, ot15Hours: nextOt };
+        const chargePair = defaultChargesForEventType(eventType, asgn.workMode, nextHours);
+        const chargeFields = chargePair
+          ? (() => {
+              const built = buildTimesheetFieldsFromMobCharges(
+                chargePair.billing,
+                chargePair.payroll,
+                defaultPackageHoursForWorkMode(asgn.workMode),
+              );
+              const { eventType: _e, normalHours: _n, ...rest } = built;
+              return rest;
+            })()
+          : {};
+        updated[asgn.id] = {
+          ...cur,
+          eventType,
+          normalHours: nextHours,
+          ot15Hours: nextOt,
+          ...chargeFields,
+        };
       } else {
         updated[asgn.id] = { ...cur, [field]: value };
       }
@@ -1928,9 +1948,31 @@ export function PoDailyBoardCard({
                                   nextHours = dft;
                                 }
                                 if (eventType !== 'work_day') nextOt = 0;
+                                const chargePair = defaultChargesForEventType(
+                                  eventType,
+                                  asgn.workMode,
+                                  nextHours,
+                                );
+                                const chargeFields = chargePair
+                                  ? (() => {
+                                      const built = buildTimesheetFieldsFromMobCharges(
+                                        chargePair.billing,
+                                        chargePair.payroll,
+                                        defaultPackageHoursForWorkMode(asgn.workMode),
+                                      );
+                                      const { eventType: _e, normalHours: _n, ...rest } = built;
+                                      return rest;
+                                    })()
+                                  : {};
                                 return {
                                   ...prev,
-                                  [asgn.id]: { ...cur, eventType, normalHours: nextHours, ot15Hours: nextOt },
+                                  [asgn.id]: {
+                                    ...cur,
+                                    eventType,
+                                    normalHours: nextHours,
+                                    ot15Hours: nextOt,
+                                    ...chargeFields,
+                                  },
                                 };
                               });
                             }}

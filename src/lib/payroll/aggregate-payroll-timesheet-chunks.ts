@@ -5,7 +5,7 @@ import {
   type PayrollPoLineMaps,
   resolvePoLineForPayrollTimesheet,
 } from '@/lib/payroll/timesheet-labor-base-cost';
-import { isPayrollCostStandbyPackageEvent } from '@/lib/payroll/package-labor-cost';
+import { isPayrollCostStandbyPackageEvent, payrollStandbyPackageEventUnits } from '@/lib/payroll/package-labor-cost';
 
 export type PayrollTimesheetAggChunk = {
   gross: number;
@@ -61,13 +61,18 @@ export function aggregateDailyTimesheetsPayrollChunk(
       usedContractFallback = true;
     }
     gross += r.gross;
-    const eventDelta =
-      isPayrollCostStandbyPackageEvent(ts.eventType)
-        ? Math.max(0, Number(ts.standbyUnits ?? 1))
-        : 1;
+    const eventDelta = isPayrollCostStandbyPackageEvent(ts.eventType)
+      ? payrollStandbyPackageEventUnits(ts)
+      : 1;
     eventBreakdown[ts.eventType] = (eventBreakdown[ts.eventType] || 0) + eventDelta;
     if (r.usedPackageLaborCost) {
-      if (isPayrollCostStandbyPackageEvent(ts.eventType)) {
+      if (ts.eventType === 'mobilization_day') {
+        earningsBreakdown.mobilization_day_package =
+          (earningsBreakdown.mobilization_day_package || 0) + r.gross;
+      } else if (ts.eventType === 'demobilization_day') {
+        earningsBreakdown.demobilization_day_package =
+          (earningsBreakdown.demobilization_day_package || 0) + r.gross;
+      } else if (ts.eventType === 'standby_day') {
         earningsBreakdown.standby_day_package =
           (earningsBreakdown.standby_day_package || 0) + r.gross;
       } else {

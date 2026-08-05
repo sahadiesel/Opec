@@ -184,13 +184,19 @@ export function shouldDeleteStalePoActiveAutoDailyRow(
 ): boolean {
   if (isYmdInRemobGapBetweenCycles(a, dateYmd)) return true;
   if (isYmdAfterSiteEndAwaitingRemob(a, dateYmd)) return true;
-  const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
   const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
-  /** รอบเก่าที่ปิดแล้ว (≤ mobEnd) — เก็บประวัติหลายรอบ mob/demob ไว้ อย่าลบด้วย snapshot รอบล่าสุด */
+  const segStart = resolveMobSegmentStartYmd(a);
+  /**
+   * รอบเก่าข้ามเดือน (≤ mobEnd) — เก็บประวัติ
+   * remob ในเดือนเดียวกัน: วันต้นเดือน–ก่อน M1/SB รอบใหม่มักเป็น W เติมผิด — ตัดทิ้ง
+   * (สอดคล้องกริดสรุปรายเดือนที่ว่างถึงก่อน M1)
+   */
   if (assignmentHasSplitPriorAndNewCycleOnDoc(a) && /^\d{4}-\d{2}-\d{2}$/.test(mobEnd) && dateYmd <= mobEnd) {
+    if (segStart && dateYmd.slice(0, 7) === segStart.slice(0, 7)) return true;
     return false;
   }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(mobStart) && dateYmd < mobStart) return true;
+  /** ใช้วันแรกของรอบ (SB หรือเริ่มงาน) — อย่าใช้แค่ mobWorkingStartDate จะไปตัดวัน M1/SB ก่อนเริ่มงาน */
+  if (segStart && dateYmd < segStart) return true;
   return false;
 }
 

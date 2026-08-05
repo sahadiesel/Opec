@@ -67,7 +67,7 @@ import {
 import { THAI_PIT_STANDARD_MARGINAL_RATE_PERCENTS } from '@/lib/hr/pit-thailand';
 import { CASH_ADVANCE_PAYROLL_DEDUCTION_KEY } from '@/lib/payroll/cash-advance-recovery';
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
-import { loadWorkerPayableTimesheetsForPeriod } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
+import { loadWorkerTimesheetsForPayrollLine } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
 import {
   Select,
   SelectContent,
@@ -148,6 +148,7 @@ function earningsTotalForEventType(line: PayrollBatchLine, eventType: string): n
   const eb = line.earningsBreakdown || {};
   let n = Number(eb[eventType]) || 0;
   n += Number(eb[`${eventType}_policy`]) || 0;
+  n += Number(eb[`${eventType}_package`]) || 0;
   if (eventType === 'work_day') {
     n += Number((eb as { work_day_package?: number }).work_day_package) || 0;
   }
@@ -417,38 +418,17 @@ export default function PayrollBatchWorkerLinePage({
     void (async () => {
       try {
         /**
-         * ยึดใบงานที่ batch ใช้ตอนสร้าง (`sourceTimesheetIds`) เป็นหลัก
-         * — หลังสร้างงวดใบงานมัก LOCKED / เคลียร์ readyForPayroll ทำให้ตัวกรอง
-         * `loadWorkerPayableTimesheetsForPeriod` ได้แค่บางวัน (เช่น 4 วัน) ทั้งที่ยอดใน batch
-         * มาจากทั้งเดือน → หน้า detail แสดง Gross ไม่ตรง Settlement Lines
+         * โหลดตาม timesheet ปัจจุบัน + กฎ payable (เดียวกับปุ่มคำนวณใหม่)
+         * — ไม่ยึด sourceTimesheetIds อย่างเดียว เพราะอาจค้างรอบ mob เก่า (เช่น 1–4/07)
+         *   ทั้งที่สรุปรายเดือนเริ่ม M1 รอบใหม่แล้ว
          */
-        const uniqueTids = [...new Set((line.sourceTimesheetIds ?? []).filter(Boolean))];
-        let rows: DailyTimesheet[] = [];
-
-        if (uniqueTids.length > 0) {
-          const snaps = await Promise.all(
-            uniqueTids.map((tid) => getDoc(doc(firestore, 'daily_timesheets', tid))),
-          );
-          for (const s of snaps) {
-            if (s.exists()) rows.push({ id: s.id, ...(s.data() as object) } as DailyTimesheet);
-          }
-          rows = rows.filter((ts) => {
-            const d = String(ts.date || '').slice(0, 10);
-            return d >= periodStart && d <= periodEnd && ts.workerId === workerId;
-          });
-        }
-
-        if (rows.length === 0) {
-          rows = await loadWorkerPayableTimesheetsForPeriod(
-            firestore,
-            workerId,
-            periodStart,
-            periodEnd,
-            { includePayrollLocked: true },
-          );
-        }
-
-        rows.sort((a, b) => a.date.localeCompare(b.date));
+        const rows = await loadWorkerTimesheetsForPayrollLine(
+          firestore,
+          workerId,
+          periodStart,
+          periodEnd,
+          line.sourceTimesheetIds,
+        );
         if (!cancelled) setTimesheets(normalizeTimesheetsForPayrollLine(rows));
       } catch {
         if (!cancelled) setTimesheets([]);
@@ -945,6 +925,10 @@ export default function PayrollBatchWorkerLinePage({
                 คอลัมน์ <strong>ยอด (คำนวณ)</strong> ใช้สูตรเดียวกับการสร้าง Payroll Batch (แพ็กต้นทุน PO + ตัวคูณจากสัญญา)
                 — ถ้าโหลดบริบทไม่ครบจะใช้ค่าเฉลี่ยจาก snapshot ในงวด
               </p>
+              <p className="text-xs text-muted-foreground">
+                แหล่งข้อมูลแต่ละแถว = เอกสาร <span className="font-mono">daily_timesheets</span> ของลูกจ้างในงวด
+                (รวมใบที่ผูกใน batch) — ไม่ได้ดึงจากช่องว่างบนกระดาน/สรุปรายเดือนโดยตรง
+              </p>
               {dailyDisplay.snapshotMismatch && (
                 <p className="text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 text-xs">
                   ผลรวมรายวันตามสูตรปัจจุบัน (฿{dailyDisplay.total.toLocaleString()}) ไม่เท่ากับที่บันทึกในงวด (฿
@@ -971,7 +955,7 @@ export default function PayrollBatchWorkerLinePage({
                     <TableHead className="text-right">ชม.ปกติ</TableHead>
                     <TableHead className="text-right">OT / อื่นๆ</TableHead>
                     <TableHead className="text-right tabular-nums">ยอด (คำนวณ)</TableHead>
-                    <TableHead>หมายเหตุ</TableHead>
+                    <TableHead>แหล่ง / หมายเหตุ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1023,7 +1007,18 @@ export default function PayrollBatchWorkerLinePage({
                             '—'
                           )}
                         </TableCell>
-                        <TableCell className="text-xs max-w-[200px] truncate">{ts.remark || '—'}</TableCell>
+                        <TableCell className="text-xs max-w-[280px]">
+                          <div className="font-mono text-[10px] text-muted-foreground break-all">
+                            PO {(ts.purchaseOrderId || '—').slice(0, 12)}
+                            {ts.purchaseOrderId && ts.purchaseOrderId.length > 12 ? '…' : ''}
+                            {' · '}
+                            asg {(ts.assignmentId || '—').slice(0, 10)}
+                            {ts.assignmentId && ts.assignmentId.length > 10 ? '…' : ''}
+                          </div>
+                          <div className="truncate mt-0.5" title={ts.remark || undefined}>
+                            {ts.remark || '—'}
+                          </div>
+                        </TableCell>
                       </TableRow>
                     );
                   })}
@@ -1493,8 +1488,9 @@ export default function PayrollBatchWorkerLinePage({
             <AlertDialogDescription asChild>
               <div className="text-sm text-muted-foreground space-y-2">
                 <p>
-                  ระบบจะดึงใบงานรายวันตาม <span className="font-mono">sourceTimesheetIds</span> แล้วคำนวณ Gross /
-                  ประกันสังคม / ภงด. ชุดใหม่ตามสูตรและ HR settings <strong className="text-foreground">ปัจจุบัน</strong>
+                  ระบบจะดึงใบงานรายวันที่จ่ายได้ตาม timesheet ปัจจุบัน (ตัดรอบ mob เก่าที่ค้างหลัง remob)
+                  แล้วคำนวณ Gross / ประกันสังคม / ภงด. ชุดใหม่ตามสูตรและ HR settings{' '}
+                  <strong className="text-foreground">ปัจจุบัน</strong> — อัปเดตชุดใบอ้างอิงในงวดให้ตรงด้วย
                 </p>
                 <p>
                   <strong className="text-foreground">จะคงไว้:</strong> รายการเบี้ยเลี้ยงและรายได้เพิ่ม รายการหักพิเศษ การตั้งค่า ภงด.

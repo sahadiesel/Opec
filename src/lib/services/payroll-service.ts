@@ -116,7 +116,10 @@ import {
   fetchWorkerCashAdvancesPendingSalaryRecovery,
 } from '@/lib/payroll/cash-advance-recovery';
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
-import { filterTimesheetsForWorkerPayrollAsync, loadWorkerPayableTimesheetsForPeriod } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
+import {
+  filterTimesheetsForWorkerPayrollAsync,
+  loadWorkerTimesheetsForPayrollLine,
+} from '@/lib/payroll/filter-timesheets-for-worker-payroll';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
 import { 
   markRetroAdjustmentsApplied, 
@@ -1522,7 +1525,8 @@ export class PayrollService {
   }
 
   /**
-   * คำนวณใหม่เฉพาะคนงานหนึ่งคนจากใบงานที่ผูกไว้ (`sourceTimesheetIds`) — **คง** เบี้ยเลี้ยง/หักพิเศษ/ภงด. และยอดหักเบิกล่วงหน้าที่บันทึกแล้ว
+   * คำนวณใหม่เฉพาะคนงานหนึ่งคนจากใบงานปัจจุบันที่จ่ายได้ (สอดคล้อง timesheet / remob)
+   * — **คง** เบี้ยเลี้ยง/หักพิเศษ/ภงด. และยอดหักเบิกล่วงหน้าที่บันทึกแล้ว
    * ไม่แตะบรรทัดคนอื่น — ใช้แทน Regenerate ทั้ง batch เมื่อแก้สูตร/ซ้ำวันแล้วไม่ต้องเสียการปรับยอดทุกคน
    */
   async recalculateWorkerPayrollLinePreserveHrAdjustments(
@@ -1573,26 +1577,17 @@ export class PayrollService {
       throw new Error('ไม่พบช่วงวันที่งวด — ไม่สามารถคำนวณใหม่ได้');
     }
 
-    let loaded = await loadWorkerPayableTimesheetsForPeriod(
+    /**
+     * โหลดตาม timesheet ปัจจุบัน + กฎ payable (ตัดรอบ mob เก่าที่ค้างใน sourceTimesheetIds)
+     * — ไม่ยึด source อย่างเดียว เพราะหลัง remob กริดสรุปรายเดือนอาจเริ่ม M1 ใหม่แล้ว
+     */
+    const loaded = await loadWorkerTimesheetsForPayrollLine(
       this.db,
       workerId,
       periodStart,
       periodEnd,
-      { includePayrollLocked: true },
+      rawIds,
     );
-
-    if (loaded.length === 0 && rawIds.length > 0) {
-      const fallback: DailyTimesheet[] = [];
-      for (const tid of rawIds) {
-        const s = await getDoc(doc(this.db, 'daily_timesheets', tid));
-        if (!s.exists()) continue;
-        const ts = { id: s.id, ...(s.data() as object) } as DailyTimesheet;
-        const d = String(ts.date || '').slice(0, 10);
-        if (d < periodStart || d > periodEnd) continue;
-        fallback.push(ts);
-      }
-      loaded = await filterTimesheetsForWorkerPayrollAsync(this.db, fallback);
-    }
 
     if (loaded.length === 0) {
       throw new Error(

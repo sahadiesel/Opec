@@ -49,6 +49,25 @@ export function isPayrollCostStandbyPackageEvent(
   );
 }
 
+/**
+ * จำนวนหน่วยที่นับใน eventBreakdown / สลิป สำหรับ SB / M1 / D1
+ * — ห้ามใช้ standbyUnits กับ M1/D1 (แถว demob มักตั้ง standbyUnits=0 ทำให้นับวันหาย)
+ */
+export function payrollStandbyPackageEventUnits(
+  ts: Pick<DailyTimesheet, 'eventType' | 'standbyUnits' | 'mobUnits' | 'demobUnits'>,
+): number {
+  if (ts.eventType === 'mobilization_day') {
+    return Math.max(1, Number(ts.mobUnits ?? 1));
+  }
+  if (ts.eventType === 'demobilization_day') {
+    return Math.max(1, Number(ts.demobUnits ?? 1));
+  }
+  if (ts.eventType === 'standby_day') {
+    return Math.max(1, Number(ts.standbyUnits ?? 1));
+  }
+  return 1;
+}
+
 /** ชม.ที่จ่าย standby / M1 / D1 — ใช้ normalHours ที่ลงไว้; ถ้าไม่มี ใช้ชม.ในแพ็ก PO (12 หรือ 8) × standbyUnits */
 export function resolveStandbyPaidHours(
   ts: Pick<DailyTimesheet, 'normalHours' | 'standbyUnits'>,

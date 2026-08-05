@@ -1186,9 +1186,14 @@ export default function WaveMonthTimesheetSummaryPage() {
     for (const tr of tableRows) {
       const { wave, rw, rosterAssignment } = tr;
       const key = `${wave.id}|${rw.workerId}|${rosterAssignment.id}`;
-      /** ทุก mobilization ใน wave นี้ — ไม่ใช่แค่แถวที่ pickRoster เลือก (กันมีหลาย doc ต่อคน) */
+      /** mobilization อื่นของคน+PO เดียวกัน (รวมคนละ wave) — จับคู่หลัง remob / เอกสารเก่า */
       const alternateMobIds = mobAssignments
-        .filter((m) => m.waveId === wave.id && m.workerId === rw.workerId && m.id !== rosterAssignment.id)
+        .filter(
+          (m) =>
+            m.workerId === rw.workerId &&
+            m.id !== rosterAssignment.id &&
+            (m.poId || '').trim() === (rosterAssignment.poId || '').trim(),
+        )
         .map((m) => m.id);
       m.set(
         key,
@@ -1216,7 +1221,12 @@ export default function WaveMonthTimesheetSummaryPage() {
       const { wave, rw, rosterAssignment } = tr;
       const key = `${wave.id}|${rw.workerId}|${rosterAssignment.id}`;
       const alternateMobIds = mobAssignments
-        .filter((m) => m.waveId === wave.id && m.workerId === rw.workerId && m.id !== rosterAssignment.id)
+        .filter(
+          (m) =>
+            m.workerId === rw.workerId &&
+            m.id !== rosterAssignment.id &&
+            (m.poId || '').trim() === (rosterAssignment.poId || '').trim(),
+        )
         .map((m) => m.id);
       m.set(
         key,
@@ -1244,7 +1254,12 @@ export default function WaveMonthTimesheetSummaryPage() {
       const { wave, rw, rosterAssignment } = tr;
       const key = `${wave.id}|${rw.workerId}|${rosterAssignment.id}`;
       const alternateMobIds = mobAssignments
-        .filter((mob) => mob.waveId === wave.id && mob.workerId === rw.workerId && mob.id !== rosterAssignment.id)
+        .filter(
+          (mob) =>
+            mob.workerId === rw.workerId &&
+            mob.id !== rosterAssignment.id &&
+            (mob.poId || '').trim() === (rosterAssignment.poId || '').trim(),
+        )
         .map((mob) => mob.id);
       let sum = sumOtHoursForWaveMonthRow(
         rosterAssignment,
@@ -1278,8 +1293,8 @@ export default function WaveMonthTimesheetSummaryPage() {
   }, [tableRows, days, sheetsByWaveWorker, monthSheetsForOpenPos, mobAssignments, retroByTimesheetId]);
 
   /**
-   * คนละหนึ่งแถวในงวดเดือน: ถ้าพนักงานถูกดึงจากหลาย wave / หลาย mobilization ที่ชี้ชุดลงเวลาเดียวกัน
-   * (หรือมีหลายเอกสาร daily ซ้ำความหมาย) — เลือกแถวเดียวตามคะแนนจับคู่กับข้อมูลจริง + wave ที่ยังเปิดอยู่
+   * คนละหนึ่งแถวต่อ PO ในงวดเดือน: หลาย wave/mobilization ของ PO เดียวกันเลือกแถวเดียว
+   * — คนที่อยู่หลาย PO ในชุดเดียวกันต้องยังเห็นแยกแถว (กันวันของ PO อื่นหายหลัง dedupe)
    */
   const dedupedTableRows = useMemo(() => {
     type Row = (typeof tableRows)[number];
@@ -1293,7 +1308,12 @@ export default function WaveMonthTimesheetSummaryPage() {
     const scoreRow = (tr: Row): Scored => {
       const { wave, rw, rosterAssignment } = tr;
       const alternateMobIds = mobAssignments
-        .filter((m) => m.waveId === wave.id && m.workerId === rw.workerId && m.id !== rosterAssignment.id)
+        .filter(
+          (m) =>
+            m.workerId === rw.workerId &&
+            m.id !== rosterAssignment.id &&
+            (m.poId || '').trim() === (rosterAssignment.poId || '').trim(),
+        )
         .map((m) => m.id);
       const scope = poTimesheetScopeId(rosterAssignment.poId);
       const poId = (rosterAssignment.poId || '').trim();
@@ -1338,14 +1358,20 @@ export default function WaveMonthTimesheetSummaryPage() {
     };
 
     const scored = tableRows.map(scoreRow);
-    const bestByWorker = new Map<string, Scored>();
+    /** คนละหนึ่งแถวต่อ PO — ชุด PO Active หลายใบต้องไม่หุบวันของ PO อื่นหาย */
+    const bestByWorkerPo = new Map<string, Scored>();
     for (const s of scored) {
-      const wid = s.tr.rw.workerId;
-      const cur = bestByWorker.get(wid);
-      if (!cur || better(s, cur)) bestByWorker.set(wid, s);
+      const poId = (s.tr.rosterAssignment.poId || s.tr.po?.id || '').trim();
+      const key = `${s.tr.rw.workerId}\0${poId}`;
+      const cur = bestByWorkerPo.get(key);
+      if (!cur || better(s, cur)) bestByWorkerPo.set(key, s);
     }
 
-    const out = scored.filter((s) => bestByWorker.get(s.tr.rw.workerId) === s).map((s) => s.tr);
+    const out = scored.filter((s) => {
+      const poId = (s.tr.rosterAssignment.poId || s.tr.po?.id || '').trim();
+      const key = `${s.tr.rw.workerId}\0${poId}`;
+      return bestByWorkerPo.get(key) === s;
+    }).map((s) => s.tr);
     out.sort((a, b) => {
       const c = a.rw.name.localeCompare(b.rw.name, 'th', { sensitivity: 'base', numeric: true });
       if (c !== 0) return c;
@@ -1612,7 +1638,12 @@ export default function WaveMonthTimesheetSummaryPage() {
       const printRows = dedupedTableRows.map((tr) => {
         const { wave, rw, rosterAssignment } = tr;
         const alternateMobIds = mobAssignments
-          .filter((m) => m.waveId === wave.id && m.workerId === rw.workerId && m.id !== rosterAssignment.id)
+          .filter(
+            (m) =>
+              m.workerId === rw.workerId &&
+              m.id !== rosterAssignment.id &&
+              (m.poId || '').trim() === (rosterAssignment.poId || '').trim(),
+          )
           .map((m) => m.id);
         const dayCells = days.map((d) => {
           const tsRaw = resolveTimesheetForWaveMonthCell(
@@ -2674,7 +2705,12 @@ export default function WaveMonthTimesheetSummaryPage() {
                           const monthReview = reviewByWaveId.get(wave.id);
                           const waveMobs = eligibleMobsByWaveId.get(wave.id) ?? [];
                           const alternateMobIds = mobAssignments
-                            .filter((m) => m.waveId === wave.id && m.workerId === rw.workerId && m.id !== rosterAssignment.id)
+                            .filter(
+                              (m) =>
+                                m.workerId === rw.workerId &&
+                                m.id !== rosterAssignment.id &&
+                                (m.poId || '').trim() === (rosterAssignment.poId || '').trim(),
+                            )
                             .map((m) => m.id);
                           const rowWorkerMonthWorkTotal =
                             rowWorkHoursMonthTotalByKey.get(`${wave.id}|${rw.workerId}|${rosterAssignment.id}`) ?? 0;

@@ -108,6 +108,35 @@ export function mobDayChargeKindToEventType(kind: MobDayChargeKind): RateConditi
   return 'standby_day';
 }
 
+/** ค่า charge มาตรฐานให้ตรง eventType — ใช้ตอนเปลี่ยนประเภทวันบนกระดาน */
+export function defaultChargesForEventType(
+  eventType: RateConditionEventType | string | undefined | null,
+  workMode?: JobMode | string | null,
+  hours?: number | null,
+): { billing: MobDayChargeSpec; payroll: MobDayChargeSpec } | null {
+  const pkg = defaultPackageHoursForWorkMode(workMode);
+  const h = Number(hours);
+  const hoursOrPkg = Number.isFinite(h) && h > 0 ? Math.min(24, h) : pkg;
+  const et = String(eventType || '');
+  if (et === 'work_day') {
+    const spec = { kind: 'WORKING' as const, hours: hoursOrPkg };
+    return { billing: spec, payroll: spec };
+  }
+  if (et === 'standby_day') {
+    const spec = { kind: 'STANDBY' as const, hours: hoursOrPkg > 0 ? hoursOrPkg : 8 };
+    return { billing: spec, payroll: spec };
+  }
+  if (et === 'mobilization_day') {
+    const spec = { kind: 'M1' as const, hours: hoursOrPkg };
+    return { billing: spec, payroll: spec };
+  }
+  if (et === 'demobilization_day') {
+    const spec = { kind: 'D1' as const, hours: hoursOrPkg };
+    return { billing: spec, payroll: spec };
+  }
+  return null;
+}
+
 /** รหัสบนกระดาน — SB / W / MO / D1 */
 export function mobDayChargeStatusCode(
   kind: MobDayChargeKind | string | undefined | null,
@@ -152,16 +181,60 @@ export function resolveTimesheetBillingCharge(
   >,
 ): MobDayChargeSpec {
   const pkg = defaultPackageHoursForWorkMode(ts.workMode);
+  const et = String(ts.eventType || '');
+  const hoursFromTs = (): number => {
+    const h = Number(ts.mobBillingChargeHours ?? ts.normalHours);
+    return Number.isFinite(h) && h > 0 ? Math.min(24, h) : pkg;
+  };
+
+  /** เหมือนกฎฝั่ง payroll — ห้ามเชื่อ WORKING ค้างบนวัน D1/M1 */
+  if (et === 'demobilization_day') {
+    const kind = ts.mobBillingChargeKind;
+    if (kind === 'D1' || kind === 'STANDBY') {
+      return normalizeMobDayChargeSpec(
+        {
+          kind,
+          hours: ts.mobBillingChargeHours ?? ts.normalHours,
+          m1AmountOverride: ts.mobBillingM1AmountOverride,
+        },
+        pkg,
+      );
+    }
+    return normalizeMobDayChargeSpec(
+      {
+        kind: 'D1',
+        hours: hoursFromTs(),
+        m1AmountOverride: ts.mobBillingM1AmountOverride,
+      },
+      pkg,
+    );
+  }
+  if (et === 'mobilization_day') {
+    const kind = ts.mobBillingChargeKind;
+    if (kind === 'M1' || kind === 'STANDBY') {
+      return normalizeMobDayChargeSpec(
+        {
+          kind,
+          hours: ts.mobBillingChargeHours ?? ts.normalHours,
+          m1AmountOverride: ts.mobBillingM1AmountOverride,
+        },
+        pkg,
+      );
+    }
+    return normalizeMobDayChargeSpec(
+      {
+        kind: 'M1',
+        hours: hoursFromTs(),
+        m1AmountOverride: ts.mobBillingM1AmountOverride,
+      },
+      pkg,
+    );
+  }
+
   if (ts.mobBillingChargeKind) {
-    const et = String(ts.eventType || '');
-    /**
-     * วัน Mob-like อนุญาตให้บิลคนละชนิดกับ eventType (เช่น เซลล์ SB แต่บิล WORKING/M1)
-     * วัน work_day ถ้า charge ค้างจากรอบ SB เก่า — ไม่เชื่อ ใช้ eventType
-     */
-    const isMobLikeEvent =
-      et === 'standby_day' || et === 'mobilization_day' || et === 'demobilization_day';
+    const isStandbyEvent = et === 'standby_day';
     const chargeMatchesEvent = !et || mobDayChargeKindToEventType(ts.mobBillingChargeKind) === et;
-    if (isMobLikeEvent || chargeMatchesEvent) {
+    if (isStandbyEvent || chargeMatchesEvent) {
       return normalizeMobDayChargeSpec(
         {
           kind: ts.mobBillingChargeKind,
@@ -171,14 +244,6 @@ export function resolveTimesheetBillingCharge(
         pkg,
       );
     }
-  }
-  if (ts.eventType === 'mobilization_day') {
-    const h = Number(ts.normalHours);
-    return { kind: 'M1', hours: Number.isFinite(h) && h > 0 ? h : pkg };
-  }
-  if (ts.eventType === 'demobilization_day') {
-    const h = Number(ts.normalHours);
-    return { kind: 'D1', hours: Number.isFinite(h) && h > 0 ? h : pkg };
   }
   if (ts.eventType === 'work_day') {
     const h = Number(ts.normalHours);
@@ -204,16 +269,66 @@ export function resolveTimesheetPayrollCharge(
   >,
 ): MobDayChargeSpec {
   const pkg = defaultPackageHoursForWorkMode(ts.workMode);
+  const et = String(ts.eventType || '');
+  const hoursFromTs = (): number => {
+    const h = Number(ts.mobPayrollChargeHours ?? ts.normalHours);
+    return Number.isFinite(h) && h > 0 ? Math.min(24, h) : pkg;
+  };
+
+  /**
+   * demobilization / mobilization: กระดานมักเปลี่ยนแค่ eventType โดยไม่เขียน charge ใหม่
+   * — ห้ามเชื่อ WORKING ค้างจากวัน work_day (จะจ่ายเต็มแพ็กแทน D1/M1 ×0.5)
+   */
+  if (et === 'demobilization_day') {
+    const kind = ts.mobPayrollChargeKind;
+    if (kind === 'D1' || kind === 'STANDBY') {
+      return normalizeMobDayChargeSpec(
+        {
+          kind,
+          hours: ts.mobPayrollChargeHours ?? ts.normalHours,
+          m1AmountOverride: ts.mobPayrollM1AmountOverride,
+        },
+        pkg,
+      );
+    }
+    return normalizeMobDayChargeSpec(
+      {
+        kind: 'D1',
+        hours: hoursFromTs(),
+        // ไม่พก override ค้างจากวัน WORKING เต็มวัน
+      },
+      pkg,
+    );
+  }
+  if (et === 'mobilization_day') {
+    const kind = ts.mobPayrollChargeKind;
+    if (kind === 'M1' || kind === 'STANDBY') {
+      return normalizeMobDayChargeSpec(
+        {
+          kind,
+          hours: ts.mobPayrollChargeHours ?? ts.normalHours,
+          m1AmountOverride: ts.mobPayrollM1AmountOverride,
+        },
+        pkg,
+      );
+    }
+    return normalizeMobDayChargeSpec(
+      {
+        kind: 'M1',
+        hours: hoursFromTs(),
+      },
+      pkg,
+    );
+  }
+
   if (ts.mobPayrollChargeKind) {
-    const et = String(ts.eventType || '');
     /**
-     * วัน Mob-like อนุญาตให้จ่ายคนละชนิดกับ eventType (เช่น เซลล์ SB แต่จ่าย WORKING)
+     * วัน Mob-like อื่น (standby): อนุญาตให้จ่ายคนละชนิดกับ eventType ได้
      * วัน work_day ถ้า charge ค้างจากรอบ SB เก่า — ไม่เชื่อ ใช้ eventType
      */
-    const isMobLikeEvent =
-      et === 'standby_day' || et === 'mobilization_day' || et === 'demobilization_day';
+    const isStandbyEvent = et === 'standby_day';
     const chargeMatchesEvent = !et || mobDayChargeKindToEventType(ts.mobPayrollChargeKind) === et;
-    if (isMobLikeEvent || chargeMatchesEvent) {
+    if (isStandbyEvent || chargeMatchesEvent) {
       return normalizeMobDayChargeSpec(
         {
           kind: ts.mobPayrollChargeKind,
@@ -223,14 +338,6 @@ export function resolveTimesheetPayrollCharge(
         pkg,
       );
     }
-  }
-  if (ts.eventType === 'mobilization_day') {
-    const h = Number(ts.normalHours);
-    return { kind: 'M1', hours: Number.isFinite(h) && h > 0 ? h : pkg };
-  }
-  if (ts.eventType === 'demobilization_day') {
-    const h = Number(ts.normalHours);
-    return { kind: 'D1', hours: Number.isFinite(h) && h > 0 ? h : pkg };
   }
   if (ts.eventType === 'work_day') {
     const h = Number(ts.normalHours);

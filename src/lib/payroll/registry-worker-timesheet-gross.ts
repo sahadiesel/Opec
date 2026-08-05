@@ -82,7 +82,24 @@ function resolveStandbyLikeCostMultiplier(input: {
   }
 
   if (flat != null && flat > 0 && working != null && working > 0) {
-    return flat / working;
+    const ratio = flat / working;
+    /**
+     * M1/D1 ที่เท่า Working (≈1.0x) มักเป็นค่าค้างผิดจากวันทำงานเต็มวัน
+     * — UI default คือ 0.5x; ถ้า M1 มีสัดส่วน ~0.5 ให้ยึดค่านั้นกับ D1 ด้วย
+     */
+    const isTrip =
+      input.eventType === 'mobilization_day' || input.eventType === 'demobilization_day';
+    if (isTrip && Math.abs(ratio - 1) < 0.02) {
+      const m1Flat =
+        input.mode === 'offshore' ? resolveMatrixCostRate(rate, 'offshore_m1_per_trip') : null;
+      const m1Ratio =
+        m1Flat != null && m1Flat > 0 && working > 0 ? m1Flat / working : null;
+      if (m1Ratio != null && m1Ratio > 0.05 && Math.abs(m1Ratio - 1) >= 0.02) {
+        return m1Ratio;
+      }
+      return policyMult;
+    }
+    return ratio;
   }
   return policyMult;
 }
@@ -100,7 +117,7 @@ function resolvePolicyFallbackCost(
     case 'mobilization_day':
       return 0;
     case 'demobilization_day':
-      return baseCost * Number(p.demobilization ?? 1) * Number(ts.demobUnits ?? 1);
+      return baseCost * Number(p.standby ?? 0.5) * Number(ts.demobUnits ?? 1);
     case 'travel_day':
       return baseCost * Number(p.travel ?? 1) * Number(ts.travelUnits ?? 1);
     case 'public_holiday_worked':
@@ -141,18 +158,6 @@ export function computeRegistryWorkerTimesheetGross(
   },
 ): RegistryWorkerTimesheetGrossResult {
   const payrollCharge = resolveTimesheetPayrollCharge(ts);
-  if (
-    (payrollCharge.kind === 'M1' || payrollCharge.kind === 'D1') &&
-    payrollCharge.m1AmountOverride != null &&
-    payrollCharge.m1AmountOverride > 0
-  ) {
-    return {
-      gross: payrollCharge.m1AmountOverride,
-      usedPackageLaborCost: false,
-      usedPolicyFallback: true,
-      fromPositionModel: true,
-    };
-  }
 
   const payTs: DailyTimesheet = {
     ...ts,
@@ -186,6 +191,26 @@ export function computeRegistryWorkerTimesheetGross(
     poContractById: input.poContractById,
     poWorkModeByPoId: input.poWorkModeByPoId,
   });
+
+  /**
+   * Override บาท M1/D1 — ใช้เฉพาะเมื่อเป็นยอดแบบ trip (~≤85% ของฐานวัน)
+   * ถ้ายอด ≈ เต็มวัน มักค้างจากวัน WORKING เดิม → คิดจากแพ็ก ×0.5 แทน
+   */
+  const overrideAmt = Number(payrollCharge.m1AmountOverride);
+  if (
+    (payrollCharge.kind === 'M1' || payrollCharge.kind === 'D1') &&
+    Number.isFinite(overrideAmt) &&
+    overrideAmt > 0 &&
+    !(baseCost > 0 && overrideAmt >= baseCost * 0.85)
+  ) {
+    return {
+      gross: Math.round(overrideAmt * 100) / 100,
+      usedPackageLaborCost: false,
+      usedPolicyFallback: true,
+      fromPositionModel: true,
+    };
+  }
+
   const policy = workerLaborCostPolicy(input.workerGlobalLabor);
   const payrollRestSchedule = workerGlobalLaborToPayrollRestSchedule(input.workerGlobalLabor);
 
