@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -138,6 +138,7 @@ export function PayrollBatchDetailView({
   const [confirmLineIds, setConfirmLineIds] = useState<Set<string>>(() => new Set());
   const [payoutBankId, setPayoutBankId] = useState('');
   const [payoutActionBusy, setPayoutActionBusy] = useState(false);
+  const ensuredTimesheetLockBatchIdRef = useRef<string | null>(null);
   const canEditBatch = payrollPerm('payroll_worker', 'edit_batch');
   /** อนุมัติยอดหลัง HR_REVIEWED — เฉพาะผู้จัดการ (ไม่ใช่ payroll_officer) */
   const canManagerApproveWorkerBatch = canApproveWorkerPayrollBatchAsManager(currentUser as User);
@@ -171,6 +172,22 @@ export function PayrollBatchDetailView({
 
   const batchRef = useMemoFirebase(() => (firestore && canViewBatch ? doc(firestore, 'payroll_batches', id) : null), [firestore, id, canViewBatch]);
   const { data: batch, isLoading: isBatchLoading } = useDoc<PayrollBatch>(batchRef as any);
+
+  /** งวด PAID/LOCKED — ซ่อมล็อกใบงานใน sourceTimesheetIds ที่ยังไม่ LOCKED (เช่น ของ Prapat) */
+  useEffect(() => {
+    if (!firestore || !currentUser || !batch) return;
+    if (batch.status !== 'PAID' && batch.status !== 'LOCKED') return;
+    if (ensuredTimesheetLockBatchIdRef.current === batch.id) return;
+    ensuredTimesheetLockBatchIdRef.current = batch.id;
+    void (async () => {
+      try {
+        const svc = new PayrollService(firestore);
+        await svc.ensureBatchSourceTimesheetsLocked(batch.id, currentUser as User);
+      } catch {
+        ensuredTimesheetLockBatchIdRef.current = null;
+      }
+    })();
+  }, [firestore, currentUser, batch?.id, batch?.status]);
 
   const linesQuery = useMemoFirebase(() => (firestore && canViewBatch ? collection(firestore, 'payroll_batches', id, 'lines') : null), [firestore, id, canViewBatch]);
   const { data: lines, isLoading: isLinesLoading } = useCollection<PayrollBatchLine>(linesQuery as any);

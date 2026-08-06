@@ -984,24 +984,10 @@ export class PayrollService {
     await headerWb.commit();
     await payrollSleep(PAYROLL_FS_COMMIT_GAP_MS);
 
-    const lockFields = {
-      status: 'LOCKED' as const,
-      readyForPayroll: false,
-      lockedAt: Date.now(),
-      lockedBy: user.displayName,
-      updatedAt: Date.now(),
-    };
-    for (let i = 0; i < timesheets.length; i += PAYROLL_FS_WRITE_CHUNK) {
-      const slice = timesheets.slice(i, i + PAYROLL_FS_WRITE_CHUNK);
-      const lockWb = writeBatch(this.db);
-      for (const ts of slice) {
-        lockWb.update(doc(this.db, 'daily_timesheets', ts.id), lockFields);
-      }
-      await lockWb.commit();
-      if (i + PAYROLL_FS_WRITE_CHUNK < timesheets.length) {
-        await payrollSleep(PAYROLL_FS_COMMIT_GAP_MS);
-      }
-    }
+    await this.lockTimesheetsForPayrollBatchAdmin(
+      timesheets.map((ts) => ts.id),
+      user.displayName || user.email || user.id || 'system',
+    );
 
     /** ผูกคำขอเบิกแยก batch — กันเกิน limit 500 ops ของ Firestore เมื่อมี timesheet จำนวนมาก */
     if (advanceIdsToLinkToBatch.length > 0) {
@@ -1035,6 +1021,45 @@ export class PayrollService {
     });
 
     return batchId;
+  }
+
+  /**
+   * ล็อกใบงานที่อยู่ในงวดจ่าย — กันแก้ต้นทางหลังสร้าง/จ่าย batch
+   * (idempotent: เรียกซ้ำได้ถ้ายังมีใบงานใน sourceTimesheetIds ที่ยังไม่ LOCKED)
+   */
+  private async lockTimesheetsForPayrollBatchAdmin(
+    timesheetIds: string[],
+    lockedBy: string,
+  ): Promise<number> {
+    const unique = [...new Set(timesheetIds.map((id) => String(id || '').trim()).filter(Boolean))];
+    if (unique.length === 0) return 0;
+    const lockFields = {
+      status: 'LOCKED' as const,
+      readyForPayroll: false,
+      lockedAt: Date.now(),
+      lockedBy: lockedBy || 'system',
+      updatedAt: Date.now(),
+    };
+    let locked = 0;
+    for (let i = 0; i < unique.length; i += PAYROLL_FS_WRITE_CHUNK) {
+      const slice = unique.slice(i, i + PAYROLL_FS_WRITE_CHUNK);
+      const snaps = await Promise.all(slice.map((id) => getDoc(doc(this.db, 'daily_timesheets', id))));
+      const lockWb = writeBatch(this.db);
+      let ops = 0;
+      for (const snap of snaps) {
+        if (!snap.exists()) continue;
+        const cur = snap.data() as DailyTimesheet;
+        if (cur.status === 'LOCKED' && cur.readyForPayroll === false) continue;
+        lockWb.update(snap.ref, lockFields);
+        ops++;
+        locked++;
+      }
+      if (ops > 0) await lockWb.commit();
+      if (i + PAYROLL_FS_WRITE_CHUNK < unique.length) {
+        await payrollSleep(PAYROLL_FS_COMMIT_GAP_MS);
+      }
+    }
+    return locked;
   }
 
   private async unlockTimesheetsForPayrollBatchAdmin(timesheetIds: string[]): Promise<void> {
@@ -1404,6 +1429,21 @@ export class PayrollService {
     if (!snap.exists()) throw new Error('Payroll batch not found');
     const batch = snap.data() as PayrollBatch;
     if (batch.status === 'PAID' || batch.status === 'LOCKED') {
+      /** ซ่อมใบงานที่ควรล็อกแต่ยังไม่ LOCKED (เช่น รวม PO ทีหลัง / พลาดตอน generate) */
+      try {
+        const linesSnap = await getDocs(collection(this.db, 'payroll_batches', id, 'lines'));
+        const tsIds: string[] = [];
+        linesSnap.forEach((d) => {
+          const line = d.data() as PayrollBatchLine;
+          (line.sourceTimesheetIds ?? []).forEach((tid) => tsIds.push(tid));
+        });
+        await this.lockTimesheetsForPayrollBatchAdmin(
+          tsIds,
+          user.displayName || user.email || user.id || 'system',
+        );
+      } catch {
+        /* best-effort */
+      }
       return { alreadyDone: true as const, cashbookEntryId: batch.financeCashbookEntryId };
     }
     if (batch.status !== 'FINANCE_PREPARED' && batch.status !== 'PAYMENT_EXPORTED') {
@@ -1489,6 +1529,16 @@ export class PayrollService {
     }
     await wb.commit();
 
+    /** ล็อกใบงานของแถวที่ตัดบัญชีแล้ว — รวมกรณีที่ generate พลาดหรือรวม PO ทีหลัง */
+    const paidTsIds: string[] = [];
+    for (const l of selected) {
+      ((l as PayrollBatchLine).sourceTimesheetIds ?? []).forEach((tid) => paidTsIds.push(tid));
+    }
+    await this.lockTimesheetsForPayrollBatchAdmin(
+      paidTsIds,
+      user.displayName || user.email || user.id || 'system',
+    );
+
     await writeAuditLog(this.db, user, {
       actionType: 'PAID',
       entityType: 'PayrollBatch',
@@ -1501,6 +1551,46 @@ export class PayrollService {
     });
 
     return { alreadyDone: false as const, cashbookEntryId, allPaidNow };
+  }
+
+  /**
+   * ซ่อมล็อกใบงานใน sourceTimesheetIds ของงวดที่จ่าย/ล็อกแล้ว
+   * — ใช้เมื่อมีใบงานยังไม่ LOCKED ทั้งที่ batch เป็น PAID แล้ว
+   */
+  async ensureBatchSourceTimesheetsLocked(batchId: string, user: User): Promise<number> {
+    const allowed =
+      canConfirmWorkerPayrollPaid(user) || isSystemAdmin(user) || isPayrollOfficer(user);
+    if (!allowed) {
+      assertPayrollPermission(user, 'payroll_worker', 'edit_batch');
+    }
+    const batchRef = doc(this.getBatchCollection(), batchId);
+    const batchSnap = await getDoc(batchRef);
+    if (!batchSnap.exists()) throw new Error('ไม่พบ payroll batch');
+    const batch = batchSnap.data() as PayrollBatch;
+    if (batch.status !== 'PAID' && batch.status !== 'LOCKED' && batch.status !== 'FINANCE_PREPARED' && batch.status !== 'PAYMENT_EXPORTED') {
+      throw new Error('ล็อกซ่อมได้เมื่องวดอยู่ในสถานะจ่าย/เตรียมจ่ายแล้วเท่านั้น');
+    }
+    const linesSnap = await getDocs(collection(this.db, 'payroll_batches', batchId, 'lines'));
+    const tsIds: string[] = [];
+    linesSnap.forEach((d) => {
+      const line = d.data() as PayrollBatchLine;
+      (line.sourceTimesheetIds ?? []).forEach((tid) => tsIds.push(tid));
+    });
+    const n = await this.lockTimesheetsForPayrollBatchAdmin(
+      tsIds,
+      user.displayName || user.email || user.id || 'system',
+    );
+    if (n > 0) {
+      await writeAuditLog(this.db, user, {
+        actionType: 'UPDATE',
+        entityType: 'PayrollBatch',
+        entityId: batchId,
+        payrollBatchId: batchId,
+        sourceModule: 'hr',
+        afterSummary: `Ensure source timesheets LOCKED (${n} updated)`,
+      });
+    }
+    return n;
   }
 
   async lockBatch(id: string, user: User) {
@@ -1929,6 +2019,11 @@ export class PayrollService {
     }
 
     await updateDoc(lineRef, stripUndefinedForFirestore(patch) as DocumentData);
+
+    await this.lockTimesheetsForPayrollBatchAdmin(
+      workerTs.map((ts) => ts.id),
+      user.displayName || user.email || user.id || 'system',
+    );
 
     await this.recalculateBatchTotalsFromLines(batchId, user);
 

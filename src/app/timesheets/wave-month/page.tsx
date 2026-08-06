@@ -1742,38 +1742,17 @@ export default function WaveMonthTimesheetSummaryPage() {
         return;
       }
       const tsLocked = isTimesheetPayrollLocked(ts);
-      if (tsLocked) {
-        setRetroEdit({ timesheet: ts!, workerName: rw.name, po });
-        return;
-      }
-      if (ts && canCorrectTimesheetOtDirect(ts)) {
-        const assignment =
-          waveMobs.find((m) => m.id === ts.assignmentId) ?? waveMobs.find((m) => m.workerId === rw.workerId);
-        if (!assignment) {
-          toast({
-            variant: 'destructive',
-            title: 'ไม่พบการมอบหมาย',
-            description: 'เพิ่ม Mobilization / Assignment ใน Wave ก่อน',
-          });
-          return;
-        }
-        const rateCtx = firestore
-          ? await loadCellEditRateContext(firestore, assignment, po)
-          : { poLine: null, positionRate: null };
-        setCellEdit({
-          wave,
-          po,
-          monthReview,
-          workerId: rw.workerId,
-          workerName: rw.name,
-          assignment,
-          cellDate,
-          timesheet: ts,
-          ...rateCtx,
-        });
-        return;
-      }
-      if (retroOnlyPayrollMonth) {
+      /**
+       * ใบงาน LOCKED / เดือนมี payroll ปิดแล้ว / คนปิดงวดแล้ว
+       * → เปิดฟอร์มแก้ไขย้อนหลังชุดเดียว (แบบ Natthawut)
+       * ห้ามเปิด «แก้ไขลงเวลารายวัน» แม้ใบงานยังไม่ LOCKED (เช่น Prapat ที่ปิดงวดแล้วแต่ status ยังไม่ LOCKED)
+       */
+      const forceRetro =
+        tsLocked ||
+        retroOnlyPayrollMonth ||
+        isRowLockedForWorker(po, monthReview, rw.workerId);
+
+      if (forceRetro) {
         const assignment = ts
           ? waveMobs.find((m) => m.id === ts.assignmentId) ?? waveMobs.find((m) => m.workerId === rw.workerId)
           : waveMobs.find((m) => m.workerId === rw.workerId);
@@ -1807,6 +1786,34 @@ export default function WaveMonthTimesheetSummaryPage() {
             cellDate,
           });
         setRetroEdit({ timesheet: retroTs, workerName: rw.name, po });
+        return;
+      }
+
+      if (ts && canCorrectTimesheetOtDirect(ts)) {
+        const assignment =
+          waveMobs.find((m) => m.id === ts.assignmentId) ?? waveMobs.find((m) => m.workerId === rw.workerId);
+        if (!assignment) {
+          toast({
+            variant: 'destructive',
+            title: 'ไม่พบการมอบหมาย',
+            description: 'เพิ่ม Mobilization / Assignment ใน Wave ก่อน',
+          });
+          return;
+        }
+        const rateCtx = firestore
+          ? await loadCellEditRateContext(firestore, assignment, po)
+          : { poLine: null, positionRate: null };
+        setCellEdit({
+          wave,
+          po,
+          monthReview,
+          workerId: rw.workerId,
+          workerName: rw.name,
+          assignment,
+          cellDate,
+          timesheet: ts,
+          ...rateCtx,
+        });
         return;
       }
       if (isRowLockedForWorker(po, monthReview, rw.workerId)) {
@@ -2814,8 +2821,10 @@ export default function WaveMonthTimesheetSummaryPage() {
                                 const cellLabel = timesheetWaveMonthCellDisplayWithRetro(ts, retroForCell);
                                 const hasRetro = hasActiveRetroAdjustments(retroForCell);
                                 const tsLocked = isTimesheetPayrollLocked(ts);
+                                const rowClosed = isRowLockedForWorker(po, monthReview, rw.workerId);
                                 const cellClickable =
-                                  canEditTs && (tsLocked || retroOnlyPayrollMonth || editableGrid);
+                                  canEditTs &&
+                                  (tsLocked || retroOnlyPayrollMonth || rowClosed || editableGrid);
                                 return (
                                   <TableCell key={d} className="px-0.5 text-center text-[11px] leading-none">
                                     {!ts ? (
@@ -2838,7 +2847,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                                           cellClickable && 'cursor-pointer hover:opacity-90',
                                         )}
                                         title={
-                                          (retroOnlyPayrollMonth
+                                          (tsLocked || retroOnlyPayrollMonth || rowClosed
                                             ? `คลิกแก้ไขย้อนหลัง · ${d}`
                                             : editableGrid
                                               ? `คลิกแก้ไข · ${d} · ${ts.eventType} · ${ts.status}`
@@ -2873,22 +2882,25 @@ export default function WaveMonthTimesheetSummaryPage() {
                                       <button
                                         type="button"
                                         title={
-                                          retroOnlyPayrollMonth
+                                          retroOnlyPayrollMonth || rowClosed
                                             ? `เพิ่มแก้ไขย้อนหลัง · ${d}`
                                             : editableGrid
                                               ? `เพิ่มรายการ · ${d}`
                                               : undefined
                                         }
-                                        disabled={!(retroOnlyPayrollMonth || editableGrid) || !canEditTs}
+                                        disabled={
+                                          !(retroOnlyPayrollMonth || rowClosed || editableGrid) || !canEditTs
+                                        }
                                         onClick={() =>
                                           openCellEdit(wave, po, monthReview, rw, d, undefined, waveMobs)
                                         }
                                         className={cn(
                                           'inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-sm py-0.5 font-medium text-[11px] leading-none',
-                                          (retroOnlyPayrollMonth || editableGrid) &&
+                                          (retroOnlyPayrollMonth || rowClosed || editableGrid) &&
                                             canEditTs &&
                                             'cursor-pointer hover:bg-muted/60 text-muted-foreground/80',
-                                          !(retroOnlyPayrollMonth || editableGrid) && 'cursor-default opacity-45 text-muted-foreground/40',
+                                          !(retroOnlyPayrollMonth || rowClosed || editableGrid) &&
+                                            'cursor-default opacity-45 text-muted-foreground/40',
                                         )}
                                       >
                                         {hasRetro ? cellLabel : ' - '}
@@ -3141,7 +3153,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       <Dialog open={!!retroEdit} onOpenChange={(open) => !open && setRetroEdit(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>แก้ไขย้อนหลัง (ใบงานล็อคแล้ว)</DialogTitle>
+            <DialogTitle>แก้ไขย้อนหลัง (งวดปิด / ใบงานล็อค)</DialogTitle>
             <DialogDescription>
               ไม่แก้ข้อมูลต้นทาง — บันทึก OT / M1 / D1 / standby ที่เพิ่มแยกต่างหาก แสดงบนตารางพร้อมเครื่องหมาย † และจ่ายในงวดที่เลือก
             </DialogDescription>
