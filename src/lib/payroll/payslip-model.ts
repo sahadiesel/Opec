@@ -25,20 +25,22 @@ import type { SingleTimesheetGrossContext } from '@/lib/payroll/single-timesheet
 export const PAYSLIP_DEFAULT_COMPANY_TH = 'โอพีอีซี ออปส์โฟลว์';
 export const PAYSLIP_DEFAULT_COMPANY_EN = 'OPEC OpsFlow';
 
+/** คีย์หักยอดที่ชำระไปแล้วในงวดก่อนหน้า — บันทึกลง deductionsBreakdown ตอนยืนยันจ่าย */
+export const PRIOR_PAID_RECOVERY_DEDUCTION_KEY = 'prior_paid_recovery';
+
 /**
- * งวดที่จ่าย/ล็อกแล้ว และเป็นเอกสารชุดแรกของเดือน (ไม่มีงวดก่อนหน้าให้หัก)
- * — คง snapshot ตามที่จ่ายไปแล้ว ไม่ทับด้วยใบงานปัจจุบัน
+ * งวดที่จ่าย/ล็อกแล้ว — คง snapshot ตามที่บันทึกใน settlement line
+ * (ยอดหลาย PO + หักยอดจ่ายแล้วถูก persist ตอนยืนยันจ่าย / ensure)
+ * ไม่ทับด้วยใบงานสดทุกครั้งที่เปิดหน้า
  *
- * งวดชุดหลังในเดือนเดียวกัน (แม้ PAID แล้ว) ยังต้องแสดงรายได้ครบทุก PO + หักยอดที่จ่ายไปแล้ว
+ * `opts.hasEarlierPaidInPeriod` คงไว้เพื่อความเข้ากันได้ของ callers — ไม่มีผลแล้ว
  */
 export function isWorkerPayrollBatchSnapshotFrozen(
   batch: Pick<PayrollBatch, 'status'> | null | undefined,
-  opts?: { hasEarlierPaidInPeriod?: boolean },
+  _opts?: { hasEarlierPaidInPeriod?: boolean },
 ): boolean {
   const s = batch?.status;
-  if (s !== 'PAID' && s !== 'LOCKED') return false;
-  if (opts?.hasEarlierPaidInPeriod) return false;
-  return true;
+  return s === 'PAID' || s === 'LOCKED';
 }
 
 /** ลำดับเวลางวด — ใช้กรอง «ยอดที่ชำระไปแล้ว» ให้เป็นงวดก่อนหน้าจริง ๆ */
@@ -165,6 +167,7 @@ function humanizeDeductionKey(key: string): string {
     social_security: 'ประกันสังคม',
     pit_withholding: 'ภาษี ณ ที่จ่าย (ภงด. 1)',
     cash_advance_recovery: 'หักคืนเบิกล่วงหน้า',
+    [PRIOR_PAID_RECOVERY_DEDUCTION_KEY]: 'หักยอดที่ชำระไปแล้ว (งวดก่อนหน้า)',
     late_deduction: 'หักมาสาย',
     absence_deduction: 'หักขาดงาน (จากสแกน)',
     unpaid_leave_deduction: 'หักลาเกินสิทธิ์ / ลาไม่อนุมัติ',
@@ -642,7 +645,7 @@ export type PriorPaidPayrollSlipRef = {
   batch: PayrollBatch;
 };
 
-function resolveLineNetForPayslip(line: PayrollBatchLine): number {
+export function resolveLineNetForPayslip(line: PayrollBatchLine): number {
   const netFromLine = round2(line.netAmount);
   const netFromSnapshot = line.d8Snapshot?.net != null ? round2(line.d8Snapshot.net) : null;
   const hasCashAdvanceRecovery = Number(line.deductionsBreakdown?.cash_advance_recovery) > 0;
@@ -812,29 +815,33 @@ export function buildPayslipFromWorkerLine(
     roundingNote = false;
   } else if (!isSupplemental && priorPaidRefs && priorPaidRefs.length > 0) {
     /** งวด NORMAL รอบหลัง — แสดงรายได้รวมทั้งเดือน แล้วหักยอดที่บัญชีจ่ายไปแล้วในงวดก่อน */
-    let priorNetSum = 0;
-    const dateLabels: string[] = [];
-    for (const ref of priorPaidRefs) {
-      const n = resolveLineNetForPayslip(ref.line);
-      if (n <= 0.005) continue;
-      priorNetSum = round2(priorNetSum + n);
-      const dl = formatPaymentDate(workerPaymentTimestamp(ref.batch));
-      if (dl && dl !== '-') dateLabels.push(dl);
-    }
-    if (priorNetSum > 0.005) {
-      const kind =
-        dateLabels.length === 1
-          ? `งวดก่อนหน้า`
-          : `งวดก่อนหน้า ${priorPaidRefs.length} รายการ`;
-      pushAlreadyPaidDeduction(
-        deductionLines,
-        priorNetSum,
-        kind,
-        dateLabels.length === 1 ? dateLabels[0] : dateLabels.join(', '),
-      );
-      deductionsTotal = sumLines(deductionLines);
-      netPay = round2(grossTotal - deductionsTotal);
-      roundingNote = false;
+    const alreadyPersisted =
+      Number(line.deductionsBreakdown?.[PRIOR_PAID_RECOVERY_DEDUCTION_KEY]) > 0.005;
+    if (!alreadyPersisted) {
+      let priorNetSum = 0;
+      const dateLabels: string[] = [];
+      for (const ref of priorPaidRefs) {
+        const n = resolveLineNetForPayslip(ref.line);
+        if (n <= 0.005) continue;
+        priorNetSum = round2(priorNetSum + n);
+        const dl = formatPaymentDate(workerPaymentTimestamp(ref.batch));
+        if (dl && dl !== '-') dateLabels.push(dl);
+      }
+      if (priorNetSum > 0.005) {
+        const kind =
+          dateLabels.length === 1
+            ? `งวดก่อนหน้า`
+            : `งวดก่อนหน้า ${priorPaidRefs.length} รายการ`;
+        pushAlreadyPaidDeduction(
+          deductionLines,
+          priorNetSum,
+          kind,
+          dateLabels.length === 1 ? dateLabels[0] : dateLabels.join(', '),
+        );
+        deductionsTotal = sumLines(deductionLines);
+        netPay = round2(grossTotal - deductionsTotal);
+        roundingNote = false;
+      }
     }
   }
 

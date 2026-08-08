@@ -148,15 +148,6 @@ function dedupeTimesheetsForBilling(tsList: readonly DailyTimesheet[]): DailyTim
   return out.sort((a, b) => a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
 }
 
-function timesheetHasBillableOtHours(ts: DailyTimesheet): boolean {
-  return (
-    Math.max(0, Number(ts.ot15Hours) || 0) +
-      Math.max(0, Number(ts.ot20Hours) || 0) +
-      Math.max(0, Number(ts.ot30Hours) || 0) >
-    0
-  );
-}
-
 function isTripBillingTimesheetBillable(ts: DailyTimesheet): boolean {
   if (ts.readyForBilling === true) return true;
   if (ts.status === 'LOCKED') return true;
@@ -224,7 +215,9 @@ async function enrichTimesheetsForRetroSources(
  * Trip billing — ตัด work_day ที่ไม่ใช่การทำงานจริงบนไซต์:
  * - วันเดียวกับ M1 (มี mobilization_day แล้ว)
  * - ตั้งแต่วัน D1 เป็นต้นไป
- * - แถว PO Active auto ที่ไม่มี OT (เติมช่องว่าง — ไม่ตรงตารางรายเดือน)
+ *
+ * ไม่ตัดวันที่มีชั่วโมงปกติเพียงเพราะไม่มี OT / เป็นแถว auto —
+ * ค่าแรงรายวันต้องวางบิลตามงานจริง (OT เป็นรายการแยก)
  */
 export function filterTimesheetsForTripMobCycleBilling(
   timesheets: readonly DailyTimesheet[],
@@ -251,7 +244,6 @@ export function filterTimesheetsForTripMobCycleBilling(
 
   let droppedMobOverlap = 0;
   let droppedAfterD1 = 0;
-  let droppedAutoGap = 0;
 
   const out = timesheets.filter((ts) => {
     if (ts.eventType !== 'work_day') return true;
@@ -270,11 +262,6 @@ export function filterTimesheetsForTripMobCycleBilling(
       return false;
     }
 
-    if (ts.poActiveAutoDaily === true && !timesheetHasBillableOtHours(ts)) {
-      droppedAutoGap++;
-      return false;
-    }
-
     return true;
   });
 
@@ -285,11 +272,6 @@ export function filterTimesheetsForTripMobCycleBilling(
   }
   if (droppedAfterD1 > 0) {
     warnings.push(`Trip billing: ตัด work_day ${droppedAfterD1} วันที่อยู่ในช่วง D1 ขึ้นไป`);
-  }
-  if (droppedAutoGap > 0) {
-    warnings.push(
-      `Trip billing: ตัด work_day อัตโนมัติ ${droppedAutoGap} วัน (ไม่มี OT / ไม่ได้ลงในตาราง) — ไม่วางบิล`,
-    );
   }
 
   return { timesheets: out, warnings };

@@ -173,7 +173,7 @@ export function PayrollBatchDetailView({
   const batchRef = useMemoFirebase(() => (firestore && canViewBatch ? doc(firestore, 'payroll_batches', id) : null), [firestore, id, canViewBatch]);
   const { data: batch, isLoading: isBatchLoading } = useDoc<PayrollBatch>(batchRef as any);
 
-  /** งวด PAID/LOCKED — ซ่อมล็อกใบงานใน sourceTimesheetIds ที่ยังไม่ LOCKED (เช่น ของ Prapat) */
+  /** งวด PAID/LOCKED — ซ่อมล็อกใบงาน + บันทึกยอด snapshot ให้ครบ (ไม่คำนวณสดทุกครั้งที่เปิด) */
   useEffect(() => {
     if (!firestore || !currentUser || !batch) return;
     if (batch.status !== 'PAID' && batch.status !== 'LOCKED') return;
@@ -182,6 +182,7 @@ export function PayrollBatchDetailView({
     void (async () => {
       try {
         const svc = new PayrollService(firestore);
+        await svc.ensurePaidBatchLineSnapshotsPersisted(batch.id, currentUser as User);
         await svc.ensureBatchSourceTimesheetsLocked(batch.id, currentUser as User);
       } catch {
         ensuredTimesheetLockBatchIdRef.current = null;

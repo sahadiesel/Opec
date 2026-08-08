@@ -257,7 +257,8 @@ function PayrollBatchesPageContent() {
       const service = new PayrollService(firestore);
       const result = await service.preflightPayrollCheck(targetPeriodId, { workModeScope: workModeFilter, batchType });
       setPreflight(result);
-      setSelectedWorkerIds(new Set(result.eligibleWorkers.map((w) => w.workerId)));
+      /** ไม่ติ๊กอัตโนมัติ — ให้เลือกคนเอง (เลือกทั้งหมดมีปุ่มแยก) */
+      setSelectedWorkerIds(new Set());
       setIsGenerateOpen(true);
       if (result.missingApprovedMonthlyTimesheet) {
         toast({
@@ -459,9 +460,19 @@ function PayrollBatchesPageContent() {
               <DialogHeader>
                 <DialogTitle>ประมวลผล Payroll Batch ใหม่</DialogTitle>
                 <DialogDescription>
-                  เลือกรอบบัญชีที่ตรงกับเดือนที่ต้องการจ่าย ระบบจะรวบรวมเฉพาะใบงานรายวันที่ตั้ง <strong>readyForPayroll</strong> แล้ว และใช้ชื่อคนงาน / เวลาทำงาน / ราคาตามสัญญาและตำแหน่งจากข้อมูลในใบงานชุดนั้นประมวลผลเป็นชุดจ่าย
-                  {' '}
-                  สำหรับรอบแบบรายเดือน ต้องมีอย่างน้อยหนึ่งเอกสาร <strong>สรุปลงเวลารายเดือน (PO + เดือน)</strong> ที่ <strong>ล็อกงวดหรือส่งตรวจแล้ว</strong> ในเดือนนั้น — รายการรอบในเมนูดึงจากเดือนที่ปิดงวดแล้วด้วย (ไม่ต้องรออนุมัติผู้จัดการ)
+                  {batchType === 'SUPPLEMENTAL' ? (
+                    <>
+                      เลือกรอบบัญชีที่ตรงกับ<strong>เดือนที่จะจ่ายตกเบิก</strong> (เช่น ส.ค.) — ระบบดึงเฉพาะรายการ
+                      «แก้ไขย้อนหลัง» ที่ตั้ง <strong>จ่ายในงวด</strong> เป็นเดือนนั้น ไม่ใช้ใบงาน readyForPayroll ของเดือนนี้
+                      (Natthawut ไม่ต้องมีงานใน ส.ค.)
+                    </>
+                  ) : (
+                    <>
+                      เลือกรอบบัญชีที่ตรงกับเดือนที่ต้องการจ่าย ระบบจะรวบรวมเฉพาะใบงานรายวันที่ตั้ง <strong>readyForPayroll</strong> แล้ว และใช้ชื่อคนงาน / เวลาทำงาน / ราคาตามสัญญาและตำแหน่งจากข้อมูลในใบงานชุดนั้นประมวลผลเป็นชุดจ่าย
+                      {' '}
+                      สำหรับรอบแบบรายเดือน ต้องมีอย่างน้อยหนึ่งเอกสาร <strong>สรุปลงเวลารายเดือน (PO + เดือน)</strong> ที่ <strong>ล็อกงวดหรือส่งตรวจแล้ว</strong> ในเดือนนั้น — รายการรอบในเมนูดึงจากเดือนที่ปิดงวดแล้วด้วย (ไม่ต้องรออนุมัติผู้จัดการ)
+                    </>
+                  )}
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -525,6 +536,11 @@ function PayrollBatchesPageContent() {
                       <SelectItem value="SUPPLEMENTAL">ตกเบิก/จ่ายเพิ่ม (เฉพาะรายการแก้ไขย้อนหลัง)</SelectItem>
                     </SelectContent>
                   </Select>
+                  {batchType === 'SUPPLEMENTAL' ? (
+                    <p className="text-xs text-muted-foreground leading-snug">
+                      ไม่ดึงใบงานเดือนนี้ — ใช้รายการแก้ไขย้อนหลังที่เลือก «จ่ายในงวด» = เดือนของรอบบัญชีด้านบน
+                    </p>
+                  ) : null}
                 </div>
               </div>
               {preflight && !preflight.missingApprovedMonthlyTimesheet && preflight.eligibleWorkers.length > 0 && (
@@ -599,7 +615,16 @@ function PayrollBatchesPageContent() {
                   <Info className="h-5 w-5" />
                   <AlertTitle className="font-bold">ไม่มีคนงานพร้อมจ่ายในรอบนี้</AlertTitle>
                   <AlertDescription className="text-xs">
-                    ปิดงวดแล้วแต่ยังไม่มี readyForPayroll — กลับไปหน้าสรุปรายเดือนกด «ซิงก์พร้อมจ่าย Payroll» หรือปิดงวดบางส่วนอีกครั้ง · ตรวจว่าใบงานไม่ถูก LOCKED จาก batch ก่อนหน้า
+                    {batchType === 'SUPPLEMENTAL' ? (
+                      <>
+                        ยังไม่มีรายการ «แก้ไขย้อนหลัง» สถานะ approved ที่ตั้ง<strong>จ่ายในงวด</strong>เป็นเดือนนี้ —
+                        ไปหน้าสรุปรายเดือนของเดือนที่ทำงาน (เช่น ก.ค.) คลิกวันที่มี OT → บันทึกแก้ไขย้อนหลัง → เลือกจ่ายในงวดเป็นเดือนนี้ (เช่น ส.ค.) แล้วกดตรวจสอบใหม่
+                      </>
+                    ) : (
+                      <>
+                        ปิดงวดแล้วแต่ยังไม่มี readyForPayroll — กลับไปหน้าสรุปรายเดือนกด «ซิงก์พร้อมจ่าย Payroll» หรือปิดงวดบางส่วนอีกครั้ง · ตรวจว่าใบงานไม่ถูก LOCKED จาก batch ก่อนหน้า
+                      </>
+                    )}
                   </AlertDescription>
                 </Alert>
               )}

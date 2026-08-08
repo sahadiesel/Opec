@@ -121,6 +121,11 @@ import {
   loadWorkerTimesheetsForPayrollLine,
 } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
+import {
+  payrollBatchChronologyMs,
+  PRIOR_PAID_RECOVERY_DEDUCTION_KEY,
+  resolveLineNetForPayslip,
+} from '@/lib/payroll/payslip-model';
 import { 
   markRetroAdjustmentsApplied, 
   retroAdjustmentsToPriorPeriodLabels,
@@ -202,16 +207,17 @@ export class PayrollService {
     if (!payrollYearMonth) throw new Error('รอบบัญชีมีวันที่เริ่มต้นไม่ถูกต้อง');
     console.log('[Supplemental] Step 1: ✅ อ่านรอบบัญชีสำเร็จ ym=', payrollYearMonth);
 
-    // 1. Fetch unapplied approved retro adjustments for this month
-    console.log('[Supplemental] Step 2: ดึง retro adjustments (sourceYearMonth=' + payrollYearMonth + ')...');
+    // 1. รายการแก้ไขย้อนหลังที่ตั้งใจจ่ายในงวดนี้ (applyPayrollYearMonth)
+    //    — ไม่ใช้ sourceYearMonth (เดือนที่ทำงาน) เพราะ OT ก.ค. จ่ายใน ส.ค. ต้องมากับงวด ส.ค.
+    console.log('[Supplemental] Step 2: ดึง retro adjustments (applyPayrollYearMonth=' + payrollYearMonth + ')...');
     const retroQuery = query(
       collection(this.db, 'timesheet_retro_adjustments'),
-      where('sourceYearMonth', '==', payrollYearMonth),
-      where('status', '==', 'approved')
+      where('applyPayrollYearMonth', '==', payrollYearMonth),
     );
     const retroSnap = await getDocs(retroQuery);
     let retroItems = retroSnap.docs
-      .map(d => ({ ...d.data(), id: d.id } as import('@/lib/types').TimesheetRetroAdjustment));
+      .map(d => ({ ...d.data(), id: d.id } as import('@/lib/types').TimesheetRetroAdjustment))
+      .filter((r) => r.status === 'approved');
     console.log('[Supplemental] Step 2: ✅ พบ retro adjustments', retroItems.length, 'รายการ');
 
     if (filters?.workerIds?.length) {
@@ -458,14 +464,15 @@ export class PayrollService {
     if (filters?.batchType === 'SUPPLEMENTAL') {
       const payrollYearMonth = calendarYearMonthFromPeriodStart(period.startDate);
       if (!payrollYearMonth) throw new Error('รอบบัญชีมีวันที่เริ่มต้นไม่ถูกต้อง');
-      // Query by sourceYearMonth: user selects Jun period → get Jun OT items
+      /** ดึงตามงวดที่จะจ่าย (apply) — OT ต้นทาง ก.ค. ที่ตั้งจ่าย ส.ค. ต้องโผล่ตอนเลือกงวด ส.ค. */
       const retroQuery = query(
         collection(this.db, 'timesheet_retro_adjustments'),
-        where('sourceYearMonth', '==', payrollYearMonth),
-        where('status', '==', 'approved')
+        where('applyPayrollYearMonth', '==', payrollYearMonth),
       );
       const retroSnap = await getDocs(retroQuery);
-      const retroItems = retroSnap.docs.map(d => ({ ...d.data(), id: d.id } as import('@/lib/types').TimesheetRetroAdjustment));
+      const retroItems = retroSnap.docs
+        .map(d => ({ ...d.data(), id: d.id } as import('@/lib/types').TimesheetRetroAdjustment))
+        .filter((r) => r.status === 'approved');
       
       const workerRetroMap = new Map<string, import('@/lib/types').TimesheetRetroAdjustment[]>();
       for (const r of retroItems) {
@@ -1429,7 +1436,12 @@ export class PayrollService {
     if (!snap.exists()) throw new Error('Payroll batch not found');
     const batch = snap.data() as PayrollBatch;
     if (batch.status === 'PAID' || batch.status === 'LOCKED') {
-      /** ซ่อมใบงานที่ควรล็อกแต่ยังไม่ LOCKED (เช่น รวม PO ทีหลัง / พลาดตอน generate) */
+      /** ซ่อมใบงานที่ควรล็อกแต่ยังไม่ LOCKED + ซ่อมยอด snapshot ให้ครบหลาย PO + prior paid */
+      try {
+        await this.ensurePaidBatchLineSnapshotsPersisted(id, user);
+      } catch {
+        /* best-effort */
+      }
       try {
         const linesSnap = await getDocs(collection(this.db, 'payroll_batches', id, 'lines'));
         const tsIds: string[] = [];
@@ -1476,16 +1488,33 @@ export class PayrollService {
       }
     }
 
-    const sumNet = Math.round(
-      selected.reduce((s, l) => s + (Number((l as PayrollBatchLine).netAmount) || 0), 0) * 100,
-    ) / 100;
-    if (!(sumNet > 0)) {
-      throw new Error('ยอดสุทธิของชุดที่เลือกไม่ถูกต้อง');
-    }
-
     const unpaidBefore = lineRows.filter((r) => !(r as PayrollBatchLine).financePayoutCashbookEntryId);
     const stillUnpaidAfter = unpaidBefore.filter((r) => !selected.some((s) => s.docId === r.docId));
     const allPaidNow = stillUnpaidAfter.length === 0;
+
+    /** บันทึกยอดหลาย PO + หักยอดงวดก่อนหน้าลง line ก่อนตัด cashbook — ให้หน้างวด PAID ใช้ยอดนี้โดยไม่คำนวณสด */
+    const refreshedNetByDocId = new Map<string, number>();
+    for (const l of selected) {
+      const result = await this.recalculateWorkerPayrollLinePreserveHrAdjustments(
+        id,
+        (l as PayrollBatchLine).workerId,
+        user,
+        { bypassFinanceStatusGate: true, includePriorPaidRecovery: true },
+      );
+      refreshedNetByDocId.set(l.docId, result.netAmount);
+    }
+
+    const sumNet =
+      Math.round(
+        selected.reduce((s, l) => {
+          const refreshed = refreshedNetByDocId.get(l.docId);
+          const fallback = Number((l as PayrollBatchLine).netAmount) || 0;
+          return s + (refreshed ?? fallback);
+        }, 0) * 100,
+      ) / 100;
+    if (!(sumNet > 0)) {
+      throw new Error('ยอดสุทธิของชุดที่เลือกไม่ถูกต้อง');
+    }
 
     const chunkRef = `${id}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     const { cashbookEntryId, bankAccountId } = await recordPayrollFinanceApprovalPayout(this.db, user, {
@@ -1593,6 +1622,92 @@ export class PayrollService {
     return n;
   }
 
+  /**
+   * ซ่อมยอด settlement ของงวด PAID/LOCKED ให้ครบหลาย PO + หักยอดงวดก่อนหน้า
+   * — เปิดหน้ารายละเอียด batch ครั้งเดียวต่อ session เพื่อไม่ให้ตัวเลขกระพริบจาก live overlay
+   */
+  async ensurePaidBatchLineSnapshotsPersisted(batchId: string, user: User): Promise<number> {
+    const allowed =
+      canConfirmWorkerPayrollPaid(user) || isSystemAdmin(user) || isPayrollOfficer(user);
+    if (!allowed) {
+      assertPayrollPermission(user, 'payroll_worker', 'edit_batch');
+    }
+    const batchRef = doc(this.getBatchCollection(), batchId);
+    const batchSnap = await getDoc(batchRef);
+    if (!batchSnap.exists()) throw new Error('ไม่พบ payroll batch');
+    const batch = { ...(batchSnap.data() as PayrollBatch), id: batchId };
+    if (batch.status !== 'PAID' && batch.status !== 'LOCKED') {
+      throw new Error('ซ่อม snapshot ได้เมื่องวด PAID/LOCKED เท่านั้น');
+    }
+    if (batch.batchType === 'SUPPLEMENTAL') return 0;
+
+    const linesSnap = await getDocs(collection(this.db, 'payroll_batches', batchId, 'lines'));
+    let updated = 0;
+    for (const d of linesSnap.docs) {
+      const line = d.data() as PayrollBatchLine;
+      const workerId = String(line.workerId || '').trim();
+      if (!workerId) continue;
+
+      const priorNet = await this.sumPriorPaidNetForWorker(batch, workerId);
+      const hasPriorKey = Number(line.deductionsBreakdown?.[PRIOR_PAID_RECOVERY_DEDUCTION_KEY]) > 0.005;
+      /** ชุดแรกที่สะอาด / ชุดหลังที่ซ่อมแล้ว → ข้าม; ที่เหลือ (ขาดหรือค้าง prior key) → persist */
+      if (priorNet <= 0.005 && !hasPriorKey) continue;
+      if (priorNet > 0.005 && hasPriorKey) continue;
+
+      try {
+        await this.recalculateWorkerPayrollLinePreserveHrAdjustments(batchId, workerId, user, {
+          bypassFinanceStatusGate: true,
+          includePriorPaidRecovery: true,
+        });
+        updated++;
+      } catch (err) {
+        console.warn('[ensurePaidBatchLineSnapshotsPersisted] line failed', workerId, err);
+      }
+    }
+    if (updated > 0) {
+      await writeAuditLog(this.db, user, {
+        actionType: 'UPDATE',
+        entityType: 'PayrollBatch',
+        entityId: batchId,
+        sourceModule: 'hr',
+        payrollBatchId: batchId,
+        afterSummary: `Ensure paid line snapshots persisted (${updated} lines)`,
+      });
+    }
+    return updated;
+  }
+
+  /** ยอดสุทธิงวด NORMAL อื่นใน period เดียวกันที่จ่ายก่อนงวดนี้ (ต่อคน) */
+  private async sumPriorPaidNetForWorker(
+    batch: PayrollBatch & { id: string },
+    workerId: string,
+  ): Promise<number> {
+    const periodId = String(batch.payrollPeriodId || '').trim();
+    if (!periodId || !workerId) return 0;
+    const currentMs = payrollBatchChronologyMs(batch);
+    const q = query(
+      collection(this.db, 'payroll_batches'),
+      where('payrollPeriodId', '==', periodId),
+    );
+    const batchSnaps = await getDocs(q);
+    let sum = 0;
+    for (const bd of batchSnaps.docs) {
+      if (bd.id === batch.id) continue;
+      const nb = { ...(bd.data() as PayrollBatch), id: bd.id };
+      if (nb.batchType && nb.batchType !== 'NORMAL') continue;
+      if (nb.status !== 'PAID' && nb.status !== 'LOCKED') continue;
+      const priorMs = payrollBatchChronologyMs(nb);
+      if (currentMs > 0 && priorMs > 0 && priorMs >= currentMs) continue;
+      const lineId = `${nb.id}_${workerId}`;
+      const lineSnap = await getDoc(doc(this.db, 'payroll_batches', nb.id, 'lines', lineId));
+      if (!lineSnap.exists()) continue;
+      const priorLine = { ...(lineSnap.data() as PayrollBatchLine), id: lineSnap.id };
+      const n = resolveLineNetForPayslip(priorLine);
+      if (n > 0.005) sum = round2Payroll(sum + n);
+    }
+    return sum;
+  }
+
   async lockBatch(id: string, user: User) {
     assertPayrollPermission(user, 'payroll_worker', 'lock');
     const docRef = doc(this.getBatchCollection(), id);
@@ -1618,13 +1733,28 @@ export class PayrollService {
    * คำนวณใหม่เฉพาะคนงานหนึ่งคนจากใบงานปัจจุบันที่จ่ายได้ (สอดคล้อง timesheet / remob)
    * — **คง** เบี้ยเลี้ยง/หักพิเศษ/ภงด. และยอดหักเบิกล่วงหน้าที่บันทึกแล้ว
    * ไม่แตะบรรทัดคนอื่น — ใช้แทน Regenerate ทั้ง batch เมื่อแก้สูตร/ซ้ำวันแล้วไม่ต้องเสียการปรับยอดทุกคน
+   *
+   * options.bypassFinanceStatusGate — ใช้ตอนยืนยันจ่าย / ซ่อม snapshot งวด PAID
+   * options.includePriorPaidRecovery — บันทึกหักยอดงวดก่อนหน้าลง deductionsBreakdown
    */
   async recalculateWorkerPayrollLinePreserveHrAdjustments(
     batchId: string,
     workerId: string,
     user: User,
-  ): Promise<void> {
-    assertPayrollPermission(user, 'payroll_worker', 'edit_batch');
+    options?: {
+      bypassFinanceStatusGate?: boolean;
+      includePriorPaidRecovery?: boolean;
+    },
+  ): Promise<{ netAmount: number; grossAmount: number }> {
+    if (options?.bypassFinanceStatusGate) {
+      const allowed =
+        canConfirmWorkerPayrollPaid(user) || isSystemAdmin(user) || isPayrollOfficer(user);
+      if (!allowed) {
+        assertPayrollPermission(user, 'payroll_worker', 'edit_batch');
+      }
+    } else {
+      assertPayrollPermission(user, 'payroll_worker', 'edit_batch');
+    }
     const lineId = `${batchId}_${workerId}`;
     const batchRef = doc(this.getBatchCollection(), batchId);
     const lineRef = doc(this.db, 'payroll_batches', batchId, 'lines', lineId);
@@ -1633,14 +1763,16 @@ export class PayrollService {
     if (!batchSnap.exists()) throw new Error('ไม่พบ payroll batch');
     if (!lineSnap.exists()) throw new Error('ไม่พบบรรทัดลูกจ้างในงวดนี้');
 
-    const batch = batchSnap.data() as PayrollBatch;
+    const batch = { ...(batchSnap.data() as PayrollBatch), id: batchId };
     const line = lineSnap.data() as PayrollBatchLine;
 
-    const blocked = ['PAID', 'LOCKED', 'FINANCE_PREPARED', 'PAYMENT_EXPORTED'] as const;
-    if ((blocked as readonly string[]).includes(batch.status)) {
-      throw new Error(
-        'คำนวณใหม่รายคนได้เฉพาะก่อนส่งต่อบัญชี (สถานะ GENERATED / HR_REVIEWED / HR_APPROVED)',
-      );
+    if (!options?.bypassFinanceStatusGate) {
+      const blocked = ['PAID', 'LOCKED', 'FINANCE_PREPARED', 'PAYMENT_EXPORTED'] as const;
+      if ((blocked as readonly string[]).includes(batch.status)) {
+        throw new Error(
+          'คำนวณใหม่รายคนได้เฉพาะก่อนส่งต่อบัญชี (สถานะ GENERATED / HR_REVIEWED / HR_APPROVED)',
+        );
+      }
     }
 
     const periodSnap = await getDoc(doc(this.db, 'payroll_periods', batch.payrollPeriodId));
@@ -1935,6 +2067,18 @@ export class PayrollService {
       deductions[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY] = Math.round(caRecover * 100) / 100;
     }
 
+    /** HR recalc ก่อนส่งบัญชี — ไม่เก็บ prior_paid (สลิปชุดหลังหักตอนแสดง); ตอนจ่าย/ซ่อม PAID ค่อย persist */
+    if (options?.includePriorPaidRecovery && batch.batchType !== 'SUPPLEMENTAL') {
+      const priorNet = await this.sumPriorPaidNetForWorker(batch, workerId);
+      if (priorNet > 0.005) {
+        deductions[PRIOR_PAID_RECOVERY_DEDUCTION_KEY] = priorNet;
+      } else {
+        delete deductions[PRIOR_PAID_RECOVERY_DEDUCTION_KEY];
+      }
+    } else {
+      delete deductions[PRIOR_PAID_RECOVERY_DEDUCTION_KEY];
+    }
+
     const dedTotal = Object.values(deductions).reduce((a, b) => a + (Number(b) || 0), 0);
     const netAmount = Math.round((effectiveGross - dedTotal) * 100) / 100;
 
@@ -2033,8 +2177,12 @@ export class PayrollService {
       entityId: lineId,
       payrollBatchId: batchId,
       sourceModule: 'hr',
-      afterSummary: `Recalculate worker line from timesheets (preserve HR adjustments); gross ${workerGross.toFixed(2)}`,
+      afterSummary: options?.includePriorPaidRecovery
+        ? `Persist paid line snapshot (multi-PO + prior paid); gross ${workerGross.toFixed(2)} net ${netAmount.toFixed(2)}`
+        : `Recalculate worker line from timesheets (preserve HR adjustments); gross ${workerGross.toFixed(2)}`,
     });
+
+    return { netAmount, grossAmount: workerGross };
   }
 
   /**
