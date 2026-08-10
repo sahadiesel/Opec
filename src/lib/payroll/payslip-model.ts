@@ -755,6 +755,15 @@ export function buildPayslipFromWorkerLine(
   }
 
   const isSupplemental = batch.batchType === 'SUPPLEMENTAL';
+  /**
+   * งวดตกเบิก: priorPeriodAllowanceItems คือรายได้หลักที่บันทึกใน grossAmount แล้ว
+   * ถ้าเคยถูกบวกซ้ำตอน HR adjust จะได้ net ≈ 2×gross−หัก — บังคับใช้ gross−หัก
+   */
+  if (isSupplemental && Math.abs(impliedNet - netPay) >= 0.02) {
+    netPay = impliedNet;
+    roundingNote = false;
+  }
+
   let normalIncomeLines: PayslipLineItem[] | undefined;
   let normalDeductionLines: PayslipLineItem[] | undefined;
   let normalGrossTotal: number | undefined;

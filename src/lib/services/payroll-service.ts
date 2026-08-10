@@ -2002,8 +2002,17 @@ export class PayrollService {
       amount: Math.max(0, Number(x.amount) || 0),
     }));
 
-    const allowanceTotal = sumRegularAllowances(allowanceItems) + sumPriorPeriodAllowances(priorPeriodAllowanceItems);
-    const effectiveGross = Math.max(0, workerGross + allowanceTotal);
+    const allowSum = sumRegularAllowances(allowanceItems);
+    const priorSum = sumPriorPeriodAllowances(priorPeriodAllowanceItems);
+    /**
+     * SUPPLEMENTAL: priorPeriod items คือรายได้หลัก — ใช้เป็น gross ไม่บวกทับ workerGross จาก timesheet
+     * (ใบงานตกเบิกมักไม่มี timesheet; ถ้ามีก็ไม่นับซ้ำกับ prior)
+     */
+    const isSupplemental = batch.batchType === 'SUPPLEMENTAL';
+    const allowanceTotal = isSupplemental ? allowSum : allowSum + priorSum;
+    const effectiveGross = isSupplemental
+      ? Math.max(0, priorSum + allowSum)
+      : Math.max(0, workerGross + allowanceTotal);
 
     const rateSnap = d8Line.snapshot.rate;
     const d8WithAllowances = computeWorkerPayrollLineD8({
@@ -2019,8 +2028,9 @@ export class PayrollService {
         : { summary: 'hr_line_recalc' },
       earningsBreakdown: {
         ...earningsBreakdown,
-        hr_allowances: allowanceTotal,
+        ...(allowanceTotal > 0 ? { hr_allowances: allowanceTotal } : {}),
       },
+      batchType: isSupplemental ? 'SUPPLEMENTAL' : 'NORMAL',
     });
 
     const pitOv = hrStored?.pitWithholdingOverride;
@@ -2146,7 +2156,7 @@ export class PayrollService {
       periodEndDate: period.endDate,
       eventBreakdown,
       earningsBreakdown,
-      grossAmount: workerGross,
+      grossAmount: isSupplemental ? effectiveGross : workerGross,
       deductionsBreakdown: deductions,
       netAmount,
       d8Snapshot,
@@ -2253,9 +2263,18 @@ export class PayrollService {
       amount: Math.max(0, Number(x.amount) || 0),
     }));
     const priorPeriodAllowanceItems = normalizePriorPeriodAllowanceItems(input.priorPeriodAllowanceItems);
-    const allowanceTotal =
-      sumRegularAllowances(allowanceItems) + sumPriorPeriodAllowances(priorPeriodAllowanceItems);
-    const effectiveGross = Math.max(0, line.grossAmount + allowanceTotal);
+    const allowSum = sumRegularAllowances(allowanceItems);
+    const priorSum = sumPriorPeriodAllowances(priorPeriodAllowanceItems);
+    const isSupplemental = batch.batchType === 'SUPPLEMENTAL';
+    /**
+     * SUPPLEMENTAL: priorPeriodAllowanceItems คือรายได้หลักของงวด (เก็บใน grossAmount แล้ว)
+     * — ห้ามบวกซ้ำเป็น hr_allowances ทับ grossAmount (เคยทำให้ net = 2×gross − หัก)
+     */
+    const allowanceTotal = isSupplemental ? allowSum : allowSum + priorSum;
+    const effectiveGross = isSupplemental
+      ? Math.max(0, priorSum + allowSum)
+      : Math.max(0, line.grossAmount + allowanceTotal);
+    const storedGrossAmount = isSupplemental ? effectiveGross : line.grossAmount;
 
     const rateSummary = line.d8Snapshot?.rate;
     const d8Line = computeWorkerPayrollLineD8({
@@ -2271,8 +2290,9 @@ export class PayrollService {
         : { summary: 'hr_line_adjustment' },
       earningsBreakdown: {
         ...line.earningsBreakdown,
-        hr_allowances: allowanceTotal,
+        ...(allowanceTotal > 0 ? { hr_allowances: allowanceTotal } : {}),
       },
+      batchType: isSupplemental ? 'SUPPLEMENTAL' : 'NORMAL',
     });
 
     const pitOv = input.pitWithholdingOverride;
@@ -2349,6 +2369,7 @@ export class PayrollService {
     };
 
     await updateDoc(lineRef, stripUndefinedForFirestore({
+      ...(isSupplemental ? { grossAmount: storedGrossAmount } : {}),
       deductionsBreakdown: deductions,
       netAmount,
       d8Snapshot,

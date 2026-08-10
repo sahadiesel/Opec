@@ -43,9 +43,11 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { getPreviewPattern } from '@/lib/services/numbering-service';
-import { recordCashbookMovementWithBalance } from '@/lib/services/cashbook-bank-movement';
+import { recordCashbookMovementWithBalance, updateCashbookEntryAdminCorrection } from '@/lib/services/cashbook-bank-movement';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canCreate } from '@/lib/permissions';
+import { canView, canCreate, isSystemAdmin } from '@/lib/permissions';
+import { isSimpleAdmin } from '@/lib/simple-tier-model';
+import { Textarea } from '@/components/ui/textarea';
 import { cashbookPnlFromEntries } from '@/lib/cashbook-pnl-stats';
 import {
   buildCashbookListPrintHtml,
@@ -64,6 +66,11 @@ export default function CashbookPage() {
 
   const canViewPage = useMemo(() => canView(currentUser, 'cashbook'), [currentUser]);
   const canWriteCashbook = useMemo(() => canCreate(currentUser, 'cashbook'), [currentUser]);
+  /** แก้รายละเอียด/ยอดรายการที่มีแล้ว — เฉพาะ admin */
+  const canAdminEditCashbook = useMemo(
+    () => isSystemAdmin(currentUser) || isSimpleAdmin(currentUser),
+    [currentUser],
+  );
 
   const entriesQuery = useMemoFirebase(() => {
     if (!firestore || !canViewPage) return null;
@@ -77,6 +84,11 @@ export default function CashbookPage() {
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [editEntry, setEditEntry] = useState<CashbookEntry | null>(null);
+  const [editDescription, setEditDescription] = useState('');
+  const [editAmount, setEditAmount] = useState(0);
+  const [editDirection, setEditDirection] = useState<'IN' | 'OUT'>('OUT');
+  const [editSaving, setEditSaving] = useState(false);
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -226,6 +238,41 @@ export default function CashbookPage() {
       toast,
     ],
   );
+
+  const openEditEntry = useCallback((entry: CashbookEntry) => {
+    if (!canAdminEditCashbook) return;
+    setEditEntry(entry);
+    setEditDescription(String(entry.description || ''));
+    setEditAmount(Number(entry.amount) || 0);
+    setEditDirection(entry.direction === 'IN' ? 'IN' : 'OUT');
+  }, [canAdminEditCashbook]);
+
+  const handleSaveEdit = async () => {
+    if (!firestore || !currentUser || !editEntry) return;
+    if (!canAdminEditCashbook) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'แก้ไขรายการได้เฉพาะผู้ดูแลระบบ (Admin)' });
+      return;
+    }
+    setEditSaving(true);
+    try {
+      await updateCashbookEntryAdminCorrection(firestore, currentUser as User, {
+        entryId: editEntry.id,
+        description: editDescription,
+        amount: editAmount,
+        direction: editDirection,
+      });
+      toast({ title: 'บันทึกการแก้ไขแล้ว', description: editEntry.entryNo || editEntry.id });
+      setEditEntry(null);
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'แก้ไขไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -549,7 +596,21 @@ export default function CashbookPage() {
                           ) : '-'}
                         </TableCell>
                         <TableCell className="text-right pr-6">
-                          <Button variant="ghost" size="icon"><ChevronRight className="h-4 w-4" /></Button>
+                          {canAdminEditCashbook ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              title="แก้ไขรายละเอียด / ยอดเงิน"
+                              onClick={() => openEditEntry(entry)}
+                            >
+                              <ChevronRight className="h-4 w-4" />
+                            </Button>
+                          ) : (
+                            <span className="inline-flex h-9 w-9 items-center justify-center text-muted-foreground/40">
+                              <ChevronRight className="h-4 w-4" />
+                            </span>
+                          )}
                         </TableCell>
                       </TableRow>
                     );
@@ -568,6 +629,96 @@ export default function CashbookPage() {
             )}
           </CardContent>
         </Card>
+
+        <Dialog
+          open={!!editEntry}
+          onOpenChange={(open) => {
+            if (!open && !editSaving) setEditEntry(null);
+          }}
+        >
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>แก้ไขรายการ Cashbook</DialogTitle>
+              <DialogDescription>
+                แก้รายละเอียดหรือยอดที่พิมพ์ผิด — เฉพาะ Admin · ยอดบัญชีธนาคารจะถูกปรับตามส่วนต่างอัตโนมัติ
+              </DialogDescription>
+            </DialogHeader>
+            {editEntry ? (
+              <div className="space-y-4 py-2">
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs space-y-1">
+                  <p>
+                    <span className="text-muted-foreground">เลขที่: </span>
+                    <span className="font-mono font-bold text-primary">{editEntry.entryNo || editEntry.id}</span>
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">วันที่: </span>
+                    {formatStoredDateThaiBE(editEntry.entryDate)}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">ประเภท: </span>
+                    {editEntry.entryType}
+                    {editEntry.referenceId ? ` · Ref ${editEntry.referenceId.slice(0, 12)}` : ''}
+                  </p>
+                </div>
+                {editEntry.entryType === 'TRANSFER' ? (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                    รายการโอนระหว่างบัญชี — แก้ยอดฝั่งนี้จะไม่แก้คู่โอนอีกฝั่งอัตโนมัติ ตรวจคู่รายการด้วย
+                  </p>
+                ) : null}
+                <div className="space-y-2">
+                  <Label htmlFor="cb-edit-desc">รายละเอียด</Label>
+                  <Textarea
+                    id="cb-edit-desc"
+                    rows={3}
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    disabled={editSaving}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>ทิศทาง</Label>
+                    <Select
+                      value={editDirection}
+                      onValueChange={(v: 'IN' | 'OUT') => setEditDirection(v)}
+                      disabled={editSaving}
+                    >
+                      <SelectTrigger className="h-11">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="IN">เงินเข้า (In)</SelectItem>
+                        <SelectItem value="OUT">เงินออก (Out)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="cb-edit-amt">จำนวนเงิน</Label>
+                    <Input
+                      id="cb-edit-amt"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      className="h-11 font-bold text-lg"
+                      value={editAmount}
+                      onChange={(e) => setEditAmount(parseFloat(e.target.value) || 0)}
+                      disabled={editSaving}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditEntry(null)} disabled={editSaving}>
+                ยกเลิก
+              </Button>
+              <Button type="button" className="font-bold" onClick={() => void handleSaveEdit()} disabled={editSaving}>
+                {editSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                บันทึกการแก้ไข
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppShell>
   );

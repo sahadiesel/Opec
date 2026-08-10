@@ -83,6 +83,72 @@ export async function recordCashbookMovementWithBalance(
 }
 
 /**
+ * แก้รายละเอียด / ยอด / ทิศทางรายการ cashbook (admin) — ปรับ currentBalance ของบัญชีให้สอดคล้อง
+ */
+export async function updateCashbookEntryAdminCorrection(
+  db: Firestore,
+  user: User,
+  params: {
+    entryId: string;
+    description: string;
+    amount: number;
+    direction: 'IN' | 'OUT';
+  },
+): Promise<void> {
+  const entryId = String(params.entryId || '').trim();
+  if (!entryId) throw new Error('ไม่พบรายการ');
+  const description = String(params.description || '').trim();
+  if (!description) throw new Error('กรุณาระบุรายละเอียด');
+  const newAmt = roundMoney2(Number(params.amount));
+  if (!(newAmt > 0)) throw new Error('ยอดเงินต้องมากกว่า 0');
+  const newDir = params.direction === 'IN' ? 'IN' : 'OUT';
+
+  const entryRef = doc(db, 'cashbook_entries', entryId);
+  const entrySnap = await getDoc(entryRef);
+  if (!entrySnap.exists()) throw new Error('ไม่พบรายการ cashbook');
+  const cur = entrySnap.data() as {
+    amount?: number;
+    direction?: string;
+    bankAccountId?: string;
+    description?: string;
+  };
+  const bankAccountId = String(cur.bankAccountId || '').trim();
+  if (!bankAccountId) throw new Error('รายการไม่มีบัญชีธนาคาร');
+
+  const oldAmt = roundMoney2(Number(cur.amount) || 0);
+  const oldDir = cur.direction === 'IN' ? 'IN' : 'OUT';
+  const oldSigned = oldDir === 'IN' ? oldAmt : -oldAmt;
+  const newSigned = newDir === 'IN' ? newAmt : -newAmt;
+  const bankDelta = roundMoney2(newSigned - oldSigned);
+
+  const bankRef = doc(db, 'bank_accounts', bankAccountId);
+  const now = Date.now();
+  const batch = writeBatch(db);
+  batch.update(entryRef, {
+    description,
+    amount: newAmt,
+    direction: newDir,
+    updatedAt: now,
+  });
+  if (Math.abs(bankDelta) >= 0.005) {
+    batch.update(bankRef, {
+      currentBalance: increment(bankDelta),
+      updatedAt: now,
+    });
+  }
+  await batch.commit();
+
+  const { writeAuditLog } = await import('@/lib/services/audit-service');
+  await writeAuditLog(db, user, {
+    actionType: 'UPDATE',
+    entityType: 'CashbookEntry',
+    entityId: entryId,
+    sourceModule: 'accounting',
+    afterSummary: `Admin corrected cashbook: desc/amount ${oldAmt} ${oldDir} → ${newAmt} ${newDir}`,
+  });
+}
+
+/**
  * รับ/จ่าย Petty Cash หน้างาน — ปรับ `bank_accounts.currentBalance` เฉพาะกอง Petty
  * ไม่สร้างเอกสารใน `cashbook_entries` (ฝ่ายบัญชีตัดเงินออกจำนวนก้อนตอนโอนเข้า Petty แล้ว; รายรับรายจ่ายนี้คือการทำบัญชีภายในกองเท่านั้น)
  */

@@ -1380,7 +1380,9 @@ function AssignmentsPageContent() {
                                     มี mobilization ซ้ำ (ดูตารางแดงด้านบน)
                                   </Badge>
                                 ) : null}
-                                <span className="text-xs text-muted-foreground flex items-center gap-1 font-medium"><Briefcase className="h-3 w-3" /> {asgn.positionId}</span>
+                                <span className="text-xs text-muted-foreground flex items-center gap-1 font-medium">
+                                  <Briefcase className="h-3 w-3" /> {poLinePositionLabel}
+                                </span>
                               </div>
                             </TableCell>
                             <TableCell>
