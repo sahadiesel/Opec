@@ -37,6 +37,11 @@ import {
   ymMatchesYearMonthScope,
 } from '@/lib/date/year-month-scope-filter';
 import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
+import {
+  AccountingFilterToolbar,
+  AccountingFilterToolbarAction,
+  AccountingFilterToolbarStat,
+} from '@/components/accounting/accounting-filter-toolbar';
 import { useFirestore, useCollection, useMemoFirebase, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { Users, ExternalLink, Loader2, Search, Building2, Printer, Banknote, Paperclip, Briefcase } from 'lucide-react';
@@ -769,8 +774,15 @@ export default function AccountingWithholdingPayrollHubPage() {
     [filteredExecutive],
   );
 
-  /** ยอดหักรวมลูกจ้าง + พนักงานออฟฟิศ + ผู้บริหาร ตามรายการที่ค้นหา/กรองเดือนปัจจุบัน */
+  /** รวมตามตัวกรองปัจจุบัน (ลูกจ้าง + ออฟฟิศ + ผู้บริหาร รวมกัน) */
   const grandTotalPit = workerTotalPit + officeTotalTax + executiveTotalTax;
+  const grandTotalPaid = useMemo(
+    () =>
+      filteredWorker.reduce((sum, { paid }) => sum + paid, 0) +
+      filteredOffice.reduce((sum, { paid }) => sum + paid, 0) +
+      filteredExecutive.reduce((sum, { paid }) => sum + paid, 0),
+    [filteredWorker, filteredOffice, filteredExecutive],
+  );
 
   const allWorkerTotalPit = useMemo(
     () => workerRows.reduce((sum, { pit }) => sum + pit, 0),
@@ -816,9 +828,14 @@ export default function AccountingWithholdingPayrollHubPage() {
       setPrintBusy(true);
       try {
         const { rows, truncated } = capWithholdingPayrollListPrintRows(sourceRows);
-        const workerTotal = workers.reduce((sum, { pit }) => sum + pit, 0);
-        const officeTotal = offices.reduce((sum, { tax }) => sum + tax, 0);
-        const executiveTotal = executives.reduce((sum, { tax }) => sum + tax, 0);
+        const paidTotal =
+          workers.reduce((sum, { paid }) => sum + paid, 0) +
+          offices.reduce((sum, { paid }) => sum + paid, 0) +
+          executives.reduce((sum, { paid }) => sum + paid, 0);
+        const withholdTotal =
+          workers.reduce((sum, { pit }) => sum + pit, 0) +
+          offices.reduce((sum, { tax }) => sum + tax, 0) +
+          executives.reduce((sum, { tax }) => sum + tax, 0);
         const generatedAt = new Date().toLocaleString('th-TH', {
           dateStyle: 'medium',
           timeStyle: 'short',
@@ -832,10 +849,8 @@ export default function AccountingWithholdingPayrollHubPage() {
           rows,
           scopeTitle,
           filterLines,
-          grandTotalLabel: fmtBaht(workerTotal + officeTotal + executiveTotal),
-          workerTotalLabel: fmtBaht(workerTotal),
-          officeTotalLabel: fmtBaht(officeTotal),
-          executiveTotalLabel: fmtBaht(executiveTotal),
+          paidTotalLabel: fmtBaht(paidTotal),
+          withholdTotalLabel: fmtBaht(withholdTotal),
           generatedAt,
           printedBy: currentUser?.displayName,
           truncated,
@@ -1287,59 +1302,72 @@ export default function AccountingWithholdingPayrollHubPage() {
             <CardTitle className="text-base">ค้นหาและกรองเดือน</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-md">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    className="h-10 pl-9"
-                    placeholder="พิมพ์คำค้น..."
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
-                    aria-label="ค้นหารายการหัก ณ ที่จ่าย"
-                  />
-                </div>
-                <YearMonthScopeSelects
-                  idPrefix="wht"
-                  yearCe={yearFilterCe}
-                  monthScope={monthScope}
-                  yearOptionsCe={yearOptionsCe}
-                  onYearCeChange={setYearFilterCe}
-                  onMonthScopeChange={setMonthScope}
-                />
-              </div>
-              <div className="flex flex-wrap items-end gap-2 shrink-0">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 shrink-0 gap-2 whitespace-nowrap"
-                  onClick={() => setPrintDialogOpen(true)}
-                >
-                  <Printer className="h-4 w-4 shrink-0" />
-                  พิมพ์รายการ
-                </Button>
-                {canPayWhtTax && payableRowCount > 0 ? (
-                  <Button
-                    type="button"
-                    className="h-10 shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white gap-2 px-4 whitespace-nowrap"
-                    onClick={openPayTaxDialog}
-                  >
-                    <Banknote className="h-4 w-4 shrink-0" />
-                    จ่ายภาษี ({selectedPayRowCount})
-                  </Button>
-                ) : null}
-                {!loadingBatches && !loadingRuns && !loadingExecutiveRuns && !loadingWorkerLines && !loadingOfficeLines && !loadingExecutiveLines ? (
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">
-                      รวมลูกจ้าง + ออฟฟิศ + ผู้บริหาร
-                    </p>
-                    <div className="flex h-10 min-w-[11rem] items-center justify-end rounded-md border border-primary/30 bg-primary/5 px-4">
-                      <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(grandTotalPit)}</p>
-                    </div>
+            <AccountingFilterToolbar
+              filters={
+                <>
+                  <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-md">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="h-10 pl-9"
+                      placeholder="พิมพ์คำค้น..."
+                      value={q}
+                      onChange={(e) => setQ(e.target.value)}
+                      aria-label="ค้นหารายการหัก ณ ที่จ่าย"
+                    />
                   </div>
-                ) : null}
-              </div>
-            </div>
+                  <YearMonthScopeSelects
+                    idPrefix="wht"
+                    yearCe={yearFilterCe}
+                    monthScope={monthScope}
+                    yearOptionsCe={yearOptionsCe}
+                    onYearCeChange={setYearFilterCe}
+                    onMonthScopeChange={setMonthScope}
+                  />
+                </>
+              }
+              actions={
+                <>
+                  <AccountingFilterToolbarAction>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 shrink-0 gap-2 whitespace-nowrap"
+                      onClick={() => setPrintDialogOpen(true)}
+                    >
+                      <Printer className="h-4 w-4 shrink-0" />
+                      พิมพ์รายการ
+                    </Button>
+                  </AccountingFilterToolbarAction>
+                  {canPayWhtTax && payableRowCount > 0 ? (
+                    <AccountingFilterToolbarAction>
+                      <Button
+                        type="button"
+                        className="h-10 shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white gap-2 px-4 whitespace-nowrap"
+                        onClick={openPayTaxDialog}
+                      >
+                        <Banknote className="h-4 w-4 shrink-0" />
+                        จ่ายภาษี ({selectedPayRowCount})
+                      </Button>
+                    </AccountingFilterToolbarAction>
+                  ) : null}
+                  {!loadingBatches &&
+                  !loadingRuns &&
+                  !loadingExecutiveRuns &&
+                  !loadingWorkerLines &&
+                  !loadingOfficeLines &&
+                  !loadingExecutiveLines ? (
+                    <>
+                      <AccountingFilterToolbarStat label="รวมรายจ่าย" value={fmtBaht(grandTotalPaid)} />
+                      <AccountingFilterToolbarStat
+                        label="รวมการหัก"
+                        value={fmtBaht(grandTotalPit)}
+                        emphasize
+                      />
+                    </>
+                  ) : null}
+                </>
+              }
+            />
           </CardContent>
         </Card>
 
@@ -1414,12 +1442,11 @@ export default function AccountingWithholdingPayrollHubPage() {
                 </CardDescription>
               </div>
               {!loadingBatches && !loadingWorkerLines && !workerLinesErr ? (
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">ยอดหักรวม (ในตาราง)</p>
-                  <div className="flex h-10 items-center justify-end rounded-md border border-primary/25 bg-primary/5 px-4 shadow-sm sm:min-w-[180px]">
-                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(workerTotalPit)}</p>
-                  </div>
-                </div>
+                <AccountingFilterToolbarStat
+                  label="ยอดหักรวม"
+                  value={fmtBaht(workerTotalPit)}
+                  emphasize
+                />
               ) : null}
             </div>
           </CardHeader>
@@ -1571,12 +1598,11 @@ export default function AccountingWithholdingPayrollHubPage() {
                 </CardDescription>
               </div>
               {!loadingRuns && !loadingOfficeLines && !officeLinesErr ? (
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">ยอดหักรวม (ในตาราง)</p>
-                  <div className="flex h-10 items-center justify-end rounded-md border border-primary/25 bg-primary/5 px-4 shadow-sm sm:min-w-[180px]">
-                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(officeTotalTax)}</p>
-                  </div>
-                </div>
+                <AccountingFilterToolbarStat
+                  label="ยอดหักรวม"
+                  value={fmtBaht(officeTotalTax)}
+                  emphasize
+                />
               ) : null}
             </div>
           </CardHeader>
@@ -1729,12 +1755,11 @@ export default function AccountingWithholdingPayrollHubPage() {
                 </CardDescription>
               </div>
               {!loadingExecutiveRuns && !loadingExecutiveLines && !executiveLinesErr ? (
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">ยอดหักรวม (ในตาราง)</p>
-                  <div className="flex h-10 items-center justify-end rounded-md border border-primary/25 bg-primary/5 px-4 shadow-sm sm:min-w-[180px]">
-                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtBaht(executiveTotalTax)}</p>
-                  </div>
-                </div>
+                <AccountingFilterToolbarStat
+                  label="ยอดหักรวม"
+                  value={fmtBaht(executiveTotalTax)}
+                  emphasize
+                />
               ) : null}
             </div>
           </CardHeader>

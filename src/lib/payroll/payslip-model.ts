@@ -165,6 +165,7 @@ function humanizeDeductionKey(key: string): string {
   if (key.startsWith('manual_ded_')) return key;
   const map: Record<string, string> = {
     social_security: 'ประกันสังคม',
+    employee_assistance_fund: 'กองทุนสงเคราะห์ลูกจ้าง',
     pit_withholding: 'ภาษี ณ ที่จ่าย (ภงด. 1)',
     cash_advance_recovery: 'หักคืนเบิกล่วงหน้า',
     [PRIOR_PAID_RECOVERY_DEDUCTION_KEY]: 'หักยอดที่ชำระไปแล้ว (งวดก่อนหน้า)',
@@ -593,6 +594,11 @@ export function buildWorkerPayslipDeductionLines(line: PayrollBatchLine): Paysli
     out.push({ label: 'ประกันสังคม', amount: ss });
   }
 
+  const fund = round2(Number(d.employee_assistance_fund) || 0);
+  if (fund > 0.005) {
+    out.push({ label: 'กองทุนสงเคราะห์ลูกจ้าง', amount: fund });
+  }
+
   const pit = round2(Number(d.pit_withholding) || 0);
   if (Math.abs(pit) > 0.005) {
     const periodYm = (line.periodEndDate || line.periodStartDate || '').slice(0, 7);
@@ -613,7 +619,7 @@ export function buildWorkerPayslipDeductionLines(line: PayrollBatchLine): Paysli
     });
   });
 
-  const known = new Set<string>(['social_security', 'pit_withholding']);
+  const known = new Set<string>(['social_security', 'employee_assistance_fund', 'pit_withholding']);
   manual.forEach((_, i) => known.add(`manual_ded_${i}`));
 
   for (const [k, v] of Object.entries(d)) {

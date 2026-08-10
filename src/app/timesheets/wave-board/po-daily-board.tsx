@@ -722,17 +722,8 @@ export function PoDailyBoardCard({
             : needsPackageHours
               ? { ...ex, normalHours: dft }
               : ex;
-      } else {
-        next[asgn.id] = {
-          workerId: asgn.workerId,
-          assignmentId: asgn.id,
-          date: targetDate,
-          eventType: 'work_day',
-          normalHours: dft,
-          ot15Hours: 0,
-          status: 'DRAFT',
-        };
       }
+      // ไม่สร้างร่าง work_day สำหรับแถวที่ยังไม่มีเอกสาร — ช่องประเภทวันเป็น «ว่าง» ตามสถานะจริง
     }
     setPersistedAssignmentIds(persisted);
     setRosterData((prev) => {
@@ -1798,6 +1789,8 @@ export function PoDailyBoardCard({
                   const dft = defaultHoursByAssignmentId.get(asgn.id) ?? 12;
                   const raw = rosterData[asgn.id];
                   const isRowCleared = clearedRowIds.has(asgn.id);
+                  /** ยังไม่มีเอกสาร / ยังไม่เลือกประเภทวัน — แสดง «ว่าง» ไม่บังคับเป็น work_day */
+                  const isEmptySlot = isRowCleared || !raw;
                   const persisted = persistedAssignmentIds.has(asgn.id) && !isRowCleared;
                   const afterMobEnd = isHtmlDateAfterMobLocationEnd(asgn, targetDate);
                   const awaitingRemob = assignmentAwaitingRemobAfterSiteFinish(asgn);
@@ -1812,23 +1805,18 @@ export function PoDailyBoardCard({
                   /** หลัง mob end — ซ่อนยอดจาก Firestore เฉพาะเมื่อไม่เปิดแก้ประเภทวัน */
                   const maskAfterMobEnd =
                     afterMobEnd && !(awaitingRemob && priorCycleWorkWhileAwaitingRemob);
+                  const emptyRowDisplay = {
+                    eventType: 'work_day' as RateConditionEventType,
+                    normalHours: 0,
+                    ot15Hours: 0,
+                    remark: '',
+                    status: undefined as DailyTimesheetStatus | undefined,
+                  };
                   const row =
-                    isRowCleared
-                      ? {
-                          eventType: 'work_day' as RateConditionEventType,
-                          normalHours: 0,
-                          ot15Hours: 0,
-                          remark: '',
-                          status: undefined as DailyTimesheetStatus | undefined,
-                        }
+                    isEmptySlot
+                      ? emptyRowDisplay
                       : maskAfterMobEnd && !showEventTypeEditor
-                        ? {
-                            eventType: 'work_day' as RateConditionEventType,
-                            normalHours: 0,
-                            ot15Hours: 0,
-                            remark: '',
-                            status: undefined as DailyTimesheetStatus | undefined,
-                          }
+                        ? emptyRowDisplay
                         : {
                             ...raw,
                             eventType: et,
@@ -1868,7 +1856,7 @@ export function PoDailyBoardCard({
                   const canFinishJob =
                     editableMobWindow &&
                     WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(asgn.deploymentStatus as Assignment['deploymentStatus']);
-                  const eventSelectValue = isRowCleared
+                  const eventSelectValue = isEmptySlot
                     ? PO_DAILY_BOARD_EVENT_CLEAR
                     : row.eventType;
 
@@ -2015,7 +2003,7 @@ export function PoDailyBoardCard({
                         )}
                       </TableCell>
                       <TableCell className={PO_BOARD_HOURS_CELL_CLASS}>
-                        {!showEventTypeEditor || isRowCleared ? (
+                        {!showEventTypeEditor || isEmptySlot ? (
                           <span className="flex h-9 items-center justify-center text-xs text-muted-foreground">—</span>
                         ) : (
                           <Input
@@ -2034,14 +2022,23 @@ export function PoDailyBoardCard({
                               markRowDirty(asgn.id);
                               setRosterData((p) => ({
                                 ...p,
-                                [asgn.id]: { ...(p[asgn.id] || {}), normalHours: v },
+                                [asgn.id]: {
+                                  workerId: asgn.workerId,
+                                  assignmentId: asgn.id,
+                                  date: targetDate,
+                                  eventType: 'work_day' as RateConditionEventType,
+                                  ot15Hours: 0,
+                                  status: 'DRAFT' as DailyTimesheetStatus,
+                                  ...(p[asgn.id] || {}),
+                                  normalHours: v,
+                                },
                               }));
                             }}
                           />
                         )}
                       </TableCell>
                       <TableCell className={PO_BOARD_HOURS_CELL_CLASS}>
-                        {(!showEventTypeEditor || isRowCleared || row.eventType !== 'work_day') ? (
+                        {(!showEventTypeEditor || isEmptySlot || row.eventType !== 'work_day') ? (
                           <span className="flex h-9 items-center justify-center text-xs text-muted-foreground">—</span>
                         ) : (
                           <Input
@@ -2087,7 +2084,7 @@ export function PoDailyBoardCard({
                           >
                             {!dateInAssignment
                               ? '—'
-                              : afterMobEnd || isRowCleared
+                              : afterMobEnd || isEmptySlot
                                 ? '—'
                                 : waveBoardStatusCode(persisted, row.eventType)}
                           </span>
@@ -2149,9 +2146,9 @@ export function PoDailyBoardCard({
                             </span>
                           ) : null}
                           <Input
-                            disabled={rowEditLocked || isRowCleared}
+                            disabled={rowEditLocked || isEmptySlot}
                             className="h-8 text-[10px] text-right w-full min-w-0"
-                            value={isRowCleared ? '' : row.remark}
+                            value={isEmptySlot ? '' : row.remark}
                             onChange={(e) => {
                               setClearedRowIds((prev) => {
                                 if (!prev.has(asgn.id)) return prev;

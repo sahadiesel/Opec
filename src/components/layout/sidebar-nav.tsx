@@ -87,6 +87,7 @@ import {
 } from '@/lib/navigation/nav-access';
 import { cn } from '@/lib/utils';
 import { useAccountingSidebarAlerts } from '@/hooks/use-accounting-sidebar-alerts';
+import { useApprovalSidebarAlerts } from '@/hooks/use-approval-sidebar-alerts';
 import { AccountingNavAlertDot } from '@/components/layout/accounting-nav-alert-dot';
 
 /** ข้อความเมนูหลัก sidebar — ตัวหนา ขนาดเล็กกว่าเดิม (text-xs) ให้พอดีกับความกว้างแถบ */
@@ -523,6 +524,7 @@ export function SidebarNav({
     cashAdvanceAlert,
     vendorBillAlert,
   } = useAccountingSidebarAlerts(user);
+  const { approvalAlert } = useApprovalSidebarAlerts(user);
 
   /** ไฟเตือนรายเมนูย่อยใต้ «รายการรอทำจ่าย (บัญชี)» — href → มีรายการรอจ่ายหรือไม่ */
   const payoutQueueAlertByHref: Record<string, { active: boolean; title: string }> = {
@@ -824,6 +826,9 @@ export function SidebarNav({
                                     {sub.description}
                                   </span>
                                 </div>
+                                {sub.audienceOpsHrManagersOnly && approvalAlert ? (
+                                  <AccountingNavAlertDot title="มีรายการรออนุมัติในศูนย์อนุมัติ" />
+                                ) : null}
                                 <ChevronRight className="ml-auto h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]:rotate-90" />
                               </SidebarMenuButton>
                             </CollapsibleTrigger>

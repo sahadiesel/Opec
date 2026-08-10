@@ -110,6 +110,13 @@ export type PayrollWorkerWhtPrintVm = {
   withholdingTaxWordsTh: string;
   pitZeroNote?: string;
 
+  /** เงินได้รวมสำหรับแสดงในเอกสาร — เงินได้/เงินเดือนรวมของงวดนี้ (เท่ากับ grossAmount) */
+  certificateIncomeTotalBaht?: number;
+  /** เงินสะสมที่จ่ายเข้ากองทุนประกันสังคมสะสมทั้งปี — สำหรับยื่น ภ.ง.ด. 90/91 */
+  yearToDateSocialSecurityBaht?: number;
+  /** เงินสะสมกองทุนสงเคราะห์ลูกจ้างสะสมทั้งปี — สำหรับยื่น ภ.ง.ด. 90/91 */
+  yearToDateEmployeeAssistanceFundBaht?: number;
+
   taxCondition: WhtTaxCondition;
   paymentMethod: PaymentMethod;
   paymentReferenceNo: string;

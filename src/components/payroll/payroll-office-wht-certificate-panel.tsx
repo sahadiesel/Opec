@@ -31,6 +31,7 @@ import {
   auditPayrollOfficeWhtSinglePrint,
   auditPayrollOfficeWhtXmlGenerated,
 } from '@/lib/payroll/payroll-office-wht-audit';
+import { loadOfficeYearToDateStatutoryFunds } from '@/lib/payroll/payroll-wht-year-to-date-funds';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting } from '@/lib/simple-tier-model';
 
@@ -107,6 +108,27 @@ export function PayrollOfficeWhtCertificatePanel({
     if (active) setIssueYmd(timestampMsToBangkokYmd(Date.now()));
   }, [active, run.id, line.id]);
 
+  const [ytdFunds, setYtdFunds] = useState<{ sso: number; assistanceFund: number } | null>(null);
+  useEffect(() => {
+    if (!active || !firestore || !paymentYmd) {
+      setYtdFunds(null);
+      return;
+    }
+    let cancelled = false;
+    const year = Number(paymentYmd.slice(0, 4));
+    void (async () => {
+      try {
+        const res = await loadOfficeYearToDateStatutoryFunds(firestore, line.staffId, year, run.id);
+        if (!cancelled) setYtdFunds(res);
+      } catch {
+        if (!cancelled) setYtdFunds(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [active, firestore, line.staffId, run.id, paymentYmd]);
+
   const validation = useMemo(
     () =>
       validatePayrollOfficeWhtPrint({
@@ -130,11 +152,13 @@ export function PayrollOfficeWhtCertificatePanel({
         periodLabel,
         issueDateYmd: issueYmd,
         paymentDateYmd: paymentYmd,
+        yearToDateSocialSecurityBaht: ytdFunds?.sso,
+        yearToDateEmployeeAssistanceFundBaht: ytdFunds?.assistanceFund,
       });
     } catch {
       return null;
     }
-  }, [run, line, staff, companyProfile, periodLabel, issueYmd, paymentYmd]);
+  }, [run, line, staff, companyProfile, periodLabel, issueYmd, paymentYmd, ytdFunds]);
 
   const previewHtml = useMemo(() => {
     if (!vm) return '';

@@ -2617,6 +2617,10 @@ export interface PayrollBatch {
   hrApprovedAt?: number;
   financePreparedBy?: string;
   financePreparedAt?: number;
+  /** บัญชีไม่อนุมัติจ่าย — ส่งกลับฝ่ายเงินเดือนตรวจ (GENERATED) */
+  financeRejectedBy?: string;
+  financeRejectedAt?: number;
+  financeRejectReason?: string;
   /** บัญชียืนยันจ่ายแล้ว — รายการ cashbook ที่สร้างอัตโนมัติ */
   financeCashbookEntryId?: string;
   /** บัญชีธนาคารที่ใช้ตัดจ่าย (ถ้าว่าง ระบบใช้บัญชี ACTIVE แรก) */

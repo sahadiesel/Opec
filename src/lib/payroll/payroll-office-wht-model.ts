@@ -48,6 +48,18 @@ function pitAmountOffice(line: OfficePayrollLine): number {
   return officePayrollLineTaxAmount(line);
 }
 
+/** ยอดประกันสังคม (ฝั่งพนักงาน) ของบรรทัดงวดนี้ — ใช้เป็น fallback เมื่อไม่มี YTD ระบุมา */
+export function officePayrollLineSocialSecurityAmount(line: OfficePayrollLine): number {
+  const v = Number(line.socialSecurity ?? 0);
+  return round2(Number.isFinite(v) ? v : 0);
+}
+
+/** ยอดกองทุนสงเคราะห์ลูกจ้างของบรรทัดงวดนี้ — ใช้เป็น fallback เมื่อไม่มี YTD ระบุมา */
+export function officePayrollLineEmployeeAssistanceFundAmount(line: OfficePayrollLine): number {
+  const v = Number(line.d8Snapshot?.deductions?.employee_assistance_fund ?? 0);
+  return round2(Number.isFinite(v) ? v : 0);
+}
+
 export function buildPayrollOfficeWhtPrintVm(input: {
   run: OfficePayrollRun;
   line: OfficePayrollLine;
@@ -59,6 +71,10 @@ export function buildPayrollOfficeWhtPrintVm(input: {
   officialDocumentNo?: boolean;
   /** ข้อความประเภทงวดบนสลิปฝังในใบหัก (เช่น ผู้บริหาร) */
   payslipPayrollTypeLabelOverride?: string;
+  /** เงินสะสมกองทุนประกันสังคมทั้งปี (สำหรับยื่น ภ.ง.ด. 90/91) — ถ้าไม่ระบุ ใช้ยอดของบรรทัดงวดนี้แทน */
+  yearToDateSocialSecurityBaht?: number;
+  /** เงินสะสมกองทุนสงเคราะห์ลูกจ้างทั้งปี — ถ้าไม่ระบุ ใช้ยอดของบรรทัดงวดนี้แทน */
+  yearToDateEmployeeAssistanceFundBaht?: number;
 }): PayrollWorkerWhtPrintVm {
   const { run, line, staff, company, periodLabel, issueDateYmd, paymentDateYmd } = input;
 
@@ -89,6 +105,15 @@ export function buildPayrollOfficeWhtPrintVm(input: {
 
   const pitZeroNote =
     wht <= 0.005 ? 'ไม่มีภาษีหัก ณ ที่จ่ายในงวดนี้ (แสดงยอดภาษี 0.00)' : undefined;
+
+  const yearToDateSocialSecurityBaht =
+    input.yearToDateSocialSecurityBaht != null && Number.isFinite(input.yearToDateSocialSecurityBaht)
+      ? round2(input.yearToDateSocialSecurityBaht)
+      : officePayrollLineSocialSecurityAmount(line);
+  const yearToDateEmployeeAssistanceFundBaht =
+    input.yearToDateEmployeeAssistanceFundBaht != null && Number.isFinite(input.yearToDateEmployeeAssistanceFundBaht)
+      ? round2(input.yearToDateEmployeeAssistanceFundBaht)
+      : officePayrollLineEmployeeAssistanceFundAmount(line);
 
   return {
     documentNo,
@@ -142,6 +167,10 @@ export function buildPayrollOfficeWhtPrintVm(input: {
     withholdingTaxRateDisplayTh: 'ตามการคำนวณ Payroll (พนักงานออฟฟิศ)',
     withholdingTaxWordsTh: amountToThaiBahtText(wht),
     pitZeroNote,
+
+    certificateIncomeTotalBaht: grossAmount,
+    yearToDateSocialSecurityBaht,
+    yearToDateEmployeeAssistanceFundBaht,
 
     taxCondition: 'WITHHOLDING',
     paymentMethod: inferOfficePaymentMethod(staff),

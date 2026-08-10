@@ -28,6 +28,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   buildMoneyReceiptPrintHtml,
   openStandardPrintWindow,
+  wrapStandardPrintDocument,
   type TaxInvoicePrintSheet,
 } from '@/lib/documents/standard-document-print';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
@@ -128,6 +129,21 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
     [receipt, taxInv, companyProfile, customer, printLocale, toast],
   );
 
+  /** พรีวิวหน้าจอ — รูปแบบเดียวกับตอนพิมพ์ (ต้นฉบับ 1 แผ่น) */
+  const previewHtml = useMemo(() => {
+    if (!receipt || !taxInv) return '';
+    const body = buildMoneyReceiptPrintHtml({
+      company: companyProfile ?? undefined,
+      receipt,
+      taxInvoice: taxInv,
+      customer: customer ?? undefined,
+      printedAtMs: Date.now(),
+      locale: printLocale,
+      sheets: ['original'],
+    });
+    return wrapStandardPrintDocument(receipt.receiptNo, body, { lang: printLocale });
+  }, [receipt, taxInv, companyProfile, customer, printLocale]);
+
   const handlePrint = useCallback(() => {
     if (!receipt || !taxInv) return;
     setReceiptPrintPreset('p1');
@@ -190,7 +206,7 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
 
   return (
     <AppShell user={currentUser as User} onLogout={() => {}}>
-      <div className="mx-auto max-w-3xl space-y-6">
+      <div className="mx-auto max-w-4xl space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
             <Button variant="ghost" size="icon" onClick={() => router.push('/receipts')}>
@@ -203,7 +219,7 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} showLabel />
-            <Button variant="outline" className="gap-2" type="button" onClick={handlePrint}>
+            <Button variant="outline" className="gap-2" type="button" onClick={handlePrint} disabled={!taxInv}>
               <Printer className="h-4 w-4" /> พิมพ์
             </Button>
           </div>
@@ -277,6 +293,31 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
                   <Link href={`/tax-invoices/${taxInv.id}`}>เปิดใบกำกับภาษีต้นทาง</Link>
                 </Button>
               </p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">พรีวิวเอกสาร</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              รูปแบบเดียวกับตอนพิมพ์ — สลับภาษาด้านบนได้ก่อนกดพิมพ์
+            </p>
+          </CardHeader>
+          <CardContent>
+            {!taxInv ? (
+              <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                กำลังโหลดใบกำกับอ้างอิง…
+              </div>
+            ) : previewHtml ? (
+              <iframe
+                title={`พรีวิวใบเสร็จ ${receipt.receiptNo}`}
+                className="w-full min-h-[720px] rounded-md border bg-white"
+                srcDoc={previewHtml}
+              />
+            ) : (
+              <p className="py-10 text-center text-sm text-muted-foreground">ไม่สามารถสร้างพรีวิวได้</p>
             )}
           </CardContent>
         </Card>

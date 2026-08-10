@@ -84,14 +84,10 @@ function buildPayrollWorkerWhtBodyHtml(vm: PayrollWorkerWhtPrintVm, copyVariant:
 
   const banner = escapeHtml(copyVariantBannerTh(copyVariant));
 
-  const earnRows = vm.earningsRows
-    .map((r) => `<tr><td>${escapeHtml(r.label)}</td><td>${fmtBaht(r.amount)} บาท</td></tr>`)
-    .join('');
-  const dedRows = vm.deductionsRows
-    .map((r) => `<tr><td>${escapeHtml(r.label)}</td><td>${fmtBaht(r.amount)} บาท</td></tr>`)
-    .join('');
-
   const pitNote = vm.pitZeroNote ? `<div class="field muted">${escapeHtml(vm.pitZeroNote)}</div>` : '';
+  const incomeTotal = vm.certificateIncomeTotalBaht ?? vm.grossAmount;
+  const ytdSso = vm.yearToDateSocialSecurityBaht ?? 0;
+  const ytdFund = vm.yearToDateEmployeeAssistanceFundBaht ?? 0;
 
   return `
 ${!opts.official ? '<div class="draft-watermark">[ ตัวอย่างก่อนออกเอกสาร — ไม่ใช่หลักฐานทางการ ]</div>' : ''}
@@ -137,38 +133,30 @@ ${payee.bankName || payee.bankAccountLast4 ? `<div class="field">ธนาคา
 <div class="field">วิธีชำระเงิน: ${escapeHtml(paymentMethodTh(vm.paymentMethod))}</div>
 <div class="field">เลขที่อ้างอิงการชำระเงิน: ${escapeHtml(vm.paymentReferenceNo || '—')}</div>
 
-<div class="pwht-earn-ded-wrap">
-  <div class="pwht-earn-ded-col">
-    <div class="sec pwht-inline-sec">รายได้</div>
-    <table class="amounts" aria-label="รายได้">
-      <tbody>
-        ${earnRows}
-        <tr><td><strong>รวมรายได้</strong></td><td><strong>${fmtBaht(vm.grossAmount)} บาท</strong></td></tr>
-      </tbody>
-    </table>
-  </div>
-  <div class="pwht-earn-ded-col">
-    <div class="sec pwht-inline-sec">รายการหัก</div>
-    <table class="amounts" aria-label="รายการหัก">
-      <tbody>
-        ${dedRows}
-        <tr><td><strong>รวมรายการหัก</strong></td><td><strong>${fmtBaht(vm.totalDeductions)} บาท</strong></td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<div class="sec">4. ภาษีหัก ณ ที่จ่าย</div>
+<div class="sec">4. เงินได้และภาษี</div>
 ${pitNote}
-<div class="field">ฐานภาษี (เงินได้ที่ใช้คำนวณใน Payroll): ${fmtBaht(vm.taxableIncomeAmount)} บาท</div>
-<div class="field">อัตราภาษีหัก ณ ที่จ่าย ${escapeHtml(vm.withholdingTaxRateDisplayTh)} เป็นเงินที่หักไว้ ${fmtBaht(vm.withholdingTaxAmount)} บาท</div>
+<table class="amounts" aria-label="เงินได้และภาษี">
+  <tbody>
+    <tr><td>เงินได้/เงินเดือนรวม</td><td>${fmtBaht(incomeTotal)} บาท</td></tr>
+    <tr><td><strong>ภาษีที่หักไว้</strong></td><td><strong>${fmtBaht(vm.withholdingTaxAmount)} บาท</strong></td></tr>
+  </tbody>
+</table>
 <div class="field">ตัวอักษรจำนวนภาษีที่หักไว้: ${escapeHtml(vm.withholdingTaxWordsTh)}</div>
-<div class="field"><strong>ยอดสุทธิที่จ่าย</strong>: ${fmtBaht(vm.netPaidAmount)} บาท</div>
+<div class="field muted">ยอดสุทธิที่จ่าย (หลังหักทุกรายการ): ${fmtBaht(vm.netPaidAmount)} บาท</div>
 
-<div class="sec">5. เงื่อนไขการหักภาษี</div>
+<div class="sec">5. เงินสะสมกองทุน (สำหรับยื่น ภ.ง.ด. 90/91)</div>
+<table class="amounts" aria-label="เงินสะสมกองทุน">
+  <tbody>
+    <tr><td>เงินสะสมที่จ่ายเข้ากองทุนประกันสังคม</td><td>${fmtBaht(ytdSso)} บาท</td></tr>
+    <tr><td>เงินสะสมกองทุนสงเคราะห์ลูกจ้าง</td><td>${fmtBaht(ytdFund)} บาท</td></tr>
+  </tbody>
+</table>
+<div class="field muted">ยอดสะสมนับตั้งแต่ต้นปีปฏิทินถึงงวดนี้ (รวมงวดปัจจุบัน)</div>
+
+<div class="sec">6. เงื่อนไขการหักภาษี</div>
 ${taxConditionChecks()}
 
-<div class="sec">6. ผู้จ่ายเงิน / ผู้รับรอง</div>
+<div class="sec">7. ผู้จ่ายเงิน / ผู้รับรอง</div>
 <div class="certify-block">ข้าพเจ้าขอรับรองว่า ข้อความและตัวเลขข้างต้นถูกต้องตรงตามความเป็นจริงทุกประการ</div>
 <div class="sign-grid">
   <div class="sign-cell">

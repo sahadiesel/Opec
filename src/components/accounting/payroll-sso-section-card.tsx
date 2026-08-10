@@ -36,6 +36,10 @@ import {
   type OfficeSsoRow,
   type WorkerSsoRow,
 } from '@/app/accounting/social-security-payroll/sso-section-utils';
+import {
+  AccountingFilterToolbarAction,
+  AccountingFilterToolbarStat,
+} from '@/components/accounting/accounting-filter-toolbar';
 import type { BankAccount, User } from '@/lib/types';
 import type { Firestore } from 'firebase/firestore';
 import {
@@ -304,17 +308,20 @@ export function PayrollSsoSectionCard({
             </div>
             {!loading && !error ? (
               <div className="flex flex-wrap items-end gap-2 shrink-0">
-                <PayrollSsoPayButton
-                  canPay={canPay}
-                  selectedCount={selectedPayCount}
-                  onPay={openPayDialog}
+                {canPay ? (
+                  <AccountingFilterToolbarAction>
+                    <PayrollSsoPayButton
+                      canPay={canPay}
+                      selectedCount={selectedPayCount}
+                      onPay={openPayDialog}
+                    />
+                  </AccountingFilterToolbarAction>
+                ) : null}
+                <AccountingFilterToolbarStat
+                  label="ยอด ปกส.+สมทบ รวม"
+                  value={totalSsoLabel}
+                  emphasize
                 />
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">ยอด ปกส.+สมทบ รวม (ในตาราง)</p>
-                  <div className="flex h-10 items-center justify-end rounded-md border border-primary/25 bg-primary/5 px-4 shadow-sm sm:min-w-[180px]">
-                    <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{totalSsoLabel}</p>
-                  </div>
-                </div>
               </div>
             ) : null}
           </div>

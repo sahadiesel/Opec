@@ -19,6 +19,11 @@ import { PayrollSsoCombinedPayButton } from '@/components/accounting/payroll-sso
 import { fmtSsoBaht } from '@/components/accounting/payroll-sso-list-table';
 import { fmtBaht } from '@/components/accounting/withholding-wht-pay-tax-ui';
 import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
+import {
+  AccountingFilterToolbar,
+  AccountingFilterToolbarAction,
+  AccountingFilterToolbarStat,
+} from '@/components/accounting/accounting-filter-toolbar';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { Users, Loader2, Search, Building2, Briefcase, ShieldCheck, Printer } from 'lucide-react';
@@ -493,7 +498,21 @@ export default function AccountingSocialSecurityPayrollHubPage() {
     [filteredExecutive],
   );
 
-  const grandTotal = workerTotalSso + officeTotalSso + executiveTotalSso;
+  /** รวมตามตัวกรอง — รวมรายจ่าย = ยอดจ่าย · รวมการหัก = ยอด ปกส. (หักจากค่าจ้าง) */
+  const grandTotalWithhold = useMemo(
+    () =>
+      filteredWorker.reduce((sum, { sso }) => sum + sso, 0) +
+      filteredOffice.reduce((sum, { sso }) => sum + sso, 0) +
+      filteredExecutive.reduce((sum, { sso }) => sum + sso, 0),
+    [filteredWorker, filteredOffice, filteredExecutive],
+  );
+  const grandTotalPaid = useMemo(
+    () =>
+      filteredWorker.reduce((sum, { line }) => sum + workerLineGrossPayAmount(line), 0) +
+      filteredOffice.reduce((sum, { line }) => sum + officeLineGrossPayAmount(line), 0) +
+      filteredExecutive.reduce((sum, { line }) => sum + officeLineGrossPayAmount(line), 0),
+    [filteredWorker, filteredOffice, filteredExecutive],
+  );
   const filteredRowCount = filteredWorker.length + filteredOffice.length + filteredExecutive.length;
   const allRowCount = workerRows.length + officeRows.length + executiveRows.length;
   const ssoDataLoading =
@@ -551,9 +570,14 @@ export default function AccountingSocialSecurityPayrollHubPage() {
       setPrintBusy(true);
       try {
         const { rows, truncated } = capSocialSecurityPayrollListPrintRows(sourceRows);
-        const workerTotal = workers.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0);
-        const officeTotal = offices.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0);
-        const executiveTotal = executives.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0);
+        const paidTotal =
+          workers.reduce((sum, { line }) => sum + workerLineGrossPayAmount(line), 0) +
+          offices.reduce((sum, { line }) => sum + officeLineGrossPayAmount(line), 0) +
+          executives.reduce((sum, { line }) => sum + officeLineGrossPayAmount(line), 0);
+        const withholdTotal =
+          workers.reduce((sum, { sso }) => sum + sso, 0) +
+          offices.reduce((sum, { sso }) => sum + sso, 0) +
+          executives.reduce((sum, { sso }) => sum + sso, 0);
         const generatedAt = new Date().toLocaleString('th-TH', {
           dateStyle: 'medium',
           timeStyle: 'short',
@@ -566,10 +590,8 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           rows,
           scopeTitle,
           filterLines,
-          grandTotalLabel: fmtSsoBaht(workerTotal + officeTotal + executiveTotal),
-          workerTotalLabel: fmtSsoBaht(workerTotal),
-          officeTotalLabel: fmtSsoBaht(officeTotal),
-          executiveTotalLabel: fmtSsoBaht(executiveTotal),
+          paidTotalLabel: fmtBaht(paidTotal),
+          remitTotalLabel: fmtSsoBaht(withholdTotal),
           generatedAt,
           printedBy: currentUser?.displayName,
           truncated,
@@ -647,11 +669,11 @@ export default function AccountingSocialSecurityPayrollHubPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <ShieldCheck className="h-7 w-7 shrink-0 text-primary" />
-            3. จ่ายประกันสังคม (รายเงินสมทบลูกจ้าง)
+            3. จ่ายประกันสังคม รายเงินสมทบลูกจ้าง
           </h1>
           <p className="text-muted-foreground mt-1">
             สรุปยอดเงินสมทบประกันสังคมฝั่งลูกจ้างที่ระบบหักไว้ในแต่ละงวด — ลูกจ้าง / ออฟฟิศ / ผู้บริหาร — ใช้นำส่ง สปส.
-            (สปส.1-10) คนละชุดกับภาษี ภงด.1
+            สปส.1-10 คนละชุดกับภาษี ภงด.1
           </p>
         </div>
 
@@ -661,65 +683,77 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           </CardHeader>
           <CardContent className="pt-0">
             <p className="text-xs text-muted-foreground mb-3">
-              กรองเดือนใช้งวดเงินเดือน (period month) ไม่ใช่วันที่จ่าย — สอดคล้องการนำส่ง สปส.1-10
+              กรองเดือนใช้งวดเงินเดือน ไม่ใช่วันที่จ่าย — สอดคล้องการนำส่ง สปส.1-10
             </p>
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-md">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    className="h-10 pl-9"
-                    placeholder="พิมพ์คำค้น (ชื่อ, เลขบัตร, ชุดจ่าย)..."
-                    value={q}
-                    onChange={(e) => setQ(e.target.value)}
-                    aria-label="ค้นหารายการประกันสังคม"
-                  />
-                </div>
-                <YearMonthScopeSelects
-                  idPrefix="sso"
-                  yearCe={yearFilterCe}
-                  monthScope={monthScope}
-                  yearOptionsCe={yearOptionsCe}
-                  onYearCeChange={setYearFilterCe}
-                  onMonthScopeChange={setMonthScope}
-                />
-              </div>
-              <div className="flex flex-wrap items-end gap-2 shrink-0 ml-auto justify-end">
-                <PayrollSsoCombinedPayButton
-                  canPay={canPaySso}
-                  loading={ssoDataLoading}
-                  firestore={firestore}
-                  currentUser={user}
-                  operatingBankOptions={operatingBankOptions}
-                  workerTableRows={workerTableRows}
-                  officeTableRows={officeTableRows}
-                  executiveTableRows={executiveTableRows}
-                  workerRows={workerRows}
-                  officeRows={officeRows}
-                  executiveRows={executiveRows}
-                  onWorkerRowsChange={setWorkerRows}
-                  onOfficeRowsChange={setOfficeRows}
-                  onExecutiveRowsChange={setExecutiveRows}
-                />
-                {!ssoDataLoading ? (
-                  <div className="flex flex-col items-end gap-1 shrink-0">
-                    <p className="text-xs font-medium text-muted-foreground whitespace-nowrap">รวม ปกส.+สมทบ (3 หมวด)</p>
-                    <div className="flex h-10 min-w-[11rem] items-center justify-end rounded-md border border-primary/30 bg-primary/5 px-4">
-                      <p className="text-lg font-bold tabular-nums tracking-tight text-primary">{fmtSsoBaht(grandTotal)}</p>
-                    </div>
+            <AccountingFilterToolbar
+              filters={
+                <>
+                  <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-md">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="h-10 pl-9"
+                      placeholder="พิมพ์คำค้น..."
+                      value={q}
+                      onChange={(e) => setQ(e.target.value)}
+                      aria-label="ค้นหารายการประกันสังคม"
+                    />
                   </div>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 shrink-0 gap-2 whitespace-nowrap"
-                  onClick={() => setPrintDialogOpen(true)}
-                >
-                  <Printer className="h-4 w-4 shrink-0" />
-                  พิมพ์รายการ
-                </Button>
-              </div>
-            </div>
+                  <YearMonthScopeSelects
+                    idPrefix="sso"
+                    yearCe={yearFilterCe}
+                    monthScope={monthScope}
+                    yearOptionsCe={yearOptionsCe}
+                    onYearCeChange={setYearFilterCe}
+                    onMonthScopeChange={setMonthScope}
+                  />
+                </>
+              }
+              actions={
+                <>
+                  <AccountingFilterToolbarAction>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 shrink-0 gap-2 whitespace-nowrap"
+                      onClick={() => setPrintDialogOpen(true)}
+                    >
+                      <Printer className="h-4 w-4 shrink-0" />
+                      พิมพ์รายการ
+                    </Button>
+                  </AccountingFilterToolbarAction>
+                  {canPaySso && !ssoDataLoading ? (
+                    <AccountingFilterToolbarAction>
+                      <PayrollSsoCombinedPayButton
+                        canPay={canPaySso}
+                        loading={false}
+                        firestore={firestore}
+                        currentUser={user}
+                        operatingBankOptions={operatingBankOptions}
+                        workerTableRows={workerTableRows}
+                        officeTableRows={officeTableRows}
+                        executiveTableRows={executiveTableRows}
+                        workerRows={workerRows}
+                        officeRows={officeRows}
+                        executiveRows={executiveRows}
+                        onWorkerRowsChange={setWorkerRows}
+                        onOfficeRowsChange={setOfficeRows}
+                        onExecutiveRowsChange={setExecutiveRows}
+                      />
+                    </AccountingFilterToolbarAction>
+                  ) : null}
+                  {!ssoDataLoading ? (
+                    <>
+                      <AccountingFilterToolbarStat label="รวมรายจ่าย" value={fmtBaht(grandTotalPaid)} />
+                      <AccountingFilterToolbarStat
+                        label="รวมการหัก"
+                        value={fmtSsoBaht(grandTotalWithhold)}
+                        emphasize
+                      />
+                    </>
+                  ) : null}
+                </>
+              }
+            />
           </CardContent>
         </Card>
 

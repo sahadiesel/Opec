@@ -78,6 +78,10 @@ import {
   projectedAnnualGrossFromMonthly,
 } from '@/lib/payroll/employee-payroll-deductions';
 import {
+  DEFAULT_EMPLOYEE_ASSISTANCE_FUND_MONTHLY_CEILING_BAHT,
+  DEFAULT_EMPLOYEE_ASSISTANCE_FUND_RATE_PERCENT,
+} from '@/lib/payroll/employee-assistance-fund';
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogContent,
@@ -199,6 +203,10 @@ export default function HrSettingsPage() {
 
   const [ssoRate, setSsoRate] = useState(5);
   const [ssoCeiling, setSsoCeiling] = useState(15_000);
+  const [assistanceFundRate, setAssistanceFundRate] = useState(DEFAULT_EMPLOYEE_ASSISTANCE_FUND_RATE_PERCENT);
+  const [assistanceFundCeiling, setAssistanceFundCeiling] = useState(
+    DEFAULT_EMPLOYEE_ASSISTANCE_FUND_MONTHLY_CEILING_BAHT,
+  );
   const [annualAllowance, setAnnualAllowance] = useState(DEFAULT_ANNUAL_PERSONAL_ALLOWANCE);
   const [pitBands, setPitBands] = useState<PitProgressiveBand[]>(() => cloneDefaultPitBands());
   /** ฐานรายได้รายเดือนสำหรับกล่องทดสอบ ภงด.1 (ไม่บันทึกแยก — สะท้อนสูตร payroll) */
@@ -256,6 +264,12 @@ export default function HrSettingsPage() {
         const c = Number(sso.config.monthlyCeilingBaht);
         if (Number.isFinite(r) && r >= 0 && r <= 100) setSsoRate(r);
         if (Number.isFinite(c) && c > 0) setSsoCeiling(c);
+        const fr = Number(sso.config.employeeAssistanceFundRatePercent);
+        const fc = Number(sso.config.employeeAssistanceFundMonthlyCeilingBaht);
+        setAssistanceFundRate(Number.isFinite(fr) && fr >= 0 && fr <= 100 ? fr : DEFAULT_EMPLOYEE_ASSISTANCE_FUND_RATE_PERCENT);
+        setAssistanceFundCeiling(
+          Number.isFinite(fc) && fc > 0 ? fc : DEFAULT_EMPLOYEE_ASSISTANCE_FUND_MONTHLY_CEILING_BAHT,
+        );
       }
       if (tax?.config && String(tax.config.mode) === 'th_pit_monthly_annualized') {
         const a = Number(tax.config.annualPersonalAllowance);
@@ -391,6 +405,16 @@ export default function HrSettingsPage() {
       toast({ variant: 'destructive', title: 'เพดานประกันสังคมไม่ถูกต้อง' });
       return;
     }
+    const fundRate = Number(assistanceFundRate);
+    const fundCeiling = Number(assistanceFundCeiling);
+    if (!Number.isFinite(fundRate) || fundRate < 0 || fundRate > 100) {
+      toast({ variant: 'destructive', title: 'อัตรากองทุนสงเคราะห์ลูกจ้างไม่ถูกต้อง' });
+      return;
+    }
+    if (!Number.isFinite(fundCeiling) || fundCeiling <= 0) {
+      toast({ variant: 'destructive', title: 'เพดานกองทุนสงเคราะห์ลูกจ้างไม่ถูกต้อง' });
+      return;
+    }
     if (!Number.isFinite(allowance) || allowance < 0) {
       toast({ variant: 'destructive', title: 'ลดหย่อนรายปีไม่ถูกต้อง' });
       return;
@@ -453,6 +477,8 @@ export default function HrSettingsPage() {
         config: {
           employeeRatePercent: rate,
           monthlyCeilingBaht: ceiling,
+          employeeAssistanceFundRatePercent: fundRate,
+          employeeAssistanceFundMonthlyCeilingBaht: fundCeiling,
         },
         updatedAt: now,
         createdAt: ssoCreated,
@@ -763,6 +789,49 @@ export default function HrSettingsPage() {
                   <p className="text-xs text-muted-foreground flex gap-2">
                     <Info className="h-4 w-4 shrink-0 mt-0.5" />
                     ไม่ต้องตั้งซ้ำรายคน — รัน payroll จะดึงจากนโยบาย SSO ที่บันทึกที่นี่
+                  </p>
+                </div>
+
+                <Separator />
+
+                <div className="rounded-lg border bg-muted/10 p-4 space-y-4">
+                  <div>
+                    <Label className="text-foreground font-medium">กองทุนสงเคราะห์ลูกจ้าง</Label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      กฎหมายใหม่ 0.25% ของค่าจ้าง (สูงสุดไม่เกิน ~43.73 บาท/เดือน จากฐาน 17,500) แต่ช่วงแรกตั้ง 0
+                      เพราะยังไม่บังคับ
+                    </p>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label className="text-muted-foreground flex items-center gap-2">
+                      <Percent className="h-4 w-4" /> อัตราหัก (ลูกจ้าง) %
+                    </Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={0.01}
+                      disabled={!canEdit || loading}
+                      value={assistanceFundRate}
+                      onChange={(e) => setAssistanceFundRate(Number(e.target.value))}
+                      className="font-mono max-w-[200px]"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label className="text-muted-foreground">เพดานค่าจ้างคำนวณต่อเดือน (บาท)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      step={100}
+                      disabled={!canEdit || loading}
+                      value={assistanceFundCeiling}
+                      onChange={(e) => setAssistanceFundCeiling(Number(e.target.value))}
+                      className="font-mono max-w-[240px]"
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground flex gap-2">
+                    <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                    อัตรา 0% = ไม่หัก — เมื่อกฎหมายบังคับใช้จริง ปรับอัตรานี้แล้วรัน payroll งวดถัดไปจะหักอัตโนมัติ
                   </p>
                 </div>
               </CardContent>

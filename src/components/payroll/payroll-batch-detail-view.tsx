@@ -17,6 +17,7 @@ import {
   CreditCard,
   Printer,
   FileSpreadsheet,
+  XCircle,
 } from 'lucide-react';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { WorkerPayrollWhtSingleDialog } from '@/components/payroll/worker-payroll-wht-single-dialog';
@@ -96,6 +97,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -135,6 +137,9 @@ export function PayrollBatchDetailView({
   const [listPrintBusy, setListPrintBusy] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmPaidOpen, setConfirmPaidOpen] = useState(false);
+  const [rejectPaidOpen, setRejectPaidOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectBusy, setRejectBusy] = useState(false);
   const [confirmLineIds, setConfirmLineIds] = useState<Set<string>>(() => new Set());
   const [payoutBankId, setPayoutBankId] = useState('');
   const [payoutActionBusy, setPayoutActionBusy] = useState(false);
@@ -666,6 +671,34 @@ export function PayrollBatchDetailView({
     }
   }, [firestore, batch, currentUser, toast, payoutBankId, confirmLineIds]);
 
+  const handleFinanceRejectPayout = useCallback(async () => {
+    if (!firestore || !batch || !currentUser) return;
+    setRejectBusy(true);
+    try {
+      const svc = new PayrollService(firestore);
+      await svc.financeRejectWorkerBatchPayout(batch.id, currentUser as User, {
+        reason: rejectReason.trim() || undefined,
+      });
+      setRejectPaidOpen(false);
+      setRejectReason('');
+      toast({
+        title: 'ไม่อนุมัติจ่ายแล้ว',
+        description: 'สถานะกลับเป็นตรวจแล้ว (GENERATED) — ฝ่ายเงินเดือนแก้ไขแล้วส่งขอผู้จัดการอนุมัติใหม่ได้ · รายการออกจากคิวบัญชี',
+      });
+      if (shell === 'accounting') {
+        router.push('/accounting/worker-payroll');
+      }
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่อนุมัติไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setRejectBusy(false);
+    }
+  }, [firestore, batch, currentUser, toast, rejectReason, shell, router]);
+
   if (userLoading || isBatchLoading || !currentUser) {
     return <div className="flex items-center justify-center min-h-screen"><Loader2 className="h-12 w-12 text-primary animate-spin" /></div>;
   }
@@ -1002,6 +1035,18 @@ export function PayrollBatchDetailView({
                     บัญชียืนยันจ่ายแล้ว (เลือกบัญชีตัดจ่าย)…
                   </Button>
                 )}
+                {showAccountingConfirm && accountingPaidLineCount === 0 && !batch.financeCashbookEntryId ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    disabled={rejectBusy || confirmBusy}
+                    onClick={() => setRejectPaidOpen(true)}
+                  >
+                    <XCircle className="h-4 w-4 mr-2" />
+                    ไม่อนุมัติจ่าย
+                  </Button>
+                ) : null}
                 {batch.financeCashbookEntryId ? (
                   <span className="text-xs text-muted-foreground font-mono">
                     Cashbook ref: {batch.financeCashbookEntryId}
@@ -1081,6 +1126,53 @@ export function PayrollBatchDetailView({
                 className="bg-primary"
               >
                 {confirmBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} ยืนยันตัดจากบัญชีนี้
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog
+          open={rejectPaidOpen}
+          onOpenChange={(open) => {
+            if (rejectBusy) return;
+            setRejectPaidOpen(open);
+            if (!open) setRejectReason('');
+          }}
+        >
+          <AlertDialogContent className="max-w-lg">
+            <AlertDialogHeader>
+              <AlertDialogTitle>ไม่อนุมัติจ่าย — ส่งกลับฝ่ายเงินเดือนตรวจ</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3 text-sm text-left">
+                  <p>
+                    งวด <span className="font-mono font-semibold">{batch.id}</span> จะถูกนำออกจากคิวบัญชี และสถานะกลับเป็น{' '}
+                    <strong>ตรวจแล้ว (GENERATED)</strong> เพื่อให้ฝ่ายเงินเดือนแก้ไขรายการ แล้วส่งขอผู้จัดการอนุมัติใหม่อีกครั้ง
+                  </p>
+                  <div className="space-y-2">
+                    <Label htmlFor="finance-reject-reason">เหตุผล (ถ้ามี)</Label>
+                    <Textarea
+                      id="finance-reject-reason"
+                      value={rejectReason}
+                      onChange={(e) => setRejectReason(e.target.value)}
+                      placeholder="เช่น ยอดไม่ตรง / ข้อมูลบัญชีลูกจ้างผิด / ต้องปรับรายการหัก…"
+                      rows={3}
+                      disabled={rejectBusy}
+                    />
+                  </div>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={rejectBusy}>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={rejectBusy}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void handleFinanceRejectPayout();
+                }}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {rejectBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null} ยืนยันไม่อนุมัติจ่าย
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

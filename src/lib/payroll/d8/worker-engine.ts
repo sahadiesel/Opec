@@ -4,6 +4,7 @@ import {
   pitFromMonthlyGross,
   socialSecurityFromPolicy,
 } from './deductions-from-policy';
+import { employeeAssistanceFundFromSsoPolicy } from '@/lib/payroll/employee-assistance-fund';
 import { policiesAppliedList, type ResolvedPayrollPolicies } from './policies';
 import {
   forceSupplementalNoSocialSecurity,
@@ -43,10 +44,12 @@ export function computeWorkerPayrollLineD8(input: WorkerPayrollD8Input): {
   const isSupplemental = isSupplementalPayrollBatchType(input.batchType);
 
   let ss = 0;
+  let fund = 0;
   let pit = 0;
 
   if (isSupplemental) {
     ss = 0;
+    fund = 0;
     pit = supplementalIncrementalPitBaht({
       supplementalGross: gross,
       priorPaidTaxableGross: input.priorPaidTaxableGross || 0,
@@ -55,13 +58,16 @@ export function computeWorkerPayrollLineD8(input: WorkerPayrollD8Input): {
   } else {
     const ssoBase = Math.max(0, gross - allowances);
     ss = socialSecurityFromPolicy(ssoBase, input.policies.sso);
-    pit = pitFromMonthlyGross(gross, input.policies.tax, input.policies.sso, ss);
+    fund = employeeAssistanceFundFromSsoPolicy(ssoBase, input.policies.sso);
+    /** PIT annualization base ต้องหักทั้ง ปสง. และกองทุนสงเคราะห์ลูกจ้างออกก่อน */
+    pit = pitFromMonthlyGross(gross, input.policies.tax, input.policies.sso, ss + fund);
   }
 
   const fixed = fixedDeductionsFromPolicy(input.policies.allowanceDeduction);
 
   let deductionsBreakdown: Record<string, number> = {
     social_security: ss,
+    ...(fund > 0 ? { employee_assistance_fund: fund } : {}),
     pit_withholding: pit,
     ...fixed,
   };

@@ -21,11 +21,11 @@ export function isSupplementalPayrollBatchType(
   return batchType === 'SUPPLEMENTAL';
 }
 
-/** บังคับไม่หัก ปสง. ในงวดตกเบิก */
+/** บังคับไม่หัก ปสง. และกองทุนสงเคราะห์ลูกจ้างในงวดตกเบิก */
 export function forceSupplementalNoSocialSecurity(
   deductions: Record<string, number>,
 ): Record<string, number> {
-  return { ...deductions, social_security: 0 };
+  return { ...deductions, social_security: 0, employee_assistance_fund: 0 };
 }
 
 /**

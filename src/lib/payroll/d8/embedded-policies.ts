@@ -2,6 +2,10 @@ import {
   DEFAULT_SOCIAL_SECURITY_EMPLOYEE_RATE_PERCENT,
   DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT,
 } from '@/lib/hr/pit-thailand';
+import {
+  DEFAULT_EMPLOYEE_ASSISTANCE_FUND_MONTHLY_CEILING_BAHT,
+  DEFAULT_EMPLOYEE_ASSISTANCE_FUND_RATE_PERCENT,
+} from '@/lib/payroll/employee-assistance-fund';
 import { DEFAULT_MONTHLY_WORK_NORM } from '@/lib/hr/monthly-work-norm-policy';
 import { DEFAULT_ANNUAL_PERSONAL_ALLOWANCE } from '@/lib/payroll/employee-payroll-deductions';
 import { HR_STATUTORY_POLICY_MONTHLY_WORK_ID, HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
@@ -51,6 +55,8 @@ export function embeddedDefaultPayrollPolicies(): PayrollPolicyRecord[] {
       config: {
         employeeRatePercent: DEFAULT_SOCIAL_SECURITY_EMPLOYEE_RATE_PERCENT,
         monthlyCeilingBaht: DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT,
+        employeeAssistanceFundRatePercent: DEFAULT_EMPLOYEE_ASSISTANCE_FUND_RATE_PERCENT,
+        employeeAssistanceFundMonthlyCeilingBaht: DEFAULT_EMPLOYEE_ASSISTANCE_FUND_MONTHLY_CEILING_BAHT,
       },
       createdAt: t,
       updatedAt: t,

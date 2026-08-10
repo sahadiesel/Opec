@@ -2,11 +2,13 @@
 
 export const MONTH_SCOPE_LAST_2 = 'LAST_2';
 export const MONTH_SCOPE_LAST_3 = 'LAST_3';
+/** ทุกเดือนในปีที่เลือก */
+export const MONTH_SCOPE_ALL = 'ALL';
 
 export type MonthScopeLookback = typeof MONTH_SCOPE_LAST_2 | typeof MONTH_SCOPE_LAST_3;
 
-/** ค่าช่องเลือกเดือน: LAST_2 | LAST_3 | '01'..'12' */
-export type MonthScopeValue = MonthScopeLookback | string;
+/** ค่าช่องเลือกเดือน: ALL | LAST_2 | LAST_3 | '01'..'12' */
+export type MonthScopeValue = typeof MONTH_SCOPE_ALL | MonthScopeLookback | string;
 
 const TH_MONTH_SHORT = [
   'ม.ค.',
@@ -22,6 +24,10 @@ const TH_MONTH_SHORT = [
   'พ.ย.',
   'ธ.ค.',
 ] as const;
+
+export function isMonthScopeAll(v: string): boolean {
+  return v === MONTH_SCOPE_ALL;
+}
 
 export function isMonthScopeLookback(v: string): v is MonthScopeLookback {
   return v === MONTH_SCOPE_LAST_2 || v === MONTH_SCOPE_LAST_3;
@@ -40,8 +46,9 @@ export function yearCeToBe(yearCe: number): number {
   return yearCe + 543;
 }
 
-/** ตัวเลือกเดือน: 2/3 เดือนย้อนหลัง แล้วตามด้วย ม.ค.–ธ.ค. */
+/** ตัวเลือกเดือน: ทุกเดือน · 2/3 เดือนย้อนหลัง · ม.ค.–ธ.ค. */
 export const MONTH_SCOPE_SELECT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: MONTH_SCOPE_ALL, label: 'ทุกเดือน' },
   { value: MONTH_SCOPE_LAST_2, label: '2 เดือนย้อนหลัง' },
   { value: MONTH_SCOPE_LAST_3, label: '3 เดือนย้อนหลัง' },
   ...TH_MONTH_SHORT.map((label, i) => ({
@@ -52,6 +59,7 @@ export const MONTH_SCOPE_SELECT_OPTIONS: ReadonlyArray<{ value: string; label: s
 
 /**
  * ชุด YYYY-MM ที่ตรงกับตัวกรอง
+ * - ALL: ม.ค.–ธ.ค. ของปีที่เลือก
  * - LAST_2 / LAST_3: นับจากวันปัจจุบันรวมเดือนนี้ (เช่น ก.ค. → LAST_2 = มิ.ย.+ก.ค.)
  * - '01'..'12': เดือนนั้นในปีที่เลือก (ค.ศ.)
  */
@@ -60,6 +68,13 @@ export function resolveYearMonthScopeSet(
   monthScope: string,
   asOf: Date = new Date(),
 ): Set<string> {
+  if (isMonthScopeAll(monthScope)) {
+    const set = new Set<string>();
+    for (let m = 1; m <= 12; m += 1) {
+      set.add(`${yearCe}-${String(m).padStart(2, '0')}`);
+    }
+    return set;
+  }
   if (isMonthScopeLookback(monthScope)) {
     const count = monthScope === MONTH_SCOPE_LAST_2 ? 2 : 3;
     const set = new Set<string>();
@@ -101,6 +116,7 @@ export function buildYearCeOptions(
 }
 
 export function describeYearMonthScopeFilter(yearCe: number, monthScope: string): string {
+  if (isMonthScopeAll(monthScope)) return `ทุกเดือน พ.ศ. ${yearCeToBe(yearCe)}`;
   if (monthScope === MONTH_SCOPE_LAST_2) return '2 เดือนย้อนหลัง (รวมเดือนปัจจุบัน)';
   if (monthScope === MONTH_SCOPE_LAST_3) return '3 เดือนย้อนหลัง (รวมเดือนปัจจุบัน)';
   const mi = Number(monthScope);

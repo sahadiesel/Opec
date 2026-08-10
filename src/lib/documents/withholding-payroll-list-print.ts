@@ -48,7 +48,7 @@ const WPL_PRINT_STYLES = `
   .wpl-scope { font-weight: 700; margin: 0; }
   .wpl-totals {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
     margin-bottom: 10px;
     font-size: 9pt;
@@ -133,10 +133,10 @@ export function buildWithholdingPayrollListPrintHtml(params: {
   rows: WithholdingPayrollListPrintRow[];
   scopeTitle: string;
   filterLines: string[];
-  grandTotalLabel: string;
-  workerTotalLabel: string;
-  officeTotalLabel: string;
-  executiveTotalLabel?: string;
+  /** รวมคอลัมน์ยอดจ่าย ตามรายการที่พิมพ์ */
+  paidTotalLabel: string;
+  /** รวมคอลัมน์ยอดหัก ตามรายการที่พิมพ์ */
+  withholdTotalLabel: string;
   generatedAt: string;
   printedBy?: string;
   truncated?: boolean;
@@ -145,10 +145,8 @@ export function buildWithholdingPayrollListPrintHtml(params: {
     rows,
     scopeTitle,
     filterLines,
-    grandTotalLabel,
-    workerTotalLabel,
-    officeTotalLabel,
-    executiveTotalLabel,
+    paidTotalLabel,
+    withholdTotalLabel,
     generatedAt,
     printedBy,
     truncated,
@@ -182,7 +180,7 @@ export function buildWithholdingPayrollListPrintHtml(params: {
 <style>${WPL_PRINT_STYLES}</style>
 <div class="sd-list-report wpl-wrap">
   ${buildWplHeader({
-    title: 'รายการหัก ณ ที่จ่าย (บุคลากร) — ภ.ง.ด.1 / ภ.ง.ด.2',
+    title: 'รายการหัก ณ ที่จ่าย บุคลากร — ภ.ง.ด.1 / ภ.ง.ด.2',
     scopeTitle,
     rowCount: rows.length,
     generatedAt,
@@ -191,11 +189,9 @@ export function buildWithholdingPayrollListPrintHtml(params: {
     scopeRightNote,
     filterBlock,
   })}
-  <div class="wpl-totals"${executiveTotalLabel != null ? ' style="grid-template-columns:repeat(4,minmax(0,1fr))"' : ''}>
-    <div class="wpl-total-box">รวมทั้งหมด<strong>${escapeHtmlDoc(grandTotalLabel)}</strong></div>
-    <div class="wpl-total-box">ลูกจ้าง<strong>${escapeHtmlDoc(workerTotalLabel)}</strong></div>
-    <div class="wpl-total-box">ออฟฟิศ<strong>${escapeHtmlDoc(officeTotalLabel)}</strong></div>
-    ${executiveTotalLabel != null ? `<div class="wpl-total-box">ผู้บริหาร<strong>${escapeHtmlDoc(executiveTotalLabel)}</strong></div>` : ''}
+  <div class="wpl-totals">
+    <div class="wpl-total-box">รวมรายจ่าย<strong>${escapeHtmlDoc(paidTotalLabel)}</strong></div>
+    <div class="wpl-total-box">รวมการหัก<strong>${escapeHtmlDoc(withholdTotalLabel)}</strong></div>
   </div>
   <table class="wpl-table">
     <colgroup>
@@ -223,7 +219,7 @@ export function buildWithholdingPayrollListPrintHtml(params: {
     <tbody>${tableRows}</tbody>
   </table>
   ${truncateNote}
-  <p class="wpl-foot">OPEC OpsFlow — หัก ณ ที่จ่ายบุคลากร (ลูกจ้าง + ออฟฟิศ + ผู้บริหาร)</p>
+  <p class="wpl-foot">OPEC OpsFlow — หัก ณ ที่จ่ายบุคลากร</p>
 </div>`;
 }
 

@@ -1,6 +1,7 @@
 import { D8_ENGINE_VERSION } from './constants';
 import { fixedDeductionsFromPolicy, pitFromPolicy, socialSecurityFromPolicy } from './deductions-from-policy';
 import { policiesAppliedList, type ResolvedPayrollPolicies } from './policies';
+import { employeeAssistanceFundFromSsoPolicy } from '@/lib/payroll/employee-assistance-fund';
 import type { OfficePayrollPitMode, PayrollLineD8Snapshot } from '@/lib/types';
 
 export type OfficePayrollD8Input = {
@@ -61,6 +62,8 @@ export function computeOfficePayrollLineD8(input: OfficePayrollD8Input): {
   const ssoWageBase = Math.max(0, Math.round(Number(input.baseSalary) * 100) / 100);
   /** ปสง. office — ฐานเงินเดือนอย่างเดียว (ไม่รวม OT / เบี้ยเลี้ยง / หักขาด·สาย·ลา) */
   const ss = deductSs ? socialSecurityFromPolicy(ssoWageBase, input.policies.sso, input.asOfDate) : 0;
+  /** กองทุนสงเคราะห์ลูกจ้าง — ฐานเดียวกับ ปสง. office; งวดที่ไม่หัก ปสง. ก็ไม่หักกองทุนนี้ */
+  const fund = deductSs ? employeeAssistanceFundFromSsoPolicy(ssoWageBase, input.policies.sso) : 0;
 
   const pitMode = input.pitMode ?? 'SYSTEM';
   let pit: number;
@@ -71,7 +74,7 @@ export function computeOfficePayrollLineD8(input: OfficePayrollD8Input): {
     pit = Math.max(0, Math.round((Number(input.pitManualAmountBaht) || 0) * 100) / 100);
     if (pit > statutoryEarningsBase) pit = Math.round(statutoryEarningsBase * 100) / 100;
   } else {
-    const pitMonthlyTaxableAfterSs = Math.max(0, Math.round((statutoryEarningsBase - ss) * 100) / 100);
+    const pitMonthlyTaxableAfterSs = Math.max(0, Math.round((statutoryEarningsBase - ss - fund) * 100) / 100);
     pit = pitFromPolicy(pitMonthlyTaxableAfterSs, input.policies.tax);
   }
   const fixed = fixedDeductionsFromPolicy(input.policies.allowanceDeduction);
@@ -79,6 +82,7 @@ export function computeOfficePayrollLineD8(input: OfficePayrollD8Input): {
   const deductionsMap: Record<string, number> = {
     ...preStatutoryMap,
     social_security: ss,
+    ...(fund > 0 ? { employee_assistance_fund: fund } : {}),
     pit_withholding: pit,
     ...fixed,
   };

@@ -1275,6 +1275,9 @@ export class PayrollService {
       d8LifecycleStatus: batchStatusToD8Lifecycle('HR_REVIEWED'),
       officerPayoutRequestBy: user.displayName,
       officerPayoutRequestAt: Date.now(),
+      financeRejectedBy: deleteField(),
+      financeRejectedAt: deleteField(),
+      financeRejectReason: deleteField(),
       updatedAt: Date.now(),
     });
     await writeAuditLog(this.db, user, {
@@ -1415,6 +1418,62 @@ export class PayrollService {
       payrollBatchId: id,
       sourceModule: 'hr',
       afterSummary: 'Handed off to finance (FINANCE_PREPARED)',
+    });
+  }
+
+  /**
+   * บัญชีไม่อนุมัติจ่าย — คืนสถานะ GENERATED (ฝ่ายเงินเดือนตรวจ/แก้ไข แล้วส่งขอผู้จัดการอนุมัติใหม่)
+   * ใช้ได้เฉพาะงวดที่ยังไม่ตัด cashbook รายคน (FINANCE_PREPARED / PAYMENT_EXPORTED)
+   */
+  async financeRejectWorkerBatchPayout(id: string, user: User, options?: { reason?: string }) {
+    if (!canConfirmWorkerPayrollPaid(user)) {
+      throw new Error('ไม่มีสิทธิ์ไม่อนุมัติจ่าย — ใช้เฉพาะฝ่ายบัญชี');
+    }
+    const docRef = doc(this.getBatchCollection(), id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('Payroll batch not found');
+    const batch = snap.data() as PayrollBatch;
+    const st = batch.status;
+    if (st !== 'FINANCE_PREPARED' && st !== 'PAYMENT_EXPORTED') {
+      throw new Error('ไม่อนุมัติจ่ายได้เฉพาะงวดที่อยู่ในคิวบัญชี (FINANCE_PREPARED / PAYMENT_EXPORTED)');
+    }
+    if (batch.financeCashbookEntryId) {
+      throw new Error('งวดนี้มีรายการ cashbook แล้ว — ไม่สามารถส่งกลับตรวจได้');
+    }
+    const linesSnap = await getDocs(collection(this.db, 'payroll_batches', id, 'lines'));
+    let paidLineCount = 0;
+    linesSnap.forEach((d) => {
+      if ((d.data() as PayrollBatchLine).financePayoutCashbookEntryId) paidLineCount += 1;
+    });
+    if (paidLineCount > 0) {
+      throw new Error(
+        `มีรายการที่ตัดจ่ายแล้ว ${paidLineCount} คน — ไม่สามารถไม่อนุมัติทั้งงวดได้ (ต้องจัดการรายที่จ่ายแล้วก่อน)`,
+      );
+    }
+    const reason = (options?.reason || '').trim();
+    await updateDoc(docRef, {
+      status: 'GENERATED',
+      d8LifecycleStatus: batchStatusToD8Lifecycle('GENERATED'),
+      officerPayoutRequestBy: deleteField(),
+      officerPayoutRequestAt: deleteField(),
+      hrApprovedBy: deleteField(),
+      hrApprovedAt: deleteField(),
+      financePreparedBy: deleteField(),
+      financePreparedAt: deleteField(),
+      financeRejectedBy: user.displayName,
+      financeRejectedAt: Date.now(),
+      ...(reason ? { financeRejectReason: reason } : { financeRejectReason: deleteField() }),
+      updatedAt: Date.now(),
+    });
+    await writeAuditLog(this.db, user, {
+      actionType: 'REJECT',
+      entityType: 'PayrollBatch',
+      entityId: id,
+      payrollBatchId: id,
+      sourceModule: 'accounting',
+      afterSummary: reason
+        ? `Accounting rejected payout → GENERATED: ${reason}`
+        : 'Accounting rejected payout; returned to GENERATED for payroll re-check',
     });
   }
 
@@ -2080,7 +2139,8 @@ export class PayrollService {
       mode,
       effectiveGross,
       policies: resolvedPolicies,
-      socialSecurityBaht: Number(deductions.social_security) || 0,
+      /** ฐาน ภงด. ต้องหักทั้ง ปสง. และกองทุนสงเคราะห์ลูกจ้างออกก่อน */
+      socialSecurityBaht: (Number(deductions.social_security) || 0) + (Number(deductions.employee_assistance_fund) || 0),
       isSupplemental,
       priorPaidTaxableGross,
       pitWithholdingOverride: pitOv,
@@ -2335,7 +2395,8 @@ export class PayrollService {
       mode,
       effectiveGross,
       policies: resolved,
-      socialSecurityBaht: Number(deductions.social_security) || 0,
+      /** ฐาน ภงด. ต้องหักทั้ง ปสง. และกองทุนสงเคราะห์ลูกจ้างออกก่อน */
+      socialSecurityBaht: (Number(deductions.social_security) || 0) + (Number(deductions.employee_assistance_fund) || 0),
       isSupplemental,
       priorPaidTaxableGross,
       pitWithholdingOverride: pitOv,

@@ -20,10 +20,10 @@ export function buildSocialSecurityPayrollListPrintHtml(params: {
   rows: SocialSecurityPayrollListPrintRow[];
   scopeTitle: string;
   filterLines: string[];
-  grandTotalLabel: string;
-  workerTotalLabel: string;
-  officeTotalLabel: string;
-  executiveTotalLabel: string;
+  /** รวมคอลัมน์ยอดจ่าย ตามรายการที่พิมพ์ */
+  paidTotalLabel: string;
+  /** รวมคอลัมน์ยอด ปกส. ตามรายการที่พิมพ์ */
+  remitTotalLabel: string;
   generatedAt: string;
   printedBy?: string;
   truncated?: boolean;
@@ -32,10 +32,8 @@ export function buildSocialSecurityPayrollListPrintHtml(params: {
     rows,
     scopeTitle,
     filterLines,
-    grandTotalLabel,
-    workerTotalLabel,
-    officeTotalLabel,
-    executiveTotalLabel,
+    paidTotalLabel,
+    remitTotalLabel,
     generatedAt,
     printedBy,
     truncated,
@@ -112,7 +110,7 @@ export function buildSocialSecurityPayrollListPrintHtml(params: {
   .ssl-scope { font-weight: 700; margin: 0; }
   .ssl-totals {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
     margin-bottom: 10px;
     font-size: 9pt;
@@ -149,13 +147,10 @@ export function buildSocialSecurityPayrollListPrintHtml(params: {
       break-after: auto !important;
     }
   }
-  @media (max-width: 640px) {
-    .ssl-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  }
 </style>
 <div class="sd-list-report ssl-wrap">
   <div class="ssl-head-row">
-    <h1 class="ssl-title ssl-head-left">รายการจ่ายประกันสังคม (รายเงินสมทบลูกจ้าง)</h1>
+    <h1 class="ssl-title ssl-head-left">รายการจ่ายประกันสังคม รายเงินสมทบลูกจ้าง</h1>
     <p class="ssl-head-right">${printedMeta}</p>
   </div>
   <div class="ssl-head-row">
@@ -164,10 +159,8 @@ export function buildSocialSecurityPayrollListPrintHtml(params: {
   </div>
   ${filterBlock}
   <div class="ssl-totals">
-    <div class="ssl-total-box">รวมทั้ง 3 หมวด<strong>${escapeHtmlDoc(grandTotalLabel)}</strong></div>
-    <div class="ssl-total-box">ลูกจ้าง<strong>${escapeHtmlDoc(workerTotalLabel)}</strong></div>
-    <div class="ssl-total-box">ออฟฟิศ<strong>${escapeHtmlDoc(officeTotalLabel)}</strong></div>
-    <div class="ssl-total-box">ผู้บริหาร<strong>${escapeHtmlDoc(executiveTotalLabel)}</strong></div>
+    <div class="ssl-total-box">รวมรายจ่าย<strong>${escapeHtmlDoc(paidTotalLabel)}</strong></div>
+    <div class="ssl-total-box">รวมการหัก<strong>${escapeHtmlDoc(remitTotalLabel)}</strong></div>
   </div>
   <table class="ssl-table">
     <colgroup>
@@ -197,7 +190,7 @@ export function buildSocialSecurityPayrollListPrintHtml(params: {
     <tbody>${tableRows}</tbody>
   </table>
   ${truncateNote}
-  <p class="ssl-foot">OPEC OpsFlow — ประกันสังคม (ลูกจ้าง + ออฟฟิศ + ผู้บริหาร)</p>
+  <p class="ssl-foot">OPEC OpsFlow — ประกันสังคม</p>
 </div>`;
 }
 

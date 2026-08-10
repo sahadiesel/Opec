@@ -618,7 +618,9 @@ export default function PayrollBatchWorkerLinePage({
           mode: workerPitMode,
           effectiveGross: eg,
           policies: resolved,
-          socialSecurityBaht: Number(d8Line.deductionsBreakdown.social_security) || 0,
+          socialSecurityBaht:
+            (Number(d8Line.deductionsBreakdown.social_security) || 0) +
+            (Number(d8Line.deductionsBreakdown.employee_assistance_fund) || 0),
           isSupplemental: !!isSupplemental,
           priorPaidTaxableGross,
           pitWithholdingOverride: pitManualBaht,

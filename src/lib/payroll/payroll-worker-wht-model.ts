@@ -87,6 +87,22 @@ function pitAmount(line: PayrollBatchLine): number {
   return workerPayrollLinePitAmount(line);
 }
 
+/** ยอดประกันสังคม (ฝั่งลูกจ้าง) ของบรรทัดงวดนี้ — ใช้เป็น fallback เมื่อไม่มี YTD ระบุมา */
+export function workerPayrollLineSocialSecurityAmount(line: PayrollBatchLine): number {
+  const db = line.deductionsBreakdown || {};
+  const snap = line.d8Snapshot?.deductions || {};
+  const v = Number(db.social_security ?? snap.social_security ?? 0);
+  return round2(Number.isFinite(v) ? v : 0);
+}
+
+/** ยอดกองทุนสงเคราะห์ลูกจ้างของบรรทัดงวดนี้ — ใช้เป็น fallback เมื่อไม่มี YTD ระบุมา */
+export function workerPayrollLineEmployeeAssistanceFundAmount(line: PayrollBatchLine): number {
+  const db = line.deductionsBreakdown || {};
+  const snap = line.d8Snapshot?.deductions || {};
+  const v = Number(db.employee_assistance_fund ?? snap.employee_assistance_fund ?? 0);
+  return round2(Number.isFinite(v) ? v : 0);
+}
+
 /**
  * สร้าง view model สำหรับพิมพ์ — ไม่เขียน Firestore
  * taxableIncomeAmount: fallback only; payroll taxable base should be mapped explicitly later.
@@ -101,6 +117,10 @@ export function buildPayrollWorkerWhtPrintVm(input: {
   issueDateYmd: string;
   paymentDateYmd: string | undefined;
   officialDocumentNo?: boolean;
+  /** เงินสะสมกองทุนประกันสังคมทั้งปี (สำหรับยื่น ภ.ง.ด. 90/91) — ถ้าไม่ระบุ ใช้ยอดของบรรทัดงวดนี้แทน */
+  yearToDateSocialSecurityBaht?: number;
+  /** เงินสะสมกองทุนสงเคราะห์ลูกจ้างทั้งปี — ถ้าไม่ระบุ ใช้ยอดของบรรทัดงวดนี้แทน */
+  yearToDateEmployeeAssistanceFundBaht?: number;
 }): PayrollWorkerWhtPrintVm {
   const { batch, line, worker, position, company, periodLabel, issueDateYmd, paymentDateYmd } = input;
 
@@ -142,6 +162,15 @@ export function buildPayrollWorkerWhtPrintVm(input: {
 
   const pitZeroNote =
     wht <= 0.005 ? 'ไม่มีภาษีหัก ณ ที่จ่ายในงวดนี้ (แสดงยอดภาษี 0.00)' : undefined;
+
+  const yearToDateSocialSecurityBaht =
+    input.yearToDateSocialSecurityBaht != null && Number.isFinite(input.yearToDateSocialSecurityBaht)
+      ? round2(input.yearToDateSocialSecurityBaht)
+      : workerPayrollLineSocialSecurityAmount(line);
+  const yearToDateEmployeeAssistanceFundBaht =
+    input.yearToDateEmployeeAssistanceFundBaht != null && Number.isFinite(input.yearToDateEmployeeAssistanceFundBaht)
+      ? round2(input.yearToDateEmployeeAssistanceFundBaht)
+      : workerPayrollLineEmployeeAssistanceFundAmount(line);
 
   return {
     documentNo,
@@ -192,6 +221,10 @@ export function buildPayrollWorkerWhtPrintVm(input: {
     withholdingTaxRateDisplayTh: 'ตามการคำนวณ Payroll',
     withholdingTaxWordsTh: amountToThaiBahtText(wht),
     pitZeroNote,
+
+    certificateIncomeTotalBaht: grossAmount,
+    yearToDateSocialSecurityBaht,
+    yearToDateEmployeeAssistanceFundBaht,
 
     taxCondition: 'WITHHOLDING',
     paymentMethod: inferPaymentMethod(line),

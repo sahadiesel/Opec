@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useMemo, useState, useEffect } from 'react';
+import { use, useMemo, useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { ArrowLeft, CheckCircle, Loader2, XCircle, PackageSearch, Send, Ban, Pencil } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Loader2, XCircle, PackageSearch, Send, Ban, Pencil, Printer } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { collection, doc, getDocs, updateDoc, deleteField, type UpdateData } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -62,6 +62,12 @@ import {
 } from '@/components/ui/table';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { cn } from '@/lib/utils';
+import {
+  buildPurchaseRequestPrintHtml,
+  openStandardPrintWindow,
+} from '@/lib/documents/standard-document-print';
+import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
+import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 
 function statusLabel(s: PurchaseRequestStatus) {
   const m: Record<PurchaseRequestStatus, string> = {
@@ -81,6 +87,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
   const { isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const { printLocale, setPrintLocale } = useDocumentPrintLocale();
 
   const [title, setTitle] = useState('');
   const [notes, setNotes] = useState('');
@@ -144,6 +151,20 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
 
   const vendorsQuery = useMemoFirebase(() => (firestore && ok ? collection(firestore, 'vendors') : null), [firestore, ok]);
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
+
+  const companyRef = useMemoFirebase(
+    () => (firestore && ok ? doc(firestore, 'system', 'company_profile') : null),
+    [firestore, ok],
+  );
+  const { data: companyProfile } = useDoc<{
+    companyNameTh?: string;
+    companyNameEn?: string;
+    taxId?: string;
+    phone?: string;
+    email?: string;
+    addressLine1?: string;
+    addressLine2?: string;
+  }>(companyRef as any);
 
   const isDraft = pr?.status === 'DRAFT';
   const isRejected = pr?.status === 'REJECTED';
@@ -482,6 +503,75 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     }
   };
 
+  const handlePrint = useCallback(async () => {
+    if (!pr) return;
+    const printLines = (formEditable ? lines : readonlyLines)
+      .filter((l) => (l.itemDescription || '').trim() || Number(l.amount) > 0)
+      .map((l) => ({
+        itemDescription: l.itemDescription,
+        quantity: parsePrDecimal(l.quantity),
+        unitPrice: parsePrDecimal(l.unitPrice),
+        amount: Number(l.amount) || 0,
+      }));
+    const vendor = vendors?.find((x) => x.id === (formEditable ? vendorId : pr.vendorId));
+    try {
+      const body = buildPurchaseRequestPrintHtml({
+        company: companyProfile ?? undefined,
+        request: {
+          ...pr,
+          title: formEditable ? title : pr.title,
+          notes: formEditable ? notes : pr.notes,
+          needByDate: formEditable ? needByDate : pr.needByDate,
+          purchasePaymentType: formEditable ? purchasePaymentType : pr.purchasePaymentType,
+          vatTreatment: formEditable ? vatTreatment : pr.vatTreatment,
+          amountBeforeTax: formEditable ? totals.amountBeforeTax : pr.amountBeforeTax,
+          vatAmount: formEditable ? totals.vatAmount : pr.vatAmount,
+          totalAmount: formEditable ? totals.totalAmount : pr.totalAmount,
+        },
+        vendor: vendor ?? undefined,
+        lines: printLines,
+        printedAtMs: Date.now(),
+        locale: printLocale,
+      });
+      if (
+        !(await openStandardPrintWindow({
+          windowTitle: pr.requestNo || 'PR',
+          bodyInnerHtml: body,
+          htmlLang: printLocale,
+        }))
+      ) {
+        toast({
+          variant: 'destructive',
+          title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+          description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+        });
+      }
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'พิมพ์ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'เกิดข้อผิดพลาดขณะประกอบเอกสาร',
+      });
+    }
+  }, [
+    pr,
+    formEditable,
+    lines,
+    readonlyLines,
+    vendors,
+    vendorId,
+    companyProfile,
+    title,
+    notes,
+    needByDate,
+    purchasePaymentType,
+    vatTreatment,
+    totals,
+    printLocale,
+    toast,
+  ]);
+
   if (isUserLoading || userLoading || !currentUser) {
     return (
       <div className="flex min-h-[50vh] w-full items-center justify-center">
@@ -516,7 +606,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="mx-auto max-w-5xl space-y-6 pb-16">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Button type="button" variant="ghost" size="icon" asChild>
               <Link href="/store/purchase-requests">
@@ -528,47 +618,47 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
               <p className="text-sm text-muted-foreground">คำขออนุมัติสั่งซื้อ</p>
             </div>
           </div>
-          <Badge
-            className={
-              displayStatus === 'APPROVED'
-                ? 'bg-green-100 text-green-900'
-                : displayStatus === 'PO_ISSUED'
-                  ? 'bg-blue-100 text-blue-900'
-                  : displayStatus === 'PENDING_APPROVAL'
-                    ? 'bg-amber-100 text-amber-900'
-                    : displayStatus === 'REJECTED'
-                      ? 'bg-red-100 text-red-900'
-                      : ''
-            }
-          >
-            {statusLabel(displayStatus)}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} showLabel />
+            <Button type="button" variant="outline" className="gap-2" onClick={() => void handlePrint()}>
+              <Printer className="h-4 w-4" /> พิมพ์เอกสาร
+            </Button>
+            <Badge
+              className={
+                displayStatus === 'APPROVED'
+                  ? 'bg-green-100 text-green-900'
+                  : displayStatus === 'PO_ISSUED'
+                    ? 'bg-blue-100 text-blue-900'
+                    : displayStatus === 'PENDING_APPROVAL'
+                      ? 'bg-amber-100 text-amber-900'
+                      : displayStatus === 'REJECTED'
+                        ? 'bg-red-100 text-red-900'
+                        : ''
+              }
+            >
+              {statusLabel(displayStatus)}
+            </Badge>
+          </div>
         </div>
 
-        <div className={cn('grid gap-4', (showPO || isRejected) && 'sm:grid-cols-2')}>
-        {showPO && (
-          <Card className="border-primary/20 bg-primary/5 sm:col-span-2">
-              <CardHeader>
-                <CardTitle className="text-base">ใบสั่งซื้อที่อ้างอิง</CardTitle>
-                <CardDescription>
-                  <Button type="button" variant="link" className="h-auto p-0 text-base font-mono" asChild>
-                    <Link href={`/purchases/${linkedPo!.id}`}>{linkedPo!.purchaseNo}</Link>
-                  </Button>
-                </CardDescription>
-              </CardHeader>
-            </Card>
-          )}
-
+        <div className={cn('grid gap-4', isRejected && 'sm:grid-cols-2')}>
           <Card className="border-primary/20 bg-primary/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">ผู้จัดทำ / ผู้อนุมัติ</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
+            <CardContent className="grid gap-4 pt-5 sm:grid-cols-3 text-sm">
               <div>
                 <p className="text-xs text-muted-foreground">ผู้จัดทำ</p>
                 <p className="font-medium">{pr.requestedByName?.trim() || '—'}</p>
               </div>
-              <div>
+              <div className="sm:text-center sm:border-x sm:px-3">
+                <p className="text-xs text-muted-foreground">ใบสั่งซื้อที่อ้างอิง</p>
+                {showPO ? (
+                  <Button type="button" variant="link" className="h-auto p-0 text-base font-mono" asChild>
+                    <Link href={`/purchases/${linkedPo!.id}`}>{linkedPo!.purchaseNo}</Link>
+                  </Button>
+                ) : (
+                  <p className="font-medium">—</p>
+                )}
+              </div>
+              <div className="sm:text-right">
                 <p className="text-xs text-muted-foreground">ผู้อนุมัติ</p>
                 <p className="font-medium">
                   {displayStatus === 'APPROVED' ||
@@ -617,28 +707,33 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         )}
 
         <Card>
-          <CardHeader>
-            <CardTitle>หัวเอกสาร</CardTitle>
-            {pr.status === 'PENDING_APPROVAL' && v && (
-              <CardDescription>รออนุมัติ — คู่ค้าเสนอ: {v.vendorName}</CardDescription>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-4 pt-6">
+            {pr.status === 'PENDING_APPROVAL' && v ? (
+              <p className="text-sm text-muted-foreground">รออนุมัติ — คู่ค้าเสนอ: {v.vendorName}</p>
+            ) : null}
+
             <div className="space-y-2">
               <Label>หัวข้อ</Label>
               <Input value={title} onChange={(e) => setTitle(e.target.value)} readOnly={!formEditable} disabled={!formEditable} />
             </div>
 
-            {formEditable ? (
-              <VendorSearchSelect vendors={vendors ?? undefined} value={vendorId} onChange={setVendorId} disabled={saving} />
-            ) : (
-              <div>
-                <Label>คู่ค้า (เสนอ)</Label>
-                <p className="pt-1 font-medium">{v?.vendorName || '—'}</p>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-[minmax(12rem,1.5fr)_repeat(3,minmax(0,1fr))]">
+              <div className="min-w-0 space-y-2">
+                {formEditable ? (
+                  <VendorSearchSelect
+                    label="คู่ค้า (เสนอ)"
+                    vendors={vendors ?? undefined}
+                    value={vendorId}
+                    onChange={setVendorId}
+                    disabled={saving}
+                  />
+                ) : (
+                  <>
+                    <Label>คู่ค้า (เสนอ)</Label>
+                    <p className="pt-1 font-medium break-words">{v?.vendorName || '—'}</p>
+                  </>
+                )}
               </div>
-            )}
-
-            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>วันที่ต้องการของ (อ้างอิง)</Label>
                 {formEditable ? (
@@ -648,7 +743,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
                     onChange={(ms) => setNeedByDate(timestampToHtmlDateValue(ms))}
                   />
                 ) : (
-                  <p>{needByDate || '—'}</p>
+                  <p className="pt-1">{needByDate || '—'}</p>
                 )}
               </div>
               <div className="space-y-2">
@@ -665,12 +760,9 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
                     </SelectContent>
                   </Select>
                 ) : (
-                  <p>{vatTreatment}</p>
+                  <p className="pt-1">{vatTreatment}</p>
                 )}
               </div>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>การชำระเงิน</Label>
                 {formEditable ? (
@@ -684,21 +776,17 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
                     </SelectContent>
                   </Select>
                 ) : (
-                  <p>{purchasePaymentType}</p>
+                  <p className="pt-1">{purchasePaymentType}</p>
                 )}
               </div>
-              {purchasePaymentType === 'CREDIT' && draftEditable && (
-                <div className="flex items-center justify-between rounded-lg border p-3">
-                  <div className="text-sm font-medium">แบ่งจ่ายหลายงวด</div>
-                  <Switch checked={paymentInstallmentsEnabled} onCheckedChange={setPaymentInstallmentsEnabled} />
-                </div>
-              )}
             </div>
 
-            <div className="space-y-2">
-              <Label>หมายเหตุ</Label>
-              <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} readOnly={!formEditable} rows={3} disabled={!formEditable} />
-            </div>
+            {purchasePaymentType === 'CREDIT' && draftEditable ? (
+              <div className="flex items-center justify-between rounded-lg border p-3 sm:max-w-md">
+                <div className="text-sm font-medium">แบ่งจ่ายหลายงวด</div>
+                <Switch checked={paymentInstallmentsEnabled} onCheckedChange={setPaymentInstallmentsEnabled} />
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -744,21 +832,33 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
               />
             )}
 
-            <div className="flex flex-wrap justify-end gap-6 rounded-lg bg-muted/30 p-4 text-sm">
-              <div className="text-right">
-                <div className="text-muted-foreground">ภาษี 7%</div>
-                <div className="font-mono font-semibold">
-                  ฿{(formEditable ? totals.vatAmount : pr.vatAmount ?? 0).toLocaleString(undefined, {
-                    minimumFractionDigits: 2,
-                  })}
-                </div>
+            <div className="grid gap-4 sm:grid-cols-2 sm:items-end">
+              <div className="space-y-2">
+                <Label>หมายเหตุ</Label>
+                <Textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  readOnly={!formEditable}
+                  rows={3}
+                  disabled={!formEditable}
+                />
               </div>
-              <div className="text-right">
-                <div className="text-muted-foreground">ยอดสุทธิ</div>
-                <div className="font-mono font-bold text-lg text-primary">
-                  ฿{(formEditable ? totals.totalAmount : pr.totalAmount ?? pr.estimatedAmount ?? 0).toLocaleString(undefined, {
-                    minimumFractionDigits: 2,
-                  })}
+              <div className="flex flex-wrap justify-end gap-6 rounded-lg bg-muted/30 p-4 text-sm">
+                <div className="text-right">
+                  <div className="text-muted-foreground">ภาษี 7%</div>
+                  <div className="font-mono font-semibold">
+                    ฿{(formEditable ? totals.vatAmount : pr.vatAmount ?? 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                    })}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-muted-foreground">ยอดสุทธิ</div>
+                  <div className="font-mono font-bold text-lg text-primary">
+                    ฿{(formEditable ? totals.totalAmount : pr.totalAmount ?? pr.estimatedAmount ?? 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                    })}
+                  </div>
                 </div>
               </div>
             </div>

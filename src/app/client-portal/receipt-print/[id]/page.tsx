@@ -1,10 +1,11 @@
 'use client';
 
-import { use, useCallback, useState } from 'react';
+import { use, useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Loader2, Printer, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -24,6 +25,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   buildMoneyReceiptPrintHtml,
   openStandardPrintWindow,
+  wrapStandardPrintDocument,
   type TaxInvoicePrintSheet,
 } from '@/lib/documents/standard-document-print';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
@@ -119,6 +121,20 @@ export default function ClientReceiptPrintPage({ params }: { params: Promise<{ i
     [receipt, taxInv, companyProfile, customer, printLocale, toast, en],
   );
 
+  const previewHtml = useMemo(() => {
+    if (!receipt || !taxInv) return '';
+    const body = buildMoneyReceiptPrintHtml({
+      company: companyProfile ?? undefined,
+      receipt,
+      taxInvoice: taxInv,
+      customer: customer ?? undefined,
+      printedAtMs: Date.now(),
+      locale: printLocale,
+      sheets: ['original'],
+    });
+    return wrapStandardPrintDocument(receipt.receiptNo, body, { lang: printLocale });
+  }, [receipt, taxInv, companyProfile, customer, printLocale]);
+
   const handlePrint = useCallback(() => {
     if (!receipt || !taxInv) return;
     setReceiptPrintPreset('p1');
@@ -184,12 +200,41 @@ export default function ClientReceiptPrintPage({ params }: { params: Promise<{ i
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} showLabel />
-          <Button type="button" className="gap-2" onClick={handlePrint}>
+          <Button type="button" className="gap-2" onClick={handlePrint} disabled={!taxInv}>
             <Printer className="h-4 w-4" />
             {en ? 'Print' : 'พิมพ์'}
           </Button>
         </div>
       </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">{en ? 'Document preview' : 'พรีวิวเอกสาร'}</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            {en
+              ? 'Same layout as print — switch language above before printing.'
+              : 'รูปแบบเดียวกับตอนพิมพ์ — สลับภาษาด้านบนได้ก่อนกดพิมพ์'}
+          </p>
+        </CardHeader>
+        <CardContent>
+          {!taxInv ? (
+            <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">
+              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              {en ? 'Loading tax invoice…' : 'กำลังโหลดใบกำกับอ้างอิง…'}
+            </div>
+          ) : previewHtml ? (
+            <iframe
+              title={en ? `Receipt preview ${receipt.receiptNo}` : `พรีวิวใบเสร็จ ${receipt.receiptNo}`}
+              className="w-full min-h-[720px] rounded-md border bg-white"
+              srcDoc={previewHtml}
+            />
+          ) : (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              {en ? 'Preview unavailable.' : 'ไม่สามารถสร้างพรีวิวได้'}
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       <Dialog open={printPresetOpen} onOpenChange={setPrintPresetOpen}>
         <DialogContent className="max-w-lg">
