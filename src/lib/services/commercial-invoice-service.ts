@@ -37,6 +37,13 @@ import {
   normalizeWorkerIdSet,
   partialPoMonthInvoiceLabel,
 } from '@/lib/commercial/partial-po-month-billing';
+import {
+  commercialInvoiceRevisionNoOf,
+  formatCommercialInvoiceRevisionNo,
+  isCommercialInvoiceLatestEditable,
+  isCommercialInvoiceSuperseded,
+  parseCommercialInvoiceBaseNo,
+} from '@/lib/commercial/commercial-invoice-revision';
 import { resolveBillingMode } from '@/lib/commercial/resolve-billing-mode';
 import { sellSnapshotForWorkMode } from '@/lib/commercial/position-rate-sell';
 import { resolveWaveMonthPeriodBounds } from '@/lib/timesheet/wave-month-payroll-bridge';
@@ -55,6 +62,18 @@ import {
 import { resolveTripMobDemobLocationChoice } from '@/lib/services/trip-mob-demob-billing';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
+
+async function stampCommercialInvoiceRevisionRoot(
+  db: Firestore,
+  invoiceId: string,
+  invoiceNo: string,
+): Promise<void> {
+  await updateDoc(doc(db, 'commercial_invoices', invoiceId), {
+    revisionRootId: invoiceId,
+    baseInvoiceNo: parseCommercialInvoiceBaseNo(invoiceNo) || invoiceNo,
+    revisionNo: 0,
+  } as any);
+}
 import { writeAuditLog } from '@/lib/services/audit-service';
 
 function roundMoney(n: number): number {
@@ -154,7 +173,7 @@ export async function findCommercialInvoiceByPoMonthReview(
   if (snap.empty) return null;
   for (const d of snap.docs) {
     const data = d.data() as CommercialInvoice;
-    if (data.status !== 'VOID') {
+    if (data.status !== 'VOID' && !isCommercialInvoiceSuperseded(data)) {
       return { id: d.id, invoiceNo: String(data.invoiceNo || '') };
     }
   }
@@ -170,7 +189,7 @@ export async function findCommercialInvoiceByTripBatch(
   if (snap.empty) return null;
   for (const d of snap.docs) {
     const data = d.data() as CommercialInvoice;
-    if (data.status !== 'VOID') {
+    if (data.status !== 'VOID' && !isCommercialInvoiceSuperseded(data)) {
       return { id: d.id, invoiceNo: String(data.invoiceNo || '') };
     }
   }
@@ -187,6 +206,7 @@ export function commercialInvoiceCoversMonthReview(
   review: WaveMonthTimesheetReview,
 ): boolean {
   if (inv.status === 'VOID') return false;
+  if (isCommercialInvoiceSuperseded(inv)) return false;
   if (inv.sourceWaveMonthReviewId === review.id) return true;
   const { start, end } = resolveWaveMonthPeriodBounds(review);
   return (
@@ -209,6 +229,7 @@ export function commercialInvoiceCoversPoMonthReview(
   review: PoMonthTimesheetReview,
 ): boolean {
   if (inv.status === 'VOID') return false;
+  if (isCommercialInvoiceSuperseded(inv)) return false;
   if (isPartialPoMonthCommercialInvoice(inv)) return false;
   if (inv.sourcePoMonthReviewId === review.id) return true;
   const { start, end } = resolvePoMonthPeriodBounds(review);
@@ -230,6 +251,7 @@ export function poMonthReviewMissingCommercialInvoice(
   const related = invoices.filter(
     (inv) =>
       inv.status !== 'VOID' &&
+      !isCommercialInvoiceSuperseded(inv) &&
       inv.poId === review.poId &&
       (inv.sourcePoMonthReviewId === review.id ||
         (inv.periodStart &&
@@ -269,6 +291,7 @@ async function findCommercialInvoiceByPoWaveAndPeriod(
   for (const d of snap.docs) {
     const x = d.data() as CommercialInvoice;
     if (x.status === 'VOID') continue;
+    if (isCommercialInvoiceSuperseded(x)) continue;
     if (x.periodStart === periodStart && x.periodEnd === periodEnd) {
       return { id: d.id, invoiceNo: String(x.invoiceNo || '') };
     }
@@ -291,6 +314,7 @@ async function findCommercialInvoiceByQuotationPoPeriod(
   for (const d of snap.docs) {
     const x = d.data() as CommercialInvoice;
     if (x.status === 'VOID') continue;
+    if (isCommercialInvoiceSuperseded(x)) continue;
     if (x.periodStart === periodStart && x.periodEnd === periodEnd) {
       return { id: d.id, invoiceNo: String(x.invoiceNo || '') };
     }
@@ -460,6 +484,8 @@ export async function createCommercialDraftFromQuotationPoLines(
     sanitizeFirestorePayload(payload as Record<string, unknown>),
   );
 
+  await stampCommercialInvoiceRevisionRoot(db, ref.id, invoiceNo);
+
   const linkedIds = [po.customerId, poId, quotationIdRef || undefined].filter(Boolean) as string[];
 
   await writeAuditLog(db, actor, {
@@ -532,6 +558,7 @@ async function findCommercialInvoiceByPoMonthPeriodDup(
   for (const d of snap.docs) {
     const x = d.data() as CommercialInvoice;
     if (x.status === 'VOID') continue;
+    if (isCommercialInvoiceSuperseded(x)) continue;
     if (isPartialPoMonthCommercialInvoice(x)) continue;
     if (x.periodStart === periodStart && x.periodEnd === periodEnd) {
       return { id: d.id, invoiceNo: String(x.invoiceNo || '') };
@@ -556,6 +583,7 @@ async function listPoMonthCommercialInvoicesForPeriod(
   for (const d of snap.docs) {
     const x = { id: d.id, ...(d.data() as object) } as CommercialInvoice;
     if (x.status === 'VOID') continue;
+    if (isCommercialInvoiceSuperseded(x)) continue;
     if (x.periodStart === periodStart && x.periodEnd === periodEnd) out.push(x);
   }
   return out;
@@ -601,6 +629,7 @@ async function findFullCommercialInvoiceByPoMonthReview(
   for (const d of snap.docs) {
     const data = d.data() as CommercialInvoice;
     if (data.status === 'VOID') continue;
+    if (isCommercialInvoiceSuperseded(data)) continue;
     if (isPartialPoMonthCommercialInvoice(data)) continue;
     return { id: d.id, invoiceNo: String(data.invoiceNo || '') };
   }
@@ -722,6 +751,7 @@ async function assertPoAllowsMonthlyCommercialInvoice(
   for (const d of snap.docs) {
     const inv = { id: d.id, ...(d.data() as object) } as CommercialInvoice;
     if (inv.status === 'VOID') continue;
+    if (isCommercialInvoiceSuperseded(inv)) continue;
     if (!commercialInvoicePeriodsOverlap(inv.periodStart, inv.periodEnd, periodStart, periodEnd)) {
       continue;
     }
@@ -851,6 +881,8 @@ export async function createCommercialDraftInvoiceForPoMonth(
     collection(db, 'commercial_invoices'),
     sanitizeFirestorePayload(payload as Record<string, unknown>),
   );
+
+  await stampCommercialInvoiceRevisionRoot(db, ref.id, invoiceNo);
 
   await writeAuditLog(db, actor, {
     actionType: 'CREATE_COMMERCIAL_INVOICE',
@@ -1203,6 +1235,8 @@ export async function createCommercialDraftInvoiceForTripBatch(
     sanitizeFirestorePayload(payload as Record<string, unknown>),
   );
 
+  await stampCommercialInvoiceRevisionRoot(db, ref.id, invoiceNo);
+
   await markTripBatchInvoiced(db, batch.id, ref.id);
 
   await writeAuditLog(db, actor, {
@@ -1351,6 +1385,8 @@ export async function createCommercialDraftInvoice(
     sanitizeFirestorePayload(payload as Record<string, unknown>),
   );
 
+  await stampCommercialInvoiceRevisionRoot(db, ref.id, invoiceNo);
+
   await writeAuditLog(db, actor, {
     actionType: 'CREATE_COMMERCIAL_INVOICE',
     entityType: 'CommercialInvoice',
@@ -1412,6 +1448,9 @@ export async function sendCommercialDraftToCustomer(
   if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
   const cur = snap.data() as CommercialInvoice;
   if (cur.status !== 'DRAFT') throw new Error('ส่งได้เฉพาะเอกสารสถานะ DRAFT (ตรวจยอดภายในก่อน)');
+  if (!isCommercialInvoiceLatestEditable(cur)) {
+    throw new Error('เอกสารรุ่นนี้ถูกแทนที่แล้ว — ส่งได้เฉพาะรุ่นล่าสุดเท่านั้น');
+  }
 
   const now = Date.now();
   const patch = sanitizeFirestorePayload({
@@ -1674,6 +1713,9 @@ export async function regenerateCommercialDraftInvoiceFromTimesheets(
   if (cur.status !== 'DRAFT') {
     throw new Error('ดึงรายการใหม่ได้เฉพาะใบสถานะ DRAFT (ตรวจภายใน)');
   }
+  if (!isCommercialInvoiceLatestEditable(cur)) {
+    throw new Error('เอกสารรุ่นนี้ถูกแทนที่แล้ว — ดึงรายการใหม่ได้เฉพาะรุ่นล่าสุดเท่านั้น');
+  }
   if (cur.waveId === QUOTATION_PO_WAVE_PLACEHOLDER) {
     throw new Error('ใบจาก PO ใบเสนอราคาไม่มี timesheet — ไม่สามารถดึงใหม่ได้');
   }
@@ -1835,6 +1877,9 @@ export async function updateCommercialDraftInvoice(
   if (cur.status !== 'DRAFT') {
     throw new Error('แก้ไขรายการได้เฉพาะใบสถานะ DRAFT (ตรวจภายใน)');
   }
+  if (!isCommercialInvoiceLatestEditable(cur)) {
+    throw new Error('เอกสารรุ่นนี้ถูกแทนที่แล้ว — แก้ไขได้เฉพาะรุ่นล่าสุดเท่านั้น');
+  }
 
   const normalized = normalizeDraftLines(nextLines);
   const amountBeforeTax = roundMoney(normalized.reduce((s, x) => s + x.amount, 0));
@@ -1869,6 +1914,105 @@ export async function updateCommercialDraftInvoice(
   });
 }
 
+/**
+ * บันทึกการแก้ไขรายการ → สร้างเอกสารรุ่นใหม่ (R1, R2, …) เก็บต้นฉบับไว้เปิดดูอย่างเดียว
+ */
+export async function saveCommercialDraftInvoiceAsNewRevision(
+  db: Firestore,
+  invoiceId: string,
+  nextLines: CommercialInvoiceLine[],
+  actor: User,
+  extra?: { notes?: string },
+): Promise<{ id: string; invoiceNo: string; revisionNo: number }> {
+  const ref = doc(db, 'commercial_invoices', invoiceId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
+  const cur = { id: snap.id, ...(snap.data() as object) } as CommercialInvoice;
+  if (cur.status !== 'DRAFT') {
+    throw new Error('บันทึกรุ่นใหม่ได้เฉพาะใบสถานะ DRAFT (ตรวจภายใน)');
+  }
+  if (!isCommercialInvoiceLatestEditable(cur)) {
+    throw new Error('เอกสารรุ่นนี้ถูกแทนที่แล้ว — แก้ไขได้เฉพาะรุ่นล่าสุดเท่านั้น');
+  }
+
+  const normalized = normalizeDraftLines(nextLines);
+  const amountBeforeTax = roundMoney(normalized.reduce((s, x) => s + x.amount, 0));
+  const vp = Number(cur.vatPercent) || 0;
+  const vatAmount = roundMoney((amountBeforeTax * vp) / 100);
+  const totalAmount = roundMoney(amountBeforeTax + vatAmount);
+  const now = Date.now();
+  const actorName = actor.displayName || actor.email || actor.id;
+
+  const baseNo =
+    (cur.baseInvoiceNo || '').trim() || parseCommercialInvoiceBaseNo(cur.invoiceNo) || cur.invoiceNo;
+  const prevRev = commercialInvoiceRevisionNoOf(cur);
+  const nextRev = prevRev + 1;
+  const nextInvoiceNo = formatCommercialInvoiceRevisionNo(baseNo, nextRev);
+  const rootId = (cur.revisionRootId || '').trim() || cur.id;
+
+  const {
+    id: _omitId,
+    supersededByInvoiceId: _omitSup,
+    ...rest
+  } = cur;
+
+  const payload: Omit<CommercialInvoice, 'id'> = {
+    ...rest,
+    invoiceNo: nextInvoiceNo,
+    baseInvoiceNo: baseNo,
+    revisionNo: nextRev,
+    revisionRootId: rootId,
+    previousRevisionId: cur.id,
+    status: 'DRAFT',
+    lines: normalized,
+    amountBeforeTax,
+    vatAmount,
+    totalAmount,
+    notes: extra && 'notes' in extra ? (extra.notes ?? '').trim() : cur.notes,
+    attachments: cur.attachments ? [...cur.attachments] : undefined,
+    createdAt: now,
+    createdByUid: actor.id,
+    createdByName: actorName,
+    updatedAt: now,
+    updatedByUid: actor.id,
+    updatedByName: actorName,
+  };
+  delete (payload as { supersededByInvoiceId?: string }).supersededByInvoiceId;
+  delete (payload as { customerRevisionRequestedAt?: number }).customerRevisionRequestedAt;
+  delete (payload as { customerRevisionRequestNote?: string }).customerRevisionRequestNote;
+  delete (payload as { customerRevisionIssueId?: string }).customerRevisionIssueId;
+  delete (payload as { sentToCustomerAt?: number }).sentToCustomerAt;
+  delete (payload as { sentToCustomerByUid?: string }).sentToCustomerByUid;
+  delete (payload as { sentToCustomerByName?: string }).sentToCustomerByName;
+
+  const newRef = await addDoc(
+    collection(db, 'commercial_invoices'),
+    sanitizeFirestorePayload(payload as Record<string, unknown>),
+  );
+
+  await updateDoc(ref, {
+    supersededByInvoiceId: newRef.id,
+    updatedAt: now,
+    updatedByUid: actor.id,
+    updatedByName: actorName,
+    ...(cur.baseInvoiceNo ? {} : { baseInvoiceNo: baseNo }),
+    ...(cur.revisionRootId ? {} : { revisionRootId: rootId }),
+    ...(typeof cur.revisionNo === 'number' ? {} : { revisionNo: prevRev }),
+  } as any);
+
+  await writeAuditLog(db, actor, {
+    actionType: 'CREATE',
+    entityType: 'CommercialInvoice',
+    entityId: newRef.id,
+    entityLabel: `${nextInvoiceNo} ← revision ของ ${cur.invoiceNo}`,
+    sourceModule: 'commercial_invoices',
+    linkedIds: [cur.customerId, cur.poId, cur.waveId, cur.id],
+    afterSummary: `สร้างรุ่นแก้ไข R${nextRev} จาก ${cur.invoiceNo} (ต้นฉบับเปิดดูอย่างเดียว)`,
+  });
+
+  return { id: newRef.id, invoiceNo: nextInvoiceNo, revisionNo: nextRev };
+}
+
 const ATTACH_EDITABLE_STATUSES = new Set(['DRAFT', 'PENDING_CUSTOMER']);
 
 /** OPEC: เพิ่มเอกสารแนบให้ลูกค้าเปิดดูตอนตรวจใบวางบิล (สูงสุด 5 ไฟล์) */
@@ -1884,6 +2028,9 @@ export async function addCommercialInvoiceAttachment(
   const cur = snap.data() as CommercialInvoice;
   if (!ATTACH_EDITABLE_STATUSES.has(cur.status)) {
     throw new Error('แนบเอกสารได้เฉพาะใบสถานะ DRAFT หรือรอลูกค้าตรวจ');
+  }
+  if (!isCommercialInvoiceLatestEditable(cur)) {
+    throw new Error('เอกสารรุ่นนี้ถูกแทนที่แล้ว — แนบไฟล์ได้เฉพาะรุ่นล่าสุดเท่านั้น');
   }
   const existing = cur.attachments ?? [];
   if (existing.length >= MAX_COMMERCIAL_INVOICE_ATTACHMENTS) {

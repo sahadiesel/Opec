@@ -65,13 +65,14 @@ import {
   reopenCommercialInvoiceForCustomerRevision,
   sendCommercialDraftToCustomer,
   voidCommercialInvoice,
-  updateCommercialDraftInvoice,
+  saveCommercialDraftInvoiceAsNewRevision,
   regenerateCommercialDraftInvoiceFromTimesheets,
   addCommercialInvoiceAttachment,
   removeCommercialInvoiceAttachment,
   QUOTATION_PO_WAVE_PLACEHOLDER,
   PO_MONTH_WAVE_PLACEHOLDER,
 } from '@/lib/services/commercial-invoice-service';
+import { isCommercialInvoiceLatestEditable } from '@/lib/commercial/commercial-invoice-revision';
 import {
   COMMERCIAL_INVOICE_ATTACHMENT_MIME_ACCEPT,
   MAX_COMMERCIAL_INVOICE_ATTACHMENT_BYTES,
@@ -437,8 +438,11 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const canEditAttachments =
     !!canAct &&
     !!invoice &&
+    isCommercialInvoiceLatestEditable(invoice) &&
     (invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER');
   const invoiceAttachments = invoice?.attachments ?? [];
+  const isLatestRevision = !!invoice && isCommercialInvoiceLatestEditable(invoice);
+  const supersededById = (invoice?.supersededByInvoiceId || '').trim();
 
   const handleAttachFiles = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -539,13 +543,29 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
   const handleSaveDraftLines = async () => {
     if (!firestore || !currentUser || !canAct || !invoice || invoice.status !== 'DRAFT') return;
+    if (!isCommercialInvoiceLatestEditable(invoice)) {
+      toast({
+        variant: 'destructive',
+        title: 'แก้ไขไม่ได้',
+        description: 'เอกสารรุ่นนี้ถูกแทนที่แล้ว — เปิดรุ่นล่าสุดเพื่อแก้ไข',
+      });
+      return;
+    }
     setSaveBusy(true);
     try {
-      await updateCommercialDraftInvoice(firestore, invoice.id, draftLines, currentUser, {
-        notes: notesDraft,
+      const created = await saveCommercialDraftInvoiceAsNewRevision(
+        firestore,
+        invoice.id,
+        draftLines,
+        currentUser,
+        { notes: notesDraft },
+      );
+      toast({
+        title: 'บันทึกรุ่นใหม่แล้ว',
+        description: `เลขที่ ${created.invoiceNo} — เอกสารเดิมเปิดดูได้อย่างเดียว`,
       });
-      toast({ title: 'บันทึกแล้ว', description: 'อัปเดตรายการ เงื่อนไข/หมายเหตุ และยอดก่อน VAT / VAT / รวม' });
       setLinesEditing(false);
+      router.push(`/draft-invoices/${created.id}`);
     } catch (e: unknown) {
       toast({
         variant: 'destructive',
@@ -692,12 +712,12 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   };
 
   const canEditDraftLines = Boolean(
-    invoice && invoice.status === 'DRAFT' && canAct && linesEditing,
+    invoice && invoice.status === 'DRAFT' && canAct && linesEditing && isLatestRevision,
   );
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="space-y-6 p-4 md:p-6 max-w-5xl mx-auto">
+      <div className="space-y-6 p-4 md:p-6 max-w-7xl mx-auto">
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="ghost" size="sm" asChild>
             <Link href="/draft-invoices">
@@ -734,23 +754,18 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
           </div>
         </div>
 
-        <Alert>
-          <Info className="h-4 w-4" />
-          <AlertTitle>ขั้นตอนการเรียกเก็บ</AlertTitle>
-          <AlertDescription className="space-y-2">
-            <p>
-              <strong>ตรวจภายใน (DRAFT)</strong> — ตรวจยอดและรายการให้ถูกต้อง จากนั้นกด{' '}
-              <strong>ส่งให้ลูกค้าตรวจสอบ</strong> เพื่อแสดงใน Client Portal
-            </p>
-            <p>
-              <strong>รอลูกค้าตรวจ</strong> — ลูกค้า (Approver) หรือผู้จัดการฝั่ง OPEC สามารถกดยืนยันยอดได้
-            </p>
-            <p className="text-xs text-muted-foreground">
-              หลังยืนยันเรียกเก็บแล้ว — ฝ่ายบัญชีสร้าง <strong>ใบกำกับภาษี (กับใบวางบิล)</strong> ส่งลูกค้า — แยกจาก{' '}
-              <strong>ใบเสร็จรับเงิน</strong> ที่ออกหลังลูกค้าโอนแล้วบัญชีตรวจสอบและยืนยันรับเงิน (ยังไม่ e-Tax)
-            </p>
-          </AlertDescription>
-        </Alert>
+        {supersededById ? (
+          <Alert className="border-slate-300 bg-slate-50/90 dark:bg-slate-900/40">
+            <Info className="h-4 w-4" />
+            <AlertTitle>เอกสารรุ่นเก่า — เปิดดูอย่างเดียว</AlertTitle>
+            <AlertDescription className="space-y-2">
+              <p>รุ่นนี้ถูกแทนที่แล้วหลังบันทึกแก้ไข — แก้ไขหรือส่งลูกค้าได้เฉพาะรุ่นล่าสุด</p>
+              <Button type="button" variant="outline" size="sm" asChild>
+                <Link href={`/draft-invoices/${supersededById}`}>เปิดรุ่นล่าสุด</Link>
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         {invoice.customerRevisionRequestedAt && (
           <Alert className="border-purple-300 bg-purple-50/80 dark:bg-purple-950/30">
@@ -940,16 +955,10 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
           </Alert>
         )}
 
+        <div className="grid gap-4 items-start lg:grid-cols-[minmax(0,1fr)_minmax(17rem,22rem)]">
+          <div className="min-w-0 space-y-4">
         <Card>
-          <CardHeader>
-            <CardTitle>{docEn ? 'Document header' : 'หัวเอกสาร'}</CardTitle>
-            <CardDescription>
-              {docEn
-                ? 'PO / Wave reference and billing period'
-                : 'อ้างอิง PO / Wave (หรือ PO ใบเสนอราคา) และช่วงวางบิล'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-2 text-sm">
+          <CardContent className="grid gap-3 pt-6 sm:grid-cols-2 text-sm">
             <div className="flex items-start gap-2">
               <Building2 className="h-4 w-4 mt-0.5 text-muted-foreground" />
               <div>
@@ -1013,105 +1022,162 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
           </CardContent>
         </Card>
 
-        {canAct && invoice.status === 'DRAFT' && (
-          <div className="print:hidden flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
-            {!linesEditing ? (
-              <Button
-                type="button"
-                className="gap-2 shrink-0"
-                onClick={() => setLinesEditing(true)}
-                disabled={actionBusy || saveBusy || regenerateBusy}
-              >
-                <Pencil className="h-4 w-4" />
-                แก้ไข/เพิ่มรายการ
-              </Button>
-            ) : (
-              <>
+        {canAct && invoice.status === 'DRAFT' && isLatestRevision && (
+          <div className="print:hidden space-y-3">
+            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
+              {!linesEditing ? (
                 <Button
                   type="button"
-                  variant="secondary"
                   className="gap-2 shrink-0"
-                  onClick={() => void handleSaveDraftLines()}
-                  disabled={saveBusy}
+                  onClick={() => setLinesEditing(true)}
+                  disabled={actionBusy || saveBusy || regenerateBusy}
                 >
-                  {saveBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  บันทึกการแก้ไขรายการ
+                  <Pencil className="h-4 w-4" />
+                  แก้ไข/เพิ่มรายการ
                 </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="gap-2 shrink-0"
-                  onClick={addManualAdjustmentLine}
-                  disabled={saveBusy}
-                >
-                  <Plus className="h-4 w-4" />
-                  เพิ่มบรรทัด
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="gap-2 shrink-0"
-                  onClick={cancelLinesEditing}
-                  disabled={saveBusy}
-                >
-                  ยกเลิกแก้ไข
-                </Button>
-              </>
-            )}
-            {canRegenerateFromTimesheets && (
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
+              ) : (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="gap-2 shrink-0"
+                    onClick={() => void handleSaveDraftLines()}
+                    disabled={saveBusy}
+                  >
+                    {saveBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                    บันทึกเป็นรุ่นใหม่ (R…)
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
-                    className="gap-2 shrink-0 border-blue-300 text-blue-800 hover:bg-blue-50 dark:text-blue-200 dark:hover:bg-blue-950/40"
-                    disabled={regenerateBusy || saveBusy || actionBusy || linesEditing}
+                    className="gap-2 shrink-0"
+                    onClick={addManualAdjustmentLine}
+                    disabled={saveBusy}
                   >
-                    {regenerateBusy ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    )}
-                    ดึงจาก timesheet ใหม่
+                    <Plus className="h-4 w-4" />
+                    เพิ่มบรรทัด
                   </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>ดึงรายการจาก timesheet ใหม่?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      ระบบจะคำนวณบรรทัดค่าแรงจาก timesheet ที่พร้อมวางบิลในงวดนี้อีกครั้ง (รวมทุก wave ใต้ PO
-                      สำหรับงวด PO+เดือน) และแทนที่บรรทัดเดิมจาก timesheet — บรรทัดที่เพิ่มเองจะยังอยู่
-                      · เลขที่ใบและสถานะ DRAFT ไม่เปลี่ยน
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => void handleRegenerateFromTimesheets()}>
-                      ดึงใหม่
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="gap-2 shrink-0"
+                    onClick={cancelLinesEditing}
+                    disabled={saveBusy}
+                  >
+                    ยกเลิกแก้ไข
+                  </Button>
+                </>
+              )}
+              {canRegenerateFromTimesheets && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="gap-2 shrink-0 border-blue-300 text-blue-800 hover:bg-blue-50 dark:text-blue-200 dark:hover:bg-blue-950/40"
+                      disabled={regenerateBusy || saveBusy || actionBusy || linesEditing}
+                    >
+                      {regenerateBusy ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                      ดึงจาก timesheet ใหม่
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>ดึงรายการจาก timesheet ใหม่?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        ระบบจะคำนวณบรรทัดค่าแรงจาก timesheet ที่พร้อมวางบิลในงวดนี้อีกครั้ง (รวมทุก wave ใต้ PO
+                        สำหรับงวด PO+เดือน) และแทนที่บรรทัดเดิมจาก timesheet — บรรทัดที่เพิ่มเองจะยังอยู่
+                        · เลขที่ใบและสถานะ DRAFT ไม่เปลี่ยน
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+                      <AlertDialogAction onClick={() => void handleRegenerateFromTimesheets()}>
+                        ดึงใหม่
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+              {canAct && (
+                <Button
+                  className="gap-2 shrink-0"
+                  onClick={() => void handleSendToCustomer()}
+                  disabled={actionBusy || linesEditing || saveBusy}
+                >
+                  {actionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  {invoice.customerRevisionRequestedAt
+                    ? 'ส่งกลับไปให้ลูกค้าตรวจสอบ (Portal)'
+                    : 'ส่งให้ลูกค้าตรวจสอบ (Portal)'}
+                </Button>
+              )}
+              {canAdminVoid && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button type="button" variant="destructive" className="gap-2 shrink-0" disabled={voidBusy}>
+                      {voidBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
+                      ยกเลิกใบนี้ (VOID)
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>ยกเลิกใบแจ้งหนี้นี้?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        เฉพาะผู้ดูแลระบบ — ใช้เมื่อรายการหรือการคำนวณไม่ถูกต้อง สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO
+                        ได้อีกครั้ง (ไม่ลบประวัติเอกสาร) · ใบที่ยืนยันแล้ว (ISSUED) ยกเลิกได้ถ้ายังไม่มีใบกำกับภาษีที่ใช้งาน
+                        หรือยกเลิกใบกำกับภาษีก่อน
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>ไม่</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        onClick={() => void handleVoid()}
+                      >
+                        ยืนยันยกเลิก
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+            </div>
+            <CommercialInvoiceAttachmentsPanel
+              attachments={invoiceAttachments}
+              canEdit={canEditAttachments}
+              uploading={attachUploading}
+              removingId={attachRemovingId}
+              inputRef={attachInputRef}
+              onPick={() => attachInputRef.current?.click()}
+              onFileChange={(e) => void handleAttachFiles(e)}
+              onRemove={(att) => void handleRemoveAttachment(att)}
+              layout="horizontal"
+            />
           </div>
         )}
 
-        {invoice.status === 'DRAFT' && (canAct || canAdminVoid) ? (
-          <div className="print:hidden grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)] lg:items-start">
-            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
-            {canAct && (
-              <Button
-                className="gap-2 shrink-0"
-                onClick={() => void handleSendToCustomer()}
-                disabled={actionBusy || linesEditing || saveBusy}
-              >
-                {actionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                {invoice.customerRevisionRequestedAt
-                  ? 'ส่งกลับไปให้ลูกค้าตรวจสอบ (Portal)'
-                  : 'ส่งให้ลูกค้าตรวจสอบ (Portal)'}
-              </Button>
-            )}
-            {canAdminVoid && (
+        {invoice.status === 'DRAFT' && !isLatestRevision && invoiceAttachments.length > 0 ? (
+          <div className="print:hidden">
+            <CommercialInvoiceAttachmentsPanel
+              attachments={invoiceAttachments}
+              canEdit={false}
+              uploading={false}
+              removingId={null}
+              inputRef={attachInputRef}
+              onPick={() => undefined}
+              onFileChange={() => undefined}
+              onRemove={() => undefined}
+              layout="horizontal"
+            />
+          </div>
+        ) : null}
+
+        {invoice.status === 'DRAFT' && isLatestRevision && !canAct && canAdminVoid ? (
+          <div className="print:hidden space-y-3">
+            <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-1">
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button type="button" variant="destructive" className="gap-2 shrink-0" disabled={voidBusy}>
@@ -1123,9 +1189,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   <AlertDialogHeader>
                     <AlertDialogTitle>ยกเลิกใบแจ้งหนี้นี้?</AlertDialogTitle>
                     <AlertDialogDescription>
-                      เฉพาะผู้ดูแลระบบ — ใช้เมื่อรายการหรือการคำนวณไม่ถูกต้อง สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO
-                      ได้อีกครั้ง (ไม่ลบประวัติเอกสาร) · ใบที่ยืนยันแล้ว (ISSUED) ยกเลิกได้ถ้ายังไม่มีใบกำกับภาษีที่ใช้งาน
-                      หรือยกเลิกใบกำกับภาษีก่อน
+                      เฉพาะผู้ดูแลระบบ — สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO ได้อีกครั้ง
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -1139,23 +1203,23 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
-            )}
             </div>
             <CommercialInvoiceAttachmentsPanel
               attachments={invoiceAttachments}
-              canEdit={canEditAttachments}
-              uploading={attachUploading}
-              removingId={attachRemovingId}
+              canEdit={false}
+              uploading={false}
+              removingId={null}
               inputRef={attachInputRef}
-              onPick={() => attachInputRef.current?.click()}
-              onFileChange={(e) => void handleAttachFiles(e)}
-              onRemove={(att) => void handleRemoveAttachment(att)}
+              onPick={() => undefined}
+              onFileChange={() => undefined}
+              onRemove={() => undefined}
+              layout="horizontal"
             />
           </div>
         ) : null}
 
         {invoice.status === 'PENDING_CUSTOMER' && (
-          <div className="print:hidden grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)] lg:items-start">
+          <div className="print:hidden space-y-3">
           <Alert className="border-amber-200 bg-amber-50/80">
             <AlertTitle>รอการยืนยันยอด</AlertTitle>
             <AlertDescription>
@@ -1165,10 +1229,10 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   {invoice.sentToCustomerByName ? ` · โดย ${invoice.sentToCustomerByName}` : ''}
                 </span>
               )}
-              {(canAct || canAdminVoid) && (
-                <div className="mt-3 flex flex-wrap items-center gap-2">
+              {(canAct || canAdminVoid) && isLatestRevision && (
+                <div className="mt-3 flex flex-nowrap items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]">
                   {canAct && (
-                    <Button className="gap-2" variant="default" onClick={() => void handleManagerConfirm()} disabled={actionBusy}>
+                    <Button className="gap-2 shrink-0" variant="default" onClick={() => void handleManagerConfirm()} disabled={actionBusy}>
                       {actionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                       ยืนยันยอดเรียกเก็บ (ฝั่ง OPEC)
                     </Button>
@@ -1176,7 +1240,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   {canAdminVoid && (
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
-                        <Button type="button" variant="destructive" className="gap-2" disabled={voidBusy}>
+                        <Button type="button" variant="destructive" className="gap-2 shrink-0" disabled={voidBusy}>
                           {voidBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
                           ยกเลิกใบนี้ (VOID)
                         </Button>
@@ -1215,6 +1279,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
             onPick={() => attachInputRef.current?.click()}
             onFileChange={(e) => void handleAttachFiles(e)}
             onRemove={(att) => void handleRemoveAttachment(att)}
+            layout="horizontal"
           />
           </div>
         )}
@@ -1222,7 +1287,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
         {invoice.status !== 'DRAFT' &&
           invoice.status !== 'PENDING_CUSTOMER' &&
           invoiceAttachments.length > 0 && (
-            <div className="print:hidden max-w-md">
+            <div className="print:hidden">
               <CommercialInvoiceAttachmentsPanel
                 attachments={invoiceAttachments}
                 canEdit={false}
@@ -1232,22 +1297,46 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 onPick={() => undefined}
                 onFileChange={() => undefined}
                 onRemove={() => undefined}
+                layout="horizontal"
               />
             </div>
           )}
 
-        {visibleGenerationWarnings.length > 0 && (
-          <Alert className="border-amber-200 bg-amber-50/80">
-            <AlertTitle>คำเตือนตอนคำนวณ</AlertTitle>
-            <AlertDescription>
-              <ul className="list-disc pl-4 text-sm space-y-1">
-                {visibleGenerationWarnings.map((w, i) => (
-                  <li key={i}>{w}</li>
-                ))}
-              </ul>
-            </AlertDescription>
-          </Alert>
-        )}
+          </div>
+
+          <aside className="print:hidden space-y-4 lg:sticky lg:top-4">
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertTitle>ขั้นตอนการเรียกเก็บ</AlertTitle>
+              <AlertDescription className="space-y-2 text-sm">
+                <p>
+                  <strong>ตรวจภายใน (DRAFT)</strong> — ตรวจยอดและรายการให้ถูกต้อง จากนั้นกด{' '}
+                  <strong>ส่งให้ลูกค้าตรวจสอบ</strong> เพื่อแสดงใน Client Portal
+                </p>
+                <p>
+                  <strong>รอลูกค้าตรวจ</strong> — ลูกค้า (Approver) หรือผู้จัดการฝั่ง OPEC สามารถกดยืนยันยอดได้
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  หลังยืนยันเรียกเก็บแล้ว — ฝ่ายบัญชีสร้าง <strong>ใบกำกับภาษี (กับใบวางบิล)</strong> ส่งลูกค้า — แยกจาก{' '}
+                  <strong>ใบเสร็จรับเงิน</strong> ที่ออกหลังลูกค้าโอนแล้วบัญชีตรวจสอบและยืนยันรับเงิน (ยังไม่ e-Tax)
+                </p>
+              </AlertDescription>
+            </Alert>
+
+            {visibleGenerationWarnings.length > 0 ? (
+              <Alert className="border-amber-200 bg-amber-50/80">
+                <AlertTitle>คำเตือนตอนคำนวณ</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc pl-4 text-sm space-y-1">
+                    {visibleGenerationWarnings.map((w, i) => (
+                      <li key={i}>{w}</li>
+                    ))}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            ) : null}
+          </aside>
+        </div>
 
         <Card>
           <CardHeader>
@@ -1460,6 +1549,7 @@ function CommercialInvoiceAttachmentsPanel({
   onPick,
   onFileChange,
   onRemove,
+  layout = 'vertical',
 }: {
   attachments: CommercialInvoiceAttachment[];
   canEdit: boolean;
@@ -1469,85 +1559,100 @@ function CommercialInvoiceAttachmentsPanel({
   onPick: () => void;
   onFileChange: (e: ChangeEvent<HTMLInputElement>) => void;
   onRemove: (att: CommercialInvoiceAttachment) => void;
+  layout?: 'vertical' | 'horizontal';
 }) {
   const maxMb = MAX_COMMERCIAL_INVOICE_ATTACHMENT_BYTES / (1024 * 1024);
+  const horizontal = layout === 'horizontal';
   return (
-    <Card className="border-2 border-blue-400 bg-blue-50/50 dark:border-blue-600 dark:bg-blue-950/25 shadow-sm">
-      <CardHeader className="pb-2 pt-4 px-4">
-        <CardTitle className="text-sm font-semibold text-blue-900 dark:text-blue-100 flex items-center gap-2">
-          <Paperclip className="h-4 w-4" />
-          เอกสารแนบ
-          <Badge variant="secondary" className="font-normal text-[10px]">
-            {attachments.length}/{MAX_COMMERCIAL_INVOICE_ATTACHMENTS}
-          </Badge>
-        </CardTitle>
-        <CardDescription className="text-xs text-blue-900/70 dark:text-blue-100/70">
-          รูปหรือ PDF · ไม่เกิน {maxMb} MB ต่อไฟล์ · สูงสุด {MAX_COMMERCIAL_INVOICE_ATTACHMENTS} ไฟล์ — ลูกค้าเปิดดูได้ตอนตรวจใบวางบิล
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3 px-4 pb-4">
-        {canEdit && (
-          <>
-            <input
-              ref={inputRef}
-              type="file"
-              multiple
-              accept={COMMERCIAL_INVOICE_ATTACHMENT_MIME_ACCEPT}
-              className="hidden"
-              onChange={onFileChange}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full gap-2 border-blue-300 bg-white text-blue-900 hover:bg-blue-100 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-100"
-              disabled={uploading || attachments.length >= MAX_COMMERCIAL_INVOICE_ATTACHMENTS}
-              onClick={onPick}
-            >
-              {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
-              แนบเอกสาร
-            </Button>
-          </>
-        )}
-        {attachments.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-2">ยังไม่มีไฟล์แนบ</p>
-        ) : (
-          <ul className="space-y-1.5">
-            {attachments.map((att) => (
-              <li
-                key={att.id}
-                className="flex items-center gap-2 rounded-md border border-blue-200/80 bg-white/80 dark:bg-background/40 px-2 py-1.5 text-xs"
+    <Card className="border-2 border-blue-400 bg-blue-50/50 dark:border-blue-600 dark:bg-blue-950/25 shadow-sm w-full">
+      <CardContent
+        className={
+          horizontal
+            ? 'flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between'
+            : 'space-y-3 px-4 pb-4 pt-4'
+        }
+      >
+        <div className={horizontal ? 'min-w-0 flex-1 space-y-1' : 'space-y-1'}>
+          <div className="text-sm font-semibold text-blue-900 dark:text-blue-100 flex items-center gap-2">
+            <Paperclip className="h-4 w-4" />
+            เอกสารแนบ
+            <Badge variant="secondary" className="font-normal text-[10px]">
+              {attachments.length}/{MAX_COMMERCIAL_INVOICE_ATTACHMENTS}
+            </Badge>
+          </div>
+          <p className="text-xs text-blue-900/70 dark:text-blue-100/70">
+            รูปหรือ PDF · ไม่เกิน {maxMb} MB ต่อไฟล์ · สูงสุด {MAX_COMMERCIAL_INVOICE_ATTACHMENTS} ไฟล์ — ลูกค้าเปิดดูได้ตอนตรวจใบวางบิล
+          </p>
+        </div>
+
+        <div className={horizontal ? 'flex flex-wrap items-center gap-2 shrink-0' : 'space-y-3'}>
+          {canEdit && (
+            <>
+              <input
+                ref={inputRef}
+                type="file"
+                multiple
+                accept={COMMERCIAL_INVOICE_ATTACHMENT_MIME_ACCEPT}
+                className="hidden"
+                onChange={onFileChange}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className={
+                  horizontal
+                    ? 'gap-2 border-blue-300 bg-white text-blue-900 hover:bg-blue-100 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-100'
+                    : 'w-full gap-2 border-blue-300 bg-white text-blue-900 hover:bg-blue-100 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-100'
+                }
+                disabled={uploading || attachments.length >= MAX_COMMERCIAL_INVOICE_ATTACHMENTS}
+                onClick={onPick}
               >
-                <a
-                  href={att.downloadUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="min-w-0 flex-1 truncate font-medium text-primary hover:underline inline-flex items-center gap-1"
-                  title={att.fileName}
+                {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
+                แนบเอกสาร
+              </Button>
+            </>
+          )}
+          {attachments.length === 0 ? (
+            <p className="text-xs text-muted-foreground">{horizontal ? 'ยังไม่มีไฟล์แนบ' : 'ยังไม่มีไฟล์แนบ'}</p>
+          ) : (
+            <ul className={horizontal ? 'flex flex-wrap gap-1.5' : 'space-y-1.5'}>
+              {attachments.map((att) => (
+                <li
+                  key={att.id}
+                  className="flex items-center gap-2 rounded-md border border-blue-200/80 bg-white/80 dark:bg-background/40 px-2 py-1.5 text-xs max-w-full"
                 >
-                  <ExternalLink className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{att.fileName}</span>
-                </a>
-                {canEdit && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0 text-destructive"
-                    disabled={removingId === att.id}
-                    onClick={() => onRemove(att)}
-                    aria-label="ลบไฟล์"
+                  <a
+                    href={att.downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-w-0 max-w-[14rem] truncate font-medium text-primary hover:underline inline-flex items-center gap-1"
+                    title={att.fileName}
                   >
-                    {removingId === att.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+                    <ExternalLink className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{att.fileName}</span>
+                  </a>
+                  {canEdit && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 shrink-0 text-destructive"
+                      disabled={removingId === att.id}
+                      onClick={() => onRemove(att)}
+                      aria-label="ลบไฟล์"
+                    >
+                      {removingId === att.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

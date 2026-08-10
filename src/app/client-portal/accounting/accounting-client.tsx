@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ChevronRight, FileBarChart, Receipt, Paperclip } from 'lucide-react';
 import type { TaxInvoice, CommercialInvoice, MoneyReceipt } from '@/lib/types';
 import { isPartialPoMonthCommercialInvoice } from '@/lib/commercial/partial-po-month-billing';
+import { isCommercialInvoiceSuperseded } from '@/lib/commercial/commercial-invoice-revision';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, orderBy } from 'firebase/firestore';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
@@ -126,7 +127,10 @@ export function AccountingContent() {
   }, [firestore, currentUser?.customerId]);
   const { data: commercialInvoices, isLoading: commercialLoad } = useCollection<CommercialInvoice>(commercialQ as any);
 
-  const commercialForPortal = commercialInvoices ?? [];
+  const commercialForPortal = useMemo(
+    () => (commercialInvoices ?? []).filter((inv) => !isCommercialInvoiceSuperseded(inv)),
+    [commercialInvoices],
+  );
 
   const taxList = useMemo(() => {
     return [...(invoices ?? [])]

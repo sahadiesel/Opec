@@ -2235,6 +2235,19 @@ export interface CommercialInvoice {
    * (รูป/PDF · สูงสุด 5 ไฟล์ · ไม่เกิน 2 MB ต่อไฟล์)
    */
   attachments?: CommercialInvoiceAttachment[];
+  /**
+   * เลขฐานไม่มีท้าย R — เช่น DFI-2026-08-0006
+   * (เลขแสดงผลใช้ invoiceNo เช่น DFI-2026-08-0006 R1)
+   */
+  baseInvoiceNo?: string;
+  /** 0 = ต้นฉบับ, 1 = R1, 2 = R2 … */
+  revisionNo?: number;
+  /** id เอกสารต้นในชุด revision (ตัวเองถ้าเป็นต้นฉบับ) */
+  revisionRootId?: string;
+  /** รุ่นก่อนหน้าในชุด */
+  previousRevisionId?: string;
+  /** ถูกแทนที่ด้วยรุ่นใหม่ — เปิดดูได้อย่างเดียว */
+  supersededByInvoiceId?: string;
   createdAt: number;
   createdByUid: string;
   createdByName: string;
