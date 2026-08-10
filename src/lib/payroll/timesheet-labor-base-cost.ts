@@ -168,7 +168,8 @@ function resolveLaborCostFromPositionRegistry(
   return Number.isFinite(f) && f > 0 ? f : 0;
 }
 
-function workerCustomLaborRateForMode(
+/** ฐานรายวันที่ระบุเองในทะเบียนลูกจ้าง (ไม่ใช้ตารางตำแหน่ง/สัญญา) */
+export function workerCustomLaborRateForMode(
   w: Worker,
   mode: LaborCostWorkMode,
 ): number {

@@ -61,11 +61,9 @@ import {
   loadPayrollPoliciesFromFirestore,
   resolvePayrollPoliciesForDate,
   computeWorkerPayrollLineD8,
+  forceSupplementalNoSocialSecurity,
+  resolveWorkerPitWithholdingBaht,
 } from '@/lib/payroll/d8';
-import {
-  pitFromMonthlyGross,
-  pitFromMonthlyGrossWithMarginalCeiling,
-} from '@/lib/payroll/d8/deductions-from-policy';
 import { THAI_PIT_STANDARD_MARGINAL_RATE_PERCENTS } from '@/lib/hr/pit-thailand';
 import { CASH_ADVANCE_PAYROLL_DEDUCTION_KEY } from '@/lib/payroll/cash-advance-recovery';
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
@@ -526,11 +524,39 @@ export default function PayrollBatchWorkerLinePage({
     [allowanceRows, priorPeriodRows],
   );
 
-  /** Gross จากตาราง + เบี้ยเลี้ยง (สอดคล้องช่องแรก — ไม่อิง snapshot งวด) */
-  const grossAfterAllowancesPreview = useMemo(
-    () => Math.max(0, dailyDisplay.total + allowancePreviewTotal),
-    [dailyDisplay.total, allowancePreviewTotal],
+  const regularAllowancePreviewTotal = useMemo(
+    () =>
+      allowanceRows
+        .filter((r) => r.label.trim() && Number(r.amount) > 0)
+        .reduce((s, r) => s + (Number(r.amount) || 0), 0),
+    [allowanceRows],
   );
+
+  const priorPeriodPreviewTotal = useMemo(
+    () =>
+      priorPeriodRows
+        .filter(
+          (r) => /^\d{4}-\d{2}$/.test(r.sourceYearMonth.trim()) && r.label.trim() && Number(r.amount) > 0,
+        )
+        .reduce((s, r) => s + (Number(r.amount) || 0), 0),
+    [priorPeriodRows],
+  );
+
+  const isSupplementalBatch = batch?.batchType === 'SUPPLEMENTAL';
+
+  /** Gross จากตาราง + เบี้ยเลี้ยง (สอดคล้องช่องแรก — ไม่อิง snapshot งวด) */
+  const grossAfterAllowancesPreview = useMemo(() => {
+    if (isSupplementalBatch) {
+      return Math.max(0, priorPeriodPreviewTotal + regularAllowancePreviewTotal);
+    }
+    return Math.max(0, dailyDisplay.total + allowancePreviewTotal);
+  }, [
+    isSupplementalBatch,
+    priorPeriodPreviewTotal,
+    regularAllowancePreviewTotal,
+    dailyDisplay.total,
+    allowancePreviewTotal,
+  ]);
 
   const cashAdvanceRecoveryAmount = useMemo(
     () => Math.max(0, Number(line?.deductionsBreakdown?.[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]) || 0),
@@ -557,7 +583,14 @@ export default function PayrollBatchWorkerLinePage({
       try {
         const policies = await loadPayrollPoliciesFromFirestore(firestore);
         const resolved = resolvePayrollPoliciesForDate(period.endDate, policies, 'worker');
-        const eg = Math.max(0, dailyDisplay.total + allowancePreviewTotal);
+        const isSupplemental = batch?.batchType === 'SUPPLEMENTAL';
+        const eg = isSupplemental
+          ? Math.max(0, priorPeriodPreviewTotal + regularAllowancePreviewTotal)
+          : Math.max(0, dailyDisplay.total + allowancePreviewTotal);
+        const hrAllow = isSupplemental ? regularAllowancePreviewTotal : allowancePreviewTotal;
+        const priorPaidTaxableGross = isSupplemental
+          ? Math.max(0, Number(normalLine?.grossAmount) || 0)
+          : 0;
         const rateSummary = line.d8Snapshot?.rate;
         const d8Line = computeWorkerPayrollLineD8({
           asOfDate: period.endDate,
@@ -572,54 +605,34 @@ export default function PayrollBatchWorkerLinePage({
             : { summary: 'preview_table_gross' },
           earningsBreakdown: {
             ...line.earningsBreakdown,
-            hr_allowances: allowancePreviewTotal,
+            ...(hrAllow > 0 ? { hr_allowances: hrAllow } : {}),
           },
+          batchType: isSupplemental ? 'SUPPLEMENTAL' : 'NORMAL',
+          priorPaidTaxableGross,
         });
-        {
-          let p = Number(d8Line.deductionsBreakdown.pit_withholding) || 0;
-          if (workerPitMode === 'manual_baht') {
-            p = Math.max(0, Number(pitManualBaht) || 0);
-          } else if (workerPitMode === 'auto_salary_base') {
-            p = pitFromMonthlyGross(
-              Math.max(0, Number(pitAutoSalaryBase) || 0),
-              resolved.tax,
-              resolved.sso,
-            );
-          } else if (workerPitMode === 'auto_timesheet' && !autoTimesheetUseFullTable) {
-            p = pitFromMonthlyGrossWithMarginalCeiling(
-              eg,
-              resolved.tax,
-              resolved.sso,
-              Math.max(0, Math.min(35, autoTimesheetMarginalRate)),
-              d8Line.deductionsBreakdown.social_security,
-            );
-          } else {
-            p = pitFromMonthlyGross(eg, resolved.tax, resolved.sso, d8Line.deductionsBreakdown.social_security);
-          }
-          if (!cancelled) {
-            setPreviewPitAuto(p);
-            setPreviewTaxPolicyName(resolved.tax?.name ?? null);
-          }
+        const marg =
+          workerPitMode === 'auto_timesheet' && !autoTimesheetUseFullTable
+            ? Math.max(0, Math.min(35, autoTimesheetMarginalRate))
+            : null;
+        let p = resolveWorkerPitWithholdingBaht({
+          mode: workerPitMode,
+          effectiveGross: eg,
+          policies: resolved,
+          socialSecurityBaht: Number(d8Line.deductionsBreakdown.social_security) || 0,
+          isSupplemental: !!isSupplemental,
+          priorPaidTaxableGross,
+          pitWithholdingOverride: pitManualBaht,
+          pitAutoSalaryBaseBaht: pitAutoSalaryBase,
+          maxMarginalRatePercent: marg,
+        });
+        if (!cancelled) {
+          setPreviewPitAuto(p);
+          setPreviewTaxPolicyName(resolved.tax?.name ?? null);
         }
-        const deductions: Record<string, number> = { ...d8Line.deductionsBreakdown };
-        if (workerPitMode === 'manual_baht') {
-          deductions.pit_withholding = Math.max(0, Number(pitManualBaht) || 0);
-        } else if (workerPitMode === 'auto_salary_base') {
-          deductions.pit_withholding = pitFromMonthlyGross(
-            Math.max(0, Number(pitAutoSalaryBase) || 0),
-            resolved.tax,
-            resolved.sso,
-          );
-        } else if (workerPitMode === 'auto_timesheet' && !autoTimesheetUseFullTable) {
-          deductions.pit_withholding = pitFromMonthlyGrossWithMarginalCeiling(
-            eg,
-            resolved.tax,
-            resolved.sso,
-            Math.max(0, Math.min(35, autoTimesheetMarginalRate)),
-            d8Line.deductionsBreakdown.social_security,
-          );
-        } else {
-          deductions.pit_withholding = pitFromMonthlyGross(eg, resolved.tax, resolved.sso, d8Line.deductionsBreakdown.social_security);
+        let deductions: Record<string, number> = { ...d8Line.deductionsBreakdown };
+        deductions.pit_withholding = p;
+        if (isSupplemental) {
+          deductions = forceSupplementalNoSocialSecurity(deductions);
         }
         deductionRows
           .filter((r) => r.label.trim() && Number(r.amount) > 0)
@@ -650,8 +663,12 @@ export default function PayrollBatchWorkerLinePage({
     firestore,
     line,
     period?.endDate,
+    batch?.batchType,
+    normalLine?.grossAmount,
     dailyDisplay.total,
     allowancePreviewTotal,
+    regularAllowancePreviewTotal,
+    priorPeriodPreviewTotal,
     deductionRows,
     workerPitMode,
     pitManualBaht,
@@ -709,8 +726,9 @@ export default function PayrollBatchWorkerLinePage({
       });
       toast({
         title: 'บันทึกการปรับยอดแล้ว',
-        description:
-          workerPitMode === 'manual_baht'
+        description: batch?.batchType === 'SUPPLEMENTAL'
+          ? 'งวดตกเบิก: ไม่หักประกันสังคม · ภงด. ตามเกณฑ์ปกติ (ถ้าถึงเกณฑ์)'
+          : workerPitMode === 'manual_baht'
             ? 'ใช้ยอดหัก ภงด. ตามจำนวนที่กำหนด — ประกันสังคมตามเงินได้จริง'
             : workerPitMode === 'auto_salary_base'
               ? 'หัก ภงด. จากฐานเงินเดือนที่ระบุ ตาม policy ใน HR'
@@ -741,6 +759,7 @@ export default function PayrollBatchWorkerLinePage({
     autoTimesheetMarginalRate,
     adjNotes,
     toast,
+    batch?.batchType,
   ]);
 
   const handleRecalculateFromTimesheets = useCallback(async () => {
@@ -1218,12 +1237,25 @@ export default function PayrollBatchWorkerLinePage({
           <CardHeader>
             <CardTitle>ปรับยอด (เบี้ยเลี้ยง / หักพิเศษ / ภาษี ณ ที่จ่าย)</CardTitle>
             <CardDescription>
-              ระบบคำนวณประกันสังคมและภาษีเงินได้รายเดือนตาม{' '}
-              <Link href="/hr/settings" className="underline font-medium">
-                HR settings
-              </Link>{' '}
-              จากยอดรวมหลังเบี้ยเลี้ยง — สามารถกำหนดยอดหัก ภงด. เองได้ถ้าจำเป็น — ยอดหักคืนเบิกล่วงหน้า (ถ้ามี)
-              ลด NET เท่านั้น ไม่ลดฐานคำนวณ ภงด.
+              {isSupplementalBatch ? (
+                <>
+                  งวดตกเบิกอย่างเดียว (ไม่มีค่าแรงเดือนปัจจุบันในงวดนี้): <strong>ไม่หักประกันสังคม</strong>
+                  {' '}· คิด <strong>ภงด.1 ตามเกณฑ์ปกติ</strong> จากยอดตกเบิก (ถ้าถึงเกณฑ์หลังประมาณการ ×12)
+                  — ตั้งค่าที่{' '}
+                  <Link href="/hr/settings" className="underline font-medium">
+                    HR settings
+                  </Link>
+                </>
+              ) : (
+                <>
+                  ระบบคำนวณประกันสังคมและภาษีเงินได้รายเดือนตาม{' '}
+                  <Link href="/hr/settings" className="underline font-medium">
+                    HR settings
+                  </Link>{' '}
+                  จากยอดรวมหลังเบี้ยเลี้ยง — สามารถกำหนดยอดหัก ภงด. เองได้ถ้าจำเป็น — ยอดหักคืนเบิกล่วงหน้า (ถ้ามี)
+                  ลด NET เท่านั้น ไม่ลดฐานคำนวณ ภงด.
+                </>
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">

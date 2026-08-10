@@ -15,6 +15,7 @@ import type { Worker, Position, Assignment } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
 import { resolveWorkerLaborBaseRate } from '@/lib/payroll/labor-cost-model';
+import { deriveOtHourlyRatesFromDailyPackage } from '@/lib/commercial/package-hourly-rate';
 import { useActiveBankNameCatalog, useActiveSsoHospitalCatalog } from '@/hooks/use-hrm-name-catalogs';
 import { displayWorkerRegistryJobStatus, workerRegistryJobStatusBadgeProps } from '@/lib/ops/worker-effective-job-status';
 
@@ -114,6 +115,18 @@ export function WorkerInfoTab({
   const customOffDisplay = isEditing
     ? (editedWorker.laborCostCustomOffshore !== undefined ? editedWorker.laborCostCustomOffshore : worker.laborCostCustomOffshore)
     : worker.laborCostCustomOffshore;
+
+  /** มาตรฐานออฟชอร์ 12 ชม. = 8 ปกติ + 4 OT → OT1.5/ชม. จากฐานรายวัน */
+  const offshoreOtPreview = useMemo(() => {
+    const d = offshoreEff?.rate;
+    if (d == null || !(d > 0)) return null;
+    const rates = deriveOtHourlyRatesFromDailyPackage(d, 12);
+    return {
+      daily: d,
+      normalHourly: Math.round(rates.normalHourly * 100) / 100,
+      ot15Hourly: Math.round(rates.ot15Hourly * 100) / 100,
+    };
+  }, [offshoreEff?.rate]);
 
   const readinessOnHold = worker.readinessManualHold === true;
   const readinessComplianceOk = worker.readinessStatus === 'READY';
@@ -370,7 +383,7 @@ export function WorkerInfoTab({
                 <div className="space-y-0.5">
                   <Label className="font-bold">ยึด default ของตำแหน่งหลัก</Label>
                   <p className="text-xs text-muted-foreground">
-                    ปิด = กำหนดฐาน onshore / offshore เอง (override รายคน ทุกงาน/สัญญา)
+                    ปิด = กำหนดฐาน onshore / offshore เอง → payroll / ตกเบิก OT ยึดฐานนี้ (ไม่ใช้ OFF OT/hr ในสัญญา)
                   </p>
                 </div>
                 <Switch
@@ -424,13 +437,26 @@ export function WorkerInfoTab({
                 </div>
               )}
               <div className="text-xs text-muted-foreground space-y-1 border-t pt-3">
+                <p className="rounded-md border border-amber-200/70 bg-amber-50/80 p-2.5 text-amber-950 leading-relaxed">
+                  <span className="font-semibold">มาตรฐานออฟชอร์ 12 ชม.</span> = 8 ชม.ปกติ + 4 ชม.OT
+                  {' '}→ ฐานชม. = ราคารายวัน ÷ 14 · OT 1.5× = ฐานชม. × 1.5
+                  {offshoreOtPreview ? (
+                    <>
+                      {' '}· ตอนนี้ ฿{offshoreOtPreview.daily.toLocaleString('th-TH')} → ปกติ ฿
+                      {offshoreOtPreview.normalHourly.toLocaleString('th-TH')}/ชม. · OT ฿
+                      {offshoreOtPreview.ot15Hourly.toLocaleString('th-TH')}/ชม.
+                    </>
+                  ) : (
+                    <> (เช่น ฿1,400 → ปกติ ฿100/ชม. · OT ฿150/ชม.)</>
+                  )}
+                </p>
                 <p>
-                  ตัวอย่างฐานต้นทุนต่อวัน (รวมค่าตำแหน่งแล้วเมื่อใช้ default ตำแหน่ง — ไม่ใช่ราคาขาย): ออนชอร์{' '}
+                  ฐานต้นทุนต่อวัน: ออนชอร์{' '}
                   {onshoreEff?.rate != null ? `฿${onshoreEff.rate} (${onshoreEff.source === 'position_default' ? 'ตำแหน่ง' : 'กำหนดเอง'})` : '—'} · ออฟชอร์{' '}
                   {offshoreEff?.rate != null ? `฿${offshoreEff.rate} (${offshoreEff.source === 'position_default' ? 'ตำแหน่ง' : 'กำหนดเอง'})` : '—'}
                 </p>
                 <p className="text-[11px]">
-                  Payroll ใช้เส้นทางต้นทุนเดิมต่อใบ timesheet — มีแค่การบวกค่าตำแหน่งรายคนท้ายขั้นตอนนั้น (ถ้ามีค่ามากกว่า 0 และไม่ใช้ override รายคน)
+                  ถ้าปิดยึดตำแหน่งและกรอกฐานเอง — ค่าแรงรวม OT (payroll + ตกเบิก) คำนวณจากฐานหน้าลูกจ้างตามสูตรด้านบน ไม่ใช้ OFF OT/hr ในตารางสัญญา
                 </p>
               </div>
             </CardContent>

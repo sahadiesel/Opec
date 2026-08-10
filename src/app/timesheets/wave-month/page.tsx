@@ -350,6 +350,7 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [retroPayPreviewLoading, setRetroPayPreviewLoading] = useState(false);
   const [retroPayMissing, setRetroPayMissing] = useState<RetroMissingRateInfo[]>([]);
   const [retroPayContractId, setRetroPayContractId] = useState('');
+  const [retroPayRateSource, setRetroPayRateSource] = useState<'worker_custom' | 'contract_matrix' | null>(null);
   const [editDate, setEditDate] = useState('');
   const [editEvent, setEditEvent] = useState<RateConditionEventType>('work_day');
   const [editHours, setEditHours] = useState(12);
@@ -469,6 +470,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     setRetroPayPreview(null);
     setRetroPayMissing([]);
     setRetroPayContractId('');
+    setRetroPayRateSource(null);
   }, [retroEdit, monthYm]);
 
   useEffect(() => {
@@ -477,6 +479,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       setRetroPayPreviewLoading(false);
       setRetroPayMissing([]);
       setRetroPayContractId('');
+      setRetroPayRateSource(null);
       return;
     }
     const ot = Math.max(0, Number(retroAddedOt) || 0);
@@ -488,6 +491,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       setRetroPayPreviewLoading(false);
       setRetroPayMissing([]);
       setRetroPayContractId('');
+      setRetroPayRateSource(null);
       return;
     }
     let cancelled = false;
@@ -510,10 +514,12 @@ export default function WaveMonthTimesheetSummaryPage() {
           setRetroPayPreview(result.ok ? result.amountBaht : null);
           setRetroPayMissing(result.missingRates);
           setRetroPayContractId(result.contractId);
+          setRetroPayRateSource(result.rateSource ?? null);
         } catch {
           if (!cancelled) {
             setRetroPayPreview(null);
             setRetroPayMissing([]);
+            setRetroPayRateSource(null);
           }
         } finally {
           if (!cancelled) setRetroPayPreviewLoading(false);
@@ -3319,7 +3325,12 @@ export default function WaveMonthTimesheetSummaryPage() {
               ) ? (
                 <>
                   <div className="rounded-md border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-sm">
-                    <span className="text-muted-foreground">ยอดจ่ายเพิ่ม (จากตารางอัตรา): </span>
+                    <span className="text-muted-foreground">
+                      ยอดจ่ายเพิ่ม
+                      {retroPayRateSource === 'worker_custom'
+                        ? ' (จากฐานทะเบียนลูกจ้าง): '
+                        : ' (จากตารางอัตรา): '}
+                    </span>
                     {retroPayPreviewLoading ? (
                       <span className="inline-flex items-center gap-1 text-muted-foreground">
                         <Loader2 className="h-3.5 w-3.5 animate-spin" /> กำลังคำนวณ…
@@ -3334,7 +3345,15 @@ export default function WaveMonthTimesheetSummaryPage() {
                       <span className="text-muted-foreground">— กรอกชม. OT/standby เพื่อคำนวณ</span>
                     )}
                     <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
-                      ดึงจากตารางอัตราสัญญา ฝั่ง <strong>ต้นทุน (Cost)</strong> — เช่น OFF OT/hr, OFF M1/trip
+                      {retroPayRateSource === 'worker_custom' ? (
+                        <>
+                          ยึดฐานออฟชอร์/ออนชอร์จากหน้าลูกจ้าง · แพ็ก 12 ชม. = 8 ปกติ + 4 OT → OT/ชม. = (ฐานวัน÷14)×1.5
+                        </>
+                      ) : (
+                        <>
+                          ดึงจากตารางอัตราสัญญา ฝั่ง <strong>ต้นทุน (Cost)</strong> — เช่น OFF OT/hr, OFF M1/trip
+                        </>
+                      )}
                     </p>
                   </div>
                   {retroPayMissing.length > 0 ? (

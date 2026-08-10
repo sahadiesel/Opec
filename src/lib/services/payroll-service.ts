@@ -76,11 +76,9 @@ import {
   computeOfficePayrollLineD8,
   loadPayrollPoliciesFromFirestore,
   resolvePayrollPoliciesForDate,
+  forceSupplementalNoSocialSecurity,
+  resolveWorkerPitWithholdingBaht,
 } from '@/lib/payroll/d8';
-import {
-  pitFromMonthlyGross,
-  pitFromMonthlyGrossWithMarginalCeiling,
-} from '@/lib/payroll/d8/deductions-from-policy';
 import {
   buildLaborCostResolutionSnapshot,
   resolveWorkerLaborBaseRate,
@@ -1708,6 +1706,36 @@ export class PayrollService {
     return sum;
   }
 
+  /**
+   * ฐานรายได้ (gross) จากงวด NORMAL ในเดือนภาษีเดียวกัน — ใช้คิด ภงด. ส่วนต่างรอบตกเบิก
+   * รวมทั้งที่ยังไม่ PAID (เพื่อให้ preview/recalc สอดคล้องตอนสร้าง supplemental)
+   */
+  private async sumPriorNormalTaxableGrossForWorker(
+    batch: PayrollBatch & { id: string },
+    workerId: string,
+  ): Promise<number> {
+    const periodId = String(batch.payrollPeriodId || '').trim();
+    if (!periodId || !workerId) return 0;
+    const q = query(
+      collection(this.db, 'payroll_batches'),
+      where('payrollPeriodId', '==', periodId),
+    );
+    const batchSnaps = await getDocs(q);
+    let sum = 0;
+    for (const bd of batchSnaps.docs) {
+      if (bd.id === batch.id) continue;
+      const nb = { ...(bd.data() as PayrollBatch), id: bd.id };
+      if (nb.batchType && nb.batchType !== 'NORMAL') continue;
+      const lineId = `${nb.id}_${workerId}`;
+      const lineSnap = await getDoc(doc(this.db, 'payroll_batches', nb.id, 'lines', lineId));
+      if (!lineSnap.exists()) continue;
+      const priorLine = lineSnap.data() as PayrollBatchLine;
+      const g = Math.max(0, Number(priorLine.grossAmount) || 0);
+      if (g > 0.005) sum = round2Payroll(sum + g);
+    }
+    return sum;
+  }
+
   async lockBatch(id: string, user: User) {
     assertPayrollPermission(user, 'payroll_worker', 'lock');
     const docRef = doc(this.getBatchCollection(), id);
@@ -2015,6 +2043,9 @@ export class PayrollService {
       : Math.max(0, workerGross + allowanceTotal);
 
     const rateSnap = d8Line.snapshot.rate;
+    const priorPaidTaxableGross = isSupplemental
+      ? await this.sumPriorNormalTaxableGrossForWorker(batch, workerId)
+      : 0;
     const d8WithAllowances = computeWorkerPayrollLineD8({
       asOfDate: asOf,
       policies: resolvedPolicies,
@@ -2031,6 +2062,7 @@ export class PayrollService {
         ...(allowanceTotal > 0 ? { hr_allowances: allowanceTotal } : {}),
       },
       batchType: isSupplemental ? 'SUPPLEMENTAL' : 'NORMAL',
+      priorPaidTaxableGross,
     });
 
     const pitOv = hrStored?.pitWithholdingOverride;
@@ -2043,30 +2075,20 @@ export class PayrollService {
           ? 'manual_baht'
           : 'auto_timesheet');
 
-    const deductions: Record<string, number> = { ...d8WithAllowances.deductionsBreakdown };
-    if (mode === 'manual_baht') {
-      deductions.pit_withholding = Math.max(0, Number(pitOv) || 0);
-    } else if (mode === 'auto_salary_base') {
-      const base = Math.max(0, Number(hrStored?.pitAutoSalaryBaseBaht) || 0);
-      deductions.pit_withholding = pitFromMonthlyGross(base, resolvedPolicies.tax, resolvedPolicies.sso);
-    } else {
-      if (mr != null && Number.isFinite(mr)) {
-        const clamped = Math.max(0, Math.min(35, Number(mr)));
-        deductions.pit_withholding = pitFromMonthlyGrossWithMarginalCeiling(
-          effectiveGross,
-          resolvedPolicies.tax,
-          resolvedPolicies.sso,
-          clamped,
-          deductions.social_security,
-        );
-      } else {
-        deductions.pit_withholding = pitFromMonthlyGross(
-          effectiveGross,
-          resolvedPolicies.tax,
-          resolvedPolicies.sso,
-          deductions.social_security,
-        );
-      }
+    let deductions: Record<string, number> = { ...d8WithAllowances.deductionsBreakdown };
+    deductions.pit_withholding = resolveWorkerPitWithholdingBaht({
+      mode,
+      effectiveGross,
+      policies: resolvedPolicies,
+      socialSecurityBaht: Number(deductions.social_security) || 0,
+      isSupplemental,
+      priorPaidTaxableGross,
+      pitWithholdingOverride: pitOv,
+      pitAutoSalaryBaseBaht: hrStored?.pitAutoSalaryBaseBaht,
+      maxMarginalRatePercent: mr != null && Number.isFinite(mr) ? Number(mr) : null,
+    });
+    if (isSupplemental) {
+      deductions = forceSupplementalNoSocialSecurity(deductions);
     }
     deductionItems.forEach((d, idx) => {
       deductions[`manual_ded_${idx}`] = Math.max(0, Number(d.amount) || 0);
@@ -2277,6 +2299,12 @@ export class PayrollService {
     const storedGrossAmount = isSupplemental ? effectiveGross : line.grossAmount;
 
     const rateSummary = line.d8Snapshot?.rate;
+    const priorPaidTaxableGross = isSupplemental
+      ? await this.sumPriorNormalTaxableGrossForWorker(
+          { ...batch, id: batchId },
+          workerId,
+        )
+      : 0;
     const d8Line = computeWorkerPayrollLineD8({
       asOfDate: asOf,
       policies: resolved,
@@ -2293,6 +2321,7 @@ export class PayrollService {
         ...(allowanceTotal > 0 ? { hr_allowances: allowanceTotal } : {}),
       },
       batchType: isSupplemental ? 'SUPPLEMENTAL' : 'NORMAL',
+      priorPaidTaxableGross,
     });
 
     const pitOv = input.pitWithholdingOverride;
@@ -2301,31 +2330,20 @@ export class PayrollService {
       input.workerPitMode ??
       (mr != null && Number.isFinite(mr) ? 'auto_timesheet' : (pitOv != null && Number.isFinite(pitOv) ? 'manual_baht' : 'auto_timesheet'));
 
-    const deductions: Record<string, number> = { ...d8Line.deductionsBreakdown };
-    if (mode === 'manual_baht') {
-      const p = Math.max(0, Number(pitOv) || 0);
-      deductions.pit_withholding = p;
-    } else if (mode === 'auto_salary_base') {
-      const base = Math.max(0, Number(input.pitAutoSalaryBaseBaht) || 0);
-      deductions.pit_withholding = pitFromMonthlyGross(base, resolved.tax, resolved.sso);
-    } else {
-      if (mr != null && Number.isFinite(mr)) {
-        const clamped = Math.max(0, Math.min(35, Number(mr)));
-        deductions.pit_withholding = pitFromMonthlyGrossWithMarginalCeiling(
-          effectiveGross,
-          resolved.tax,
-          resolved.sso,
-          clamped,
-          deductions.social_security,
-        );
-      } else {
-        deductions.pit_withholding = pitFromMonthlyGross(
-          effectiveGross,
-          resolved.tax,
-          resolved.sso,
-          deductions.social_security,
-        );
-      }
+    let deductions: Record<string, number> = { ...d8Line.deductionsBreakdown };
+    deductions.pit_withholding = resolveWorkerPitWithholdingBaht({
+      mode,
+      effectiveGross,
+      policies: resolved,
+      socialSecurityBaht: Number(deductions.social_security) || 0,
+      isSupplemental,
+      priorPaidTaxableGross,
+      pitWithholdingOverride: pitOv,
+      pitAutoSalaryBaseBaht: input.pitAutoSalaryBaseBaht,
+      maxMarginalRatePercent: mr != null && Number.isFinite(mr) ? Number(mr) : null,
+    });
+    if (isSupplemental) {
+      deductions = forceSupplementalNoSocialSecurity(deductions);
     }
     input.deductionItems.forEach((d, idx) => {
       deductions[`manual_ded_${idx}`] = Math.max(0, Number(d.amount) || 0);

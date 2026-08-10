@@ -5,6 +5,11 @@ import {
   socialSecurityFromPolicy,
 } from './deductions-from-policy';
 import { policiesAppliedList, type ResolvedPayrollPolicies } from './policies';
+import {
+  forceSupplementalNoSocialSecurity,
+  isSupplementalPayrollBatchType,
+  supplementalIncrementalPitBaht,
+} from './worker-statutory';
 import type { PayrollLineD8Snapshot } from '@/lib/types';
 
 export type WorkerPayrollD8Input = {
@@ -15,12 +20,18 @@ export type WorkerPayrollD8Input = {
   rate: { summary: string; conditionIds?: string[]; laborTermIds?: string[] };
   earningsBreakdown: Record<string, number>;
   batchType?: 'NORMAL' | 'SUPPLEMENTAL';
-  /** ฐานรายได้สุทธิของรอบก่อนหน้าในเดือนภาษีเดียวกัน (เพื่อคำนวณฐานภาษีสะสมรอบตกเบิก) */
+  /**
+   * ฐานรายได้ของรอบ NORMAL ในเดือนภาษีเดียวกัน (เพื่อคิด ภงด. ส่วนต่างรอบตกเบิก)
+   * — งวดตกเบิกอย่างเดียวไม่มีค่าแรงเดือนปัจจุบัน → prior = 0
+   */
   priorPaidTaxableGross?: number;
 };
 
 /**
  * D8 — คำนวณบรรทัด worker หลังรวม gross จาก timesheet แล้ว
+ *
+ * SUPPLEMENTAL (ตกเบิกเดือนก่อน / ไม่มีค่าแรงงวดปัจจุบันใน batch นี้):
+ * ไม่หักประกันสังคม · คิด ภงด. ตามเกณฑ์ปกติ (ส่วนต่างจากฐาน prior ถ้ามี)
  */
 export function computeWorkerPayrollLineD8(input: WorkerPayrollD8Input): {
   deductionsBreakdown: Record<string, number>;
@@ -28,32 +39,35 @@ export function computeWorkerPayrollLineD8(input: WorkerPayrollD8Input): {
   snapshot: PayrollLineD8Snapshot;
 } {
   const gross = Math.max(0, input.grossFromTimesheets);
-
   const allowances = Number(input.earningsBreakdown?.hr_allowances) || 0;
-  
+  const isSupplemental = isSupplementalPayrollBatchType(input.batchType);
+
   let ss = 0;
   let pit = 0;
 
-  if (input.batchType === 'SUPPLEMENTAL') {
-    // ไม่มีประกันสังคมในรอบตกเบิก
+  if (isSupplemental) {
     ss = 0;
-    // ภาษีรอบตกเบิก = ภาษีของ (ฐานเดิม + ตกเบิก) - ภาษีของฐานเดิม
-    const priorGross = Math.max(0, input.priorPaidTaxableGross || 0);
-    const taxTotal = pitFromMonthlyGross(priorGross + gross, input.policies.tax, input.policies.sso, 0);
-    const taxPrior = pitFromMonthlyGross(priorGross, input.policies.tax, input.policies.sso, 0);
-    pit = Math.max(0, taxTotal - taxPrior);
+    pit = supplementalIncrementalPitBaht({
+      supplementalGross: gross,
+      priorPaidTaxableGross: input.priorPaidTaxableGross || 0,
+      policies: input.policies,
+    });
   } else {
     const ssoBase = Math.max(0, gross - allowances);
     ss = socialSecurityFromPolicy(ssoBase, input.policies.sso);
     pit = pitFromMonthlyGross(gross, input.policies.tax, input.policies.sso, ss);
   }
+
   const fixed = fixedDeductionsFromPolicy(input.policies.allowanceDeduction);
 
-  const deductionsBreakdown: Record<string, number> = {
+  let deductionsBreakdown: Record<string, number> = {
     social_security: ss,
     pit_withholding: pit,
     ...fixed,
   };
+  if (isSupplemental) {
+    deductionsBreakdown = forceSupplementalNoSocialSecurity(deductionsBreakdown);
+  }
 
   const deductionsTotal = Object.values(deductionsBreakdown).reduce((a, b) => a + b, 0);
   const netAmount = Math.round((gross - deductionsTotal) * 100) / 100;

@@ -14,3 +14,9 @@ export {
 export { loadPayrollPoliciesFromFirestore } from './policy-loader';
 export { computeOfficePayrollLineD8, type OfficePayrollD8Input } from './office-engine';
 export { computeWorkerPayrollLineD8, type WorkerPayrollD8Input } from './worker-engine';
+export {
+  forceSupplementalNoSocialSecurity,
+  isSupplementalPayrollBatchType,
+  resolveWorkerPitWithholdingBaht,
+  supplementalIncrementalPitBaht,
+} from './worker-statutory';
