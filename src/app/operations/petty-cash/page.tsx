@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -17,9 +17,14 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { ArrowDownLeft, ArrowUpRight, Banknote, List, Loader2, Plus, Wallet } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Banknote, List, Loader2, Plus, Printer, Wallet } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatStoredDateThaiBE } from '@/lib/date-thai';
+import {
+  htmlDateValueToTimestampMs,
+  timestampToHtmlDateValue,
+  formatStoredDateThaiBE,
+  formatPayrollYearMonthThaiBE,
+} from '@/lib/date-thai';
 import { BankAccount, CashbookEntry, PettyCashEntry, User } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, where } from 'firebase/firestore';
@@ -28,6 +33,18 @@ import { canCreate, canView } from '@/lib/permissions';
 import { recordPettyCashMovement } from '@/lib/services/cashbook-bank-movement';
 import { useAppUser } from '@/hooks/use-app-user';
 import { FirestorePermissionError } from '@/firebase/errors';
+import {
+  buildPettyCashListPrintHtml,
+  fmtPettyCashPrintBaht,
+  type PettyCashListPrintRow,
+} from '@/lib/documents/petty-cash-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import { cn } from '@/lib/utils';
+
+/** คอลัมน์เงินเข้า/ออก/คงเหลือ — กว้างเท่ากัน (~+10% จากเดิม) */
+const MONEY_COL =
+  'w-[7.25rem] min-w-[7.25rem] max-w-[7.25rem] px-2 py-1.5 text-center align-middle';
+const DATA_COL = 'px-2 py-1.5 align-middle';
 
 function endOfMonthYmd(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
@@ -302,6 +319,95 @@ export default function OperationsPettyCashPage() {
   const [description, setDescription] = useState('');
   const [entryDate, setEntryDate] = useState(timestampToHtmlDateValue(Date.now()));
   const [saving, setSaving] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
+
+  const closingBalance = useMemo(() => {
+    if (movementRowsWithBalance.length > 0) {
+      return movementRowsWithBalance[movementRowsWithBalance.length - 1]!.balanceAfter;
+    }
+    return balanceAtStartOfSelectedMonth;
+  }, [movementRowsWithBalance, balanceAtStartOfSelectedMonth]);
+
+  const handlePrintList = useCallback(async () => {
+    if (!selectedAccount) return;
+    setPrintBusy(true);
+    try {
+      const printRows: PettyCashListPrintRow[] = [
+        {
+          entryDate: formatStoredDateThaiBE(monthStart),
+          entryNo: '—',
+          description: 'ยอดยกมา (ก่อนรายการในเดือน)',
+          entryType: `ยอดตั้งต้น ${fmtPettyCashPrintBaht(openingBalanceNum)} + สะสมก่อนเดือน ${
+            preMonthNet >= 0 ? '+' : '−'
+          }${fmtPettyCashPrintBaht(Math.abs(preMonthNet)).replace(/^฿/, '')}`,
+          sourceLabel: '',
+          inLabel: '—',
+          outLabel: '—',
+          balanceLabel: fmtPettyCashPrintBaht(balanceAtStartOfSelectedMonth),
+        },
+        ...movementRowsWithBalance.map((row) => ({
+          entryDate: formatStoredDateThaiBE(row.entryDate),
+          entryNo: row.entryNo,
+          description: row.description,
+          entryType: row.entryType,
+          sourceLabel: row.source === 'petty' ? 'ฝ่ายหน้างาน' : 'ฝ่ายบัญชี',
+          inLabel:
+            row.direction === 'IN' ? fmtPettyCashPrintBaht(row.amount) : '—',
+          outLabel:
+            row.direction === 'OUT' ? fmtPettyCashPrintBaht(row.amount) : '—',
+          balanceLabel: fmtPettyCashPrintBaht(row.balanceAfter),
+        })),
+      ];
+
+      const generatedAt = new Date().toLocaleString('th-TH', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      });
+      const body = buildPettyCashListPrintHtml({
+        accountCode: selectedAccount.accountCode || selectedAccount.id,
+        accountName: selectedAccount.accountName || 'Petty Cash',
+        monthLabel: formatPayrollYearMonthThaiBE(selectedMonth),
+        monthYm: selectedMonth,
+        openingBalanceLabel: fmtPettyCashPrintBaht(openingBalanceNum),
+        broughtForwardLabel: fmtPettyCashPrintBaht(balanceAtStartOfSelectedMonth),
+        totalInLabel: fmtPettyCashPrintBaht(monthTotals.totalIn),
+        totalOutLabel: fmtPettyCashPrintBaht(monthTotals.totalOut),
+        netLabel: fmtPettyCashPrintBaht(monthTotals.net),
+        closingBalanceLabel: fmtPettyCashPrintBaht(closingBalance),
+        rows: printRows,
+        generatedAt,
+        printedBy: currentUser?.displayName,
+      });
+
+      const ok = await openStandardPrintWindow({
+        windowTitle: 'PettyCash-List',
+        suggestedFileName: `PettyCash-${selectedAccount.accountCode || 'PC'}-${selectedMonth}`,
+        bodyInnerHtml: body,
+        htmlLang: 'th',
+      });
+      if (!ok) {
+        toast({
+          variant: 'destructive',
+          title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+          description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+        });
+      }
+    } finally {
+      setPrintBusy(false);
+    }
+  }, [
+    selectedAccount,
+    monthStart,
+    openingBalanceNum,
+    preMonthNet,
+    balanceAtStartOfSelectedMonth,
+    movementRowsWithBalance,
+    selectedMonth,
+    monthTotals,
+    closingBalance,
+    currentUser?.displayName,
+    toast,
+  ]);
 
   const handleSubmit = async () => {
     if (!firestore || !currentUser) return;
@@ -352,12 +458,6 @@ export default function OperationsPettyCashPage() {
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
             <Banknote className="h-8 w-8" /> เบิกจ่าย Petty Cash (หน้างาน)
           </h1>
-          <p className="text-muted-foreground text-lg max-w-3xl">
-            กองเงิน Petty แยกจาก “สมุดรายรับ-รายจ่าย” ฝ่ายบัญชี — ใช้เพื่อตามเงินโอนมาใช้หน้างาน รับ-จ่าย
-            โดยฝ่ายปฏิบัติการ ยอดโอนเข้า-ออกที่ลงฝ่ายบัญชีจะแสดงในตารางเพื่อให้เห็นยอดเงินสดยังอยู่หน้างานเท่าใด
-            (โอนระหว่างบัญชีฝากธนาคารเอง ไม่ใช่ “เงินเข้า-ออก กอง” ของ Petty) — รายการด้านล่างสำหรับ
-            มุมมองกอง: รับ-จ่าย/คงเหลือเงินสดหน้างาน
-          </p>
         </div>
 
         {bankPettyListError && (
@@ -396,47 +496,38 @@ export default function OperationsPettyCashPage() {
         {pettyAccounts && pettyAccounts.length > 0 && (
           <>
             <Card className="w-full">
-              <CardHeader>
-                <CardTitle className="text-lg">บันทึกรายการ</CardTitle>
-                <CardDescription>
-                  ฝ่ายปฏิบัติการบันทึกรับ/จ่ายเงินสดกอง Petty หน้างาน — รายการโอนเข้า-ออกจากฝ่ายบัญชี
-                  ดูได้ในตาราง &quot;รายการเคลื่อนไหว&quot; ด้านล่าง
-                </CardDescription>
+              <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0 pb-3">
+                <div className="min-w-0 space-y-1">
+                  <CardTitle className="text-lg">บันทึกรายการ</CardTitle>
+                  <CardDescription>
+                    บันทึกรับ/จ่ายเงินสดกอง Petty หน้างาน — ดูรายการโอนจากฝ่ายบัญชีในตารางด้านล่าง
+                  </CardDescription>
+                </div>
+                {selectedAccount ? (
+                  <div className="shrink-0 rounded-lg border bg-muted/40 px-4 py-2 text-right">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
+                      ยอดคงเหลือปัจจุบัน
+                    </p>
+                    <p className="font-mono text-xl font-black tabular-nums text-primary">
+                      {selectedAccount.currency}{' '}
+                      {(Number(selectedAccount.currentBalance) || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                      })}
+                    </p>
+                  </div>
+                ) : null}
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4 lg:items-end">
-                  <div className="space-y-2 lg:col-span-1">
-                    <Label>บัญชี Petty Cash</Label>
-                    <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
-                      <SelectTrigger className="h-11">
-                        <SelectValue placeholder="เลือกบัญชี" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {pettyAccounts.map((a) => (
-                          <SelectItem key={a.id} value={a.id}>
-                            {a.accountCode} — {a.accountName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
+                  <div className="w-full space-y-1.5 sm:w-auto xl:w-[11rem]">
+                    <Label>วันที่</Label>
+                    <DatePickerThaiBE
+                      className="h-11 w-full"
+                      value={htmlDateValueToTimestampMs(entryDate)}
+                      onChange={(ms) => setEntryDate(timestampToHtmlDateValue(ms))}
+                    />
                   </div>
-                  {selectedAccount && (
-                    <div className="rounded-lg border bg-muted/40 p-3 md:min-h-[4.5rem]">
-                      <p className="text-xs font-bold uppercase text-muted-foreground">ยอดคงเหลือปัจจุบัน (ระบบ)</p>
-                      <p className="text-xl font-black text-primary">
-                        {selectedAccount.currency}{' '}
-                        {(Number(selectedAccount.currentBalance) || 0).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                        })}
-                      </p>
-                      {canView(currentUser, 'bank_accounts') && (
-                        <Button type="button" variant="outline" size="sm" className="mt-2" asChild>
-                          <Link href={`/bank-accounts/${selectedAccount.id}`}>รายละเอียดกอง / รายการเคลื่อนไหว (เต็ม)</Link>
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                  <div className="space-y-2">
+                  <div className="w-full space-y-1.5 sm:w-auto xl:w-[10.5rem]">
                     <Label>ทิศทาง</Label>
                     <Select value={direction} onValueChange={(v: 'IN' | 'OUT') => setDirection(v)}>
                       <SelectTrigger className="h-11">
@@ -448,18 +539,8 @@ export default function OperationsPettyCashPage() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    <Label>วันที่</Label>
-                    <DatePickerThaiBE
-                      className="h-11"
-                      value={htmlDateValueToTimestampMs(entryDate)}
-                      onChange={(ms) => setEntryDate(timestampToHtmlDateValue(ms))}
-                    />
-                  </div>
-                </div>
-                <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
-                  <div className="space-y-2 lg:col-span-5">
-                    <Label>รายละเอียด</Label>
+                  <div className="min-w-0 flex-1 space-y-1.5">
+                    <Label>รายการ</Label>
                     <Input
                       className="h-11"
                       value={description}
@@ -467,7 +548,7 @@ export default function OperationsPettyCashPage() {
                       placeholder="เช่น ค่าอุปกรณ์หน้างาน, ค่ารถรับส่ง"
                     />
                   </div>
-                  <div className="space-y-2 lg:col-span-2">
+                  <div className="w-full space-y-1.5 sm:w-auto xl:w-[9rem]">
                     <Label>จำนวนเงิน</Label>
                     <Input
                       type="number"
@@ -476,7 +557,7 @@ export default function OperationsPettyCashPage() {
                       onChange={(e) => setAmount(parseFloat(e.target.value) || 0)}
                     />
                   </div>
-                  <div className="lg:col-span-2">
+                  <div className="w-full sm:w-auto xl:w-[10.5rem]">
                     <Button className="h-11 w-full font-bold gap-2" onClick={handleSubmit} disabled={saving}>
                       {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                       บันทึกรายการ
@@ -487,28 +568,35 @@ export default function OperationsPettyCashPage() {
             </Card>
 
             <Card className="w-full">
-              <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <CardTitle className="flex items-center gap-2 text-lg">
-                    <List className="h-5 w-5 text-primary" />
+              <CardHeader className="flex flex-row items-center justify-between gap-3 space-y-0 py-4">
+                <CardTitle className="flex min-w-0 items-center gap-2 text-lg leading-none">
+                  <List className="h-5 w-5 shrink-0 text-primary" />
+                  <span className="truncate">
                     รายการเคลื่อนไหว — รายรับ-รายจ่าย-คงเหลือ (กอง {selectedAccount?.accountCode})
-                  </CardTitle>
-                  <CardDescription>
-                    รวม (1) รายการโอนเงินเข้า/ออก ที่ฝ่ายบัญชีลงใน cashbook สำหรับกองนี้
-                    (เช่น โอนจากบัญชีธนาคาร) กับ (2) รายรับ-จ่าย ที่ฝ่ายหน้างานลงใน Petty
-                    ยอด &quot;ยกมา&quot; = ยอดตั้งต้น (ตั้งบัญชี) + รายการสะสมก่อนเดือนที่เลือก
-                  </CardDescription>
-                </div>
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="space-y-1">
-                    <Label className="text-xs text-muted-foreground">กรองตามเดือน</Label>
-                    <Input
-                      type="month"
-                      className="w-[min(100%,14rem)] font-mono"
-                      value={selectedMonth}
-                      onChange={(e) => setSelectedMonth(e.target.value)}
-                    />
-                  </div>
+                  </span>
+                </CardTitle>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Input
+                    type="month"
+                    className="h-9 w-[12.5rem] font-mono"
+                    value={selectedMonth}
+                    onChange={(e) => setSelectedMonth(e.target.value)}
+                    aria-label="เดือน"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 gap-2 font-bold"
+                    disabled={printBusy || movementBlockLoading || !selectedAccount}
+                    onClick={() => void handlePrintList()}
+                  >
+                    {printBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Printer className="h-4 w-4" />
+                    )}
+                    พิมพ์รายการ
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent>
@@ -518,7 +606,7 @@ export default function OperationsPettyCashPage() {
                   </div>
                 ) : (
                   <>
-                    <div className="mb-4 flex flex-col gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm">
+                    <div className="mb-3 flex flex-col gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm">
                       <div className="grid gap-1 sm:grid-cols-3 sm:gap-4">
                         <div>
                           <span className="text-muted-foreground">ยอดตั้งต้น (ตอนสร้างกอง / งบยกมา):</span>{' '}
@@ -573,39 +661,38 @@ export default function OperationsPettyCashPage() {
                         )}
                       </div>
                     </div>
-                    <p className="mb-2 text-xs text-muted-foreground">
-                      แถวแรกในตารางคือ ยอดยกมา ก่อนรายการในเดือน — แถวถัดไปรวมโอนจากธนาคาร (ฝ่ายบัญชี) และรายลงเอง (ฝ่ายหน้างาน)
-                    </p>
                     <div className="overflow-x-auto rounded-md border">
-                      <Table className="min-w-[920px]">
+                      <Table className="min-w-[980px] table-fixed">
                         <TableHeader>
-                          <TableRow>
-                            <TableHead className="w-[6.5rem]">วันที่</TableHead>
-                            <TableHead className="w-[6.5rem]">เลขที่</TableHead>
-                            <TableHead className="min-w-[12rem]">รายละเอียด / ประเภท</TableHead>
-                            <TableHead className="w-[6.5rem] text-right">รับ (เข้า)</TableHead>
-                            <TableHead className="w-[6.5rem] text-right">จ่าย (ออก)</TableHead>
-                            <TableHead className="w-[7.5rem] text-right">คงเหลือ</TableHead>
+                          <TableRow className="hover:bg-transparent">
+                            <TableHead className={cn(DATA_COL, 'h-9 w-[6.5rem] text-left')}>วันที่</TableHead>
+                            <TableHead className={cn(DATA_COL, 'h-9 w-[7.5rem] text-left')}>เลขที่</TableHead>
+                            <TableHead className={cn(DATA_COL, 'h-9 min-w-[12rem]')}>รายละเอียด / ประเภท</TableHead>
+                            <TableHead className={cn(MONEY_COL, 'h-9 font-semibold')}>รับ (เข้า)</TableHead>
+                            <TableHead className={cn(MONEY_COL, 'h-9 font-semibold')}>จ่าย (ออก)</TableHead>
+                            <TableHead className={cn(MONEY_COL, 'h-9 font-semibold')}>คงเหลือ</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           <TableRow className="bg-muted/50 font-medium">
-                            <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                            <TableCell className={cn(DATA_COL, 'whitespace-nowrap text-sm text-muted-foreground')}>
                               {formatStoredDateThaiBE(monthStart)}
                             </TableCell>
-                            <TableCell className="text-xs">—</TableCell>
-                            <TableCell>
-                              <div className="text-sm font-bold">ยอดยกมา (ก่อนรายการในเดือน)</div>
-                              <div className="text-[11px] text-muted-foreground">
-                                ยอดตั้งต้น ฿ {openingBalanceNum.toLocaleString(undefined, { minimumFractionDigits: 2 })} + รายสะสมก่อนเดือน{' '}
+                            <TableCell className={cn(DATA_COL, 'text-xs')}>—</TableCell>
+                            <TableCell className={DATA_COL}>
+                              <div className="text-sm font-bold leading-tight">ยอดยกมา (ก่อนรายการในเดือน)</div>
+                              <div className="text-[11px] leading-tight text-muted-foreground">
+                                ยอดตั้งต้น ฿{openingBalanceNum.toLocaleString(undefined, { minimumFractionDigits: 2 })} + รายสะสมก่อนเดือน{' '}
                                 {preMonthNet >= 0 ? '+' : '−'}
                                 {Math.abs(preMonthNet).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </div>
                             </TableCell>
-                            <TableCell className="text-right text-sm text-muted-foreground">—</TableCell>
-                            <TableCell className="text-right text-sm text-muted-foreground">—</TableCell>
-                            <TableCell className="text-right text-sm font-bold text-primary">
-                              ฿ {balanceAtStartOfSelectedMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            <TableCell className={cn(MONEY_COL, 'text-sm text-muted-foreground')}>—</TableCell>
+                            <TableCell className={cn(MONEY_COL, 'text-sm text-muted-foreground')}>—</TableCell>
+                            <TableCell className={cn(MONEY_COL, 'text-sm font-bold text-primary')}>
+                              <span className="inline-flex items-center justify-center gap-0.5 whitespace-nowrap font-mono tabular-nums">
+                                ฿{balanceAtStartOfSelectedMonth.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
                             </TableCell>
                           </TableRow>
                           {movementRowsWithBalance.map((row) => {
@@ -613,14 +700,14 @@ export default function OperationsPettyCashPage() {
                             const outAm = row.direction === 'OUT' ? row.amount : 0;
                             return (
                               <TableRow key={row.key}>
-                                <TableCell className="whitespace-nowrap text-sm">
+                                <TableCell className={cn(DATA_COL, 'whitespace-nowrap text-sm')}>
                                   {formatStoredDateThaiBE(row.entryDate)}
                                 </TableCell>
-                                <TableCell className="font-mono text-xs font-medium">{row.entryNo}</TableCell>
-                                <TableCell>
-                                  <div className="text-sm font-medium">{row.description}</div>
-                                  <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                                    <Badge variant="secondary" className="text-[10px]">
+                                <TableCell className={cn(DATA_COL, 'font-mono text-xs font-medium')}>{row.entryNo}</TableCell>
+                                <TableCell className={DATA_COL}>
+                                  <div className="text-sm font-medium leading-tight">{row.description}</div>
+                                  <div className="mt-0.5 flex flex-wrap items-center gap-1 leading-tight">
+                                    <Badge variant="secondary" className="h-5 px-1.5 py-0 text-[10px]">
                                       {row.source === 'petty' ? 'ฝ่ายหน้างาน' : 'ฝ่ายบัญชี (รวมโอนจากธ.ก.)'}
                                     </Badge>
                                     <span className="text-[11px] text-muted-foreground">{row.entryType}</span>
@@ -632,27 +719,37 @@ export default function OperationsPettyCashPage() {
                                     )}
                                   </div>
                                 </TableCell>
-                                <TableCell className="text-right text-sm font-medium text-emerald-800">
-                                  {inAm > 0
-                                    ? `฿ ${inAm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                    : '—'}
-                                  {row.direction === 'IN' && <ArrowDownLeft className="ml-1 inline h-3.5 w-3.5 opacity-60" />}
+                                <TableCell className={cn(MONEY_COL, 'text-sm font-medium text-emerald-800')}>
+                                  {inAm > 0 ? (
+                                    <span className="inline-flex items-center justify-center gap-0.5 whitespace-nowrap font-mono tabular-nums">
+                                      ฿{inAm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      <ArrowDownLeft className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                                    </span>
+                                  ) : (
+                                    '—'
+                                  )}
                                 </TableCell>
-                                <TableCell className="text-right text-sm font-medium text-red-800">
-                                  {outAm > 0
-                                    ? `฿ ${outAm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                    : '—'}
-                                  {row.direction === 'OUT' && <ArrowUpRight className="ml-1 inline h-3.5 w-3.5 opacity-60" />}
+                                <TableCell className={cn(MONEY_COL, 'text-sm font-medium text-red-800')}>
+                                  {outAm > 0 ? (
+                                    <span className="inline-flex items-center justify-center gap-0.5 whitespace-nowrap font-mono tabular-nums">
+                                      ฿{outAm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      <ArrowUpRight className="h-3.5 w-3.5 shrink-0 opacity-70" />
+                                    </span>
+                                  ) : (
+                                    '—'
+                                  )}
                                 </TableCell>
-                                <TableCell className="text-right text-sm font-bold text-primary">
-                                  ฿ {row.balanceAfter.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                <TableCell className={cn(MONEY_COL, 'text-sm font-bold text-primary')}>
+                                  <span className="inline-flex items-center justify-center gap-0.5 whitespace-nowrap font-mono tabular-nums">
+                                    ฿{row.balanceAfter.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
                                 </TableCell>
                               </TableRow>
                             );
                           })}
                           {movementRowsWithBalance.length === 0 && (
                             <TableRow>
-                              <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
+                              <TableCell colSpan={6} className="py-4 text-center text-sm text-muted-foreground">
                                 ยังไม่มีรายการเคลื่อนไหวในเดือน {formatStoredDateThaiBE(monthStart)} – {formatStoredDateThaiBE(monthEnd)} (ยอดยกมาข้างบนใช้คำนวณต่อ)
                               </TableCell>
                             </TableRow>
