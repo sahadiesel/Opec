@@ -63,6 +63,7 @@ import {
   ArrowRight,
   Building2,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Coins,
   Loader2,
@@ -118,6 +119,7 @@ function moneyTH(n: number) {
 }
 
 function CheckRow({ c }: { c: ValidationCheck }) {
+  const [open, setOpen] = useState(false);
   const Icon = c.severity === 'red' ? XCircle : c.severity === 'yellow' ? AlertTriangle : CheckCircle2;
   const color =
     c.severity === 'red'
@@ -125,13 +127,104 @@ function CheckRow({ c }: { c: ValidationCheck }) {
       : c.severity === 'yellow'
         ? 'text-amber-600'
         : 'text-emerald-600';
+  const hasInspect = (c.inspectItems?.length ?? 0) > 0;
+  const ExpandIcon = open ? ChevronDown : ChevronRight;
+
   return (
-    <div className="flex gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-sm">
-      <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', color)} />
-      <div className="min-w-0 space-y-0.5">
-        <div className="font-medium leading-tight">{c.label}</div>
-        {c.detail ? <p className="text-muted-foreground text-xs leading-snug">{c.detail}</p> : null}
-      </div>
+    <div className="rounded-md border border-border/60 bg-muted/20 text-sm">
+      <button
+        type="button"
+        disabled={!hasInspect}
+        onClick={() => hasInspect && setOpen((v) => !v)}
+        className={cn(
+          'flex w-full gap-2 px-3 py-2 text-left',
+          hasInspect && 'cursor-pointer hover:bg-muted/40',
+          !hasInspect && 'cursor-default',
+        )}
+      >
+        <Icon className={cn('mt-0.5 h-4 w-4 shrink-0', color)} />
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="font-medium leading-tight">{c.label}</div>
+            {hasInspect ? (
+              <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-amber-800">
+                กดดูรายละเอียด
+                <ExpandIcon className="h-3.5 w-3.5" />
+              </span>
+            ) : null}
+          </div>
+          {c.detail ? <p className="text-muted-foreground text-xs leading-snug">{c.detail}</p> : null}
+          {c.howToFix && !open ? (
+            <p className="rounded-sm bg-background/80 px-2 py-1.5 text-xs leading-snug text-foreground/90">
+              <span className="font-semibold">ต้องทำอย่างไร: </span>
+              {c.howToFix}
+            </p>
+          ) : null}
+        </div>
+      </button>
+      {hasInspect && open ? (
+        <div className="space-y-2 border-t border-border/50 bg-background/60 px-3 py-3">
+          {c.howToFix ? (
+            <p className="text-xs text-muted-foreground leading-snug">
+              <span className="font-semibold text-foreground">ต้องทำอย่างไร: </span>
+              {c.howToFix}
+            </p>
+          ) : null}
+          {c.inspectItems!.map((item) => (
+            <div
+              key={item.lineId}
+              className="rounded-md border border-amber-200/80 bg-amber-50/50 px-3 py-2 dark:bg-amber-950/20"
+            >
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <div className="font-medium">{item.workerName}</div>
+                <div className="text-xs tabular-nums text-muted-foreground">
+                  สุทธิ {moneyTH(item.netAmount)}
+                </div>
+              </div>
+              <ul className="mt-1.5 space-y-1">
+                {item.entries.map((e, idx) => (
+                  <li
+                    key={`${item.lineId}-${idx}`}
+                    className="flex flex-wrap items-baseline justify-between gap-2 text-xs"
+                  >
+                    <span>
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          'mr-1.5 h-5 px-1.5 text-[10px]',
+                          e.kind === 'เพิ่ม' && 'border-emerald-300 text-emerald-800',
+                          e.kind === 'หัก' && 'border-red-300 text-red-800',
+                        )}
+                      >
+                        {e.kind}
+                      </Badge>
+                      {e.label}
+                    </span>
+                    {typeof e.amount === 'number' ? (
+                      <span
+                        className={cn(
+                          'font-mono tabular-nums font-semibold',
+                          e.kind === 'หัก' ? 'text-red-800' : e.kind === 'เพิ่ม' ? 'text-emerald-800' : '',
+                        )}
+                      >
+                        {e.kind === 'หัก' ? '−' : e.kind === 'เพิ่ม' ? '+' : ''}
+                        {moneyTH(Math.abs(e.amount))}
+                      </span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+              {item.slipHref ? (
+                <div className="mt-2">
+                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs" asChild>
+                    <Link href={item.slipHref}>เปิดสลิปรายคน</Link>
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -672,8 +765,14 @@ export function PayrollApprovalCenterD6({
                       {!linesLoading && workerLines && workerChecks.map((c) => <CheckRow key={c.id} c={c} />)}
                       {workerBlocking && (
                         <Alert variant="destructive" className="mt-2">
-                          <AlertTitle>อนุมัติไม่ได้</AlertTitle>
-                          <AlertDescription>มีข้อผิดพลาดระดับแดง — แก้ที่ต้นทางหรือใช้ correction request ก่อน</AlertDescription>
+                          <AlertTitle>อนุมัติไม่ได้จนกว่าจะแก้ข้อแดง</AlertTitle>
+                          <AlertDescription className="space-y-1">
+                            <p>ดูช่อง「ต้องทำอย่างไร」ใต้แต่ละข้อแดงด้านบน — แก้ที่ต้นทางแล้วกลับมาหน้านี้อัปเดต</p>
+                            <p className="text-xs opacity-90">
+                              หมายเหตุ: หน้า batch ที่แสดงวิธีจ่ายเป็น CASH อาจเป็นค่าเริ่มต้นของหน้าจอ
+                              ถ้าบัญชีในทะเบียนมีอยู่แล้วแต่ยังติดแดง ให้ตั้งวิธีจ่าย/บัญชีให้ครบแล้วคำนวณใหม่เพื่ออัปเดต snapshot
+                            </p>
+                          </AlertDescription>
                         </Alert>
                       )}
                     </CardContent>
@@ -973,8 +1072,10 @@ export function PayrollApprovalCenterD6({
                       {!linesLoading && officeLines && officeChecks.map((c) => <CheckRow key={c.id} c={c} />)}
                       {officeBlocking && (
                         <Alert variant="destructive" className="mt-2">
-                          <AlertTitle>อนุมัติไม่ได้</AlertTitle>
-                          <AlertDescription>มีข้อแดงจากทะเบียนพนักงาน / บรรทัดงวด</AlertDescription>
+                          <AlertTitle>อนุมัติไม่ได้จนกว่าจะแก้ข้อแดง</AlertTitle>
+                          <AlertDescription>
+                            ดูช่อง「ต้องทำอย่างไร」ใต้แต่ละข้อแดงด้านบน — แก้ที่ทะเบียนพนักงานแล้วกลับมาตรวจอีกครั้ง
+                          </AlertDescription>
                         </Alert>
                       )}
                     </CardContent>
