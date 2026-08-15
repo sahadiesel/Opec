@@ -1506,7 +1506,7 @@ export interface TimesheetRetroAdjustment {
   sourceYearMonth: string;
   /** งวด payroll ที่ตั้งใจจ่าย YYYY-MM */
   applyPayrollYearMonth: string;
-  /** ชม. OT / standby ที่เพิ่ม (delta — ไม่แทนที่ของเดิม) */
+  /** ชม. OT / standby ที่เพิ่มจากฐานสลิป (delta ในเอกสาร — UI ใส่ยอดรวมแล้วคำนวณส่วนต่าง) */
   addedOt15Hours?: number;
   addedOt20Hours?: number;
   addedOt30Hours?: number;
@@ -1902,6 +1902,13 @@ export type RentalPayableStatus = 'PENDING' | 'PAID' | 'VOID';
 /** ประเภทสัญญาเช่าภายใต้เมนูการจัดการสัญญา */
 export type LeaseContractKind = 'PROPERTY' | 'VEHICLE';
 
+/**
+ * วิธีการทำจ่ายตามสัญญาเช่า
+ * - AUTO_NOTIFY: สร้างรอบรอจ่ายอัตโนมัติ → แจ้งบัญชีโอนเหมือนเดิม
+ * - BILL_FIRST: ต้องทำใบวางบิลอ้างสัญญา (ไม่ผ่าน PR/PO) ก่อนบัญชีทำจ่าย
+ */
+export type RentalPayoutWorkflow = 'AUTO_NOTIFY' | 'BILL_FIRST';
+
 /** สัญญาเช่าที่ OPEC เป็นผู้เช่า — collection `rental_contracts` */
 export interface RentalContract {
   id: string;
@@ -1917,6 +1924,10 @@ export interface RentalContract {
   endDate: string;
   /** วันที่ครบกำหนดของแต่ละเดือน (1–31; เกินวันสุดท้ายจะใช้วันสุดท้ายของเดือน) */
   paymentDayOfMonth: number;
+  /**
+   * วิธีการทำจ่าย — ไม่ระบุ = AUTO_NOTIFY (สัญญาเก่า)
+   */
+  payoutWorkflow?: RentalPayoutWorkflow;
   withholdingTaxRatePercent: number;
   /**
    * VAT % บนฐานค่าเช่า — นิติบุคคลมัก 7 · บุคคลธรรมดา 0
@@ -3056,6 +3067,13 @@ export interface Purchase {
   purchaseNo: string;
   /** อ้าง PR ที่อนุมัติแล้ว — ใบสั่งซื้อใหม่ต้องระบุ */
   purchaseRequestId?: string;
+  /**
+   * แหล่งที่มา — RENTAL_CONTRACT = PO เงาจากสัญญาเช่า (ไม่ต้องมี PR)
+   * ไม่ระบุ = ใบสั่งซื้อปกติ
+   */
+  origin?: 'RENTAL_CONTRACT';
+  /** เมื่อ origin = RENTAL_CONTRACT */
+  rentalContractId?: string;
   vendorId: string;
   purchaseDate: string;
   purchaseType: PurchaseType;
@@ -3440,6 +3458,12 @@ export interface PurchaseVendorBill {
   purchaseId: string;
   /** snapshot เลขที่ PR — แสดงบนปะหน้าใบวางบิล */
   purchaseRequestNo?: string;
+  /** ใบวางบิลอ้างสัญญาเช่าโดยตรง (ไม่ผ่าน PR/PO จริง) */
+  rentalContractId?: string;
+  /** เดือนค่าเช่าที่วางบิล (YYYY-MM) */
+  rentalPeriodMonth?: string;
+  /** snapshot เลขสัญญาเช่า */
+  rentalContractNo?: string;
   /** snapshot ณ สร้าง/ส่ง — ใช้แยกเวิร์กโฟลว์เงินสด vs เครดิต */
   purchaseType?: PurchaseType;
   /** ผูกกับงวดชำระ (ถ้ามี) */

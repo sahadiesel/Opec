@@ -316,21 +316,32 @@ export default function PayrollBatchWorkerLinePage({
         return;
       }
       const imported = await retroAdjustmentsToPriorPeriodItemsWithPay(firestore, rows);
-      setPriorPeriodRows((prev) => {
-        const kept = prev.filter((r) => r.label.trim() || r.amount.trim() || r.sourceYearMonth.trim());
-        return [
-          ...(kept.length ? kept : []),
-          ...imported.map((it) => ({
-            sourceYearMonth: it.sourceYearMonth,
-            label: it.label,
-            amount: String(it.amount),
-          })),
-        ];
-      });
-      const totalBaht = imported.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+      const mapped = imported.map((it) => ({
+        sourceYearMonth: it.sourceYearMonth,
+        label: it.label,
+        amount: String(it.amount),
+      }));
+      const kept = priorPeriodRows.filter(
+        (r) => r.label.trim() || r.amount.trim() || r.sourceYearMonth.trim(),
+      );
+      const existingKeys = new Set(
+        kept.map((r) => `${r.sourceYearMonth.trim()}|${r.label.trim()}|${r.amount.trim()}`),
+      );
+      const fresh = mapped.filter(
+        (it) => !existingKeys.has(`${it.sourceYearMonth.trim()}|${it.label.trim()}|${it.amount.trim()}`),
+      );
+      if (fresh.length === 0) {
+        toast({
+          title: 'รายการแก้ไขย้อนหลังมีในสลิปแล้ว',
+          description: `${imported.length} รายการถูกดึงไว้ก่อนหน้านี้แล้ว`,
+        });
+        return;
+      }
+      setPriorPeriodRows([...(kept.length ? kept : []), ...fresh]);
+      const totalBaht = fresh.reduce((s, x) => s + (Number(x.amount) || 0), 0);
       toast({
         title: 'ดึงรายการแก้ไขย้อนหลังแล้ว',
-        description: `${rows.length} รายการ · รวม ฿${totalBaht.toLocaleString()} (คำนวณจากสูตร PO/ตำแหน่ง)`,
+        description: `เพิ่ม ${fresh.length} รายการ · รวม ฿${totalBaht.toLocaleString()} (คำนวณจากสูตร PO/ตำแหน่ง)`,
       });
     } catch (e) {
       toast({
@@ -341,7 +352,7 @@ export default function PayrollBatchWorkerLinePage({
     } finally {
       setRetroImportBusy(false);
     }
-  }, [firestore, payrollApplyYearMonth, workerId, toast]);
+  }, [firestore, payrollApplyYearMonth, workerId, priorPeriodRows, toast]);
 
   useEffect(() => {
     if (!line) return;

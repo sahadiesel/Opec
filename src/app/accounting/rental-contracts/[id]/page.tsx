@@ -42,8 +42,10 @@ import { canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { isAccountingManager, isAccountingOfficer, isSystemAdmin } from '@/lib/permission-core';
 import type {
   BankAccount,
+  PurchaseVendorBill,
   RentalContract,
   RentalPayable,
+  RentalPayoutWorkflow,
   User,
   Vendor,
 } from '@/lib/types';
@@ -51,15 +53,26 @@ import {
   approveRentalContract,
   cancelRentalContract,
   computeRentalMonthAmounts,
+  createRentalVendorBillForPeriod,
   defaultVatRateForLessor,
   generateDueRentalPayables,
+  listRentalContractMonths,
   rejectRentalContract,
   resolveContractVatRatePercent,
+  resolveRentalPayoutWorkflow,
+  rentalPayoutWorkflowLabel,
   submitRentalContractForApproval,
   updateRentalContract,
 } from '@/lib/services/rental-contract-service';
 import { buildRentalContractPrintHtml } from '@/lib/documents/rental-contract-print';
 import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   RentalContractLogsTab,
   type RentalContractChangeLog,
@@ -97,6 +110,21 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
     () => [...(payableRows ?? [])].sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
     [payableRows],
   );
+  const rentalBillsQuery = useMemoFirebase(
+    () =>
+      firestore && contract
+        ? query(collection(firestore, 'purchase_vendor_bills'), where('rentalContractId', '==', contract.id))
+        : null,
+    [firestore, contract?.id],
+  );
+  const { data: rentalBillRows } = useCollection<PurchaseVendorBill>(rentalBillsQuery as never);
+  const rentalBills = useMemo(
+    () =>
+      [...(rentalBillRows ?? [])].sort((a, b) =>
+        String(b.rentalPeriodMonth || '').localeCompare(String(a.rentalPeriodMonth || '')),
+      ),
+    [rentalBillRows],
+  );
 
   const [busy, setBusy] = useState(false);
   const [reasonMode, setReasonMode] = useState<'reject' | 'cancel' | null>(null);
@@ -124,9 +152,16 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
     !!currentUser &&
     !!contract &&
     !['CANCELLED', 'EXPIRED', 'PENDING_APPROVAL'].includes(contract.status) &&
-    (isSystemAdmin(currentUser) ||
-      isAccountingManager(currentUser) ||
-      (isAccountingOfficer(currentUser) && (contract.status === 'DRAFT' || contract.status === 'REJECTED')));
+    (isSystemAdmin(currentUser) || isAccountingManager(currentUser) || isAccountingOfficer(currentUser));
+  const payoutWorkflow = resolveRentalPayoutWorkflow(contract);
+  const billableMonths = useMemo(
+    () => (contract ? listRentalContractMonths(contract.startDate, contract.endDate) : []),
+    [contract],
+  );
+  const billedPeriodSet = useMemo(
+    () => new Set(rentalBills.map((b) => String(b.rentalPeriodMonth || '').trim()).filter(Boolean)),
+    [rentalBills],
+  );
 
   const bankQuery = useMemoFirebase(
     () => (firestore && canPay ? query(collection(firestore, 'bank_accounts'), where('status', '==', 'ACTIVE')) : null),
@@ -140,6 +175,7 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
     vatRate: '0',
     whtRate: '5',
     paymentDay: '1',
+    payoutWorkflow: 'AUTO_NOTIFY' as RentalPayoutWorkflow,
     startDate: '',
     endDate: '',
     notes: '',
@@ -154,6 +190,8 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
     securityDepositAmount: '0',
     rentedItemDescription: '',
   });
+  const [billPeriodMonth, setBillPeriodMonth] = useState('');
+  const [creatingBill, setCreatingBill] = useState(false);
 
   const monthPreview = useMemo(() => {
     if (!contract) return null;
@@ -176,6 +214,7 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
 
   useEffect(() => {
     if (!firestore || !contract || contract.status !== 'ACTIVE' || syncAttempted.current) return;
+    if (resolveRentalPayoutWorkflow(contract) === 'BILL_FIRST') return;
     syncAttempted.current = true;
     void generateDueRentalPayables(firestore, contract).catch((error) => console.error(error));
   }, [firestore, contract]);
@@ -189,6 +228,7 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
       vatRate: String(vat),
       whtRate: String(contract.withholdingTaxRatePercent ?? 0),
       paymentDay: String(contract.paymentDayOfMonth ?? 1),
+      payoutWorkflow: resolveRentalPayoutWorkflow(contract),
       startDate: contract.startDate || '',
       endDate: contract.endDate || '',
       notes: contract.notes || '',
@@ -263,6 +303,7 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
         vatSource: vatManual ? 'MANUAL' : 'AUTO_BY_LESSOR',
         withholdingTaxRatePercent: Number(editForm.whtRate) || 0,
         paymentDayOfMonth: Number(editForm.paymentDay) || 1,
+        payoutWorkflow: editForm.payoutWorkflow,
         startDate: editForm.startDate,
         endDate: editForm.endDate,
         notes: editForm.notes,
@@ -449,6 +490,15 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
                   </div>
                   <div><p className="text-xs text-muted-foreground">ระยะเวลา</p><p>{formatYmdRangeThaiBE(contract.startDate, contract.endDate)}</p></div>
                   <div><p className="text-xs text-muted-foreground">ครบกำหนดจ่าย</p><p>วันที่ {contract.paymentDayOfMonth} ของทุกเดือน</p></div>
+                  <div className="sm:col-span-2">
+                    <p className="text-xs text-muted-foreground">วิธีการทำจ่าย</p>
+                    <p className="font-medium">{rentalPayoutWorkflowLabel(payoutWorkflow)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {payoutWorkflow === 'BILL_FIRST'
+                        ? 'สร้างใบวางบิลอ้างสัญญานี้ก่อน แล้วบัญชีทำจ่ายจากใบวางบิล (ไม่ผ่าน PR/PO)'
+                        : 'ระบบแจ้งบัญชีโอนอัตโนมัติเมื่อครบกำหนดแต่ละเดือน'}
+                    </p>
+                  </div>
                   {contract.notes ? <div className="sm:col-span-2"><p className="text-xs text-muted-foreground">หมายเหตุ</p><p>{contract.notes}</p></div> : null}
                   {contract.lastEditedAt ? (
                     <div className="sm:col-span-2 text-xs text-muted-foreground">
@@ -501,7 +551,7 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
                       <XCircle className="mr-2 h-4 w-4" /> ยกเลิกสัญญา
                     </Button>
                   ) : null}
-                  {contract.status === 'ACTIVE' ? (
+                  {contract.status === 'ACTIVE' && payoutWorkflow === 'AUTO_NOTIFY' ? (
                     <Button
                       variant="outline"
                       className="w-full border-white/40 bg-white/10 text-white hover:bg-white/20"
@@ -521,17 +571,138 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
                   ) : null}
                   {busy ? <Loader2 className="mx-auto h-5 w-5 animate-spin" /> : null}
                   {contract.status === 'ACTIVE' ? (
-                    <p className="text-xs text-white/70">ระบบสร้างรายการรอจ่ายอัตโนมัติเมื่อถึงวันที่กำหนดของแต่ละเดือน</p>
+                    <p className="text-xs text-white/70">
+                      {payoutWorkflow === 'BILL_FIRST'
+                        ? 'โหมดใบวางบิลก่อน — สร้างใบวางบิลจากสัญญาด้านล่าง แล้วส่งบัญชีทำจ่าย'
+                        : 'ระบบสร้างรายการรอจ่ายอัตโนมัติเมื่อถึงวันที่กำหนดของแต่ละเดือน'}
+                    </p>
                   ) : null}
                 </CardContent>
               </Card>
             </div>
 
+            {payoutWorkflow === 'BILL_FIRST' ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>ใบวางบิลอ้างสัญญา</CardTitle>
+                  <CardDescription>
+                    สร้างใบวางบิลจากสัญญานี้โดยตรง (ไม่ผ่าน PR/PO) แล้วส่งบัญชีทำจ่ายที่เมนูรับวางบิล / รอจ่ายเจ้าหนี้
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {contract.status === 'ACTIVE' || contract.status === 'EXPIRED' ? (
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div className="space-y-1.5 min-w-[12rem]">
+                        <Label>เดือนที่วางบิล</Label>
+                        <Select value={billPeriodMonth} onValueChange={setBillPeriodMonth}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="เลือกเดือน" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {billableMonths.map((m) => (
+                              <SelectItem key={m} value={m} disabled={billedPeriodSet.has(m)}>
+                                {formatPayrollYearMonthMmYyyyThaiBE(m)}
+                                {billedPeriodSet.has(m) ? ' · มีใบแล้ว' : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        disabled={creatingBill || !billPeriodMonth || billedPeriodSet.has(billPeriodMonth)}
+                        onClick={() =>
+                          void (async () => {
+                            if (!firestore || !currentUser || !billPeriodMonth) return;
+                            setCreatingBill(true);
+                            try {
+                              const { billId, receiptNo } = await createRentalVendorBillForPeriod(
+                                firestore,
+                                currentUser as User,
+                                contract,
+                                billPeriodMonth,
+                              );
+                              toast({
+                                title: 'สร้างใบวางบิลแล้ว',
+                                description: `${receiptNo} · เปิดใบเพื่อส่งบัญชี`,
+                              });
+                              setBillPeriodMonth('');
+                              router.push(`/accounting/ap-bills/vendor-bills/${billId}`);
+                            } catch (error) {
+                              toast({
+                                variant: 'destructive',
+                                title: 'สร้างใบวางบิลไม่สำเร็จ',
+                                description: error instanceof Error ? error.message : String(error),
+                              });
+                            } finally {
+                              setCreatingBill(false);
+                            }
+                          })()
+                        }
+                      >
+                        {creatingBill ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        สร้างใบวางบิล
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">อนุมัติสัญญาก่อนจึงสร้างใบวางบิลได้</p>
+                  )}
+                  <div className="overflow-x-auto rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>เลขที่ใบ</TableHead>
+                          <TableHead>เดือน</TableHead>
+                          <TableHead className="text-right">ยอด</TableHead>
+                          <TableHead>สถานะ</TableHead>
+                          <TableHead className="text-right">เปิด</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {rentalBills.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                              ยังไม่มีใบวางบิลจากสัญญานี้
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          rentalBills.map((b) => (
+                            <TableRow key={b.id}>
+                              <TableCell className="font-mono text-sm">{b.receiptNo}</TableCell>
+                              <TableCell>
+                                {b.rentalPeriodMonth
+                                  ? formatPayrollYearMonthMmYyyyThaiBE(b.rentalPeriodMonth)
+                                  : '—'}
+                              </TableCell>
+                              <TableCell className="text-right font-mono tabular-nums">
+                                ฿{money(Number(b.billAmount) || 0)}
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant="outline">{b.status}</Badge>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <Button type="button" variant="secondary" size="sm" asChild>
+                                  <Link href={`/accounting/ap-bills/vendor-bills/${b.id}`}>เปิดใบ</Link>
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+
             <Card>
               <CardHeader>
-                <CardTitle>แผนงวดชำระตามสัญญา</CardTitle>
+                <CardTitle>
+                  {payoutWorkflow === 'BILL_FIRST' ? 'รอบจ่ายอัตโนมัติ (ไม่ใช้ในโหมดนี้)' : 'แผนงวดชำระตามสัญญา'}
+                </CardTitle>
                 <CardDescription>
-                  แต่ละเดือนมีหลักฐานการจ่าย · Cashbook · หัก ณ ที่จ่าย และเอกสารประกอบ (ใบเสร็จ) เหมือนใบวางบิล
+                  {payoutWorkflow === 'BILL_FIRST'
+                    ? 'โหมดใบวางบิลก่อนจะไม่สร้างคิวโอนอัตโนมัติ — ใช้ตารางใบวางบิลด้านบน'
+                    : 'แต่ละเดือนมีหลักฐานการจ่าย · Cashbook · หัก ณ ที่จ่าย และเอกสารประกอบ (ใบเสร็จ) เหมือนใบวางบิล'}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -707,6 +878,27 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
                 value={editForm.paymentDay}
                 onChange={(e) => setEditForm((p) => ({ ...p, paymentDay: e.target.value }))}
               />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>วิธีการทำจ่าย</Label>
+              <Select
+                value={editForm.payoutWorkflow}
+                onValueChange={(v) =>
+                  setEditForm((p) => ({ ...p, payoutWorkflow: v as RentalPayoutWorkflow }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="AUTO_NOTIFY">
+                    1. {rentalPayoutWorkflowLabel('AUTO_NOTIFY')}
+                  </SelectItem>
+                  <SelectItem value="BILL_FIRST">
+                    2. {rentalPayoutWorkflowLabel('BILL_FIRST')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>วันเริ่มสัญญา</Label>

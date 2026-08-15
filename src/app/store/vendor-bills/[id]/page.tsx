@@ -1088,11 +1088,11 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       toast({ variant: 'destructive', title: 'ส่งไม่ได้', description: 'ต้องเป็นฉบับร่างและมีใบสั่งซื้อ' });
       return;
     }
-    if (!purchase.purchaseRequestId) {
+    if (!purchase.purchaseRequestId && purchase.origin !== 'RENTAL_CONTRACT' && !bill.rentalContractId) {
       toast({
         variant: 'destructive',
         title: 'PO นี้ไม่อ้าง PR',
-        description: 'รับวางบิลได้เฉพาะใบสั่งซื้อที่อ้างอิง PR ที่อนุมัติแล้ว',
+        description: 'รับวางบิลได้เฉพาะใบสั่งซื้อที่อ้างอิง PR ที่อนุมัติแล้ว หรือใบวางบิลอ้างสัญญาเช่า',
       });
       return;
     }
@@ -1556,7 +1556,24 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
           <div>
             <h1 className="text-2xl font-bold text-primary">{bill.receiptNo}</h1>
             <p className="text-sm text-muted-foreground">
-              ใบสั่งซื้อ {bill.purchaseNo || bill.purchaseId} · {vendor?.vendorName || '—'}
+              {bill.rentalContractId
+                ? `สัญญาเช่า ${bill.rentalContractNo || bill.purchaseNo || '—'}${
+                    bill.rentalPeriodMonth ? ` · เดือน ${bill.rentalPeriodMonth}` : ''
+                  }`
+                : `ใบสั่งซื้อ ${bill.purchaseNo || bill.purchaseId}`}
+              {' · '}
+              {vendor?.vendorName || '—'}
+              {bill.rentalContractId ? (
+                <>
+                  {' · '}
+                  <Link
+                    href={`/accounting/rental-contracts/${bill.rentalContractId}`}
+                    className="underline text-primary"
+                  >
+                    เปิดสัญญา
+                  </Link>
+                </>
+              ) : null}
             </p>
           </div>
           <div className="ml-auto flex flex-col items-end gap-1">

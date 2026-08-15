@@ -93,7 +93,7 @@ export function buildPayrollExecutiveWhtPrintVm(
     documentNo: buildPayrollExecutiveWhtDocumentNo(input.run.id, input.staff.staffCode, issueYear),
     subtitleTh:
       manualIncomeType === 'MEETING_ALLOWANCE'
-        ? 'สำหรับเบี้ยประชุมประจำเดือน'
+        ? 'สำหรับเบี้ยประชุมประจำเดือน ตามมาตรา 40(2)'
         : manualIncomeType === 'DIVIDEND'
           ? 'สำหรับเงินปันผล'
           : manualIncomeType === 'OTHER'
@@ -109,7 +109,7 @@ export function buildPayrollExecutiveWhtPrintVm(
             : 'PAYROLL_WAGE',
     incomeTypeNameTh:
       manualIncomeType === 'MEETING_ALLOWANCE'
-        ? 'เบี้ยประชุมประจำเดือน'
+        ? 'เบี้ยประชุมประจำเดือน ตามมาตรา 40(2)'
         : manualIncomeType === 'DIVIDEND'
           ? 'เงินปันผล'
           : usesManualWht && manualIncomeLabel

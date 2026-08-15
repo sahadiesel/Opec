@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useMemo } from 'react';
+import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { doc } from 'firebase/firestore';
@@ -36,6 +36,7 @@ export default function AccountingPayrollOfficeWhtCertificatePage({
   const { profile } = usePermissions(currentUser);
   const firestore = useFirestore();
   const { profile: companyProfile } = useCompanyDocumentProfile();
+  const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null);
 
   const useMatrixGuards = isMatrixControlledRole(currentUser);
 
@@ -97,11 +98,14 @@ export default function AccountingPayrollOfficeWhtCertificatePage({
           </Button>
         </div>
 
-        <div>
-          <h1 className="text-xl font-bold tracking-tight">หนังสือรับรองหัก ณ ที่จ่าย — พนักงานออฟฟิศ</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            {line?.staffName ?? '…'} · {run?.payrollRunNo ?? runId} · บรรทัด {lineId}
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-tight">หนังสือรับรองหัก ณ ที่จ่าย — พนักงานออฟฟิศ</h1>
+            <p className="text-muted-foreground text-sm mt-1">
+              {line?.staffName ?? '…'} · {run?.payrollRunNo ?? runId} · บรรทัด {lineId}
+            </p>
+          </div>
+          <div ref={setToolbarHost} className="min-h-9 shrink-0" />
         </div>
 
         {loading ? (
@@ -119,6 +123,7 @@ export default function AccountingPayrollOfficeWhtCertificatePage({
             periodLabel={periodLabel}
             companyProfile={companyProfile}
             currentUser={user}
+            toolbarHost={toolbarHost}
           />
         )}
       </div>

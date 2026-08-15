@@ -118,6 +118,146 @@ export async function createTimesheetRetroAdjustment(
   return ref.id;
 }
 
+function sumRetroOtHours(r: TimesheetRetroAdjustment): number {
+  return (
+    Math.max(0, Number(r.addedOt15Hours) || 0) +
+    Math.max(0, Number(r.addedOt20Hours) || 0) +
+    Math.max(0, Number(r.addedOt30Hours) || 0)
+  );
+}
+
+/** โหลดรายการแก้ไขย้อนหลังของใบงาน (ไม่รวม void) */
+export async function loadTimesheetRetroAdjustmentsForTimesheet(
+  db: Firestore,
+  sourceTimesheetId: string,
+): Promise<TimesheetRetroAdjustment[]> {
+  const tid = String(sourceTimesheetId || '').trim();
+  if (!tid) return [];
+  const snap = await getDocs(
+    query(collection(db, COLLECTION), where('sourceTimesheetId', '==', tid)),
+  );
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as object) } as TimesheetRetroAdjustment))
+    .filter((r) => r.status !== 'void');
+}
+
+/** ยกเลิกรายการแก้ไขย้อนหลังที่ยังรอจ่าย (approved) ของใบงาน */
+export async function voidApprovedRetroAdjustmentsForTimesheet(
+  db: Firestore,
+  user: User,
+  sourceTimesheetId: string,
+  reason: string,
+): Promise<number> {
+  if (!canManageRetro(user)) throw new Error('ไม่มีสิทธิ์ยกเลิกแก้ไขย้อนหลัง timesheet');
+  const tid = String(sourceTimesheetId || '').trim();
+  if (!tid) return 0;
+  const note = String(reason || '').trim() || 'แทนที่ด้วยยอด OT ที่ต้องการ';
+  const snap = await getDocs(
+    query(collection(db, COLLECTION), where('sourceTimesheetId', '==', tid)),
+  );
+  const now = Date.now();
+  let voided = 0;
+  for (const d of snap.docs) {
+    const row = { id: d.id, ...(d.data() as object) } as TimesheetRetroAdjustment;
+    if (row.status !== 'approved') continue;
+    await updateDoc(doc(db, COLLECTION, d.id), {
+      status: 'void',
+      updatedAt: now,
+      voidReason: note,
+      voidedByUserId: user.id,
+      voidedAt: now,
+    });
+    voided += 1;
+    await writeAuditLog(db, user, {
+      actionType: 'UPDATE',
+      entityType: 'TimesheetRetroAdjustment',
+      entityId: d.id,
+      timesheetId: tid,
+      sourceModule: 'operations',
+      afterSummary: `Void approved retro ${row.workDateYmd}: OT=${sumRetroOtHours(row)} — ${note}`,
+    });
+  }
+  return voided;
+}
+
+/**
+ * ตั้ง OT แก้ไขย้อนหลังแบบยอดรวมที่ต้องการบนตาราง (ไม่บวกทับ)
+ * — ยกเลิก approved เดิมของใบงาน แล้วสร้างใหม่เท่าที่ยังขาดจากฐานสลิป + ที่จ่ายแล้ว (applied)
+ */
+export async function setAbsoluteWorkDayRetroOt(
+  db: Firestore,
+  user: User,
+  input: {
+    sourceTimesheet: DailyTimesheet;
+    sourceYearMonth: string;
+    applyPayrollYearMonth: string;
+    /** ชม. OT รวมที่ต้องการให้แสดงบนตาราง (base + retro) */
+    targetOtHours: number;
+    /** ฐานบนใบงานที่นับเป็นของเดิม (LOCKED = ot บนสลิป; ยังไม่ล็อค = 0 เพราะจะย้ายออกจากใบงาน) */
+    baseOtHoursOnSlip: number;
+    reason: string;
+  },
+): Promise<{ createdId: string | null; voidedCount: number; addedOtHours: number }> {
+  if (!canManageRetro(user)) throw new Error('ไม่มีสิทธิ์บันทึกแก้ไขย้อนหลัง timesheet');
+  const ts = input.sourceTimesheet;
+  const target = Math.max(0, Math.min(24, Number(input.targetOtHours) || 0));
+  const base = Math.max(0, Number(input.baseOtHoursOnSlip) || 0);
+  const reason = String(input.reason || '').trim();
+  if (!reason) throw new Error('กรุณาระบุเหตุผลการแก้ไข');
+
+  const existing = await loadTimesheetRetroAdjustmentsForTimesheet(db, ts.id);
+  const appliedOt = existing
+    .filter((r) => r.status === 'applied')
+    .reduce((s, r) => s + sumRetroOtHours(r), 0);
+  const approvedRows = existing.filter((r) => r.status === 'approved');
+
+  const neededFromRetro = Math.max(0, target - base);
+  const addedOtHours = Math.max(0, neededFromRetro - appliedOt);
+
+  if (addedOtHours <= 0 && approvedRows.length === 0) {
+    if (Math.abs(target - (base + appliedOt)) < 0.001) {
+      throw new Error('ไม่มีรายการที่ต้องแก้ — OT รวมตรงกับของเดิมแล้ว');
+    }
+    throw new Error('ไม่มีรายการแก้ไขย้อนหลังรอจ่ายที่ต้องอัปเดต');
+  }
+
+  /** สร้างรายการใหม่ก่อน แล้วค่อย void ของเดิม — กันข้อมูลหายถ้าคำนวณยอดไม่ผ่าน */
+  let createdId: string | null = null;
+  if (addedOtHours > 0) {
+    createdId = await createTimesheetRetroAdjustment(db, user, {
+      sourceTimesheet: ts,
+      sourceYearMonth: input.sourceYearMonth,
+      applyPayrollYearMonth: input.applyPayrollYearMonth,
+      addedOt15Hours: addedOtHours,
+      reason,
+    });
+  }
+
+  const now = Date.now();
+  let voidedCount = 0;
+  for (const row of approvedRows) {
+    if (createdId && row.id === createdId) continue;
+    await updateDoc(doc(db, COLLECTION, row.id), {
+      status: 'void',
+      updatedAt: now,
+      voidReason: reason,
+      voidedByUserId: user.id,
+      voidedAt: now,
+    });
+    voidedCount += 1;
+    await writeAuditLog(db, user, {
+      actionType: 'UPDATE',
+      entityType: 'TimesheetRetroAdjustment',
+      entityId: row.id,
+      timesheetId: ts.id,
+      sourceModule: 'operations',
+      afterSummary: `Void approved retro ${row.workDateYmd}: OT=${sumRetroOtHours(row)} — replaced by absolute OT ${target}`,
+    });
+  }
+
+  return { createdId, voidedCount, addedOtHours };
+}
+
 export async function loadTimesheetRetroAdjustmentsForMonth(
   db: Firestore,
   sourceYearMonth: string,

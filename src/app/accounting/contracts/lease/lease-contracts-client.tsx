@@ -28,11 +28,12 @@ import { useToast } from '@/hooks/use-toast';
 import { useCollection, useFirestore, useMemoFirebase } from '@/firebase';
 import { canView } from '@/lib/permissions';
 import { isAccountingManager, isAccountingOfficer, isSystemAdmin } from '@/lib/permission-core';
-import type { LeaseContractKind, RentalContract, RentalContractStatus, User, Vendor } from '@/lib/types';
+import type { LeaseContractKind, RentalContract, RentalContractStatus, RentalPayoutWorkflow, User, Vendor } from '@/lib/types';
 import {
   computeRentalMonthAmounts,
   createRentalContract,
   defaultVatRateForLessor,
+  rentalPayoutWorkflowLabel,
 } from '@/lib/services/rental-contract-service';
 import { formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { useEffect } from 'react';
@@ -113,6 +114,7 @@ export function LeaseContractsClient({ leaseKind }: { leaseKind: LeaseContractKi
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [paymentDay, setPaymentDay] = useState('1');
+  const [payoutWorkflow, setPayoutWorkflow] = useState<RentalPayoutWorkflow>('AUTO_NOTIFY');
   const [whtRate, setWhtRate] = useState('5');
   const [vatRate, setVatRate] = useState('0');
   const [vatManual, setVatManual] = useState(false);
@@ -175,6 +177,7 @@ export function LeaseContractsClient({ leaseKind }: { leaseKind: LeaseContractKi
     setStartDate('');
     setEndDate('');
     setPaymentDay('1');
+    setPayoutWorkflow('AUTO_NOTIFY');
     setWhtRate('5');
     setVatRate('0');
     setVatManual(false);
@@ -207,6 +210,7 @@ export function LeaseContractsClient({ leaseKind }: { leaseKind: LeaseContractKi
         startDate,
         endDate,
         paymentDayOfMonth: Number(paymentDay),
+        payoutWorkflow,
         withholdingTaxRatePercent: Number(whtRate),
         vatRatePercent: Number(vatRate) || 0,
         vatSource: vatManual ? 'MANUAL' : 'AUTO_BY_LESSOR',
@@ -491,6 +495,30 @@ export function LeaseContractsClient({ leaseKind }: { leaseKind: LeaseContractKi
             <div className="space-y-2">
               <Label>ครบกำหนดจ่ายวันที่ของทุกเดือน (1–31)</Label>
               <Input type="number" min="1" max="31" value={paymentDay} onChange={(e) => setPaymentDay(e.target.value)} />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label>วิธีการทำจ่าย</Label>
+              <Select
+                value={payoutWorkflow}
+                onValueChange={(v) => setPayoutWorkflow(v as RentalPayoutWorkflow)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="AUTO_NOTIFY">
+                    1. {rentalPayoutWorkflowLabel('AUTO_NOTIFY')}
+                  </SelectItem>
+                  <SelectItem value="BILL_FIRST">
+                    2. {rentalPayoutWorkflowLabel('BILL_FIRST')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                {payoutWorkflow === 'BILL_FIRST'
+                  ? 'ต้องสร้างใบวางบิลอ้างสัญญานี้ก่อน (ไม่ผ่าน PR/PO) แล้วบัญชีจึงทำจ่ายจากใบวางบิล'
+                  : 'ระบบสร้างรายการรอจ่ายอัตโนมัติเมื่อครบกำหนด — แจ้งบัญชีโอนเหมือนเดิม'}
+              </p>
             </div>
             <div className="space-y-2">
               <Label>หมายเหตุ</Label>

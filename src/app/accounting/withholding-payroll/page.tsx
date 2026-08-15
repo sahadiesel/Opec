@@ -798,12 +798,31 @@ export default function AccountingWithholdingPayrollHubPage() {
   );
   const filteredRowCount = filteredWorker.length + filteredOffice.length + filteredExecutive.length;
   const allRowCount = workerRows.length + officeRows.length + executiveRows.length;
+  const selectedPrintRowCount =
+    selectedWorkerKeys.size + selectedOfficeKeys.size + selectedExecutiveKeys.size;
 
   const runWithholdingPayrollListPrint = useCallback(
-    async (scope: 'filtered' | 'all') => {
-      const workers = scope === 'filtered' ? filteredWorker : workerRows;
-      const offices = scope === 'filtered' ? filteredOffice : officeRows;
-      const executives = scope === 'filtered' ? filteredExecutive : executiveRows;
+    async (scope: 'filtered' | 'all' | 'selected') => {
+      const workers =
+        scope === 'selected'
+          ? filteredWorker.filter((r) => selectedWorkerKeys.has(workerRowKey(r.batch.id, r.line.id)))
+          : scope === 'filtered'
+            ? filteredWorker
+            : workerRows;
+      const offices =
+        scope === 'selected'
+          ? filteredOffice.filter((r) => selectedOfficeKeys.has(officeRowKey(r.run.id, r.line.id)))
+          : scope === 'filtered'
+            ? filteredOffice
+            : officeRows;
+      const executives =
+        scope === 'selected'
+          ? filteredExecutive.filter((r) =>
+              selectedExecutiveKeys.has(officeRowKey(r.run.id, r.line.id)),
+            )
+          : scope === 'filtered'
+            ? filteredExecutive
+            : executiveRows;
       const sourceRows = buildWithholdingPayrollPrintRows(
         workers,
         offices,
@@ -818,9 +837,11 @@ export default function AccountingWithholdingPayrollHubPage() {
           variant: 'destructive',
           title: 'ไม่มีรายการให้พิมพ์',
           description:
-            scope === 'filtered'
-              ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
-              : 'ยังไม่มีรายการหักภาษีของบุคลากรในระบบ',
+            scope === 'selected'
+              ? 'ยังไม่ได้เลือกรายการ — ติ๊กช่องด้านซ้ายของคนที่ต้องการก่อน'
+              : scope === 'filtered'
+                ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
+                : 'ยังไม่มีรายการหักภาษีของบุคลากรในระบบ',
         });
         return;
       }
@@ -843,7 +864,11 @@ export default function AccountingWithholdingPayrollHubPage() {
         const filterLines =
           scope === 'filtered' ? describeWithholdingPayrollPrintFilters(q, yearFilterCe, monthScope) : [];
         const scopeTitle =
-          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
+          scope === 'selected'
+            ? 'พิมพ์เฉพาะที่เลือก'
+            : scope === 'filtered'
+              ? 'พิมพ์ตามตัวกรองปัจจุบัน'
+              : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
 
         const body = buildWithholdingPayrollListPrintHtml({
           rows,
@@ -858,7 +883,9 @@ export default function AccountingWithholdingPayrollHubPage() {
 
         const ok = await openStandardPrintWindow({
           windowTitle: 'Withholding-Payroll-List',
-          suggestedFileName: `Withholding-Payroll-List-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          suggestedFileName: `Withholding-Payroll-List-${
+            scope === 'selected' ? 'Selected' : scope === 'filtered' ? 'Filtered' : 'All'
+          }`,
           bodyInnerHtml: body,
           htmlLang: 'th',
         });
@@ -883,6 +910,9 @@ export default function AccountingWithholdingPayrollHubPage() {
       workerRows,
       officeRows,
       executiveRows,
+      selectedWorkerKeys,
+      selectedOfficeKeys,
+      selectedExecutiveKeys,
       nationalIdByWorkerId,
       nationalIdByOfficeStaffId,
       nationalIdByExecutiveStaffId,
@@ -1376,7 +1406,7 @@ export default function AccountingWithholdingPayrollHubPage() {
             <DialogHeader>
               <DialogTitle>พิมพ์รายการหัก ณ ที่จ่าย (บุคลากร)</DialogTitle>
               <DialogDescription>
-                รวมลูกจ้าง พนักงานออฟฟิศ และผู้บริหาร — สูงสุด 500 รายการต่อครั้ง
+                พิมพ์ใบรายการสรุป — เลือกเฉพาะบางคนได้ด้วยช่องติ๊กด้านซ้าย หรือกด「พิมพ์」ทีละคนเพื่อเปิดหนังสือรับรองรายบุคคล · สูงสุด 500 รายการต่อครั้ง
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 text-sm">
@@ -1393,7 +1423,17 @@ export default function AccountingWithholdingPayrollHubPage() {
                 ข้อมูลทั้งหมดในระบบ: {allRowCount} รายการ · รวม {fmtBaht(allWorkerTotalPit + allOfficeTotalTax + allExecutiveTotalTax)}
               </p>
             </div>
-            <DialogFooter className="flex-col sm:flex-row gap-2">
+            <DialogFooter className="flex-col sm:flex-row gap-2 sm:flex-wrap">
+              <Button
+                type="button"
+                variant="default"
+                className="w-full sm:w-auto"
+                disabled={printBusy || selectedPrintRowCount === 0}
+                onClick={() => void runWithholdingPayrollListPrint('selected')}
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                พิมพ์เฉพาะที่เลือก ({selectedPrintRowCount})
+              </Button>
               <Button
                 type="button"
                 variant="outline"
@@ -1406,6 +1446,7 @@ export default function AccountingWithholdingPayrollHubPage() {
               </Button>
               <Button
                 type="button"
+                variant="outline"
                 className="w-full sm:w-auto"
                 disabled={printBusy || allRowCount === 0}
                 onClick={() => void runWithholdingPayrollListPrint('all')}
@@ -1567,13 +1608,23 @@ export default function AccountingWithholdingPayrollHubPage() {
                             {renderTaxStatusBadge(wagePaid, taxPaid)}
                           </TableCell>
                           <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
-                            <Link
-                              href={`/accounting/withholding-payroll/worker/${encodeURIComponent(batch.id)}/${encodeURIComponent(line.id)}`}
-                              className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
-                            >
-                              เปิด
-                              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                            </Link>
+                            <div className="inline-flex flex-col items-center gap-1 sm:flex-row sm:justify-center">
+                              <Link
+                                href={`/accounting/withholding-payroll/worker/${encodeURIComponent(batch.id)}/${encodeURIComponent(line.id)}`}
+                                className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
+                              >
+                                เปิด
+                                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                              </Link>
+                              <Link
+                                href={`/accounting/withholding-payroll/worker/${encodeURIComponent(batch.id)}/${encodeURIComponent(line.id)}`}
+                                className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
+                                title="พิมพ์หนังสือรับรองเฉพาะคนนี้"
+                              >
+                                <Printer className="h-3.5 w-3.5 shrink-0" />
+                                พิมพ์
+                              </Link>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -1724,13 +1775,23 @@ export default function AccountingWithholdingPayrollHubPage() {
                             {renderTaxStatusBadge(wagePaid, taxPaid)}
                           </TableCell>
                           <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
-                            <Link
-                              href={`/accounting/withholding-payroll/office/${encodeURIComponent(run.id)}/${encodeURIComponent(line.id)}`}
-                              className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
-                            >
-                              เปิด
-                              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                            </Link>
+                            <div className="inline-flex flex-col items-center gap-1 sm:flex-row sm:justify-center">
+                              <Link
+                                href={`/accounting/withholding-payroll/office/${encodeURIComponent(run.id)}/${encodeURIComponent(line.id)}`}
+                                className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
+                              >
+                                เปิด
+                                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                              </Link>
+                              <Link
+                                href={`/accounting/withholding-payroll/office/${encodeURIComponent(run.id)}/${encodeURIComponent(line.id)}`}
+                                className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
+                                title="พิมพ์หนังสือรับรองเฉพาะคนนี้"
+                              >
+                                <Printer className="h-3.5 w-3.5 shrink-0" />
+                                พิมพ์
+                              </Link>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -1881,13 +1942,23 @@ export default function AccountingWithholdingPayrollHubPage() {
                             {renderTaxStatusBadge(wagePaid, taxPaid)}
                           </TableCell>
                           <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
-                            <Link
-                              href={`/accounting/withholding-payroll/executive/${encodeURIComponent(run.id)}/${encodeURIComponent(line.id)}`}
-                              className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
-                            >
-                              เปิด
-                              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                            </Link>
+                            <div className="inline-flex flex-col items-center gap-1 sm:flex-row sm:justify-center">
+                              <Link
+                                href={`/accounting/withholding-payroll/executive/${encodeURIComponent(run.id)}/${encodeURIComponent(line.id)}`}
+                                className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
+                              >
+                                เปิด
+                                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                              </Link>
+                              <Link
+                                href={`/accounting/withholding-payroll/executive/${encodeURIComponent(run.id)}/${encodeURIComponent(line.id)}`}
+                                className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
+                                title="พิมพ์หนังสือรับรองเฉพาะคนนี้"
+                              >
+                                <Printer className="h-3.5 w-3.5 shrink-0" />
+                                พิมพ์
+                              </Link>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );

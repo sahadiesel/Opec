@@ -9,6 +9,7 @@ import {
   increment,
   query,
   runTransaction,
+  setDoc,
   updateDoc,
   where,
   writeBatch,
@@ -22,6 +23,7 @@ import type {
   PurchaseVendorBill,
   RentalContract,
   RentalPayable,
+  RentalPayoutWorkflow,
   User,
   Vendor,
   VendorBillSupportingDocumentLink,
@@ -59,6 +61,22 @@ export function resolveContractVatRatePercent(
   const v = Number(contract.vatRatePercent);
   if (Number.isFinite(v) && v >= 0) return roundMoney2(v);
   return 0;
+}
+
+/** วิธีการทำจ่าย — สัญญาเก่าไม่มีฟิลด์ = AUTO_NOTIFY */
+export function resolveRentalPayoutWorkflow(
+  contract: Pick<RentalContract, 'payoutWorkflow'> | null | undefined,
+): RentalPayoutWorkflow {
+  return contract?.payoutWorkflow === 'BILL_FIRST' ? 'BILL_FIRST' : 'AUTO_NOTIFY';
+}
+
+export function rentalPayoutWorkflowLabel(workflow: RentalPayoutWorkflow): string {
+  if (workflow === 'BILL_FIRST') return 'ทำใบวางบิลก่อนให้บัญชีทำจ่าย';
+  return 'แจ้งบัญชีโอนอัตโนมัติทุกรอบการจ่าย';
+}
+
+export function rentalShadowPurchaseId(contractId: string): string {
+  return `rental_${contractId}`;
 }
 
 export type RentalMonthAmountBreakdown = {
@@ -123,10 +141,17 @@ function assertCanApproveRentalContract(user: User): void {
 
 export function assertCanEditRentalContract(user: User, contract: Pick<RentalContract, 'status'>): void {
   if (isSystemAdmin(user) || isAccountingManager(user)) return;
-  if (isAccountingOfficer(user) && (contract.status === 'DRAFT' || contract.status === 'REJECTED')) {
+  if (
+    isAccountingOfficer(user) &&
+    contract.status !== 'CANCELLED' &&
+    contract.status !== 'EXPIRED' &&
+    contract.status !== 'PENDING_APPROVAL'
+  ) {
     return;
   }
-  throw new Error('แก้ไขสัญญาได้เฉพาะผู้จัดการบัญชี/Admin หรือเจ้าหน้าที่บัญชีเมื่อยังเป็นร่าง');
+  throw new Error(
+    'แก้ไขสัญญาได้เฉพาะแผนกบัญชีหรือ Admin — สถานะรออนุมัติ/ยกเลิก/สิ้นสุดแก้ไม่ได้',
+  );
 }
 
 export function rentalPayableId(contractId: string, periodMonth: string): string {
@@ -146,6 +171,11 @@ export function rentalDueDateForMonth(contract: RentalContract, periodMonth: str
   if (periodMonth === contract.startDate.slice(0, 7) && due < contract.startDate) due = contract.startDate;
   if (periodMonth === contract.endDate.slice(0, 7) && due > contract.endDate) due = contract.endDate;
   return due;
+}
+
+/** รายการเดือน YYYY-MM ในช่วงสัญญา */
+export function listRentalContractMonths(startYmd: string, endYmd: string): string[] {
+  return monthsBetween(startYmd, endYmd);
 }
 
 function monthsBetween(startYmd: string, endYmd: string): string[] {
@@ -190,6 +220,7 @@ export async function createRentalContract(
     leaseDurationMonths?: number;
     advanceRentMonths?: number;
     securityDepositAmount?: number;
+    payoutWorkflow?: RentalPayoutWorkflow;
   },
 ): Promise<string> {
   assertCanCreateRentalContract(user);
@@ -246,6 +277,7 @@ export async function createRentalContract(
     withholdingTaxRatePercent: rate,
     vatRatePercent,
     vatSource,
+    payoutWorkflow: input.payoutWorkflow === 'BILL_FIRST' ? 'BILL_FIRST' : 'AUTO_NOTIFY',
     status: 'DRAFT',
     revision: 0,
     ...(input.madeAtLocation?.trim() ? { madeAtLocation: input.madeAtLocation.trim() } : {}),
@@ -425,6 +457,8 @@ export async function generateDueRentalPayables(
   todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }),
 ): Promise<number> {
   if (contract.status !== 'ACTIVE') return 0;
+  /** โหมดใบวางบิลก่อน — ไม่สร้างคิวโอนอัตโนมัติ */
+  if (resolveRentalPayoutWorkflow(contract) === 'BILL_FIRST') return 0;
   const horizon = todayYmd < contract.endDate ? todayYmd : contract.endDate;
   if (horizon < contract.startDate) return 0;
   let created = 0;
@@ -827,6 +861,7 @@ const RENTAL_EDITABLE_FIELDS = [
   'vatSource',
   'withholdingTaxRatePercent',
   'paymentDayOfMonth',
+  'payoutWorkflow',
   'startDate',
   'endDate',
   'notes',
@@ -887,6 +922,7 @@ export async function refreshPendingRentalPayablesAmounts(
       withholdingTaxRatePercent: amounts.withholdingTaxRatePercent,
       withholdingTaxAmount: amounts.withholdingTaxAmount,
       netPayableAmount: amounts.netPayableAmount,
+      dueDate: rentalDueDateForMonth(contract, payable.periodMonth),
       description: `ค่าเช่า ${contract.rentedItemDescription} ประจำเดือน ${payable.periodMonth}`,
       updatedAt: now,
     });
@@ -896,6 +932,7 @@ export async function refreshPendingRentalPayablesAmounts(
       {
         debitAmount: amounts.grossAmount,
         outstandingAmount: amounts.grossAmount,
+        dueDate: rentalDueDateForMonth(contract, payable.periodMonth),
         updatedAt: now,
       },
       { merge: true },
@@ -950,6 +987,9 @@ export async function updateRentalContract(
     const d = Math.trunc(patch.paymentDayOfMonth);
     if (d < 1 || d > 31) throw new Error('วันที่จ่ายต้องอยู่ระหว่าง 1–31');
     next.paymentDayOfMonth = d;
+  }
+  if (patch.payoutWorkflow === 'AUTO_NOTIFY' || patch.payoutWorkflow === 'BILL_FIRST') {
+    next.payoutWorkflow = patch.payoutWorkflow;
   }
   if (patch.startDate != null) next.startDate = patch.startDate;
   if (patch.endDate != null) next.endDate = patch.endDate;
@@ -1051,7 +1091,9 @@ export async function updateRentalContract(
   });
 
   let pendingPayablesUpdated = 0;
-  if (moneyChanged) {
+  const shouldRefreshPending =
+    moneyChanged || changedFields.includes('paymentDayOfMonth') || changedFields.includes('rentedItemDescription');
+  if (shouldRefreshPending && resolveRentalPayoutWorkflow(next) === 'AUTO_NOTIFY') {
     pendingPayablesUpdated = await refreshPendingRentalPayablesAmounts(db, {
       ...next,
       revision,
@@ -1063,4 +1105,144 @@ export async function updateRentalContract(
   }
 
   return { changedFields, pendingPayablesUpdated };
+}
+
+/**
+ * สร้าง/อัปเดต PO เงาสำหรับสัญญาเช่า (โหมดใบวางบิลก่อน) — ไม่ต้องมี PR
+ */
+export async function ensureRentalShadowPurchase(
+  db: Firestore,
+  user: User,
+  contract: RentalContract,
+): Promise<string> {
+  assertCanCreateRentalContract(user);
+  const id = rentalShadowPurchaseId(contract.id);
+  const ref = doc(db, 'purchases', id);
+  const amounts = computeRentalMonthAmounts({
+    monthlyRentAmount: contract.monthlyRentAmount,
+    vatRatePercent: resolveContractVatRatePercent(contract),
+    withholdingTaxRatePercent: contract.withholdingTaxRatePercent,
+  });
+  const now = Date.now();
+  const payload: Purchase & { origin: 'RENTAL_CONTRACT'; rentalContractId: string } = {
+    id,
+    purchaseNo: contract.contractNo,
+    vendorId: contract.lessorVendorId,
+    purchaseDate: contract.startDate,
+    purchaseType: 'CREDIT',
+    totalAmount: amounts.grossAmount,
+    amountBeforeTax: amounts.baseRentAmount,
+    vatAmount: amounts.vatAmount,
+    status: 'ISSUED',
+    purchaseLineMode: 'SERVICE',
+    vatTreatment: amounts.vatRatePercent > 0 ? 'EXCLUSIVE' : 'NONE',
+    supplierWithholdingEnabled: amounts.withholdingTaxRatePercent > 0,
+    supplierWithholdingRatePercent: amounts.withholdingTaxRatePercent,
+    notes: `สัญญาเช่า ${contract.contractNo} · ${contract.rentedItemDescription}`,
+    origin: 'RENTAL_CONTRACT',
+    rentalContractId: contract.id,
+    createdAt: now,
+    updatedAt: now,
+    createdByUid: user.id,
+    createdByName: actorName(user),
+    issuedAt: now,
+    issuedByUid: user.id,
+    issuedByName: actorName(user),
+  };
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    await setDoc(ref, stripUndefinedForFirestore(payload));
+  } else {
+    await updateDoc(ref, {
+      totalAmount: amounts.grossAmount,
+      amountBeforeTax: amounts.baseRentAmount,
+      vatAmount: amounts.vatAmount,
+      vatTreatment: amounts.vatRatePercent > 0 ? 'EXCLUSIVE' : 'NONE',
+      supplierWithholdingEnabled: amounts.withholdingTaxRatePercent > 0,
+      supplierWithholdingRatePercent: amounts.withholdingTaxRatePercent,
+      notes: payload.notes,
+      updatedAt: now,
+    });
+  }
+  return id;
+}
+
+/**
+ * สร้างใบวางบิลอ้างสัญญาเช่าโดยตรง (ไม่ผ่าน PR/PO จริง) — ใช้เมื่อ payoutWorkflow = BILL_FIRST
+ */
+export async function createRentalVendorBillForPeriod(
+  db: Firestore,
+  user: User,
+  contract: RentalContract,
+  periodMonth: string,
+): Promise<{ billId: string; receiptNo: string }> {
+  assertCanCreateRentalContract(user);
+  if (contract.status !== 'ACTIVE' && contract.status !== 'EXPIRED') {
+    throw new Error('สร้างใบวางบิลได้เมื่อสัญญาใช้งานหรือสิ้นสุดแล้วเท่านั้น');
+  }
+  if (!/^\d{4}-\d{2}$/.test(periodMonth)) throw new Error('รูปแบบเดือนไม่ถูกต้อง (YYYY-MM)');
+  if (periodMonth < contract.startDate.slice(0, 7) || periodMonth > contract.endDate.slice(0, 7)) {
+    throw new Error('เดือนที่เลือกอยู่นอกช่วงสัญญา');
+  }
+
+  const dup = await getDocs(
+    query(collection(db, 'purchase_vendor_bills'), where('rentalContractId', '==', contract.id)),
+  );
+  const existingSamePeriod = dup.docs.find(
+    (d) => String((d.data() as PurchaseVendorBill).rentalPeriodMonth || '') === periodMonth,
+  );
+  if (existingSamePeriod) {
+    const no = (existingSamePeriod.data() as PurchaseVendorBill).receiptNo || existingSamePeriod.id;
+    throw new Error(`มีใบวางบิลสำหรับเดือน ${periodMonth} อยู่แล้ว (${no})`);
+  }
+
+  const purchaseId = await ensureRentalShadowPurchase(db, user, contract);
+  const amounts = computeRentalMonthAmounts({
+    monthlyRentAmount: contract.monthlyRentAmount,
+    vatRatePercent: resolveContractVatRatePercent(contract),
+    withholdingTaxRatePercent: contract.withholdingTaxRatePercent,
+  });
+  const dueDate = rentalDueDateForMonth(contract, periodMonth);
+  const { code } = await generateNextDocumentCode(db, 'purchase_vendor_bill', {
+    actor: actorName(user),
+    userId: user.id,
+  });
+  const now = Date.now();
+  const ref = doc(collection(db, 'purchase_vendor_bills'));
+  const bill: PurchaseVendorBill = {
+    id: ref.id,
+    receiptNo: code,
+    purchaseId,
+    purchaseNo: contract.contractNo,
+    purchaseType: 'CREDIT',
+    vendorId: contract.lessorVendorId,
+    billAmount: amounts.grossAmount,
+    billVatTreatment: amounts.vatRatePercent > 0 ? 'VAT_7' : 'NONE',
+    supplierWithholdingEnabledBill: amounts.withholdingTaxRatePercent > 0,
+    supplierWithholdingRatePercentBill: amounts.withholdingTaxRatePercent,
+    supplierWithholdingTaxBaseBill: amounts.baseRentAmount,
+    vendorBillWhtPresetCategory: 'RENT',
+    rentalContractId: contract.id,
+    rentalPeriodMonth: periodMonth,
+    rentalContractNo: contract.contractNo,
+    billingReceivedDate: dueDate,
+    plannedPaymentDate: dueDate,
+    status: 'DRAFT',
+    notes: `ค่าเช่า ${contract.rentedItemDescription} ประจำเดือน ${periodMonth} · อ้างสัญญา ${contract.contractNo}`,
+    createdAt: now,
+    updatedAt: now,
+  };
+  await setDoc(ref, stripUndefinedForFirestore(bill));
+  await writeAuditLog(db, user, {
+    actionType: 'CREATE',
+    entityType: 'PurchaseVendorBill',
+    entityId: ref.id,
+    entityLabel: code,
+    sourceModule: 'accounting',
+    sourcePath: `/accounting/rental-contracts/${contract.id}`,
+    afterSummary: `ใบวางบิลค่าเช่า ${periodMonth} · อ้างสัญญา ${contract.contractNo} · ${amounts.grossAmount.toFixed(2)} บาท`,
+    changedFields: ['status'],
+    linkedIds: [contract.id, ref.id, purchaseId],
+  });
+  return { billId: ref.id, receiptNo: code };
 }

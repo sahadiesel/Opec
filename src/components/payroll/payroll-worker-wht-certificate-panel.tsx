@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import type { Firestore } from 'firebase/firestore';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Printer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -59,6 +60,7 @@ export function PayrollWorkerWhtCertificatePanel({
   periodLabel,
   companyProfile,
   currentUser,
+  toolbarHost = null,
 }: {
   active: boolean;
   firestore: Firestore | null;
@@ -67,6 +69,7 @@ export function PayrollWorkerWhtCertificatePanel({
   periodLabel: string;
   companyProfile: CompanyDocumentProfileForPayrollWht | null;
   currentUser: User;
+  toolbarHost?: HTMLElement | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [worker, setWorker] = useState<Worker | null>(null);
@@ -269,26 +272,32 @@ export function PayrollWorkerWhtCertificatePanel({
         </Alert>
       ) : null}
 
-      <div className="flex flex-wrap gap-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" size="sm" disabled={!vm || !validation.ok}>
-              พิมพ์…
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuItem onClick={() => void handlePrint(['COPY_PAYEE_TAX_RETURN'])}>พิมพ์ฉบับที่ 1</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void handlePrint(['COPY_PAYEE_RECORD'])}>พิมพ์ฉบับที่ 2</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void handlePrint(['COPY_PAYER_RECORD'])}>พิมพ์สำเนาผู้หักภาษี</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => void handlePrint([...ALL_VARIANTS])}>พิมพ์ครบชุด (3 ฉบับ)</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        {canXml ? (
-          <Button type="button" variant="secondary" size="sm" disabled={!vm || !validation.ok} onClick={() => void handleXmlPayload()}>
-            Generate Internal XML (JSON)
-          </Button>
-        ) : null}
-      </div>
+      {(() => {
+        const toolbar: ReactNode = (
+          <div className="flex flex-wrap gap-2 justify-end">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" size="sm" disabled={!vm || !validation.ok} className="gap-1.5">
+                  <Printer className="h-4 w-4" />
+                  พิมพ์…
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => void handlePrint(['COPY_PAYEE_TAX_RETURN'])}>พิมพ์ฉบับที่ 1</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void handlePrint(['COPY_PAYEE_RECORD'])}>พิมพ์ฉบับที่ 2</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void handlePrint(['COPY_PAYER_RECORD'])}>พิมพ์สำเนาผู้หักภาษี</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void handlePrint([...ALL_VARIANTS])}>พิมพ์ครบชุด (3 ฉบับ)</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {canXml ? (
+              <Button type="button" variant="secondary" size="sm" disabled={!vm || !validation.ok} onClick={() => void handleXmlPayload()}>
+                Generate Internal XML (JSON)
+              </Button>
+            ) : null}
+          </div>
+        );
+        return toolbarHost ? createPortal(toolbar, toolbarHost) : toolbar;
+      })()}
 
       {previewHtml ? (
         <iframe title="payroll-wht-preview" className="w-full min-h-[560px] border rounded-md bg-white" srcDoc={previewHtml} />

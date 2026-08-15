@@ -78,6 +78,7 @@ export function RentalPayablesPayoutSection({ enabled }: { enabled: boolean }) {
     try {
       let created = 0;
       for (const c of activeContracts) {
+        if (c.payoutWorkflow === 'BILL_FIRST') continue;
         created += await generateDueRentalPayables(firestore, c);
       }
       setHealNote(
@@ -112,6 +113,7 @@ export function RentalPayablesPayoutSection({ enabled }: { enabled: boolean }) {
         let created = 0;
         for (const c of activeContracts) {
           if (cancelled) return;
+          if (c.payoutWorkflow === 'BILL_FIRST') continue;
           created += await generateDueRentalPayables(firestore, c);
         }
         if (!cancelled && created > 0) {
