@@ -1,4 +1,11 @@
-import type { Assignment, ChecklistItemStatus, DrugTestPanelSubstance, WorkerDrugTest } from '@/lib/types';
+import type {
+  Assignment,
+  ChecklistItemStatus,
+  DrugTestPanelSubstance,
+  WaveMonthTimesheetPhotoAttachment,
+  WorkerDrugTest,
+  WorkerDrugTestKitResult,
+} from '@/lib/types';
 import { formatOptionalDateThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 
@@ -29,10 +36,61 @@ export function displayLocation(t: WorkerDrugTest): string {
   return t.testLocationType === 'OTHER' ? 'อื่นๆ' : 'OPEC';
 }
 
+/** ชุดตรวจที่แสดงต่อรอบ — รายการใหม่ใช้ kitResults, รายการเก่ายังเป็น substanceKey เดียว */
+export function kitResultsForDisplay(t: WorkerDrugTest): WorkerDrugTestKitResult[] {
+  if (Array.isArray(t.kitResults) && t.kitResults.length > 0) {
+    return t.kitResults.filter((k) => Boolean(k.substanceKey));
+  }
+  if (t.substanceKey) {
+    return [
+      {
+        substanceKey: t.substanceKey,
+        substanceLabelSnapshot: t.substanceLabelSnapshot || t.substanceKey,
+        result: t.result,
+      },
+    ];
+  }
+  return [];
+}
+
+export function listWorkerDrugTestAttachments(t: WorkerDrugTest): WaveMonthTimesheetPhotoAttachment[] {
+  if (Array.isArray(t.attachments) && t.attachments.length > 0) return t.attachments;
+  if (t.attachment?.downloadUrl) return [t.attachment];
+  return [];
+}
+
+export function formatDrugTestBloodPressure(t: WorkerDrugTest): string {
+  const s = Number(t.bloodPressureSystolic);
+  const d = Number(t.bloodPressureDiastolic);
+  if (!Number.isFinite(s) || !Number.isFinite(d) || s <= 0 || d <= 0) return '—';
+  return `${s}/${d} mmHg`;
+}
+
+/** แตก kitResults เป็นแถวต่อชุด — ให้ mob / สรุปแผงยังนับผลรายชุดได้ */
+export function expandDrugTestsForSubstanceLookup(tests: WorkerDrugTest[]): WorkerDrugTest[] {
+  const out: WorkerDrugTest[] = [];
+  for (const t of tests) {
+    const kits = kitResultsForDisplay(t);
+    if (kits.length > 1 || (kits.length === 1 && Array.isArray(t.kitResults) && t.kitResults.length > 0)) {
+      for (const k of kits) {
+        out.push({
+          ...t,
+          substanceKey: k.substanceKey,
+          substanceLabelSnapshot: k.substanceLabelSnapshot || t.substanceLabelSnapshot,
+          result: k.result,
+        });
+      }
+    } else {
+      out.push(t);
+    }
+  }
+  return out;
+}
+
 /** ผลล่าสุดต่อ substanceKey (เรียง testDate) */
 export function getLatestDrugTestBySubstance(tests: WorkerDrugTest[]): Map<string, WorkerDrugTest> {
   const map = new Map<string, WorkerDrugTest>();
-  const sorted = [...tests].sort(
+  const sorted = [...expandDrugTestsForSubstanceLookup(tests)].sort(
     (a, b) => coerceTestDateMs(b.testDate) - coerceTestDateMs(a.testDate),
   );
   for (const t of sorted) {
@@ -144,10 +202,10 @@ export function calendarDaysBetweenYmd(fromYmd: string, toYmd: string): number |
 /** บันทึกการตรวจทั้งหมด — ล่าสุดอยู่บนสุด */
 export function sortDrugTestsNewestFirst(tests: WorkerDrugTest[]): WorkerDrugTest[] {
   return [...tests]
-    .filter((t) => Boolean(t.substanceKey))
+    .filter((t) => Boolean(t.substanceKey) || kitResultsForDisplay(t).length > 0)
     .sort((a, b) => {
-      const ta = Number(a.createdAt || a.testDate || 0);
-      const tb = Number(b.createdAt || b.testDate || 0);
+      const ta = Number(a.recordedAt || a.createdAt || a.testDate || 0);
+      const tb = Number(b.recordedAt || b.createdAt || b.testDate || 0);
       if (tb !== ta) return tb - ta;
       return (b.id || '').localeCompare(a.id || '');
     });
@@ -181,6 +239,18 @@ export function computeDrugTestRowValidityStatus(
   if (days == null || days < 0) return 'expired';
   if (days > DRUG_TEST_VALIDITY_DAYS) return 'expired';
   return 'valid';
+}
+
+/** Valid ของรอบตรวจ — มีอย่างน้อยหนึ่งชุด NEGATIVE และยังอยู่ในช่วง 10 วัน */
+export function computeDrugTestRecordValidityStatus(
+  test: WorkerDrugTest,
+  referenceYmd: string = thailandTodayYmd(),
+): DrugTestRowValidityStatus {
+  const kits = kitResultsForDisplay(test);
+  if (kits.some((k) => k.result === 'negative')) {
+    return computeDrugTestRowValidityStatus({ ...test, result: 'negative' }, referenceYmd);
+  }
+  return computeDrugTestRowValidityStatus(test, referenceYmd);
 }
 
 export function drugTestRowValidityLabelTh(status: DrugTestRowValidityStatus): string {

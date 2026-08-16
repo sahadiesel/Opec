@@ -1075,7 +1075,7 @@ export function PayrollBatchDetailView({
         )}
 
         <AlertDialog open={confirmPaidOpen} onOpenChange={setConfirmPaidOpen}>
-          <AlertDialogContent className="max-w-lg">
+          <AlertDialogContent className="max-w-3xl w-[min(48rem,calc(100vw-2rem))]">
             <AlertDialogHeader>
               <AlertDialogTitle>ยืนยันจ่าย — เลือกบัญชีตัดจ่าย</AlertDialogTitle>
               <AlertDialogDescription asChild>
@@ -1093,12 +1093,12 @@ export function PayrollBatchDetailView({
                     <div className="space-y-2">
                       <Label>บัญชีสำหรับตัดจ่าย (บังคับเลือก)</Label>
                       <Select value={payoutBankId} onValueChange={setPayoutBankId}>
-                        <SelectTrigger>
+                        <SelectTrigger className="h-auto min-h-10 py-2 whitespace-normal [&>span]:line-clamp-none [&>span]:whitespace-normal">
                           <SelectValue placeholder="เลือกบัญชี" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="max-w-[min(46rem,calc(100vw-3rem))]">
                           {activeBanks.map((b) => (
-                            <SelectItem key={b.id} value={b.id}>
+                            <SelectItem key={b.id} value={b.id} className="whitespace-normal">
                               {b.accountName} — {b.bankName} (…{String(b.accountNumber || '').slice(-4)}) · ยอดคงเหลือ ฿
                               {Number(b.currentBalance || 0).toLocaleString()} [รหัส {b.accountCode}]
                             </SelectItem>

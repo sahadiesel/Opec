@@ -403,6 +403,14 @@ export interface DrugTestPanelConfig {
 
 export type DrugTestLocationType = 'OPEC' | 'OTHER';
 export type DrugTestResult = 'none' | 'negative' | 'positive';
+export type DrugTestScreeningConclusion = 'pass' | 'fail';
+
+/** ผลต่อชุดตรวจในรอบบันทึกเดียวกัน */
+export interface WorkerDrugTestKitResult {
+  substanceKey: string;
+  substanceLabelSnapshot: string;
+  result: DrugTestResult;
+}
 
 /** ทะเบียนชื่อธนาคาร — ในฟอร์มพนักงาน/ลูกจ้างใช้เฉพาะ `nameTh` */
 export interface BankNameCatalogItem {
@@ -2950,7 +2958,7 @@ export interface WorkerMedicalRecord {
 
 export interface WorkerDrugTest {
   id: string;
-  /** อ้างอิง id จาก DrugTestPanelSubstance */
+  /** อ้างอิง id จาก DrugTestPanelSubstance — ชุดแรกของรอบ (compat รายการเก่า / mob) */
   substanceKey?: string;
   substanceLabelSnapshot?: string;
   testDate: number | null;
@@ -2958,12 +2966,27 @@ export interface WorkerDrugTest {
   /** เมื่อ testLocationType === OTHER */
   testLocationOther?: string;
   result: DrugTestResult;
+  /** ชุดที่ติ๊กรอบนี้ พร้อมผลรายชุด */
+  kitResults?: WorkerDrugTestKitResult[];
+  bodyTemperatureC?: number | null;
+  bloodPressureSystolic?: number | null;
+  bloodPressureDiastolic?: number | null;
+  alcoholMgPercent?: number | null;
+  conclusion?: DrugTestScreeningConclusion;
+  recordedByName?: string;
+  recordedByUserId?: string;
+  recordedAt?: number;
+  updatedByName?: string;
+  updatedByUserId?: string;
+  updatedAt?: number;
   /** @deprecated ไม่ใช้แล้ว — ข้อมูลเก่าเท่านั้น */
   expiryDate?: number;
   /** @deprecated ใช้ testLocationType / testLocationOther */
   laboratory?: string;
-  /** รูปถ่าย/แนบผลตรวจ (thumbnail ในตาราง) */
+  /** รูปถ่าย/แนบผลตรวจ (thumbnail ในตาราง) — รายการเก่าไฟล์เดียว */
   attachment?: WaveMonthTimesheetPhotoAttachment;
+  /** รูป/ไฟล์แนบรอบนี้ สูงสุด 5 */
+  attachments?: WaveMonthTimesheetPhotoAttachment[];
   /** เวลาบันทึกเอกสาร — ใช้เรียงลำดับล่าสุด */
   createdAt?: number;
   _path?: string;

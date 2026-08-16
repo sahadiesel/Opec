@@ -4,6 +4,8 @@ import { uploadWorkerCredentialAttachment } from '@/lib/storage/worker-credentia
 
 export { validateWorkerCredentialAttachmentFile as validateWorkerDrugTestPhotoFile } from '@/lib/storage/worker-credential-attachment';
 
+export const MAX_WORKER_DRUG_TEST_ATTACHMENTS = 5;
+
 /** อัปโหลดรูปหรือ PDF ผลตรวจสารเสพติด — รูปบีบไม่เกิน 500 KB, PDF สูงสุด 10 MB */
 export async function uploadWorkerDrugTestPhoto(
   firebaseApp: FirebaseApp,

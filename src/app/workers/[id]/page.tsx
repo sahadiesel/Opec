@@ -834,6 +834,7 @@ function WorkerDetailContent({ id }: { id: string }) {
               drugTestsQuery={drugTestsQuery as any}
               panelSubstances={panelSubstances}
               canEdit={canEditWorker}
+              currentUser={currentUser}
             />
           </TabsContent>
 

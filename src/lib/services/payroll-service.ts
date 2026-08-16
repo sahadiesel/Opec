@@ -1549,16 +1549,27 @@ export class PayrollService {
     const stillUnpaidAfter = unpaidBefore.filter((r) => !selected.some((s) => s.docId === r.docId));
     const allPaidNow = stillUnpaidAfter.length === 0;
 
-    /** บันทึกยอดหลาย PO + หักยอดงวดก่อนหน้าลง line ก่อนตัด cashbook — ให้หน้างวด PAID ใช้ยอดนี้โดยไม่คำนวณสด */
+    /**
+     * บันทึกยอดหลาย PO + หักยอดงวดก่อนหน้าลง line ก่อนตัด cashbook
+     * — ยอดที่ผู้จัดการ/บัญชีอนุมัติแล้วต้องตัดได้เสมอ ถ้าคำนวณใหม่ไม่ได้ให้ใช้ snapshot บนแถว
+     */
     const refreshedNetByDocId = new Map<string, number>();
     for (const l of selected) {
-      const result = await this.recalculateWorkerPayrollLinePreserveHrAdjustments(
-        id,
-        (l as PayrollBatchLine).workerId,
-        user,
-        { bypassFinanceStatusGate: true, includePriorPaidRecovery: true },
-      );
-      refreshedNetByDocId.set(l.docId, result.netAmount);
+      try {
+        const result = await this.recalculateWorkerPayrollLinePreserveHrAdjustments(
+          id,
+          (l as PayrollBatchLine).workerId,
+          user,
+          { bypassFinanceStatusGate: true, includePriorPaidRecovery: true },
+        );
+        refreshedNetByDocId.set(l.docId, result.netAmount);
+      } catch (err) {
+        console.warn(
+          '[financeConfirmWorkerBatchPaid] skip recalc, use approved snapshot',
+          (l as PayrollBatchLine).workerId,
+          err,
+        );
+      }
     }
 
     const sumNet =
@@ -1878,7 +1889,6 @@ export class PayrollService {
         } as PayrollPeriod);
 
     const rawIds = [...new Set((line.sourceTimesheetIds ?? []).filter(Boolean))];
-    if (rawIds.length === 0) throw new Error('ไม่มี sourceTimesheetIds — ไม่สามารถคำนวณใหม่ได้');
 
     const periodStart = period.startDate || line.periodStartDate;
     const periodEnd = period.endDate || periodFromLineEnd;
@@ -1889,6 +1899,7 @@ export class PayrollService {
     /**
      * โหลดตาม timesheet ปัจจุบัน + กฎ payable (ตัดรอบ mob เก่าที่ค้างใน sourceTimesheetIds)
      * — ไม่ยึด source อย่างเดียว เพราะหลัง remob กริดสรุปรายเดือนอาจเริ่ม M1 ใหม่แล้ว
+     * — แถวตกเบิก / SUPPLEMENTAL สร้างโดยไม่มี sourceTimesheetIds ได้ตามออกแบบ
      */
     const loaded = await loadWorkerTimesheetsForPayrollLine(
       this.db,
@@ -1899,9 +1910,22 @@ export class PayrollService {
     );
 
     if (loaded.length === 0) {
-      throw new Error(
-        'ไม่พบใบงานที่จ่ายได้ในงวดนี้ (อาจอยู่นอกช่วง mobilization หรือเป็น unpaid_leave — สอดคล้องตารางสรุปรายเดือน)',
-      );
+      const isSupplemental = batch.batchType === 'SUPPLEMENTAL';
+      const hasPriorPeriodPay = (line.hrLineAdjustments?.priorPeriodAllowanceItems?.length ?? 0) > 0;
+      if (options?.bypassFinanceStatusGate) {
+        /** ยอดผ่านผู้จัดการ + บัญชีแล้ว — ไม่บล็อกตัดจ่ายเพราะไม่มีใบงานผูกแถว */
+        return {
+          netAmount: Number(line.netAmount) || 0,
+          grossAmount: Number(line.grossAmount) || 0,
+        };
+      }
+      if (!isSupplemental && !hasPriorPeriodPay) {
+        throw new Error(
+          rawIds.length === 0
+            ? 'ไม่มีใบงานที่จ่ายได้ในงวดนี้ และแถวไม่มี sourceTimesheetIds — คำนวณใหม่ได้เฉพาะแถวที่ผูกใบงานหรือเป็นงวดตกเบิก'
+            : 'ไม่พบใบงานที่จ่ายได้ในงวดนี้ (อาจอยู่นอกช่วง mobilization หรือเป็น unpaid_leave — สอดคล้องตารางสรุปรายเดือน)',
+        );
+      }
     }
 
     const workerTs = normalizeTimesheetsForPayrollLine(loaded);
@@ -2207,7 +2231,9 @@ export class PayrollService {
 
     const wkLine = workerById.get(workerId);
     const posLine = wkLine?.currentPositionId ? posById.get(wkLine.currentPositionId) : null;
-    const firstWm = timesheetToLaborWorkMode(workerTs[0], poWorkModeByPoId);
+    const firstWm = workerTs[0]
+      ? timesheetToLaborWorkMode(workerTs[0], poWorkModeByPoId)
+      : 'onshore';
     const snapRes = wkLine
       ? resolveWorkerLaborBaseRate(
           {
