@@ -515,25 +515,25 @@ export function RentalPayablePayoutDialog({
           {canPay && isPending ? (
             <section className="space-y-4 rounded-md border border-slate-200 p-4">
               <h3 className="text-sm font-semibold flex items-center gap-2">บันทึกจ่ายเมื่อครบกำหนด</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+                <div className="space-y-2 md:col-span-9">
                   <Label>บัญชีธนาคารที่ตัดจ่าย</Label>
                   <Select value={bankId || undefined} onValueChange={setBankId}>
-                    <SelectTrigger className="h-11">
+                    <SelectTrigger className="h-11 [&>span]:line-clamp-2 [&>span]:whitespace-normal [&>span]:text-left">
                       <SelectValue placeholder="เลือกบัญชี ACTIVE" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="max-w-[min(100vw-2rem,36rem)]">
                       {(banks ?? [])
                         .filter((b) => b.status === 'ACTIVE' && String(b.accountType) !== 'PETTY_CASH')
                         .map((b) => (
-                          <SelectItem key={b.id} value={b.id}>
+                          <SelectItem key={b.id} value={b.id} className="whitespace-normal">
                             {b.bankName} · {b.accountName} [{b.accountCode}]
                           </SelectItem>
                         ))}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-2 md:col-span-3">
                   <Label>วิธีชำระ</Label>
                   <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}>
                     <SelectTrigger className="h-11">
