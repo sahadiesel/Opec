@@ -16,7 +16,10 @@ import {
 } from '@/components/ui/dialog';
 import { PayrollSsoSectionCard } from '@/components/accounting/payroll-sso-section-card';
 import { PayrollSsoCombinedPayButton } from '@/components/accounting/payroll-sso-combined-pay';
-import { fmtSsoBaht } from '@/components/accounting/payroll-sso-list-table';
+import {
+  fmtSsoBaht,
+  type PayrollSsoTableRow,
+} from '@/components/accounting/payroll-sso-list-table';
 import { fmtBaht } from '@/components/accounting/withholding-wht-pay-tax-ui';
 import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import {
@@ -44,16 +47,7 @@ import { resolvePayrollWorkerWhtPaymentDateYmd } from '@/lib/payroll/payroll-wor
 import { resolveOfficePayrollWhtPaymentDateYmd } from '@/lib/payroll/payroll-office-wht-model';
 import {
   employerContribStatusLabel,
-  isOfficeEmployerContribPaid,
-  isOfficePayrollWagePaid,
-  isOfficeSsoRemitPaid,
-  isWorkerEmployerContribPaid,
-  isWorkerPayrollWagePaid,
-  isWorkerSsoRemitPaid,
-  officeWageStatusLabel,
   ssoCombinedRemitAmount,
-  ssoRemitStatusLabel,
-  workerWageStatusLabel,
 } from '@/lib/payroll/payroll-sso-payment-model';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -72,8 +66,6 @@ import {
   executiveRowsToSsoTableFixed,
   workerLineGrossPayAmount,
   officeLineGrossPayAmount,
-  resolveWorkerNationalId,
-  resolveStaffNationalId,
 } from '@/app/accounting/social-security-payroll/sso-section-utils';
 
 export type { WorkerSsoRow, OfficeSsoRow, ExecutiveSsoRow };
@@ -129,64 +121,65 @@ function describeSocialSecurityPrintFilters(
   return lines;
 }
 
-function buildSocialSecurityPrintRows(
+function ssoPrintCombinedStatusLabel(r: PayrollSsoTableRow): string {
+  const bothPaid = r.employerContribPaid && r.ssoRemitPaid;
+  if (bothPaid) return 'จ่ายแล้ว';
+  if (!r.wagePaid) return '—';
+  if (r.employerContribPaid || r.ssoRemitPaid) return 'จ่ายบางส่วน';
+  return employerContribStatusLabel(r.wagePaid, false);
+}
+
+function mapSsoTableRowToPrintRow(section: string, r: PayrollSsoTableRow): SocialSecurityPayrollListPrintRow {
+  const isLeader = r.isGroupLeader !== false;
+  return {
+    section,
+    wageStatus: r.wageLabel,
+    ssoStatus: isLeader ? ssoPrintCombinedStatusLabel(r) : '—',
+    employerStatus: isLeader ? ssoPrintCombinedStatusLabel(r) : '—',
+    batchLabel: r.batchLabel,
+    earnerName: r.earnerName,
+    earnerId: r.earnerId,
+    paymentDate: formatYmdLocalThaiBE(r.paymentYmd),
+    paidLabel: fmtBaht(r.paid),
+    /** แถว companion ในกลุ่มคน+เดือน = ไม่นับยอด (ตรงกับจอ / ยอดจ่ายจริง) */
+    ssoLabel: isLeader ? fmtSsoBaht(r.sso) : '—',
+    employerLabel: isLeader ? fmtSsoBaht(ssoCombinedRemitAmount(r.sso)) : '—',
+  };
+}
+
+/**
+ * พิมพ์ใช้ logic เดียวกับตารางบนจอ — ยอด ปกส.+สมทบ ต่อคนต่อเดือน (สลิปล่าสุด / เพดาน)
+ * ไม่บวกซ้ำหลายชุดจ่ายของคนเดียวกัน
+ */
+function buildSocialSecurityPrintPayload(
   workers: WorkerSsoRow[],
   offices: OfficeSsoRow[],
   executives: ExecutiveSsoRow[],
   nationalIdByWorkerId?: ReadonlyMap<string, string>,
   nationalIdByOfficeStaffId?: ReadonlyMap<string, string>,
   nationalIdByExecutiveStaffId?: ReadonlyMap<string, string>,
-): SocialSecurityPayrollListPrintRow[] {
-  const rows: SocialSecurityPayrollListPrintRow[] = [];
-  for (const { batch, line, sso, paymentYmd } of workers) {
-    const wagePaid = isWorkerPayrollWagePaid(batch, line);
-    rows.push({
-      section: 'ลูกจ้าง',
-      wageStatus: workerWageStatusLabel(batch.status),
-      ssoStatus: ssoRemitStatusLabel(wagePaid, isWorkerSsoRemitPaid(line)),
-      employerStatus: employerContribStatusLabel(wagePaid, isWorkerEmployerContribPaid(line)),
-      batchLabel: batch.id,
-      earnerName: line.workerNameSnapshot || '—',
-      earnerId: resolveWorkerNationalId(line, nationalIdByWorkerId),
-      paymentDate: formatYmdLocalThaiBE(paymentYmd),
-      paidLabel: fmtBaht(workerLineGrossPayAmount(line)),
-      ssoLabel: fmtSsoBaht(sso),
-      employerLabel: fmtSsoBaht(ssoCombinedRemitAmount(sso)),
-    });
-  }
-  for (const { run, line, sso, paymentYmd } of offices) {
-    const wagePaid = isOfficePayrollWagePaid(run, line);
-    rows.push({
-      section: 'ออฟฟิศ',
-      wageStatus: officeWageStatusLabel(run.status),
-      ssoStatus: ssoRemitStatusLabel(wagePaid, isOfficeSsoRemitPaid(line)),
-      employerStatus: employerContribStatusLabel(wagePaid, isOfficeEmployerContribPaid(line)),
-      batchLabel: run.payrollRunNo || run.id,
-      earnerName: line.staffName || '—',
-      earnerId: resolveStaffNationalId(line.staffId, nationalIdByOfficeStaffId),
-      paymentDate: formatYmdLocalThaiBE(paymentYmd),
-      paidLabel: fmtBaht(officeLineGrossPayAmount(line)),
-      ssoLabel: fmtSsoBaht(sso),
-      employerLabel: fmtSsoBaht(ssoCombinedRemitAmount(sso)),
-    });
-  }
-  for (const { run, line, sso, paymentYmd } of executives) {
-    const wagePaid = isOfficePayrollWagePaid(run, line);
-    rows.push({
-      section: 'ผู้บริหาร',
-      wageStatus: officeWageStatusLabel(run.status),
-      ssoStatus: ssoRemitStatusLabel(wagePaid, isOfficeSsoRemitPaid(line)),
-      employerStatus: employerContribStatusLabel(wagePaid, isOfficeEmployerContribPaid(line)),
-      batchLabel: run.payrollRunNo || run.id,
-      earnerName: line.staffName || '—',
-      earnerId: resolveStaffNationalId(line.staffId, nationalIdByExecutiveStaffId),
-      paymentDate: formatYmdLocalThaiBE(paymentYmd),
-      paidLabel: fmtBaht(officeLineGrossPayAmount(line)),
-      ssoLabel: fmtSsoBaht(sso),
-      employerLabel: fmtSsoBaht(ssoCombinedRemitAmount(sso)),
-    });
-  }
-  return rows;
+): { rows: SocialSecurityPayrollListPrintRow[]; remitTotal: number } {
+  const workerTable = workerRowsToSsoTable(workers, nationalIdByWorkerId);
+  const officeTable = officeRowsToSsoTable(
+    offices,
+    (runId, staffId) =>
+      `/office-payroll/${encodeURIComponent(runId)}/staff/${encodeURIComponent(staffId)}`,
+    nationalIdByOfficeStaffId,
+  );
+  const executiveTable = executiveRowsToSsoTableFixed(executives, nationalIdByExecutiveStaffId);
+  const tableRows = [...workerTable, ...officeTable, ...executiveTable];
+  const remitTotal = tableRows
+    .filter((r) => r.isGroupLeader !== false)
+    .reduce((sum, r) => sum + ssoCombinedRemitAmount(r.sso), 0);
+
+  return {
+    rows: [
+      ...workerTable.map((r) => mapSsoTableRowToPrintRow('ลูกจ้าง', r)),
+      ...officeTable.map((r) => mapSsoTableRowToPrintRow('ออฟฟิศ', r)),
+      ...executiveTable.map((r) => mapSsoTableRowToPrintRow('ผู้บริหาร', r)),
+    ],
+    remitTotal,
+  };
 }
 
 export default function AccountingSocialSecurityPayrollHubPage() {
@@ -544,12 +537,28 @@ export default function AccountingSocialSecurityPayrollHubPage() {
   /** รวมตามตัวกรอง — รวม ปกส.+สมทบ ต่อคนต่อเดือน (ไม่บวกซ้ำหลายชุดจ่าย) */
   const grandTotalRemit = workerTotalSso + officeTotalSso + executiveTotalSso;
 
+  const allRowsRemitTotal = useMemo(() => {
+    const workerTable = workerRowsToSsoTable(workerRows, nationalIdByWorkerId);
+    const officeTable = officeRowsToSsoTable(officeRows, () => '', nationalIdByOfficeStaffId);
+    const executiveTable = executiveRowsToSsoTableFixed(executiveRows, nationalIdByExecutiveStaffId);
+    return [...workerTable, ...officeTable, ...executiveTable]
+      .filter((r) => r.isGroupLeader !== false)
+      .reduce((sum, r) => sum + ssoCombinedRemitAmount(r.sso), 0);
+  }, [
+    workerRows,
+    officeRows,
+    executiveRows,
+    nationalIdByWorkerId,
+    nationalIdByOfficeStaffId,
+    nationalIdByExecutiveStaffId,
+  ]);
+
   const runSocialSecurityPayrollListPrint = useCallback(
     async (scope: 'filtered' | 'all') => {
       const workers = scope === 'filtered' ? filteredWorker : workerRows;
       const offices = scope === 'filtered' ? filteredOffice : officeRows;
       const executives = scope === 'filtered' ? filteredExecutive : executiveRows;
-      const sourceRows = buildSocialSecurityPrintRows(
+      const { rows: sourceRows, remitTotal } = buildSocialSecurityPrintPayload(
         workers,
         offices,
         executives,
@@ -577,10 +586,6 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           workers.reduce((sum, { line }) => sum + workerLineGrossPayAmount(line), 0) +
           offices.reduce((sum, { line }) => sum + officeLineGrossPayAmount(line), 0) +
           executives.reduce((sum, { line }) => sum + officeLineGrossPayAmount(line), 0);
-        const remitTotal =
-          workers.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0) +
-          offices.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0) +
-          executives.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0);
         const generatedAt = new Date().toLocaleString('th-TH', {
           dateStyle: 'medium',
           timeStyle: 'short',
@@ -779,11 +784,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                 <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredRowCount} รายการ</p>
               </div>
               <p className="text-xs text-muted-foreground">
-                ข้อมูลทั้งหมด: {allRowCount} รายการ · ปกส.+สมทบ รวม {fmtSsoBaht(
-                  workerRows.reduce((s, r) => s + ssoCombinedRemitAmount(r.sso), 0) +
-                    officeRows.reduce((s, r) => s + ssoCombinedRemitAmount(r.sso), 0) +
-                    executiveRows.reduce((s, r) => s + ssoCombinedRemitAmount(r.sso), 0),
-                )}
+                ข้อมูลทั้งหมด: {allRowCount} รายการ · ปกส.+สมทบ รวม {fmtSsoBaht(allRowsRemitTotal)}
               </p>
             </div>
             <DialogFooter className="flex-col sm:flex-row gap-2">

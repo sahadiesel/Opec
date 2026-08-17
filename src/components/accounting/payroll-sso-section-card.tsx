@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Paperclip } from 'lucide-react';
 import {
   PayrollSsoListTable,
   PayrollSsoPayButton,
@@ -40,13 +40,15 @@ import {
   AccountingFilterToolbarAction,
   AccountingFilterToolbarStat,
 } from '@/components/accounting/accounting-filter-toolbar';
-import type { BankAccount, User } from '@/lib/types';
+import type { BankAccount, User, WhtTaxPaymentProofAttachment } from '@/lib/types';
 import type { Firestore } from 'firebase/firestore';
 import {
   recordExecutivePayrollSsoPayment,
   recordOfficePayrollSsoPayment,
   recordWorkerPayrollSsoPayment,
 } from '@/lib/services/payroll-sso-payment-service';
+import { uploadPayrollSsoPaymentProof } from '@/lib/storage/payroll-wht-tax-payment-proofs';
+import { useFirebaseApp } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
 
 export type SsoSectionKind = 'worker' | 'office' | 'executive';
@@ -97,11 +99,15 @@ export function PayrollSsoSectionCard({
   onExecutiveRowsChange?: (updater: (prev: ExecutiveSsoRow[]) => ExecutiveSsoRow[]) => void;
 }) {
   const { toast } = useToast();
+  const firebaseApp = useFirebaseApp();
+  const proofInputRef = useRef<HTMLInputElement>(null);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
   const [payDialog, setPayDialog] = useState<PayDialogState>(null);
   const [payBankId, setPayBankId] = useState('');
   const [payDate, setPayDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [payBusy, setPayBusy] = useState(false);
+  const [payAttachments, setPayAttachments] = useState<WhtTaxPaymentProofAttachment[]>([]);
+  const [attachProofBusy, setAttachProofBusy] = useState(false);
 
   const keySig = useMemo(() => selectableKeySig(tableRows), [tableRows]);
 
@@ -144,10 +150,60 @@ export function PayrollSsoSectionCard({
       prev && operatingBankOptions.some((b) => b.id === prev) ? prev : (operatingBankOptions[0]?.id ?? ''),
     );
     setPayDate(new Date().toISOString().slice(0, 10));
+    setPayAttachments([]);
   }, [selectedPayCount, operatingBankOptions, toast]);
 
+  const handleAttachProof = useCallback(
+    async (files: FileList | null) => {
+      if (!files?.length || !firebaseApp || !currentUser) return;
+      setAttachProofBusy(true);
+      try {
+        const uploaded: WhtTaxPaymentProofAttachment[] = [];
+        for (const file of Array.from(files)) {
+          const attachment = await uploadPayrollSsoPaymentProof(
+            firebaseApp,
+            currentUser.id,
+            file,
+            currentUser.displayName || currentUser.email || currentUser.id,
+          );
+          uploaded.push(attachment);
+        }
+        setPayAttachments((prev) => {
+          const next = [...prev];
+          for (const a of uploaded) {
+            if (!next.some((x) => x.id === a.id)) next.push(a);
+          }
+          return next;
+        });
+        toast({
+          title: 'แนบเอกสารแล้ว',
+          description: uploaded.length > 1 ? `อัปโหลด ${uploaded.length} ไฟล์` : uploaded[0]?.fileName,
+        });
+      } catch (e) {
+        toast({
+          variant: 'destructive',
+          title: 'แนบเอกสารไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setAttachProofBusy(false);
+        if (proofInputRef.current) proofInputRef.current.value = '';
+      }
+    },
+    [firebaseApp, currentUser, toast],
+  );
+
+  const handleRemoveProof = useCallback((attachmentId: string) => {
+    setPayAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+  }, []);
+
   const patchLineAfterPay = useCallback(
-    (rowKeys: string[], result: { cashbookEntryId: string; entryNo: string }, bankId: string) => {
+    (
+      rowKeys: string[],
+      result: { cashbookEntryId: string; entryNo: string },
+      bankId: string,
+      proofs: WhtTaxPaymentProofAttachment[],
+    ) => {
       const now = Date.now();
       const keySet = new Set(rowKeys);
       if (sectionKind === 'worker' && onWorkerRowsChange) {
@@ -157,7 +213,7 @@ export function PayrollSsoSectionCard({
             if (!keySet.has(key)) return row;
             return {
               ...row,
-              line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now),
+              line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now, proofs),
             };
           }),
         );
@@ -168,7 +224,7 @@ export function PayrollSsoSectionCard({
             if (!keySet.has(key)) return row;
             return {
               ...row,
-              line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now),
+              line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now, proofs),
             };
           }),
         );
@@ -179,7 +235,7 @@ export function PayrollSsoSectionCard({
             if (!keySet.has(key)) return row;
             return {
               ...row,
-              line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now),
+              line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now, proofs),
             };
           }),
         );
@@ -192,6 +248,14 @@ export function PayrollSsoSectionCard({
     if (!firestore || !currentUser || !payDialog) return;
     if (!payBankId.trim()) {
       toast({ variant: 'destructive', title: 'กรุณาเลือกบัญชีธนาคาร' });
+      return;
+    }
+    if (payAttachments.length === 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่ได้แนบเอกสาร',
+        description: 'กรุณาแนบหลักฐานการโอนก่อนยืนยันจ่าย ปกส.+สมทบ',
+      });
       return;
     }
     if (payTargets.length === 0) {
@@ -226,8 +290,9 @@ export function PayrollSsoSectionCard({
               entryDate: payDate,
               earnerName: row.line.workerNameSnapshot || row.line.workerId,
               companionLines: companions,
+              proofAttachments: payAttachments,
             });
-            patchLineAfterPay(memberKeys, result, payBankId);
+            patchLineAfterPay(memberKeys, result, payBankId, payAttachments);
           } else if (sectionKind === 'office' && officeRows) {
             const row = officeRows.find((r) => `office::${r.run.id}::${r.line.id}` === target.rowKey);
             if (!row) continue;
@@ -245,8 +310,9 @@ export function PayrollSsoSectionCard({
               entryDate: payDate,
               earnerName: row.line.staffName || row.line.staffId,
               companionLines: companions,
+              proofAttachments: payAttachments,
             });
-            patchLineAfterPay(memberKeys, result, payBankId);
+            patchLineAfterPay(memberKeys, result, payBankId, payAttachments);
           } else if (sectionKind === 'executive' && executiveRows) {
             const row = executiveRows.find((r) => `executive::${r.run.id}::${r.line.id}` === target.rowKey);
             if (!row) continue;
@@ -264,8 +330,9 @@ export function PayrollSsoSectionCard({
               entryDate: payDate,
               earnerName: row.line.staffName || row.line.staffId,
               companionLines: companions,
+              proofAttachments: payAttachments,
             });
-            patchLineAfterPay(memberKeys, result, payBankId);
+            patchLineAfterPay(memberKeys, result, payBankId, payAttachments);
           }
           for (const k of memberKeys) paidKeys.add(k);
           success += 1;
@@ -287,6 +354,7 @@ export function PayrollSsoSectionCard({
           title: 'บันทึกจ่าย ปกส.+สมทบ แล้ว',
           description: `จ่ายสำเร็จ ${success} รายการ · ตัดบัญชีและบันทึก cashbook เรียบร้อย`,
         });
+        setPayAttachments([]);
         setPayDialog(null);
       } else if (success > 0) {
         toast({
@@ -310,6 +378,7 @@ export function PayrollSsoSectionCard({
     payDialog,
     payBankId,
     payDate,
+    payAttachments,
     payTargets,
     sectionKind,
     workerRows,
@@ -373,8 +442,16 @@ export function PayrollSsoSectionCard({
         </CardContent>
       </Card>
 
-      <Dialog open={!!payDialog} onOpenChange={(open) => !open && !payBusy && setPayDialog(null)}>
-        <DialogContent className="max-w-md">
+      <Dialog
+        open={!!payDialog}
+        onOpenChange={(open) => {
+          if (!open && !payBusy && !attachProofBusy) {
+            setPayDialog(null);
+            setPayAttachments([]);
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>จ่าย ปกส.+สมทบ</DialogTitle>
             <DialogDescription>
@@ -392,12 +469,15 @@ export function PayrollSsoSectionCard({
             <div className="space-y-2">
               <Label htmlFor={`sso-pay-bank-${sectionKind}`}>บัญชีธนาคารที่ตัดจ่าย</Label>
               <Select value={payBankId} onValueChange={setPayBankId}>
-                <SelectTrigger id={`sso-pay-bank-${sectionKind}`}>
+                <SelectTrigger
+                  id={`sso-pay-bank-${sectionKind}`}
+                  className="h-auto min-h-11 py-2 [&>span]:line-clamp-none [&>span]:whitespace-normal [&>span]:text-left"
+                >
                   <SelectValue placeholder="เลือกบัญชี ACTIVE" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-w-[min(100vw-2rem,42rem)]">
                   {operatingBankOptions.map((b) => (
-                    <SelectItem key={b.id} value={b.id}>
+                    <SelectItem key={b.id} value={b.id} className="whitespace-normal">
                       {b.bankName} · {b.accountName} [{b.accountCode}]
                     </SelectItem>
                   ))}
@@ -413,15 +493,83 @@ export function PayrollSsoSectionCard({
                 onChange={(e) => setPayDate(e.target.value)}
               />
             </div>
+            <div className="space-y-2">
+              <Label>เอกสารการโอน (บังคับแนบ)</Label>
+              <p className="text-[11px] text-muted-foreground leading-snug">
+                แนบสลิปหรือหลักฐานการโอน ปกส.+สมทบ — รองรับ PDF หรือรูปภาพ (สูงสุด 10 MB ต่อไฟล์)
+              </p>
+              <input
+                ref={proofInputRef}
+                type="file"
+                multiple
+                accept="application/pdf,image/jpeg,image/jpg,image/png,image/webp,image/gif,.pdf,.jpg,.jpeg,.png,.webp,.gif"
+                className="hidden"
+                onChange={(e) => void handleAttachProof(e.target.files)}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2"
+                disabled={attachProofBusy || payBusy}
+                onClick={() => proofInputRef.current?.click()}
+              >
+                {attachProofBusy ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Paperclip className="h-4 w-4" />
+                )}
+                แนบเอกสาร
+              </Button>
+              {payAttachments.length > 0 ? (
+                <ul className="rounded-md border bg-muted/20 px-3 py-2 space-y-1.5">
+                  {payAttachments.map((a) => (
+                    <li key={a.id} className="flex items-center gap-2 min-w-0 text-xs">
+                      <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate" title={a.fileName}>
+                        {a.fileName}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 shrink-0 px-2"
+                        disabled={attachProofBusy || payBusy}
+                        onClick={() => handleRemoveProof(a.id)}
+                      >
+                        ลบ
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-amber-800 dark:text-amber-200/90">
+                  ยังไม่มีเอกสารแนบ — ต้องแนบก่อนจึงจะกดยืนยันจ่ายได้
+                </p>
+              )}
+            </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" disabled={payBusy} onClick={() => setPayDialog(null)}>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={payBusy || attachProofBusy}
+              onClick={() => {
+                setPayDialog(null);
+                setPayAttachments([]);
+              }}
+            >
               ยกเลิก
             </Button>
             <Button
               type="button"
               variant="secondary"
-              disabled={payBusy || !payBankId || payTargets.length === 0}
+              disabled={
+                payBusy ||
+                attachProofBusy ||
+                !payBankId ||
+                payAttachments.length === 0 ||
+                payTargets.length === 0
+              }
               onClick={() => void handleConfirmPay()}
             >
               {payBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}

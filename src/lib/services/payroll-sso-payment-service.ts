@@ -20,9 +20,21 @@ import type {
   PayrollBatch,
   PayrollBatchLine,
   User,
+  WhtTaxPaymentProofAttachment,
 } from '@/lib/types';
 
 type LineCollection = 'payroll_batches' | 'office_payroll_runs' | 'executive_payroll_runs';
+
+function mergeSsoProofAttachments(
+  existing: WhtTaxPaymentProofAttachment[] | undefined,
+  incoming: WhtTaxPaymentProofAttachment[] | undefined,
+): WhtTaxPaymentProofAttachment[] {
+  const merged = [...(existing ?? [])];
+  for (const a of incoming ?? []) {
+    if (!merged.some((x) => x.id === a.id)) merged.push(a);
+  }
+  return merged;
+}
 
 function buildWorkerCombinedSsoPatch(
   line: PayrollBatchLine,
@@ -31,6 +43,7 @@ function buildWorkerCombinedSsoPatch(
   bankAccountId: string,
   user: User,
   now: number,
+  proofAttachments?: WhtTaxPaymentProofAttachment[],
 ): Partial<PayrollBatchLine> & { updatedAt: number } {
   const patch: Partial<PayrollBatchLine> & { updatedAt: number } = { updatedAt: now };
   if (!isWorkerSsoRemitPaid(line)) {
@@ -49,6 +62,12 @@ function buildWorkerCombinedSsoPatch(
     patch.ssoEmployerContribPaidByName = user.displayName || user.email || user.id;
     patch.ssoEmployerContribPaymentBankAccountId = bankAccountId;
   }
+  if (proofAttachments?.length) {
+    patch.ssoRemitPaymentProofAttachments = mergeSsoProofAttachments(
+      line.ssoRemitPaymentProofAttachments,
+      proofAttachments,
+    );
+  }
   return patch;
 }
 
@@ -59,6 +78,7 @@ function buildOfficeCombinedSsoPatch(
   bankAccountId: string,
   user: User,
   now: number,
+  proofAttachments?: WhtTaxPaymentProofAttachment[],
 ): Partial<OfficePayrollLine> & { updatedAt: number } {
   const patch: Partial<OfficePayrollLine> & { updatedAt: number } = { updatedAt: now };
   if (!isOfficeSsoRemitPaid(line)) {
@@ -77,6 +97,12 @@ function buildOfficeCombinedSsoPatch(
     patch.ssoEmployerContribPaidByName = user.displayName || user.email || user.id;
     patch.ssoEmployerContribPaymentBankAccountId = bankAccountId;
   }
+  if (proofAttachments?.length) {
+    patch.ssoRemitPaymentProofAttachments = mergeSsoProofAttachments(
+      line.ssoRemitPaymentProofAttachments,
+      proofAttachments,
+    );
+  }
   return patch;
 }
 
@@ -94,6 +120,7 @@ async function recordOfficeLineSsoCombinedPayment(
     runLabel: string;
     sectionLabel: string;
     companionLines?: Array<{ run: OfficePayrollRun; line: OfficePayrollLine }>;
+    proofAttachments?: WhtTaxPaymentProofAttachment[];
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const { run, line, collection } = params;
@@ -135,7 +162,15 @@ async function recordOfficeLineSsoCombinedPayment(
   });
 
   const now = Date.now();
-  const patch = buildOfficeCombinedSsoPatch(line, cashbookEntryId, entryNo, bankAccountId, user, now);
+  const patch = buildOfficeCombinedSsoPatch(
+    line,
+    cashbookEntryId,
+    entryNo,
+    bankAccountId,
+    user,
+    now,
+    params.proofAttachments,
+  );
   await updateDoc(doc(db, collection, run.id, 'lines', line.id), patch);
 
   for (const companion of params.companionLines ?? []) {
@@ -150,6 +185,7 @@ async function recordOfficeLineSsoCombinedPayment(
       bankAccountId,
       user,
       now,
+      params.proofAttachments,
     );
     await updateDoc(doc(db, collection, companion.run.id, 'lines', companion.line.id), cPatch);
   }
@@ -169,6 +205,7 @@ export async function recordWorkerPayrollSsoPayment(
     earnerName: string;
     /** ใบอื่นในคน+เดือนเดียวกัน — มาร์กจ่ายด้วย cashbook เดียวกัน (ไม่ตัดเงินซ้ำ) */
     companionLines?: Array<{ batch: PayrollBatch; line: PayrollBatchLine }>;
+    proofAttachments?: WhtTaxPaymentProofAttachment[];
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const { batch, line } = params;
@@ -210,7 +247,15 @@ export async function recordWorkerPayrollSsoPayment(
   });
 
   const now = Date.now();
-  const patch = buildWorkerCombinedSsoPatch(line, cashbookEntryId, entryNo, bankAccountId, user, now);
+  const patch = buildWorkerCombinedSsoPatch(
+    line,
+    cashbookEntryId,
+    entryNo,
+    bankAccountId,
+    user,
+    now,
+    params.proofAttachments,
+  );
   await updateDoc(doc(db, 'payroll_batches', batch.id, 'lines', line.id), patch);
 
   for (const companion of params.companionLines ?? []) {
@@ -225,6 +270,7 @@ export async function recordWorkerPayrollSsoPayment(
       bankAccountId,
       user,
       now,
+      params.proofAttachments,
     );
     await updateDoc(doc(db, 'payroll_batches', companion.batch.id, 'lines', companion.line.id), cPatch);
   }
@@ -243,6 +289,7 @@ export async function recordOfficePayrollSsoPayment(
     entryDate: string;
     earnerName: string;
     companionLines?: Array<{ run: OfficePayrollRun; line: OfficePayrollLine }>;
+    proofAttachments?: WhtTaxPaymentProofAttachment[];
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const runLabel = params.run.payrollRunNo || params.run.id;
@@ -257,6 +304,7 @@ export async function recordOfficePayrollSsoPayment(
     runLabel,
     sectionLabel: 'พนักงานออฟฟิศ',
     companionLines: params.companionLines,
+    proofAttachments: params.proofAttachments,
   });
 }
 
@@ -271,6 +319,7 @@ export async function recordExecutivePayrollSsoPayment(
     entryDate: string;
     earnerName: string;
     companionLines?: Array<{ run: OfficePayrollRun; line: OfficePayrollLine }>;
+    proofAttachments?: WhtTaxPaymentProofAttachment[];
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const runLabel = params.run.payrollRunNo || params.run.id;
@@ -285,6 +334,7 @@ export async function recordExecutivePayrollSsoPayment(
     runLabel,
     sectionLabel: 'ผู้บริหาร',
     companionLines: params.companionLines,
+    proofAttachments: params.proofAttachments,
   });
 }
 

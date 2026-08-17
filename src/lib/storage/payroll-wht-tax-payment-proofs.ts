@@ -19,8 +19,8 @@ function proofStorageExtensionFromFilename(name: string): string | null {
   return null;
 }
 
-/** หลักฐานการโอนภาษีหัก ณ ที่จ่าย (ภงด.1) — PDF หรือรูปภาพ */
-export type WhtTaxPaymentProofSection = 'worker' | 'office' | 'executive' | 'vendor';
+/** หลักฐานการโอนภาษีหัก ณ ที่จ่าย (ภงด.1) หรือ ปกส.+สมทบ — PDF หรือรูปภาพ */
+export type WhtTaxPaymentProofSection = 'worker' | 'office' | 'executive' | 'vendor' | 'sso';
 
 export async function uploadPayrollWhtTaxPaymentProof(
   firebaseApp: FirebaseApp,
@@ -42,7 +42,9 @@ export async function uploadPayrollWhtTaxPaymentProof(
     proofStorageExtensionFromFilename(file.name) ??
     (resolvedVendorBillProofContentType(file) === 'application/pdf' ? '.pdf' : '.jpg');
   const safeName = safeFileSegment(`${stem}${ext}`);
-  const path = `payroll_wht_tax_payment_proofs/${section}/${uploaderUid}/${Date.now()}_${id.slice(0, 8)}_${safeName}`;
+  const folder =
+    section === 'sso' ? 'payroll_sso_payment_proofs' : 'payroll_wht_tax_payment_proofs';
+  const path = `${folder}/${section === 'sso' ? 'combined' : section}/${uploaderUid}/${Date.now()}_${id.slice(0, 8)}_${safeName}`;
 
   const storage = getStorage(firebaseApp);
   const r = ref(storage, path);
@@ -59,4 +61,14 @@ export async function uploadPayrollWhtTaxPaymentProof(
     uploadedByUid: uploaderUid,
     uploadedByName: uploaderName,
   };
+}
+
+/** alias — หลักฐานจ่าย ปกส.+สมทบ ใช้โครงเดียวกับ ภงด. */
+export async function uploadPayrollSsoPaymentProof(
+  firebaseApp: FirebaseApp,
+  uploaderUid: string,
+  file: File,
+  uploaderName?: string,
+): Promise<WhtTaxPaymentProofAttachment> {
+  return uploadPayrollWhtTaxPaymentProof(firebaseApp, 'sso', uploaderUid, file, uploaderName);
 }

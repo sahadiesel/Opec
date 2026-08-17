@@ -2526,6 +2526,8 @@ export interface OfficePayrollLine {
   ssoRemitPaidByUid?: string;
   ssoRemitPaidByName?: string;
   ssoRemitPaymentBankAccountId?: string;
+  /** หลักฐานการโอน ปกส.+สมทบ — แนบตอนจ่าย */
+  ssoRemitPaymentProofAttachments?: WhtTaxPaymentProofAttachment[];
   /** จ่ายเงินสมทบฝั่งนายจ้างแล้ว — ref cashbook */
   ssoEmployerContribCashbookEntryId?: string;
   ssoEmployerContribCashbookEntryNo?: string;
@@ -2795,6 +2797,8 @@ export interface PayrollBatchLine {
   ssoRemitPaidByUid?: string;
   ssoRemitPaidByName?: string;
   ssoRemitPaymentBankAccountId?: string;
+  /** หลักฐานการโอน ปกส.+สมทบ — แนบตอนจ่าย */
+  ssoRemitPaymentProofAttachments?: WhtTaxPaymentProofAttachment[];
   /** จ่ายเงินสมทบฝั่งนายจ้างแล้ว — ref cashbook */
   ssoEmployerContribCashbookEntryId?: string;
   ssoEmployerContribCashbookEntryNo?: string;

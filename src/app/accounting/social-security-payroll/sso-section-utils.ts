@@ -5,6 +5,7 @@ import type {
   OfficePayrollRun,
   PayrollBatch,
   PayrollBatchLine,
+  WhtTaxPaymentProofAttachment,
 } from '@/lib/types';
 import {
   employerSsoContribAmount,
@@ -305,6 +306,7 @@ export function applyLocalCombinedSsoPaymentPatch<T extends PayrollBatchLine | O
   result: { cashbookEntryId: string; entryNo: string },
   bankId: string,
   now = Date.now(),
+  proofAttachments?: WhtTaxPaymentProofAttachment[],
 ): T {
   const patch: Partial<T> = {};
   if (!line.ssoRemitCashbookEntryId && !line.ssoRemitPaidAt) {
@@ -322,6 +324,14 @@ export function applyLocalCombinedSsoPaymentPatch<T extends PayrollBatchLine | O
       ssoEmployerContribPaidAt: now,
       ssoEmployerContribPaymentBankAccountId: bankId,
     });
+  }
+  if (proofAttachments?.length) {
+    const existing = line.ssoRemitPaymentProofAttachments ?? [];
+    const merged = [...existing];
+    for (const a of proofAttachments) {
+      if (!merged.some((x) => x.id === a.id)) merged.push(a);
+    }
+    Object.assign(patch, { ssoRemitPaymentProofAttachments: merged });
   }
   return { ...line, ...patch };
 }

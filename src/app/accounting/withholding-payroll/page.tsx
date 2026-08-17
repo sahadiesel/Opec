@@ -2239,7 +2239,7 @@ export default function AccountingWithholdingPayrollHubPage() {
             }
           }}
         >
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-2xl sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>จ่ายภาษีหัก ณ ที่จ่าย (บุคลากร) — รวมทั้ง 3 ส่วน</DialogTitle>
               <DialogDescription>
@@ -2288,12 +2288,15 @@ export default function AccountingWithholdingPayrollHubPage() {
                     <div className="space-y-2">
                       <Label htmlFor="wht-pay-bank">บัญชีธนาคารที่ตัดจ่าย</Label>
                       <Select value={payTaxBankId} onValueChange={setPayTaxBankId}>
-                        <SelectTrigger id="wht-pay-bank">
+                        <SelectTrigger
+                          id="wht-pay-bank"
+                          className="h-auto min-h-11 py-2 [&>span]:line-clamp-none [&>span]:whitespace-normal [&>span]:text-left"
+                        >
                           <SelectValue placeholder="เลือกบัญชี ACTIVE" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="max-w-[min(100vw-2rem,42rem)]">
                           {operatingBankOptions.map((b) => (
-                            <SelectItem key={b.id} value={b.id}>
+                            <SelectItem key={b.id} value={b.id} className="whitespace-normal">
                               {b.bankName} · {b.accountName} [{b.accountCode}]
                             </SelectItem>
                           ))}
