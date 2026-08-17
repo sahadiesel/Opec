@@ -22,7 +22,7 @@ export function buildSocialSecurityPayrollListPrintHtml(params: {
   filterLines: string[];
   /** รวมคอลัมน์ยอดจ่าย ตามรายการที่พิมพ์ */
   paidTotalLabel: string;
-  /** รวมคอลัมน์ยอด ปกส. ตามรายการที่พิมพ์ */
+  /** รวมคอลัมน์ ปกส.+สมทบ (ลูกจ้าง+นายจ้าง) ตามรายการที่พิมพ์ */
   remitTotalLabel: string;
   generatedAt: string;
   printedBy?: string;
@@ -160,7 +160,7 @@ export function buildSocialSecurityPayrollListPrintHtml(params: {
   ${filterBlock}
   <div class="ssl-totals">
     <div class="ssl-total-box">รวมรายจ่าย<strong>${escapeHtmlDoc(paidTotalLabel)}</strong></div>
-    <div class="ssl-total-box">รวมการหัก<strong>${escapeHtmlDoc(remitTotalLabel)}</strong></div>
+    <div class="ssl-total-box">รวม ปกส.+สมทบ<strong>${escapeHtmlDoc(remitTotalLabel)}</strong></div>
   </div>
   <table class="ssl-table">
     <colgroup>

@@ -228,15 +228,32 @@ export function canRunFinalClearanceStep(
 }
 
 /**
- * เติม W ต้นเดือนจนถึงก่อนวัน Standby — เฉพาะคนที่มอบหมายมาจากเดือนก่อน (carry-over)
- * ไม่ใช้ mobCycle > 1 อย่างเดียว: remob ในเดือนเดียวกันจะไปเติม W วันก่อนเริ่มงานจริง (เช่น 1–5 ทั้งที่เริ่ม 6)
+ * เติม W ต้นเดือนจนถึงก่อนวัน Standby — เฉพาะคนที่มอบหมายมาจากเดือนก่อน (carry-over รอบแรก)
+ * ไม่ใช้ mobCycle > 1 / remob หลังจบไซต์: จะไปเติม W วันก่อนเริ่มงานรอบใหม่ (เช่น remob 17 → เติม W 1–16)
  */
 export function shouldAutoFillPrefixWorkDaysBeforeStandby(
-  a: Pick<Assignment, 'mobCycleNumber' | 'startDate'>,
+  a: Pick<
+    Assignment,
+    'mobCycleNumber' | 'startDate' | 'mobLocationEndDate' | 'mobWorkingStartDate' | 'mobStandbyDate'
+  >,
   standbyYmd: string,
 ): boolean {
-  const ym = standbyYmd.trim().slice(0, 7);
-  if (!/^\d{4}-\d{2}$/.test(ym)) return false;
+  const st = standbyYmd.trim().slice(0, 10);
+  const ym = st.slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(ym) || !/^\d{4}-\d{2}-\d{2}$/.test(st)) return false;
+
+  const cycle =
+    typeof a.mobCycleNumber === 'number' && Number.isFinite(a.mobCycleNumber) ? a.mobCycleNumber : 1;
+  if (cycle > 1) return false;
+
+  /** remob บนเอกสารเดิม: จบไซต์รอบเก่าแล้วยังไม่ถึง / ก่อน SB หรือเริ่มงานรอบใหม่ */
+  const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(mobEnd)) {
+    const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
+    if (mobEnd < st) return false;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(mobStart) && mobEnd < mobStart) return false;
+  }
+
   const monthStart = `${ym}-01`;
   const sd = (a.startDate || '').trim().slice(0, 10);
   if (/^\d{4}-\d{2}-\d{2}$/.test(sd) && sd < monthStart) return true;

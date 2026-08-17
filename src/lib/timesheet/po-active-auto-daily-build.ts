@@ -177,26 +177,20 @@ export function computePoActiveAutoDailyRange(
   return { start: startRaw, end: cap };
 }
 
-/** ลบแถว auto ที่สร้างผิดก่อนวัน remob / ในช่วง gap ระหว่างรอบ */
+/** ลบแถว auto ที่ค้างหลังจบไซต์ขณะยังรอ remob — หลัง remob แล้วห้ามลบตารางเดิม */
 export function shouldDeleteStalePoActiveAutoDailyRow(
   a: Assignment,
   dateYmd: string,
 ): boolean {
-  if (isYmdInRemobGapBetweenCycles(a, dateYmd)) return true;
-  if (isYmdAfterSiteEndAwaitingRemob(a, dateYmd)) return true;
-  const mobEnd = (a.mobLocationEndDate || '').trim().slice(0, 10);
-  const segStart = resolveMobSegmentStartYmd(a);
   /**
-   * รอบเก่าข้ามเดือน (≤ mobEnd) — เก็บประวัติ
-   * remob ในเดือนเดียวกัน: วันต้นเดือน–ก่อน M1/SB รอบใหม่มักเป็น W เติมผิด — ตัดทิ้ง
-   * (สอดคล้องกริดสรุปรายเดือนที่ว่างถึงก่อน M1)
+   * remob แล้ว (มี SB/เริ่มงานรอบใหม่) — เริ่มของใหม่จากวันนั้นเท่านั้น
+   * ห้ามลบ/ยุ่งตารางวันที่มีอยู่ก่อนหน้า
    */
-  if (assignmentHasSplitPriorAndNewCycleOnDoc(a) && /^\d{4}-\d{2}-\d{2}$/.test(mobEnd) && dateYmd <= mobEnd) {
-    if (segStart && dateYmd.slice(0, 7) === segStart.slice(0, 7)) return true;
+  if (assignmentHasSplitPriorAndNewCycleOnDoc(a) && resolveMobSegmentStartYmd(a)) {
     return false;
   }
-  /** ใช้วันแรกของรอบ (SB หรือเริ่มงาน) — อย่าใช้แค่ mobWorkingStartDate จะไปตัดวัน M1/SB ก่อนเริ่มงาน */
-  if (segStart && dateYmd < segStart) return true;
+  /** ยังรอ remob: ลบเฉพาะ auto หลังวันจบไซต์ */
+  if (isYmdAfterSiteEndAwaitingRemob(a, dateYmd)) return true;
   return false;
 }
 

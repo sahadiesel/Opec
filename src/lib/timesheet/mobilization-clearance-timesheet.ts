@@ -265,8 +265,8 @@ export async function deleteDraftMobFinalClearanceTimesheetsInRange(
 }
 
 /**
- * ลบ W ร่างที่เติม «ต่อเนื่องต้นเดือน» ผิดช่วง (ก่อนวันเริ่มงานรอบก่อน)
- * + ลบ W ร่างแบบเดียวกันทั้งก้อนเมื่อไม่ควร auto-fill prefix (remob ในเดือนเดียวกัน)
+ * ลบ W ร่างที่เติม «ต่อเนื่องต้นเดือน» ผิดช่วง — เฉพาะรอบแรก (carry-over)
+ * remob: ไม่ลบอะไรเลย — เริ่มรอบใหม่จากวัน Mob เท่านั้น ไม่ยุ่งตารางเดิม
  */
 export async function purgeStalePrefixContinuityWorkDaysForMonth(
   db: Firestore,
@@ -290,21 +290,15 @@ export async function purgeStalePrefixContinuityWorkDaysForMonth(
     /^\d{4}-\d{2}-\d{2}$/.test(standbyYmd) &&
     shouldAutoFillPrefixWorkDaysBeforeStandby(assignment, standbyYmd);
 
+  /** remob / ไม่ควร fill prefix — ห้ามลบตารางที่มีอยู่แล้ว */
+  if (!shouldFill) return 0;
+
   const priorFloor = resolvePriorCycleWorkStartFloorYmd(assignment);
-  /** ไม่ควร fill — ลบ prefix ทั้งช่วงต้นเดือนถึงก่อน Standby (หรือสิ้นเดือน) */
+  /** รอบแรก carry-over: ลบ W ต่อเนื่องต้นเดือนที่อยู่ก่อนวันเริ่มงานรอบก่อน (ถ้ามี) */
   let deleteBeforeExclusive: string | undefined;
-  if (!shouldFill) {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(standbyYmd) && standbyYmd.slice(0, 7) === ym) {
-      deleteBeforeExclusive = standbyYmd;
-    } else if (priorFloor && priorFloor.slice(0, 7) === ym) {
-      deleteBeforeExclusive = priorFloor;
-    } else {
-      deleteBeforeExclusive = addDaysToYmd(monthEnd, 1);
-    }
-  } else if (priorFloor && priorFloor.slice(0, 7) === ym) {
+  if (priorFloor && priorFloor.slice(0, 7) === ym) {
     deleteBeforeExclusive = priorFloor;
   }
-
   if (!deleteBeforeExclusive) return 0;
 
   const service = new TimesheetService(db);
@@ -322,7 +316,8 @@ export async function purgeStalePrefixContinuityWorkDaysForMonth(
     if (service.isFinalized(cur.status)) continue;
     if (cur.eventType !== 'work_day') continue;
     const rmk = String(cur.remark ?? '');
-    const isPrefix = rmk.includes('ต่อเนื่องต้นเดือน') || rmk.includes(PREFIX_CONTINUITY_WORK_DAY_REMARK);
+    const isPrefix =
+      rmk.includes('ต่อเนื่องต้นเดือน') || rmk.includes(PREFIX_CONTINUITY_WORK_DAY_REMARK);
     if (!isPrefix) continue;
     await deleteDoc(ref);
     removed++;
@@ -358,7 +353,10 @@ export async function applyMobFinalClearanceWorkStartFill(
     throw new Error('วันเริ่มทำงานต้องอยู่หลังวัน Standby (ไม่สามารถเลือกวันเดียวกันหรือก่อนหน้าได้)');
   }
 
-  /** ลบ W «ต่อเนื่องต้นเดือน» ที่เคยเติมผิดช่วง (เช่น remob ในเดือนเดียวกัน) */
+  /**
+   * remob ไม่ลบตารางเดิม — ฟังก์ชันนี้ no-op เมื่อไม่ควร fill prefix
+   * (เก็บเรียกไว้เผื่อรอบแรก carry-over ที่มี priorFloor)
+   */
   await purgeStalePrefixContinuityWorkDaysForMonth(db, a, st.slice(0, 7));
 
   const bypass = true;

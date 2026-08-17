@@ -498,14 +498,8 @@ export default function AccountingSocialSecurityPayrollHubPage() {
     [filteredExecutive],
   );
 
-  /** รวมตามตัวกรอง — รวมรายจ่าย = ยอดจ่าย · รวมการหัก = ยอด ปกส. (หักจากค่าจ้าง) */
-  const grandTotalWithhold = useMemo(
-    () =>
-      filteredWorker.reduce((sum, { sso }) => sum + sso, 0) +
-      filteredOffice.reduce((sum, { sso }) => sum + sso, 0) +
-      filteredExecutive.reduce((sum, { sso }) => sum + sso, 0),
-    [filteredWorker, filteredOffice, filteredExecutive],
-  );
+  /** รวมตามตัวกรอง — รวมรายจ่าย = ยอดจ่าย · รวม ปกส.+สมทบ = ยอดนำส่ง (ลูกจ้าง+นายจ้าง) */
+  const grandTotalRemit = workerTotalSso + officeTotalSso + executiveTotalSso;
   const grandTotalPaid = useMemo(
     () =>
       filteredWorker.reduce((sum, { line }) => sum + workerLineGrossPayAmount(line), 0) +
@@ -574,10 +568,10 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           workers.reduce((sum, { line }) => sum + workerLineGrossPayAmount(line), 0) +
           offices.reduce((sum, { line }) => sum + officeLineGrossPayAmount(line), 0) +
           executives.reduce((sum, { line }) => sum + officeLineGrossPayAmount(line), 0);
-        const withholdTotal =
-          workers.reduce((sum, { sso }) => sum + sso, 0) +
-          offices.reduce((sum, { sso }) => sum + sso, 0) +
-          executives.reduce((sum, { sso }) => sum + sso, 0);
+        const remitTotal =
+          workers.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0) +
+          offices.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0) +
+          executives.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0);
         const generatedAt = new Date().toLocaleString('th-TH', {
           dateStyle: 'medium',
           timeStyle: 'short',
@@ -591,7 +585,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
           scopeTitle,
           filterLines,
           paidTotalLabel: fmtBaht(paidTotal),
-          remitTotalLabel: fmtSsoBaht(withholdTotal),
+          remitTotalLabel: fmtSsoBaht(remitTotal),
           generatedAt,
           printedBy: currentUser?.displayName,
           truncated,
@@ -745,8 +739,8 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                     <>
                       <AccountingFilterToolbarStat label="รวมรายจ่าย" value={fmtBaht(grandTotalPaid)} />
                       <AccountingFilterToolbarStat
-                        label="รวมการหัก"
-                        value={fmtSsoBaht(grandTotalWithhold)}
+                        label="รวม ปกส.+สมทบ"
+                        value={fmtSsoBaht(grandTotalRemit)}
                         emphasize
                       />
                     </>
@@ -776,10 +770,10 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                 <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredRowCount} รายการ</p>
               </div>
               <p className="text-xs text-muted-foreground">
-                ข้อมูลทั้งหมด: {allRowCount} รายการ · สมทบรวม {fmtSsoBaht(
-                  workerRows.reduce((s, r) => s + r.sso, 0) +
-                    officeRows.reduce((s, r) => s + r.sso, 0) +
-                    executiveRows.reduce((s, r) => s + r.sso, 0),
+                ข้อมูลทั้งหมด: {allRowCount} รายการ · ปกส.+สมทบ รวม {fmtSsoBaht(
+                  workerRows.reduce((s, r) => s + ssoCombinedRemitAmount(r.sso), 0) +
+                    officeRows.reduce((s, r) => s + ssoCombinedRemitAmount(r.sso), 0) +
+                    executiveRows.reduce((s, r) => s + ssoCombinedRemitAmount(r.sso), 0),
                 )}
               </p>
             </div>
