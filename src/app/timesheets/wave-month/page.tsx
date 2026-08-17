@@ -65,6 +65,7 @@ import { isAssignmentEligibleForPoActiveAutoDaily } from '@/lib/timesheet/po-act
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import {
   buildTimesheetFieldsFromMobCharges,
+  defaultChargesForEventType,
   defaultPackageHoursForWorkMode,
   formatMobDayChargeSummary,
   normalizeMobDayChargeSpec,
@@ -99,6 +100,7 @@ import {
 import {
   createTimesheetRetroAdjustment,
   setAbsoluteWorkDayRetroOt,
+  voidApprovedRetroAdjustmentsForTimesheet,
 } from '@/lib/services/timesheet-retro-adjustment-service';
 import {
   computeRetroAdjustmentPayFromFirestore,
@@ -185,16 +187,20 @@ function chunkIds<T>(arr: T[], size: number): T[][] {
 /** Firestore `in` — ใช้ช่วงที่ปลอดภัยสำหรับ mobilizations.poId */
 const FIRESTORE_IN_CHUNK_PO = 30;
 
+/** ตัวเลือกประเภทวัน — ให้ตรงกับหน้าลงรายวัน (wave-board) */
 const EVENT_TYPE_OPTIONS: { label: string; value: RateConditionEventType }[] = [
   { label: 'วันทำงาน (Work)', value: 'work_day' },
   { label: 'วันเดินทาง (Travel)', value: 'travel_day' },
   { label: 'สแตนด์บาย (Standby)', value: 'standby_day' },
-  { label: 'วันเดินทาง', value: 'mobilization_day' },
+  { label: 'Mob (MO)', value: 'mobilization_day' },
   { label: 'วันเดินทางกลับ (Demob)', value: 'demobilization_day' },
-  { label: 'ลาป่วย (ได้รับค่าจ้าง)', value: 'sick_leave_paid' },
-  { label: 'ส่งกลับ/กลับก่อนกำหนด (Early return)', value: 'early_return' },
   { label: 'ไม่จ่ายค่าแรง (Unpaid)', value: 'unpaid_leave' },
 ];
+
+/** ค่าใน dropdown — ล้างช่องวันนั้น (ลบ timesheet / แสดงเป็นว่าง) */
+const WAVE_MONTH_EVENT_CLEAR = '__wave_month_empty__';
+
+type WaveMonthEventSelectValue = RateConditionEventType | typeof WAVE_MONTH_EVENT_CLEAR;
 
 function isWaveMonthReviewLocked(r: WaveMonthTimesheetReview | undefined): boolean {
   return (
@@ -316,6 +322,8 @@ type RetroEditContext = {
   timesheet: DailyTimesheet;
   workerName: string;
   po: PurchaseOrder | undefined;
+  /** มีเอกสาร daily_timesheets จริง (ไม่ใช่ใบสังเคราะห์ตอนเซลล์ว่าง) */
+  persisted: boolean;
   /** ชม. OT ที่แสดงบนตารางตอนเปิดฟอร์ม (base + retro) */
   displayOtHours: number;
   /** ชม. OT จาก retro ที่จ่ายเข้าสลิปแล้ว (applied) — ห้าม void */
@@ -368,6 +376,7 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [extraWaves, setExtraWaves] = useState<Wave[]>([]);
   const [cellEdit, setCellEdit] = useState<CellEditContext | null>(null);
   const [retroEdit, setRetroEdit] = useState<RetroEditContext | null>(null);
+  const [retroEvent, setRetroEvent] = useState<WaveMonthEventSelectValue>('work_day');
   const [retroAddedOt, setRetroAddedOt] = useState(0);
   const [retroAddedStandby, setRetroAddedStandby] = useState(0);
   const [retroAddedM1Trips, setRetroAddedM1Trips] = useState(0);
@@ -381,7 +390,7 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [retroPayContractId, setRetroPayContractId] = useState('');
   const [retroPayRateSource, setRetroPayRateSource] = useState<'worker_custom' | 'contract_matrix' | null>(null);
   const [editDate, setEditDate] = useState('');
-  const [editEvent, setEditEvent] = useState<RateConditionEventType>('work_day');
+  const [editEvent, setEditEvent] = useState<WaveMonthEventSelectValue>('work_day');
   const [editHours, setEditHours] = useState(12);
   const [editOtHours, setEditOtHours] = useState(0);
   const [editRemark, setEditRemark] = useState('');
@@ -484,11 +493,13 @@ export default function WaveMonthTimesheetSummaryPage() {
   useEffect(() => {
     if (!retroEdit) return;
     const ts = retroEdit.timesheet;
+    const ev = (ts.eventType as RateConditionEventType) || 'work_day';
+    setRetroEvent(ev);
     /** OT = ยอดรวมที่ต้องการบนตาราง — เติมค่าที่แสดงอยู่ตอนเปิดฟอร์ม */
-    setRetroAddedOt(ts.eventType === 'work_day' ? Math.max(0, Number(retroEdit.displayOtHours) || 0) : 0);
+    setRetroAddedOt(ev === 'work_day' ? Math.max(0, Number(retroEdit.displayOtHours) || 0) : 0);
     setRetroAddedStandby(0);
-    setRetroAddedM1Trips(retroEdit.timesheet.eventType === 'mobilization_day' ? 1 : 0);
-    setRetroAddedD1Trips(retroEdit.timesheet.eventType === 'demobilization_day' ? 1 : 0);
+    setRetroAddedM1Trips(ev === 'mobilization_day' ? 1 : 0);
+    setRetroAddedD1Trips(ev === 'demobilization_day' ? 1 : 0);
     setRetroApplyYm(defaultApplyPayrollYmAfter(monthYm));
     setRetroReason('');
     setRetroPayPreview(null);
@@ -497,9 +508,28 @@ export default function WaveMonthTimesheetSummaryPage() {
     setRetroPayRateSource(null);
   }, [retroEdit, monthYm]);
 
+  const onRetroEventChange = useCallback(
+    (next: WaveMonthEventSelectValue) => {
+      setRetroEvent(next);
+      if (next === WAVE_MONTH_EVENT_CLEAR) {
+        setRetroAddedOt(0);
+        setRetroAddedStandby(0);
+        setRetroAddedM1Trips(0);
+        setRetroAddedD1Trips(0);
+        return;
+      }
+      /** ค่าเริ่มต้นหลังเปลี่ยนประเภท — 0 เพื่อให้แค่เปลี่ยนประเภทวันได้โดยไม่สร้างยอดจ่ายเพิ่มอัตโนมัติ */
+      setRetroAddedOt(next === 'work_day' ? Math.max(0, Number(retroEdit?.displayOtHours) || 0) : 0);
+      setRetroAddedStandby(0);
+      setRetroAddedM1Trips(0);
+      setRetroAddedD1Trips(0);
+    },
+    [retroEdit],
+  );
+
   /** ชม. OT ที่จะสร้าง/แทนที่รายการรอจ่าย (หลังหักฐานสลิป + applied) */
   const retroOtPayHours = useMemo(() => {
-    if (!retroEdit || retroEdit.timesheet.eventType !== 'work_day') {
+    if (!retroEdit || retroEvent !== 'work_day') {
       return Math.max(0, Number(retroAddedOt) || 0);
     }
     const ts = retroEdit.timesheet;
@@ -508,10 +538,10 @@ export default function WaveMonthTimesheetSummaryPage() {
     const applied = Math.max(0, Number(retroEdit.appliedOtHours) || 0);
     const target = Math.max(0, Math.min(24, Number(retroAddedOt) || 0));
     return Math.max(0, target - base - applied);
-  }, [retroEdit, retroAddedOt]);
+  }, [retroEdit, retroEvent, retroAddedOt]);
 
   useEffect(() => {
-    if (!firestore || !retroEdit) {
+    if (!firestore || !retroEdit || retroEvent === WAVE_MONTH_EVENT_CLEAR) {
       setRetroPayPreview(null);
       setRetroPayPreviewLoading(false);
       setRetroPayMissing([]);
@@ -520,7 +550,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       return;
     }
     const ot =
-      retroEdit.timesheet.eventType === 'work_day'
+      retroEvent === 'work_day'
         ? Math.max(0, Number(retroOtPayHours) || 0)
         : Math.max(0, Number(retroAddedOt) || 0);
     const sb = Math.max(0, Number(retroAddedStandby) || 0);
@@ -539,16 +569,17 @@ export default function WaveMonthTimesheetSummaryPage() {
     const t = window.setTimeout(() => {
       void (async () => {
         try {
-          const result = await computeRetroAdjustmentPayFromFirestore(firestore, retroEdit.timesheet, {
-            addedOt15Hours: retroEdit.timesheet.eventType === 'work_day' ? ot : undefined,
+          const tsForPay: DailyTimesheet = { ...retroEdit.timesheet, eventType: retroEvent };
+          const result = await computeRetroAdjustmentPayFromFirestore(firestore, tsForPay, {
+            addedOt15Hours: retroEvent === 'work_day' ? ot : undefined,
             addedStandbyHours:
-              retroEdit.timesheet.eventType === 'mobilization_day' ||
-              retroEdit.timesheet.eventType === 'demobilization_day' ||
-              retroEdit.timesheet.eventType === 'standby_day'
+              retroEvent === 'mobilization_day' ||
+              retroEvent === 'demobilization_day' ||
+              retroEvent === 'standby_day'
                 ? sb
                 : undefined,
-            addedM1Trips: retroEdit.timesheet.eventType === 'mobilization_day' ? m1 : undefined,
-            addedD1Trips: retroEdit.timesheet.eventType === 'demobilization_day' ? d1 : undefined,
+            addedM1Trips: retroEvent === 'mobilization_day' ? m1 : undefined,
+            addedD1Trips: retroEvent === 'demobilization_day' ? d1 : undefined,
           });
           if (cancelled) return;
           setRetroPayPreview(result.ok ? result.amountBaht : null);
@@ -570,7 +601,16 @@ export default function WaveMonthTimesheetSummaryPage() {
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [firestore, retroEdit, retroAddedOt, retroOtPayHours, retroAddedStandby, retroAddedM1Trips, retroAddedD1Trips]);
+  }, [
+    firestore,
+    retroEdit,
+    retroEvent,
+    retroAddedOt,
+    retroOtPayHours,
+    retroAddedStandby,
+    retroAddedM1Trips,
+    retroAddedD1Trips,
+  ]);
 
   useEffect(() => {
     if (editEvent !== 'work_day') setEditOtHours(0);
@@ -1851,6 +1891,7 @@ export default function WaveMonthTimesheetSummaryPage() {
           timesheet: retroTs,
           workerName: rw.name,
           po,
+          persisted: !!ts,
           displayOtHours,
           appliedOtHours,
           approvedOtHours,
@@ -1935,6 +1976,67 @@ export default function WaveMonthTimesheetSummaryPage() {
     if (!firestore || !currentUser || !cellEdit) return;
     const { wave, po, monthReview, workerId, workerName, assignment, timesheet: openedTs } = cellEdit;
     const service = new TimesheetService(firestore);
+
+    if (editEvent === WAVE_MONTH_EVENT_CLEAR) {
+      if (retroOnlyPayrollMonth) {
+        toast({
+          variant: 'destructive',
+          title: 'งวด payroll ปิดแล้ว',
+          description: 'ใช้ «แก้ไขย้อนหลัง» แล้วเลือก «ว่าง (ล้างช่อง)» แทน',
+        });
+        return;
+      }
+      if (!canEditTs || isRowLockedForWorker(po, monthReview, workerId)) {
+        toast({
+          variant: 'destructive',
+          title: 'ล้างช่องไม่ได้',
+          description: 'ไม่มีสิทธิ์หรืองวดถูกปิดแล้ว',
+        });
+        return;
+      }
+      const newId = service.getTimesheetId(workerId, assignment.id, editDate);
+      const snapAtNewId = await getDoc(doc(firestore, 'daily_timesheets', newId));
+      const baseTs: DailyTimesheet | undefined = snapAtNewId.exists()
+        ? ({ id: snapAtNewId.id, ...(snapAtNewId.data() as object) } as DailyTimesheet)
+        : openedTs;
+      if (!baseTs?.id) {
+        toast({ title: 'ล้างช่องแล้ว', description: 'วันนี้ว่างอยู่แล้ว' });
+        setCellEdit(null);
+        return;
+      }
+      if (service.isFinalized(baseTs.status as DailyTimesheetStatus) || isTimesheetPayrollLocked(baseTs)) {
+        toast({
+          variant: 'destructive',
+          title: 'ล้างช่องไม่ได้',
+          description: 'รายการถูกล็อกในชุดจ่าย — ใช้แก้ไขย้อนหลังหรือลบชุดจ่ายก่อน',
+        });
+        return;
+      }
+      setSavingCell(true);
+      try {
+        await voidApprovedRetroAdjustmentsForTimesheet(
+          firestore,
+          currentUser as User,
+          baseTs.id,
+          editRemark.trim() || 'ล้างช่องจาก wave-month',
+        );
+        await deleteDoc(doc(firestore, 'daily_timesheets', baseTs.id));
+        if (openedTs?.id && openedTs.id !== baseTs.id) {
+          await deleteDoc(doc(firestore, 'daily_timesheets', openedTs.id));
+        }
+        toast({ title: 'ล้างช่องแล้ว', description: `${workerName} · ${editDate}` });
+        setCellEdit(null);
+      } catch (e: unknown) {
+        toast({
+          variant: 'destructive',
+          title: 'ล้างช่องไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setSavingCell(false);
+      }
+      return;
+    }
 
     const contractId = (assignment.contractId || po?.contractId || '').trim();
     const poLineId = (assignment.poLineId || wave.poLineId || '').trim();
@@ -2190,78 +2292,207 @@ export default function WaveMonthTimesheetSummaryPage() {
     if (!firestore || !currentUser || !retroEdit || !canEditTs) return;
     setRetroSaving(true);
     try {
-      const ev = retroEdit.timesheet.eventType;
       const reason = retroReason.trim();
       if (!reason) throw new Error('กรุณาระบุเหตุผลการแก้ไข');
 
-      if (ev === 'work_day') {
-        const locked = isTimesheetPayrollLocked(retroEdit.timesheet);
-        /**
-         * OT = ยอดรวมที่ต้องการบนตาราง — ยกเลิก approved เดิมแล้วสร้างใหม่ตามส่วนต่าง
-         * ใบงานยังไม่ LOCKED: ฐานนับ 0 (จะย้าย OT ออกจากใบงาน) เพื่อไม่บวกซ้ำ
-         */
-        const baseOnSlip = locked ? Math.max(0, Number(retroEdit.timesheet.ot15Hours) || 0) : 0;
-        const result = await setAbsoluteWorkDayRetroOt(firestore, currentUser as User, {
-          sourceTimesheet: retroEdit.timesheet,
-          sourceYearMonth: monthYm,
-          applyPayrollYearMonth: retroApplyYm.trim(),
-          targetOtHours: Math.max(0, Math.min(24, Number(retroAddedOt) || 0)),
-          baseOtHoursOnSlip: baseOnSlip,
-          reason,
-        });
-
-        if (
-          !locked &&
-          retroEdit.timesheet.id &&
-          canCorrectTimesheetOtDirect(retroEdit.timesheet)
-        ) {
-          const sourceOt = Math.max(0, Number(retroEdit.timesheet.ot15Hours) || 0);
-          if (sourceOt > 0) {
-            const service = new TimesheetService(firestore);
-            await service.correctClosedPeriodTimesheetHours(
-              retroEdit.timesheet.id,
-              currentUser as User,
-              {
-                ot15Hours: 0,
-                reason: `ย้าย OT ${sourceOt} ชม. ไปรายการแก้ไขย้อนหลัง (จ่ายในงวด ${retroApplyYm.trim()})`,
-              },
-            );
-          }
+      if (retroEvent === WAVE_MONTH_EVENT_CLEAR) {
+        const ts = retroEdit.timesheet;
+        const locked = isTimesheetPayrollLocked(ts);
+        if (locked && retroEdit.persisted) {
+          throw new Error(
+            'ใบงานถูกล็อกในชุดจ่าย payroll แล้ว — ลบชุดจ่าย (System Admin) ก่อนล้างช่อง',
+          );
         }
-
+        if (!retroEdit.persisted || !ts.id) {
+          toast({ title: 'ล้างช่องแล้ว', description: 'วันนี้ว่างอยู่แล้ว' });
+          setRetroEdit(null);
+          return;
+        }
+        const service = new TimesheetService(firestore);
+        if (service.isFinalized(ts.status as DailyTimesheetStatus)) {
+          throw new Error('รายการถูกล็อก — ล้างช่องไม่ได้');
+        }
+        const voided = await voidApprovedRetroAdjustmentsForTimesheet(
+          firestore,
+          currentUser as User,
+          ts.id,
+          reason,
+        );
+        await deleteDoc(doc(firestore, 'daily_timesheets', ts.id));
         toast({
-          title: 'บันทึกแก้ไขย้อนหลังแล้ว',
+          title: 'ล้างช่องแล้ว',
           description:
-            result.addedOtHours > 0 && retroPayPreview != null && retroPayPreview > 0
-              ? `OT รวม ${Number(retroAddedOt) || 0} ชม. · ยอดจ่ายประมาณ ฿${retroPayPreview.toLocaleString()} · จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)}`
-              : result.voidedCount > 0
-                ? `อัปเดต OT รวมเป็น ${Number(retroAddedOt) || 0} ชม. (แทนที่รายการรอจ่ายเดิม)`
-                : `แสดงบนตารางพร้อมเครื่องหมาย † — จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)}`,
+            voided > 0
+              ? `ลบใบงาน · ยกเลิกแก้ไขย้อนหลังรอจ่าย ${voided} รายการ`
+              : `${retroEdit.workerName} · ${ts.date} — แสดงเป็นว่างบนตาราง`,
         });
         setRetroEdit(null);
         return;
       }
 
-      await createTimesheetRetroAdjustment(firestore, currentUser as User, {
-        sourceTimesheet: retroEdit.timesheet,
-        sourceYearMonth: monthYm,
-        applyPayrollYearMonth: retroApplyYm.trim(),
-        addedStandbyHours:
-          ev === 'mobilization_day' || ev === 'demobilization_day' || ev === 'standby_day'
-            ? retroAddedStandby
-            : undefined,
-        addedM1Trips: ev === 'mobilization_day' ? retroAddedM1Trips : undefined,
-        addedD1Trips: ev === 'demobilization_day' ? retroAddedD1Trips : undefined,
-        reason,
-      });
+      const originalEv = (retroEdit.timesheet.eventType as RateConditionEventType) || 'work_day';
+      const ev = retroEvent;
+      const typeChanged = ev !== originalEv;
+      const locked = isTimesheetPayrollLocked(retroEdit.timesheet);
+      const service = new TimesheetService(firestore);
 
-      toast({
-        title: 'บันทึกแก้ไขย้อนหลังแล้ว',
-        description:
-          retroPayPreview != null && retroPayPreview > 0
-            ? `ยอดจ่ายประมาณ ฿${retroPayPreview.toLocaleString()} · จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)} — กดดึงจากแก้ไขย้อนหลังบนสลิป`
-            : `แสดงบนตารางพร้อมเครื่องหมาย † — จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)}`,
-      });
+      if (typeChanged && locked && retroEdit.persisted) {
+        throw new Error(
+          'ใบงานถูกล็อกในชุดจ่าย payroll แล้ว — ลบชุดจ่าย (System Admin) ก่อนเปลี่ยนประเภทวัน หรือแก้เฉพาะ OT/ชม.',
+        );
+      }
+
+      let workingTs: DailyTimesheet = { ...retroEdit.timesheet, eventType: ev };
+      const pkg = defaultPackageHoursForWorkMode(workingTs.workMode);
+      const isUnpaid = ev === 'unpaid_leave';
+      const isWorkDay = ev === 'work_day';
+      const isMobLike =
+        ev === 'mobilization_day' || ev === 'demobilization_day' || ev === 'standby_day';
+
+      /** เปลี่ยน/สร้างประเภทวันบนใบงานต้นทาง (ยังไม่ LOCKED) — ให้ตารางรายเดือนตรงกับหน้าลงรายวัน */
+      if (typeChanged || !retroEdit.persisted) {
+        const chargePair = defaultChargesForEventType(
+          ev,
+          workingTs.workMode,
+          Math.max(0, Number(workingTs.normalHours) || pkg),
+        );
+        const chargeFields = chargePair
+          ? buildTimesheetFieldsFromMobCharges(chargePair.billing, chargePair.payroll, pkg)
+          : {};
+        let nextHours = Math.max(0, Number(workingTs.normalHours) || 0);
+        let nextOt = isWorkDay ? Math.max(0, Math.min(24, Number(retroAddedOt) || 0)) : 0;
+        if (isUnpaid) {
+          nextHours = 0;
+          nextOt = 0;
+        } else if (isMobLike) {
+          nextHours = nextHours > 0 ? nextHours : pkg;
+          nextOt = 0;
+        } else if (!(nextHours > 0)) {
+          nextHours = pkg;
+        }
+        if (!isWorkDay) nextOt = 0;
+
+        const priorRemark = String(workingTs.remark || '').trim();
+        const payload: Partial<DailyTimesheet> = {
+          ...workingTs,
+          id: undefined,
+          eventType: ev,
+          normalHours: nextHours,
+          ot15Hours: locked ? Math.max(0, Number(workingTs.ot15Hours) || 0) : nextOt,
+          ot20Hours: 0,
+          ot30Hours: 0,
+          remark: priorRemark
+            ? `${priorRemark} · แก้ประเภทวัน: ${reason}`
+            : `แก้ประเภทวัน (${originalEv}→${ev}): ${reason}`,
+          shiftType: ev === 'standby_day' ? 'STANDBY' : 'DAY',
+          poActiveAutoDaily: false,
+          ...chargeFields,
+        };
+        if (!retroEdit.persisted) {
+          payload.status = 'DRAFT';
+        } else if (workingTs.status && service.canEdit(workingTs.status as DailyTimesheetStatus)) {
+          payload.status = workingTs.status;
+        } else if (!locked) {
+          payload.status = workingTs.status || 'DRAFT';
+        }
+
+        await service.bulkUpsertTimesheets([payload], currentUser as User);
+        const id = service.getTimesheetId(workingTs.workerId, workingTs.assignmentId, workingTs.date);
+        workingTs = {
+          ...workingTs,
+          ...payload,
+          id: id || workingTs.id,
+          eventType: ev,
+          normalHours: nextHours,
+          ot15Hours: (payload.ot15Hours as number) ?? nextOt,
+        } as DailyTimesheet;
+      }
+
+      if (ev === 'work_day') {
+        /**
+         * OT = ยอดรวมที่ต้องการบนตาราง — ยกเลิก approved เดิมแล้วสร้างใหม่ตามส่วนต่าง
+         * ใบงานยังไม่ LOCKED: ฐานนับ 0 (จะย้าย OT ออกจากใบงาน) เพื่อไม่บวกซ้ำ
+         */
+        const baseOnSlip = locked ? Math.max(0, Number(workingTs.ot15Hours) || 0) : 0;
+        try {
+          const result = await setAbsoluteWorkDayRetroOt(firestore, currentUser as User, {
+            sourceTimesheet: workingTs,
+            sourceYearMonth: monthYm,
+            applyPayrollYearMonth: retroApplyYm.trim(),
+            targetOtHours: Math.max(0, Math.min(24, Number(retroAddedOt) || 0)),
+            baseOtHoursOnSlip: baseOnSlip,
+            reason,
+          });
+
+          if (!locked && workingTs.id && canCorrectTimesheetOtDirect(workingTs)) {
+            const sourceOt = Math.max(0, Number(workingTs.ot15Hours) || 0);
+            if (sourceOt > 0) {
+              await service.correctClosedPeriodTimesheetHours(workingTs.id, currentUser as User, {
+                ot15Hours: 0,
+                reason: `ย้าย OT ${sourceOt} ชม. ไปรายการแก้ไขย้อนหลัง (จ่ายในงวด ${retroApplyYm.trim()})`,
+              });
+            }
+          }
+
+          toast({
+            title: 'บันทึกแก้ไขย้อนหลังแล้ว',
+            description:
+              typeChanged && result.addedOtHours <= 0
+                ? `เปลี่ยนประเภทวันเป็นวันทำงานแล้ว`
+                : result.addedOtHours > 0 && retroPayPreview != null && retroPayPreview > 0
+                  ? `OT รวม ${Number(retroAddedOt) || 0} ชม. · ยอดจ่ายประมาณ ฿${retroPayPreview.toLocaleString()} · จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)}`
+                  : result.voidedCount > 0
+                    ? `อัปเดต OT รวมเป็น ${Number(retroAddedOt) || 0} ชม. (แทนที่รายการรอจ่ายเดิม)`
+                    : `แสดงบนตารางพร้อมเครื่องหมาย † — จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)}`,
+          });
+        } catch (e: unknown) {
+          if (typeChanged && e instanceof Error && /ไม่มีรายการที่ต้องแก้|ไม่มีรายการแก้ไขย้อนหลัง/.test(e.message)) {
+            toast({
+              title: 'บันทึกแล้ว',
+              description: 'เปลี่ยนประเภทวันเป็นวันทำงานแล้ว',
+            });
+          } else {
+            throw e;
+          }
+        }
+        setRetroEdit(null);
+        return;
+      }
+
+      const sb =
+        ev === 'mobilization_day' || ev === 'demobilization_day' || ev === 'standby_day'
+          ? Math.max(0, Number(retroAddedStandby) || 0)
+          : 0;
+      const m1 = ev === 'mobilization_day' ? Math.max(0, Number(retroAddedM1Trips) || 0) : 0;
+      const d1 = ev === 'demobilization_day' ? Math.max(0, Number(retroAddedD1Trips) || 0) : 0;
+
+      if (sb + m1 + d1 > 0) {
+        await createTimesheetRetroAdjustment(firestore, currentUser as User, {
+          sourceTimesheet: workingTs,
+          sourceYearMonth: monthYm,
+          applyPayrollYearMonth: retroApplyYm.trim(),
+          addedStandbyHours: sb > 0 ? sb : undefined,
+          addedM1Trips: m1 > 0 ? m1 : undefined,
+          addedD1Trips: d1 > 0 ? d1 : undefined,
+          reason,
+          retroEventType: typeChanged ? ev : undefined,
+        });
+        toast({
+          title: 'บันทึกแก้ไขย้อนหลังแล้ว',
+          description:
+            retroPayPreview != null && retroPayPreview > 0
+              ? `ยอดจ่ายประมาณ ฿${retroPayPreview.toLocaleString()} · จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)} — กดดึงจากแก้ไขย้อนหลังบนสลิป`
+              : `แสดงบนตารางพร้อมเครื่องหมาย † — จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)}`,
+        });
+      } else if (typeChanged || !retroEdit.persisted) {
+        toast({
+          title: 'บันทึกแล้ว',
+          description: `เปลี่ยนประเภทวันเป็น ${EVENT_TYPE_OPTIONS.find((o) => o.value === ev)?.label || ev} แล้ว`,
+        });
+      } else {
+        throw new Error('กรุณาระบุชม. / trip ที่ต้องการ หรือเปลี่ยนประเภทวัน');
+      }
+
       setRetroEdit(null);
     } catch (e: unknown) {
       if (e instanceof RetroRateMatrixMissingError) {
@@ -2290,6 +2521,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     canEditTs,
     monthYm,
     retroApplyYm,
+    retroEvent,
     retroAddedOt,
     retroAddedStandby,
     retroAddedM1Trips,
@@ -3106,7 +3338,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                   <Label>ประเภทวัน</Label>
                   <Select
                     value={editEvent}
-                    onValueChange={(v: RateConditionEventType) => setEditEvent(v)}
+                    onValueChange={(v) => setEditEvent(v as WaveMonthEventSelectValue)}
                     disabled={savingCell || cellSaveAwaitingConfirm}
                   >
                     <SelectTrigger className="h-10">
@@ -3118,11 +3350,19 @@ export default function WaveMonthTimesheetSummaryPage() {
                           {opt.label}
                         </SelectItem>
                       ))}
+                      <SelectItem value={WAVE_MONTH_EVENT_CLEAR}>ว่าง (ล้างช่อง)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
-              {editEvent === 'mobilization_day' ||
+              {editEvent === WAVE_MONTH_EVENT_CLEAR ? (
+                <Alert>
+                  <AlertTitle className="text-sm">ล้างช่องวันนี้</AlertTitle>
+                  <AlertDescription className="text-xs sm:text-sm">
+                    บันทึกแล้วจะลบใบงานของวันนี้ — เซลล์บนตารางรายเดือนจะกลับเป็น « - » (เหมือนหน้าลงรายวัน)
+                  </AlertDescription>
+                </Alert>
+              ) : editEvent === 'mobilization_day' ||
               editEvent === 'demobilization_day' ||
               editEvent === 'standby_day' ? (
                 <div className="space-y-2 rounded-md border p-3">
@@ -3252,7 +3492,7 @@ export default function WaveMonthTimesheetSummaryPage() {
           <DialogHeader>
             <DialogTitle>แก้ไขย้อนหลัง (งวดปิด / ใบงานล็อค)</DialogTitle>
             <DialogDescription>
-              ไม่แก้ข้อมูลต้นทาง — ใส่ OT / M1 / D1 / standby ที่ต้องการให้แสดง (ยอดรวม ไม่ใช่บวกเพิ่ม)
+              เปลี่ยนประเภทวันได้เหมือนหน้าลงรายวัน — ใส่ OT / M1 / D1 / standby ที่ต้องการให้แสดง (ยอดรวม)
               แสดงบนตารางพร้อมเครื่องหมาย † และจ่ายในงวดที่เลือก
             </DialogDescription>
           </DialogHeader>
@@ -3265,7 +3505,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                 </p>
                 <p>
                   <span className="text-muted-foreground">วันที่:</span>{' '}
-                  <strong>{retroEdit.timesheet.date}</strong> · {retroEdit.timesheet.eventType}
+                  <strong>{retroEdit.timesheet.date}</strong>
                   {isTimesheetPayrollLocked(retroEdit.timesheet) ? (
                     <> · <span className="text-amber-800">LOCKED</span></>
                   ) : retroOnlyPayrollMonth ? (
@@ -3273,7 +3513,41 @@ export default function WaveMonthTimesheetSummaryPage() {
                   ) : null}
                 </p>
               </div>
-              {retroEdit.timesheet.eventType === 'work_day' ? (
+              <div className="space-y-1.5">
+                <Label>ประเภทวัน</Label>
+                <Select
+                  value={retroEvent}
+                  onValueChange={(v) => onRetroEventChange(v as WaveMonthEventSelectValue)}
+                  disabled={retroSaving || (isTimesheetPayrollLocked(retroEdit.timesheet) && retroEdit.persisted)}
+                >
+                  <SelectTrigger className="h-10">
+                    <SelectValue placeholder="เลือกประเภท" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EVENT_TYPE_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                    {!(isTimesheetPayrollLocked(retroEdit.timesheet) && retroEdit.persisted) ? (
+                      <SelectItem value={WAVE_MONTH_EVENT_CLEAR}>ว่าง (ล้างช่อง)</SelectItem>
+                    ) : null}
+                  </SelectContent>
+                </Select>
+                {isTimesheetPayrollLocked(retroEdit.timesheet) && retroEdit.persisted ? (
+                  <p className="text-xs text-muted-foreground">
+                    ใบงาน LOCKED — เปลี่ยนประเภทวันไม่ได้จนกว่าจะลบชุดจ่าย
+                  </p>
+                ) : null}
+              </div>
+              {retroEvent === WAVE_MONTH_EVENT_CLEAR ? (
+                <Alert>
+                  <AlertTitle className="text-sm">ล้างช่องวันนี้</AlertTitle>
+                  <AlertDescription className="text-xs sm:text-sm">
+                    บันทึกแล้วจะลบใบงานและยกเลิกรายการแก้ไขย้อนหลังที่ยังรอจ่าย — เซลล์จะกลับเป็น « - »
+                  </AlertDescription>
+                </Alert>
+              ) : retroEvent === 'work_day' ? (
                   <div className="space-y-1.5">
                     <Label htmlFor="retro-ot">OT ชม. ที่ต้องการ (0–24)</Label>
                     <Input
@@ -3309,7 +3583,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                       )}
                     </p>
                   </div>
-              ) : retroEdit.timesheet.eventType === 'mobilization_day' ? (
+              ) : retroEvent === 'mobilization_day' ? (
                 <div className="space-y-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="retro-m1">M1 trip ที่เพิ่ม</Label>
@@ -3341,7 +3615,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                     />
                   </div>
                 </div>
-              ) : retroEdit.timesheet.eventType === 'demobilization_day' ? (
+              ) : retroEvent === 'demobilization_day' ? (
                 <div className="space-y-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="retro-d1">D1 trip ที่เพิ่ม</Label>
@@ -3370,6 +3644,24 @@ export default function WaveMonthTimesheetSummaryPage() {
                     />
                   </div>
                 </div>
+              ) : retroEvent === 'standby_day' ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="retro-sb">Standby ชม. ที่เพิ่ม (0–24)</Label>
+                  <Input
+                    id="retro-sb"
+                    type="number"
+                    min={0}
+                    max={24}
+                    step={0.5}
+                    value={retroAddedStandby}
+                    onChange={(e) => setRetroAddedStandby(Number(e.target.value))}
+                    disabled={retroSaving}
+                  />
+                </div>
+              ) : retroEvent === 'unpaid_leave' || retroEvent === 'travel_day' ? (
+                <p className="text-xs text-muted-foreground rounded-md border px-3 py-2">
+                  ประเภทนี้ไม่มียอด OT/standby เพิ่ม — บันทึกเพื่อเปลี่ยนประเภทวันบนตาราง
+                </p>
               ) : (
                 <div className="space-y-1.5">
                   <Label htmlFor="retro-sb">Standby/M1/D1 ชม. ที่เพิ่ม (0–24)</Label>
@@ -3385,6 +3677,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                   />
                 </div>
               )}
+              {retroEvent !== WAVE_MONTH_EVENT_CLEAR ? (
               <div className="space-y-1.5">
                 <Label htmlFor="retro-apply-ym">จ่ายในงวด payroll</Label>
                 <Input
@@ -3395,6 +3688,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                   disabled={retroSaving}
                 />
               </div>
+              ) : null}
               <div className="space-y-1.5">
                 <Label htmlFor="retro-reason">เหตุผล (บังคับ)</Label>
                 <Textarea
@@ -3406,10 +3700,11 @@ export default function WaveMonthTimesheetSummaryPage() {
                   placeholder="เช่น OT 29–31 พ.ค. ลืมลงก่อนปิด payroll"
                 />
               </div>
+              {retroEvent !== WAVE_MONTH_EVENT_CLEAR ? (
               <div className="rounded-md border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-sm">
                   <span className="text-muted-foreground">
                   ยอดจ่ายเพิ่ม
-                  {retroEdit?.timesheet.eventType === 'work_day' && retroOtPayHours > 0
+                  {retroEvent === 'work_day' && retroOtPayHours > 0
                     ? ` (OT ${retroOtPayHours} ชม. ที่รอจ่ายใหม่)`
                     : ''}
                   {retroPayRateSource === 'worker_custom'
@@ -3441,7 +3736,8 @@ export default function WaveMonthTimesheetSummaryPage() {
                   )}
                 </p>
               </div>
-              {retroPayMissing.length > 0 ? (
+              ) : null}
+              {retroEvent !== WAVE_MONTH_EVENT_CLEAR && retroPayMissing.length > 0 ? (
                 <Alert variant="destructive" className="border-amber-300 bg-amber-50 text-amber-950">
                   <AlertTitle className="text-sm">ยังไม่ได้ใส่อัตราในตารางสัญญา</AlertTitle>
                   <AlertDescription className="text-xs space-y-2">
@@ -3479,41 +3775,50 @@ export default function WaveMonthTimesheetSummaryPage() {
               disabled={
                 retroSaving ||
                 !retroEdit ||
-                retroPayMissing.length > 0 ||
                 !retroReason.trim() ||
-                (() => {
-                  const isWorkDay = retroEdit.timesheet.eventType === 'work_day';
-                  if (isWorkDay) {
-                    const target = Math.max(0, Number(retroAddedOt) || 0);
-                    const changing =
-                      Math.abs(target - (Number(retroEdit.displayOtHours) || 0)) > 0.001 ||
-                      (Number(retroEdit.approvedOtHours) || 0) > 0;
-                    if (!changing && target <= 0) return true;
-                    if (retroOtPayHours > 0) {
+                (retroEvent !== WAVE_MONTH_EVENT_CLEAR &&
+                  (retroPayMissing.length > 0 ||
+                    (() => {
+                      if (retroEvent === 'work_day') {
+                        const target = Math.max(0, Number(retroAddedOt) || 0);
+                        const changing =
+                          Math.abs(target - (Number(retroEdit.displayOtHours) || 0)) > 0.001 ||
+                          (Number(retroEdit.approvedOtHours) || 0) > 0;
+                        if (!changing && target <= 0) return true;
+                        if (retroOtPayHours > 0) {
+                          return (
+                            retroPayPreviewLoading ||
+                            retroPayPreview == null ||
+                            retroPayPreview <= 0
+                          );
+                        }
+                        /** ลด/เคลียร์ OT รอจ่าย — ไม่ต้องมียอดจ่ายใหม่ */
+                        return (
+                          (Number(retroEdit.approvedOtHours) || 0) <= 0 &&
+                          target === (Number(retroEdit.displayOtHours) || 0)
+                        );
+                      }
+                      const originalEv =
+                        (retroEdit.timesheet.eventType as RateConditionEventType) || 'work_day';
+                      const typeChanged = retroEvent !== originalEv;
+                      if (typeChanged) return false;
+                      const hasDelta =
+                        retroAddedStandby > 0 ||
+                        retroAddedM1Trips > 0 ||
+                        retroAddedD1Trips > 0;
                       return (
-                        retroPayPreviewLoading ||
-                        retroPayPreview == null ||
-                        retroPayPreview <= 0
+                        !hasDelta ||
+                        (hasDelta &&
+                          (retroPayPreviewLoading ||
+                            retroPayPreview == null ||
+                            retroPayPreview <= 0))
                       );
-                    }
-                    /** ลด/เคลียร์ OT รอจ่าย — ไม่ต้องมียอดจ่ายใหม่ */
-                    return (Number(retroEdit.approvedOtHours) || 0) <= 0 && target === (Number(retroEdit.displayOtHours) || 0);
-                  }
-                  const hasDelta =
-                    retroAddedStandby > 0 ||
-                    retroAddedM1Trips > 0 ||
-                    retroAddedD1Trips > 0;
-                  return (
-                    !hasDelta ||
-                    (hasDelta &&
-                      (retroPayPreviewLoading || retroPayPreview == null || retroPayPreview <= 0))
-                  );
-                })()
+                    })()))
               }
               onClick={() => void performSaveRetroEdit()}
             >
               {retroSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              บันทึกแก้ไขย้อนหลัง
+              {retroEvent === WAVE_MONTH_EVENT_CLEAR ? 'ยืนยันล้างช่อง' : 'บันทึกแก้ไขย้อนหลัง'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -49,6 +49,8 @@ export async function recordWorkerPayrollWhtTaxPayment(
     entryDate: string;
     earnerName: string;
     proofAttachments?: WhtTaxPaymentProofAttachment[];
+    /** ใบอื่นในคน+เดือนเดียวกัน — มาร์กจ่ายด้วย cashbook เดียวกัน */
+    companionLines?: Array<{ batch: PayrollBatch; line: PayrollBatchLine }>;
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const { batch, line } = params;
@@ -73,7 +75,11 @@ export async function recordWorkerPayrollWhtTaxPayment(
     : bankAccountId;
 
   const earner = (params.earnerName || line.workerNameSnapshot || line.workerId || '').trim() || 'ลูกจ้าง';
-  const description = `จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) ลูกจ้าง ${earner} · ชุด ${batch.id} · ตัดจากบัญชี ${bankCode}`;
+  const companionCount = params.companionLines?.length ?? 0;
+  const description =
+    companionCount > 0
+      ? `จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) ลูกจ้าง ${earner} · รวม ${companionCount + 1} ชุดจ่ายในเดือน · ตัดจากบัญชี ${bankCode}`
+      : `จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) ลูกจ้าง ${earner} · ชุด ${batch.id} · ตัดจากบัญชี ${bankCode}`;
 
   const { cashbookEntryId, entryNo } = await recordCashbookMovementWithBalance(db, user, {
     bankAccountId,
@@ -88,6 +94,10 @@ export async function recordWorkerPayrollWhtTaxPayment(
   });
 
   const now = Date.now();
+  const proofMerged = mergeWhtTaxProofAttachments(
+    line.whtTaxPaymentProofAttachments,
+    params.proofAttachments,
+  );
   await updateDoc(doc(db, 'payroll_batches', batch.id, 'lines', line.id), {
     whtTaxCashbookEntryId: cashbookEntryId,
     whtTaxCashbookEntryNo: entryNo,
@@ -95,12 +105,29 @@ export async function recordWorkerPayrollWhtTaxPayment(
     whtTaxPaidByUid: user.id,
     whtTaxPaidByName: user.displayName || user.email || user.id,
     whtTaxPaymentBankAccountId: bankAccountId,
-    whtTaxPaymentProofAttachments: mergeWhtTaxProofAttachments(
-      line.whtTaxPaymentProofAttachments,
-      params.proofAttachments,
-    ),
+    whtTaxPaymentProofAttachments: proofMerged,
     updatedAt: now,
   });
+
+  for (const companion of params.companionLines ?? []) {
+    if (!companion?.batch?.id || !companion?.line?.id) continue;
+    if (companion.batch.id === batch.id && companion.line.id === line.id) continue;
+    if (!isWorkerPayrollWagePaid(companion.batch, companion.line)) continue;
+    if (isWorkerPayrollWhtTaxPaid(companion.line)) continue;
+    await updateDoc(doc(db, 'payroll_batches', companion.batch.id, 'lines', companion.line.id), {
+      whtTaxCashbookEntryId: cashbookEntryId,
+      whtTaxCashbookEntryNo: entryNo,
+      whtTaxPaidAt: now,
+      whtTaxPaidByUid: user.id,
+      whtTaxPaidByName: user.displayName || user.email || user.id,
+      whtTaxPaymentBankAccountId: bankAccountId,
+      whtTaxPaymentProofAttachments: mergeWhtTaxProofAttachments(
+        companion.line.whtTaxPaymentProofAttachments,
+        params.proofAttachments,
+      ),
+      updatedAt: now,
+    });
+  }
 
   return { cashbookEntryId, entryNo };
 }
@@ -159,6 +186,8 @@ export async function recordOfficePayrollWhtTaxPayment(
     entryDate: string;
     earnerName: string;
     proofAttachments?: WhtTaxPaymentProofAttachment[];
+    /** ใบอื่นในคน+เดือนเดียวกัน — มาร์กจ่ายด้วย cashbook เดียวกัน */
+    companionLines?: Array<{ run: OfficePayrollRun; line: OfficePayrollLine }>;
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const { run, line } = params;
@@ -184,7 +213,11 @@ export async function recordOfficePayrollWhtTaxPayment(
 
   const earner = (params.earnerName || line.staffName || line.staffId || '').trim() || 'พนักงาน';
   const runLabel = run.payrollRunNo || run.id;
-  const description = `จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) พนักงานออฟฟิศ ${earner} · งวด ${runLabel} · ตัดจากบัญชี ${bankCode}`;
+  const companionCount = params.companionLines?.length ?? 0;
+  const description =
+    companionCount > 0
+      ? `จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) พนักงานออฟฟิศ ${earner} · รวม ${companionCount + 1} ชุดจ่ายในเดือน · ตัดจากบัญชี ${bankCode}`
+      : `จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) พนักงานออฟฟิศ ${earner} · งวด ${runLabel} · ตัดจากบัญชี ${bankCode}`;
 
   const { cashbookEntryId, entryNo } = await recordCashbookMovementWithBalance(db, user, {
     bankAccountId,
@@ -212,6 +245,26 @@ export async function recordOfficePayrollWhtTaxPayment(
     ),
     updatedAt: now,
   });
+
+  for (const companion of params.companionLines ?? []) {
+    if (!companion?.run?.id || !companion?.line?.id) continue;
+    if (companion.run.id === run.id && companion.line.id === line.id) continue;
+    if (!isOfficePayrollWagePaid(companion.run, companion.line)) continue;
+    if (isOfficePayrollWhtTaxPaid(companion.line)) continue;
+    await updateDoc(doc(db, 'office_payroll_runs', companion.run.id, 'lines', companion.line.id), {
+      whtTaxCashbookEntryId: cashbookEntryId,
+      whtTaxCashbookEntryNo: entryNo,
+      whtTaxPaidAt: now,
+      whtTaxPaidByUid: user.id,
+      whtTaxPaidByName: user.displayName || user.email || user.id,
+      whtTaxPaymentBankAccountId: bankAccountId,
+      whtTaxPaymentProofAttachments: mergeWhtTaxProofAttachments(
+        companion.line.whtTaxPaymentProofAttachments,
+        params.proofAttachments,
+      ),
+      updatedAt: now,
+    });
+  }
 
   return { cashbookEntryId, entryNo };
 }
@@ -268,6 +321,8 @@ export async function recordExecutivePayrollWhtTaxPayment(
     entryDate: string;
     earnerName: string;
     proofAttachments?: WhtTaxPaymentProofAttachment[];
+    /** ใบอื่นในคน+เดือนเดียวกัน — มาร์กจ่ายด้วย cashbook เดียวกัน */
+    companionLines?: Array<{ run: OfficePayrollRun; line: OfficePayrollLine }>;
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const { run, line } = params;
@@ -295,7 +350,11 @@ export async function recordExecutivePayrollWhtTaxPayment(
   const runLabel = run.payrollRunNo || run.id;
   const formLabel =
     line.hrLineAdjustments?.pitManualIncomeType === 'DIVIDEND' ? 'ภ.ง.ด.2' : 'ภ.ง.ด.1';
-  const description = `จ่ายภาษีหัก ณ ที่จ่าย (${formLabel}) ผู้บริหาร ${earner} · งวด ${runLabel} · ตัดจากบัญชี ${bankCode}`;
+  const companionCount = params.companionLines?.length ?? 0;
+  const description =
+    companionCount > 0
+      ? `จ่ายภาษีหัก ณ ที่จ่าย (${formLabel}) ผู้บริหาร ${earner} · รวม ${companionCount + 1} ชุดจ่ายในเดือน · ตัดจากบัญชี ${bankCode}`
+      : `จ่ายภาษีหัก ณ ที่จ่าย (${formLabel}) ผู้บริหาร ${earner} · งวด ${runLabel} · ตัดจากบัญชี ${bankCode}`;
 
   const { cashbookEntryId, entryNo } = await recordCashbookMovementWithBalance(db, user, {
     bankAccountId,
@@ -323,6 +382,26 @@ export async function recordExecutivePayrollWhtTaxPayment(
     ),
     updatedAt: now,
   });
+
+  for (const companion of params.companionLines ?? []) {
+    if (!companion?.run?.id || !companion?.line?.id) continue;
+    if (companion.run.id === run.id && companion.line.id === line.id) continue;
+    if (!isOfficePayrollWagePaid(companion.run, companion.line)) continue;
+    if (isOfficePayrollWhtTaxPaid(companion.line)) continue;
+    await updateDoc(doc(db, 'executive_payroll_runs', companion.run.id, 'lines', companion.line.id), {
+      whtTaxCashbookEntryId: cashbookEntryId,
+      whtTaxCashbookEntryNo: entryNo,
+      whtTaxPaidAt: now,
+      whtTaxPaidByUid: user.id,
+      whtTaxPaidByName: user.displayName || user.email || user.id,
+      whtTaxPaymentBankAccountId: bankAccountId,
+      whtTaxPaymentProofAttachments: mergeWhtTaxProofAttachments(
+        companion.line.whtTaxPaymentProofAttachments,
+        params.proofAttachments,
+      ),
+      updatedAt: now,
+    });
+  }
 
   return { cashbookEntryId, entryNo };
 }

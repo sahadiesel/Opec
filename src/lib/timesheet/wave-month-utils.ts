@@ -335,34 +335,39 @@ export function timesheetWaveMonthCellDisplayWithRetro(
     addedM1Trips?: number;
     addedD1Trips?: number;
     status?: string;
+    retroEventType?: string;
   }[] = [],
 ): string {
   const activeRetro = retroAdjustments.filter((a) => a.status !== 'void');
+  const retroEventOverride = [...activeRetro]
+    .reverse()
+    .find((a) => a.retroEventType)?.retroEventType as DailyTimesheet['eventType'] | undefined;
   if (!ts) {
+    const displayEv = retroEventOverride;
     const m1 = retroAddedM1Trips(activeRetro);
     const d1 = retroAddedD1Trips(activeRetro);
     const sb = retroAddedStandbyHours(activeRetro);
+    if (displayEv === 'unpaid_leave') return hasActiveRetroAdjustments(activeRetro) ? ' - †' : ' - ';
     if (m1 > 0) return m1 > 1 ? `M1+${m1}†` : 'M1†';
     if (d1 > 0) return d1 > 1 ? `D1+${d1}†` : 'D1†';
     if (sb > 0) return `SB†`;
     const ot = retroAddedOtHours(activeRetro);
     if (ot > 0) return `W+${ot}†`;
+    if (displayEv) {
+      const abbr = timesheetEventAbbrev(displayEv);
+      return hasActiveRetroAdjustments(activeRetro) ? `${abbr}†` : abbr;
+    }
     return ' - ';
   }
-  if (ts.eventType === 'unpaid_leave') return ' - ';
-  const abbr = timesheetEventAbbrev(ts.eventType);
-  const baseOt = otHoursCountedForWaveMonth(ts);
-  const retroOt = ts.eventType === 'work_day' ? retroAddedOtHours(activeRetro) : 0;
-  const retroSb =
-    ts.eventType === 'mobilization_day' ||
-    ts.eventType === 'demobilization_day' ||
-    ts.eventType === 'standby_day'
-      ? retroAddedStandbyHours(activeRetro)
-      : 0;
+  const eventType = (retroEventOverride || ts.eventType) as DailyTimesheet['eventType'];
+  if (eventType === 'unpaid_leave') return ' - ';
+  const abbr = timesheetEventAbbrev(eventType);
+  const baseOt = otHoursCountedForWaveMonth({ ...ts, eventType });
+  const retroOt = eventType === 'work_day' ? retroAddedOtHours(activeRetro) : 0;
   const retroM1 =
-    ts.eventType === 'mobilization_day' ? retroAddedM1Trips(activeRetro) : retroAddedM1Trips(activeRetro);
+    eventType === 'mobilization_day' ? retroAddedM1Trips(activeRetro) : retroAddedM1Trips(activeRetro);
   const retroD1 =
-    ts.eventType === 'demobilization_day' ? retroAddedD1Trips(activeRetro) : retroAddedD1Trips(activeRetro);
+    eventType === 'demobilization_day' ? retroAddedD1Trips(activeRetro) : retroAddedD1Trips(activeRetro);
   const ot = baseOt + retroOt;
   const hasRetro = hasActiveRetroAdjustments(activeRetro);
   let label: string;
@@ -370,9 +375,9 @@ export function timesheetWaveMonthCellDisplayWithRetro(
     const otLabel = Number.isInteger(ot) ? String(ot) : ot.toFixed(1);
     label = `${abbr}+${otLabel}`;
   } else if (
-    ts.eventType === 'standby_day' ||
-    ts.eventType === 'mobilization_day' ||
-    ts.eventType === 'demobilization_day'
+    eventType === 'standby_day' ||
+    eventType === 'mobilization_day' ||
+    eventType === 'demobilization_day'
   ) {
     /**
      * M1/D1/SB บนกริด — ไม่โชว์ชม. (อาจบิล 12 จ่าย 8 คนละค่า)

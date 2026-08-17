@@ -118,7 +118,10 @@ export function PayrollSsoSectionCard({
   const payTargets = useMemo(() => {
     if (!payDialog) return [];
     return tableRows.filter(
-      (r) => selectedKeys.has(r.rowKey) && (r.ssoPayable || r.employerPayable),
+      (r) =>
+        r.isGroupLeader !== false &&
+        selectedKeys.has(r.rowKey) &&
+        (r.ssoPayable || r.employerPayable),
     );
   }, [payDialog, tableRows, selectedKeys]);
 
@@ -144,35 +147,36 @@ export function PayrollSsoSectionCard({
   }, [selectedPayCount, operatingBankOptions, toast]);
 
   const patchLineAfterPay = useCallback(
-    (rowKey: string, result: { cashbookEntryId: string; entryNo: string }, bankId: string) => {
+    (rowKeys: string[], result: { cashbookEntryId: string; entryNo: string }, bankId: string) => {
       const now = Date.now();
-      if (sectionKind === 'worker' && onWorkerRowsChange && workerRows) {
+      const keySet = new Set(rowKeys);
+      if (sectionKind === 'worker' && onWorkerRowsChange) {
         onWorkerRowsChange((prev) =>
           prev.map((row) => {
             const key = `worker::${row.batch.id}::${row.line.id}`;
-            if (key !== rowKey) return row;
+            if (!keySet.has(key)) return row;
             return {
               ...row,
               line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now),
             };
           }),
         );
-      } else if (sectionKind === 'office' && onOfficeRowsChange && officeRows) {
+      } else if (sectionKind === 'office' && onOfficeRowsChange) {
         onOfficeRowsChange((prev) =>
           prev.map((row) => {
             const key = `office::${row.run.id}::${row.line.id}`;
-            if (key !== rowKey) return row;
+            if (!keySet.has(key)) return row;
             return {
               ...row,
               line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now),
             };
           }),
         );
-      } else if (sectionKind === 'executive' && onExecutiveRowsChange && executiveRows) {
+      } else if (sectionKind === 'executive' && onExecutiveRowsChange) {
         onExecutiveRowsChange((prev) =>
           prev.map((row) => {
             const key = `executive::${row.run.id}::${row.line.id}`;
-            if (key !== rowKey) return row;
+            if (!keySet.has(key)) return row;
             return {
               ...row,
               line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now),
@@ -181,7 +185,7 @@ export function PayrollSsoSectionCard({
         );
       }
     },
-    [sectionKind, onWorkerRowsChange, onOfficeRowsChange, onExecutiveRowsChange, workerRows, officeRows, executiveRows],
+    [sectionKind, onWorkerRowsChange, onOfficeRowsChange, onExecutiveRowsChange],
   );
 
   const handleConfirmPay = useCallback(async () => {
@@ -202,45 +206,68 @@ export function PayrollSsoSectionCard({
 
     try {
       for (const target of payTargets) {
+        if (target.isGroupLeader === false) continue;
         try {
+          const memberKeys = target.memberRowKeys?.length ? target.memberRowKeys : [target.rowKey];
           if (sectionKind === 'worker' && workerRows) {
             const row = workerRows.find((r) => `worker::${r.batch.id}::${r.line.id}` === target.rowKey);
             if (!row) continue;
+            const companions = workerRows
+              .filter((r) => {
+                const k = `worker::${r.batch.id}::${r.line.id}`;
+                return memberKeys.includes(k) && k !== target.rowKey;
+              })
+              .map((r) => ({ batch: r.batch, line: r.line }));
             const result = await recordWorkerPayrollSsoPayment(firestore, currentUser, {
               batch: row.batch,
               line: row.line,
-              employeeSsoAmount: row.sso,
+              employeeSsoAmount: target.sso,
               bankAccountId: payBankId,
               entryDate: payDate,
               earnerName: row.line.workerNameSnapshot || row.line.workerId,
+              companionLines: companions,
             });
-            patchLineAfterPay(target.rowKey, result, payBankId);
+            patchLineAfterPay(memberKeys, result, payBankId);
           } else if (sectionKind === 'office' && officeRows) {
             const row = officeRows.find((r) => `office::${r.run.id}::${r.line.id}` === target.rowKey);
             if (!row) continue;
+            const companions = officeRows
+              .filter((r) => {
+                const k = `office::${r.run.id}::${r.line.id}`;
+                return memberKeys.includes(k) && k !== target.rowKey;
+              })
+              .map((r) => ({ run: r.run, line: r.line }));
             const result = await recordOfficePayrollSsoPayment(firestore, currentUser, {
               run: row.run,
               line: row.line,
-              employeeSsoAmount: row.sso,
+              employeeSsoAmount: target.sso,
               bankAccountId: payBankId,
               entryDate: payDate,
               earnerName: row.line.staffName || row.line.staffId,
+              companionLines: companions,
             });
-            patchLineAfterPay(target.rowKey, result, payBankId);
+            patchLineAfterPay(memberKeys, result, payBankId);
           } else if (sectionKind === 'executive' && executiveRows) {
             const row = executiveRows.find((r) => `executive::${r.run.id}::${r.line.id}` === target.rowKey);
             if (!row) continue;
+            const companions = executiveRows
+              .filter((r) => {
+                const k = `executive::${r.run.id}::${r.line.id}`;
+                return memberKeys.includes(k) && k !== target.rowKey;
+              })
+              .map((r) => ({ run: r.run, line: r.line }));
             const result = await recordExecutivePayrollSsoPayment(firestore, currentUser, {
               run: row.run,
               line: row.line,
-              employeeSsoAmount: row.sso,
+              employeeSsoAmount: target.sso,
               bankAccountId: payBankId,
               entryDate: payDate,
               earnerName: row.line.staffName || row.line.staffId,
+              companionLines: companions,
             });
-            patchLineAfterPay(target.rowKey, result, payBankId);
+            patchLineAfterPay(memberKeys, result, payBankId);
           }
-          paidKeys.add(target.rowKey);
+          for (const k of memberKeys) paidKeys.add(k);
           success += 1;
         } catch (e) {
           errors.push(`${target.earnerName}: ${e instanceof Error ? e.message : String(e)}`);

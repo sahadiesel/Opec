@@ -74,7 +74,21 @@ export function resolvePoActiveAutoDailySyncKind(a: Assignment, dateYmd: string)
   const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
   const hasNaturalSb = /^\d{4}-\d{2}-\d{2}$/.test(mobStandby);
   const hasMobStart = /^\d{4}-\d{2}-\d{2}$/.test(mobStart);
-  if (hasNaturalSb && hasMobStart && mobStandby < mobStart && dateYmd >= mobStandby && dateYmd < mobStart) {
+
+  /**
+   * วัน Mob (M1) — บันทึกจาก Final clearance เท่านั้น
+   * ห้าม auto สร้าง W/SB ทับวันเดียวกับ M1 (W เริ่มวันถัดไปหลัง M1)
+   */
+  if (hasNaturalSb && dateYmd === mobStandby) {
+    return null;
+  }
+
+  /** มี M1 แล้วยังไม่กด Start working day — ยังไม่ auto W */
+  if (hasNaturalSb && !hasMobStart) {
+    return null;
+  }
+
+  if (hasNaturalSb && hasMobStart && mobStandby < mobStart && dateYmd > mobStandby && dateYmd < mobStart) {
     return 'standby_day';
   }
 

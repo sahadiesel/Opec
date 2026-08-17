@@ -41,7 +41,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 
 function payableTableRows(...groups: PayrollSsoTableRow[][]): PayrollSsoTableRow[] {
-  return groups.flat().filter((r) => r.ssoPayable || r.employerPayable);
+  return groups.flat().filter((r) => r.isGroupLeader !== false && (r.ssoPayable || r.employerPayable));
 }
 
 export function PayrollSsoCombinedPayButton({
@@ -108,46 +108,30 @@ export function PayrollSsoCombinedPayButton({
   }, [payTargets.length, operatingBankOptions, toast]);
 
   const patchLineAfterPay = useCallback(
-    (rowKey: string, result: { cashbookEntryId: string; entryNo: string }, bankId: string) => {
+    (rowKeys: string[], result: { cashbookEntryId: string; entryNo: string }, bankId: string) => {
       const now = Date.now();
-      if (rowKey.startsWith('worker::')) {
-        onWorkerRowsChange((prev) =>
-          prev.map((row) => {
-            const key = `worker::${row.batch.id}::${row.line.id}`;
-            if (key !== rowKey) return row;
-            return {
-              ...row,
-              line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now),
-            };
-          }),
-        );
-        return;
-      }
-      if (rowKey.startsWith('office::')) {
-        onOfficeRowsChange((prev) =>
-          prev.map((row) => {
-            const key = `office::${row.run.id}::${row.line.id}`;
-            if (key !== rowKey) return row;
-            return {
-              ...row,
-              line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now),
-            };
-          }),
-        );
-        return;
-      }
-      if (rowKey.startsWith('executive::')) {
-        onExecutiveRowsChange((prev) =>
-          prev.map((row) => {
-            const key = `executive::${row.run.id}::${row.line.id}`;
-            if (key !== rowKey) return row;
-            return {
-              ...row,
-              line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now),
-            };
-          }),
-        );
-      }
+      const keySet = new Set(rowKeys);
+      onWorkerRowsChange((prev) =>
+        prev.map((row) => {
+          const key = `worker::${row.batch.id}::${row.line.id}`;
+          if (!keySet.has(key)) return row;
+          return { ...row, line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now) };
+        }),
+      );
+      onOfficeRowsChange((prev) =>
+        prev.map((row) => {
+          const key = `office::${row.run.id}::${row.line.id}`;
+          if (!keySet.has(key)) return row;
+          return { ...row, line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now) };
+        }),
+      );
+      onExecutiveRowsChange((prev) =>
+        prev.map((row) => {
+          const key = `executive::${row.run.id}::${row.line.id}`;
+          if (!keySet.has(key)) return row;
+          return { ...row, line: applyLocalCombinedSsoPaymentPatch(row.line, result, bankId, now) };
+        }),
+      );
     },
     [onWorkerRowsChange, onOfficeRowsChange, onExecutiveRowsChange],
   );
@@ -169,43 +153,66 @@ export function PayrollSsoCombinedPayButton({
 
     try {
       for (const target of payTargets) {
+        if (target.isGroupLeader === false) continue;
         try {
+          const memberKeys = target.memberRowKeys?.length ? target.memberRowKeys : [target.rowKey];
           if (target.rowKey.startsWith('worker::')) {
             const row = workerRows.find((r) => `worker::${r.batch.id}::${r.line.id}` === target.rowKey);
             if (!row) continue;
+            const companions = workerRows
+              .filter((r) => {
+                const k = `worker::${r.batch.id}::${r.line.id}`;
+                return memberKeys.includes(k) && k !== target.rowKey;
+              })
+              .map((r) => ({ batch: r.batch, line: r.line }));
             const result = await recordWorkerPayrollSsoPayment(firestore, currentUser, {
               batch: row.batch,
               line: row.line,
-              employeeSsoAmount: row.sso,
+              employeeSsoAmount: target.sso,
               bankAccountId: payBankId,
               entryDate: payDate,
               earnerName: row.line.workerNameSnapshot || row.line.workerId,
+              companionLines: companions,
             });
-            patchLineAfterPay(target.rowKey, result, payBankId);
+            patchLineAfterPay(memberKeys, result, payBankId);
           } else if (target.rowKey.startsWith('office::')) {
             const row = officeRows.find((r) => `office::${r.run.id}::${r.line.id}` === target.rowKey);
             if (!row) continue;
+            const companions = officeRows
+              .filter((r) => {
+                const k = `office::${r.run.id}::${r.line.id}`;
+                return memberKeys.includes(k) && k !== target.rowKey;
+              })
+              .map((r) => ({ run: r.run, line: r.line }));
             const result = await recordOfficePayrollSsoPayment(firestore, currentUser, {
               run: row.run,
               line: row.line,
-              employeeSsoAmount: row.sso,
+              employeeSsoAmount: target.sso,
               bankAccountId: payBankId,
               entryDate: payDate,
               earnerName: row.line.staffName || row.line.staffId,
+              companionLines: companions,
             });
-            patchLineAfterPay(target.rowKey, result, payBankId);
+            patchLineAfterPay(memberKeys, result, payBankId);
           } else if (target.rowKey.startsWith('executive::')) {
             const row = executiveRows.find((r) => `executive::${r.run.id}::${r.line.id}` === target.rowKey);
             if (!row) continue;
+            const companions = executiveRows
+              .filter((r) => {
+                const k = `executive::${r.run.id}::${r.line.id}`;
+                return memberKeys.includes(k) && k !== target.rowKey;
+              })
+              .map((r) => ({ run: r.run, line: r.line }));
             const result = await recordExecutivePayrollSsoPayment(firestore, currentUser, {
               run: row.run,
               line: row.line,
-              employeeSsoAmount: row.sso,
+              employeeSsoAmount: target.sso,
               bankAccountId: payBankId,
               entryDate: payDate,
               earnerName: row.line.staffName || row.line.staffId,
+              companionLines: companions,
             });
-            patchLineAfterPay(target.rowKey, result, payBankId);
+            patchLineAfterPay(memberKeys, result, payBankId);
           }
           success += 1;
         } catch (e) {

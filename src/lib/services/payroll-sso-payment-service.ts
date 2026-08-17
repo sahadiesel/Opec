@@ -93,6 +93,7 @@ async function recordOfficeLineSsoCombinedPayment(
     earnerName: string;
     runLabel: string;
     sectionLabel: string;
+    companionLines?: Array<{ run: OfficePayrollRun; line: OfficePayrollLine }>;
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const { run, line, collection } = params;
@@ -115,7 +116,11 @@ async function recordOfficeLineSsoCombinedPayment(
     : bankAccountId;
 
   const earner = (params.earnerName || line.staffName || line.staffId || '').trim() || 'พนักงาน';
-  const description = `จ่าย ปกส.+สมทบ ${params.sectionLabel} ${earner} · งวด ${params.runLabel} · ตัดจากบัญชี ${bankCode}`;
+  const companionCount = params.companionLines?.length ?? 0;
+  const description =
+    companionCount > 0
+      ? `จ่าย ปกส.+สมทบ ${params.sectionLabel} ${earner} · รวม ${companionCount + 1} งวดในเดือน · ตัดจากบัญชี ${bankCode}`
+      : `จ่าย ปกส.+สมทบ ${params.sectionLabel} ${earner} · งวด ${params.runLabel} · ตัดจากบัญชี ${bankCode}`;
 
   const { cashbookEntryId, entryNo } = await recordCashbookMovementWithBalance(db, user, {
     bankAccountId,
@@ -132,6 +137,23 @@ async function recordOfficeLineSsoCombinedPayment(
   const now = Date.now();
   const patch = buildOfficeCombinedSsoPatch(line, cashbookEntryId, entryNo, bankAccountId, user, now);
   await updateDoc(doc(db, collection, run.id, 'lines', line.id), patch);
+
+  for (const companion of params.companionLines ?? []) {
+    if (!companion?.run?.id || !companion?.line?.id) continue;
+    if (companion.run.id === run.id && companion.line.id === line.id) continue;
+    if (!isOfficePayrollWagePaid(companion.run, companion.line)) continue;
+    if (isOfficeSsoCombinedFullyPaid(companion.line)) continue;
+    const cPatch = buildOfficeCombinedSsoPatch(
+      companion.line,
+      cashbookEntryId,
+      entryNo,
+      bankAccountId,
+      user,
+      now,
+    );
+    await updateDoc(doc(db, collection, companion.run.id, 'lines', companion.line.id), cPatch);
+  }
+
   return { cashbookEntryId, entryNo };
 }
 
@@ -145,6 +167,8 @@ export async function recordWorkerPayrollSsoPayment(
     bankAccountId: string;
     entryDate: string;
     earnerName: string;
+    /** ใบอื่นในคน+เดือนเดียวกัน — มาร์กจ่ายด้วย cashbook เดียวกัน (ไม่ตัดเงินซ้ำ) */
+    companionLines?: Array<{ batch: PayrollBatch; line: PayrollBatchLine }>;
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const { batch, line } = params;
@@ -167,7 +191,11 @@ export async function recordWorkerPayrollSsoPayment(
     : bankAccountId;
 
   const earner = (params.earnerName || line.workerNameSnapshot || line.workerId || '').trim() || 'ลูกจ้าง';
-  const description = `จ่าย ปกส.+สมทบ ลูกจ้าง ${earner} · ชุด ${batch.id} · ตัดจากบัญชี ${bankCode}`;
+  const companionCount = params.companionLines?.length ?? 0;
+  const description =
+    companionCount > 0
+      ? `จ่าย ปกส.+สมทบ ลูกจ้าง ${earner} · รวม ${companionCount + 1} ชุดจ่ายในเดือน · ตัดจากบัญชี ${bankCode}`
+      : `จ่าย ปกส.+สมทบ ลูกจ้าง ${earner} · ชุด ${batch.id} · ตัดจากบัญชี ${bankCode}`;
 
   const { cashbookEntryId, entryNo } = await recordCashbookMovementWithBalance(db, user, {
     bankAccountId,
@@ -184,6 +212,23 @@ export async function recordWorkerPayrollSsoPayment(
   const now = Date.now();
   const patch = buildWorkerCombinedSsoPatch(line, cashbookEntryId, entryNo, bankAccountId, user, now);
   await updateDoc(doc(db, 'payroll_batches', batch.id, 'lines', line.id), patch);
+
+  for (const companion of params.companionLines ?? []) {
+    if (!companion?.batch?.id || !companion?.line?.id) continue;
+    if (companion.batch.id === batch.id && companion.line.id === line.id) continue;
+    if (!isWorkerPayrollWagePaid(companion.batch, companion.line)) continue;
+    if (isWorkerSsoCombinedFullyPaid(companion.line)) continue;
+    const cPatch = buildWorkerCombinedSsoPatch(
+      companion.line,
+      cashbookEntryId,
+      entryNo,
+      bankAccountId,
+      user,
+      now,
+    );
+    await updateDoc(doc(db, 'payroll_batches', companion.batch.id, 'lines', companion.line.id), cPatch);
+  }
+
   return { cashbookEntryId, entryNo };
 }
 
@@ -197,6 +242,7 @@ export async function recordOfficePayrollSsoPayment(
     bankAccountId: string;
     entryDate: string;
     earnerName: string;
+    companionLines?: Array<{ run: OfficePayrollRun; line: OfficePayrollLine }>;
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const runLabel = params.run.payrollRunNo || params.run.id;
@@ -210,6 +256,7 @@ export async function recordOfficePayrollSsoPayment(
     earnerName: params.earnerName,
     runLabel,
     sectionLabel: 'พนักงานออฟฟิศ',
+    companionLines: params.companionLines,
   });
 }
 
@@ -223,6 +270,7 @@ export async function recordExecutivePayrollSsoPayment(
     bankAccountId: string;
     entryDate: string;
     earnerName: string;
+    companionLines?: Array<{ run: OfficePayrollRun; line: OfficePayrollLine }>;
   },
 ): Promise<{ cashbookEntryId: string; entryNo: string }> {
   const runLabel = params.run.payrollRunNo || params.run.id;
@@ -236,6 +284,7 @@ export async function recordExecutivePayrollSsoPayment(
     earnerName: params.earnerName,
     runLabel,
     sectionLabel: 'ผู้บริหาร',
+    companionLines: params.companionLines,
   });
 }
 

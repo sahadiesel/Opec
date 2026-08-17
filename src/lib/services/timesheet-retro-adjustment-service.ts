@@ -12,7 +12,7 @@ import {
   deleteField,
   type Firestore,
 } from 'firebase/firestore';
-import type { DailyTimesheet, PriorPeriodAllowanceItem, TimesheetRetroAdjustment, User } from '@/lib/types';
+import type { DailyTimesheet, PriorPeriodAllowanceItem, RateConditionEventType, TimesheetRetroAdjustment, User } from '@/lib/types';
 import {
   computeRetroAdjustmentPayFromFirestore,
   retroHoursDeltaFromAdjustment,
@@ -41,6 +41,8 @@ export async function createTimesheetRetroAdjustment(
     addedStandbyHours?: number;
     addedM1Trips?: number;
     addedD1Trips?: number;
+    /** เมื่อเปลี่ยน/ระบุประเภทวัน (เช่น ยังไม่มีใบงานต้นทาง) */
+    retroEventType?: RateConditionEventType;
     reason: string;
   },
 ): Promise<string> {
@@ -72,7 +74,8 @@ export async function createTimesheetRetroAdjustment(
     addedD1Trips: d1Trips,
   });
   let computedPayAmountBaht = 0;
-  const payResult = await computeRetroAdjustmentPayFromFirestore(db, ts, delta);
+  const payTs = input.retroEventType ? { ...ts, eventType: input.retroEventType } : ts;
+  const payResult = await computeRetroAdjustmentPayFromFirestore(db, payTs, delta);
   if (!payResult.ok && payResult.missingRates.length > 0) {
     throw new RetroRateMatrixMissingError(payResult.missingRates, payResult.contractId, payResult.positionId);
   }
@@ -97,6 +100,7 @@ export async function createTimesheetRetroAdjustment(
     ...(standby > 0 ? { addedStandbyHours: standby } : {}),
     ...(m1Trips > 0 ? { addedM1Trips: m1Trips } : {}),
     ...(d1Trips > 0 ? { addedD1Trips: d1Trips } : {}),
+    ...(input.retroEventType ? { retroEventType: input.retroEventType } : {}),
     reason,
     ...(computedPayAmountBaht > 0 ? { computedPayAmountBaht, computedPaySnapshotAt: now } : {}),
     status: 'approved' as const,

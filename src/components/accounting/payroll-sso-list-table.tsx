@@ -22,6 +22,9 @@ export type PayrollSsoTableRow = {
   earnerId: string;
   paymentYmd: string;
   paid: number;
+  /** ยอด ปกส. บนสลิปบรรทัดนี้ (อาจไม่ใช่ยอดนำส่งรายเดือน) */
+  lineSso: number;
+  /** ยอด ปกส. ที่แสดง/จ่าย — เฉพาะ leader ของคน+เดือน */
   sso: number;
   employerContrib: number;
   wagePaid: boolean;
@@ -31,6 +34,11 @@ export type PayrollSsoTableRow = {
   openHref: string;
   ssoPayable: boolean;
   employerPayable: boolean;
+  /** กลุ่มคน+เดือน — แถว follower ไม่ให้เลือกจ่ายซ้ำ */
+  groupKey?: string;
+  isGroupLeader?: boolean;
+  groupSize?: number;
+  memberRowKeys?: string[];
 };
 
 export type PayrollSsoPayKind = 'sso_remit' | 'employer_contrib';
@@ -106,7 +114,9 @@ export function PayrollSsoListTable({
   selectedKeys: Set<string>;
   onSelectedKeysChange: (next: Set<string>) => void;
 }) {
-  const selectableRows = rows.filter((r) => r.ssoPayable || r.employerPayable);
+  const selectableRows = rows.filter(
+    (r) => (r.isGroupLeader !== false) && (r.ssoPayable || r.employerPayable),
+  );
 
   return (
     <div className="rounded-md border">
@@ -147,13 +157,27 @@ export function PayrollSsoListTable({
         </TableHeader>
         <TableBody>
           {rows.map((r) => {
-            const selectable = r.ssoPayable || r.employerPayable;
+            const isLeader = r.isGroupLeader !== false;
+            const selectable = isLeader && (r.ssoPayable || r.employerPayable);
             const allPaid = r.wagePaid && r.ssoRemitPaid && r.employerContribPaid;
+            const groupNote =
+              (r.groupSize ?? 1) > 1
+                ? isLeader
+                  ? `รวม ${r.groupSize} ชุดจ่ายในเดือน — ยอด ปกส. จากสลิปล่าสุด`
+                  : 'รวมกับสลิปล่าสุดในเดือนเดียวกัน'
+                : null;
             return (
-              <TableRow key={r.rowKey}>
+              <TableRow
+                key={r.rowKey}
+                className={cn(!isLeader && (r.groupSize ?? 1) > 1 && 'bg-muted/20')}
+              >
                 {canPay ? (
                   <TableCell className="w-11 pl-3 align-middle">
-                    {allPaid ? (
+                    {!isLeader ? (
+                      <span className="text-muted-foreground text-xs" title={groupNote ?? undefined}>
+                        ↳
+                      </span>
+                    ) : allPaid ? (
                       <span className="text-muted-foreground text-xs" title="จ่ายครบแล้ว">
                         ✓
                       </span>
@@ -193,6 +217,11 @@ export function PayrollSsoListTable({
                   <div className="truncate text-xs text-muted-foreground font-mono" title="เลขบัตรประชาชน">
                     {r.earnerId}
                   </div>
+                  {groupNote ? (
+                    <div className="truncate text-[10px] text-muted-foreground" title={groupNote}>
+                      {groupNote}
+                    </div>
+                  ) : null}
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm">{formatYmdLocalThaiBE(r.paymentYmd)}</TableCell>
                 <TableCell className={cn(SSO_EQUAL_COL_CELL, 'text-right tabular-nums text-sm')}>
@@ -204,15 +233,29 @@ export function PayrollSsoListTable({
                 <TableCell
                   className={cn(SSO_EQUAL_COL_CELL, 'text-right tabular-nums text-sm font-medium text-red-700')}
                 >
-                  {fmtSsoBaht(r.sso)}
+                  {isLeader ? (
+                    fmtSsoBaht(r.sso)
+                  ) : (
+                    <span className="text-muted-foreground text-xs" title={`บนสลิป: ${fmtSsoBaht(r.lineSso)}`}>
+                      —
+                    </span>
+                  )}
                 </TableCell>
                 <TableCell
                   className={cn(SSO_EQUAL_COL_CELL, 'text-right tabular-nums text-sm font-semibold text-amber-900')}
                 >
-                  {fmtSsoBaht(ssoCombinedRemitAmount(r.sso))}
+                  {isLeader ? (
+                    fmtSsoBaht(ssoCombinedRemitAmount(r.sso))
+                  ) : (
+                    <span className="text-muted-foreground text-xs">—</span>
+                  )}
                 </TableCell>
                 <TableCell className={cn(SSO_EQUAL_COL_CELL, 'text-center')}>
-                  {renderEmployerContribStatusBadge(r.wagePaid, r.employerContribPaid, r.ssoRemitPaid)}
+                  {isLeader ? (
+                    renderEmployerContribStatusBadge(r.wagePaid, r.employerContribPaid, r.ssoRemitPaid)
+                  ) : (
+                    <span className="text-muted-foreground text-xs">—</span>
+                  )}
                 </TableCell>
                 <TableCell className={cn(SSO_EQUAL_COL_CELL, 'text-center')}>
                   <Link

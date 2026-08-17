@@ -18,7 +18,7 @@ import { poMonthTimesheetReviewDocId } from '@/lib/timesheet/po-month-timesheet-
 import { resolvePoActiveBundleKeyForPo, resolveWorkModeForPoContext } from '@/lib/ops/po-active-bundle';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { eachYmdInRange, normalHoursFromPoLine } from '@/lib/timesheet/po-active-auto-daily-build';
-import { addDaysToYmd, shouldAutoFillPrefixWorkDaysBeforeStandby } from '@/lib/ops/mobilization-final-clearance';
+import { addDaysToYmd, shouldAutoFillPrefixWorkDaysBeforeStandby, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { buildTimesheetFieldsFromMobCharges } from '@/lib/ops/mob-day-charge';
 import { resolvePriorCycleWorkStartFloorYmd } from '@/lib/constants/timesheet-ui';
 
@@ -383,8 +383,11 @@ export async function applyMobFinalClearanceWorkStartFill(
 
   const gapStart = addDaysToYmd(st, 1);
   const gapEnd = addDaysToYmd(wk, -1);
+  const today = thailandTodayYmd();
   if (gapStart <= gapEnd) {
     for (const d of eachYmdInRange(gapStart, gapEnd)) {
+      /** อนาคตให้ auto เติมเมื่อถึงวัน — ไม่สร้าง SB/W ล่วงหน้า */
+      if (d > today) continue;
       await upsertMobClearanceDailyTimesheet(db, user, {
         assignment: a,
         po,
@@ -399,15 +402,22 @@ export async function applyMobFinalClearanceWorkStartFill(
     }
   }
 
-  await upsertMobClearanceDailyTimesheet(db, user, {
-    assignment: a,
-    po,
-    line,
-    workerDisplayName,
-    kind: 'work_day',
-    dateYmd: wk,
-    bypassPoMonthLock: bypass,
-    /** วันเริ่มงาน — ทับ standby/auto ที่ค้างบนวันนั้นได้ */
-    overwriteConflictingEventType: true,
-  });
+  /**
+   * วันเริ่มงาน = work_day
+   * ถ้าเลือกวันในอนาคต (เช่น Mob วันนี้ → เริ่มพรุ่งนี้) ยังไม่ลง W ตอนนี้
+   * — รอ PO Active auto เมื่อถึงวันนั้น (หลัง ACTIVE)
+   */
+  if (wk <= today) {
+    await upsertMobClearanceDailyTimesheet(db, user, {
+      assignment: a,
+      po,
+      line,
+      workerDisplayName,
+      kind: 'work_day',
+      dateYmd: wk,
+      bypassPoMonthLock: bypass,
+      /** วันเริ่มงาน — ทับ standby/auto ที่ค้างบนวันนั้นได้ */
+      overwriteConflictingEventType: true,
+    });
+  }
 }

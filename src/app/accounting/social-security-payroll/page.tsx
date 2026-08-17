@@ -485,21 +485,6 @@ export default function AccountingSocialSecurityPayrollHubPage() {
     return executiveRowsBySearch.filter((r) => ymMatchesYearMonthScope(executiveRowYm(r), yearFilterCe, monthScope));
   }, [executiveRowsBySearch, yearFilterCe, monthScope]);
 
-  const workerTotalSso = useMemo(
-    () => filteredWorker.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0),
-    [filteredWorker],
-  );
-  const officeTotalSso = useMemo(
-    () => filteredOffice.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0),
-    [filteredOffice],
-  );
-  const executiveTotalSso = useMemo(
-    () => filteredExecutive.reduce((sum, { sso }) => sum + ssoCombinedRemitAmount(sso), 0),
-    [filteredExecutive],
-  );
-
-  /** รวมตามตัวกรอง — รวมรายจ่าย = ยอดจ่าย · รวม ปกส.+สมทบ = ยอดนำส่ง (ลูกจ้าง+นายจ้าง) */
-  const grandTotalRemit = workerTotalSso + officeTotalSso + executiveTotalSso;
   const grandTotalPaid = useMemo(
     () =>
       filteredWorker.reduce((sum, { line }) => sum + workerLineGrossPayAmount(line), 0) +
@@ -534,6 +519,30 @@ export default function AccountingSocialSecurityPayrollHubPage() {
     () => executiveRowsToSsoTableFixed(filteredExecutive, nationalIdByExecutiveStaffId),
     [filteredExecutive, nationalIdByExecutiveStaffId],
   );
+
+  const workerTotalSso = useMemo(
+    () =>
+      workerTableRows
+        .filter((r) => r.isGroupLeader !== false)
+        .reduce((sum, r) => sum + ssoCombinedRemitAmount(r.sso), 0),
+    [workerTableRows],
+  );
+  const officeTotalSso = useMemo(
+    () =>
+      officeTableRows
+        .filter((r) => r.isGroupLeader !== false)
+        .reduce((sum, r) => sum + ssoCombinedRemitAmount(r.sso), 0),
+    [officeTableRows],
+  );
+  const executiveTotalSso = useMemo(
+    () =>
+      executiveTableRows
+        .filter((r) => r.isGroupLeader !== false)
+        .reduce((sum, r) => sum + ssoCombinedRemitAmount(r.sso), 0),
+    [executiveTableRows],
+  );
+  /** รวมตามตัวกรอง — รวม ปกส.+สมทบ ต่อคนต่อเดือน (ไม่บวกซ้ำหลายชุดจ่าย) */
+  const grandTotalRemit = workerTotalSso + officeTotalSso + executiveTotalSso;
 
   const runSocialSecurityPayrollListPrint = useCallback(
     async (scope: 'filtered' | 'all') => {

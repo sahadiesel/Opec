@@ -758,6 +758,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         bypassPoMonthLock: true,
         billingCharge: billing,
         payrollCharge: payroll,
+        /** ทับ W/SB ที่ auto สร้างผิดบนวัน Mob — วัน M1 ต้องเป็น M1 อย่างเดียว */
+        overwriteConflictingEventType: true,
         remarkOverride: `Mob — Final clearance · Mob · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
       });
       const now = Date.now();
@@ -776,7 +778,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       setClearanceEditMode(0);
       toast({
         title: editing ? `แก้ไขวัน ${kindLabel} แล้ว` : `บันทึก ${kindLabel} (${statusCode}) แล้ว`,
-        description: `วันที่ ${ymd} · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
+        description: `วันที่ ${ymd} = M1 เท่านั้น · เริ่ม W วันถัดไป (${addDaysToYmd(ymd, 1)}) หลังกดเริ่มงาน — ออโต้จะลง W ให้ · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -884,17 +886,20 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
           workYmd,
         });
       } else {
-        // ไม่มี Mob — บันทึกเฉพาะวันทำงานวันแรก ไม่เติมช่วง Standby
-        await upsertMobClearanceDailyTimesheet(firestore, currentUser as AppUser, {
-          assignment,
-          po,
-          line,
-          workerDisplayName: workerTimesheetName || assignment.workerId,
-          kind: 'work_day',
-          dateYmd: workYmd,
-          bypassPoMonthLock: true,
-          overwriteConflictingEventType: true,
-        });
+        // ไม่มี Mob — บันทึกเฉพาะวันทำงานวันแรก (ถ้าเป็นวันในอนาคต รอออโต้)
+        const todayYmd = thailandTodayYmd();
+        if (workYmd <= todayYmd) {
+          await upsertMobClearanceDailyTimesheet(firestore, currentUser as AppUser, {
+            assignment,
+            po,
+            line,
+            workerDisplayName: workerTimesheetName || assignment.workerId,
+            kind: 'work_day',
+            dateYmd: workYmd,
+            bypassPoMonthLock: true,
+            overwriteConflictingEventType: true,
+          });
+        }
       }
 
       const now = Date.now();
@@ -917,7 +922,10 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       setClearanceEditMode(0);
       toast({
         title: editing ? 'แก้ไขวันเริ่มงานแล้ว' : 'เริ่มวันทำงานแล้ว',
-        description: `ACTIVE ตั้งแต่ ${workYmd} — เติมช่วง Standby / ต่อเนื่องต้นเดือน (ถ้ามี) แล้ว · ระบบจะเติมรายวันถัดไปให้อัตโนมัติ`,
+        description:
+          workYmd > thailandTodayYmd()
+            ? `ACTIVE · วันเริ่มงาน ${workYmd} (ยังไม่ถึง) — ระบบจะลง W อัตโนมัติเมื่อถึงวันนั้น · วัน Mob คงเป็น M1 อย่างเดียว`
+            : `ACTIVE ตั้งแต่ ${workYmd} — เติมช่วง Standby / ต่อเนื่องต้นเดือน (ถ้ามี) แล้ว · ระบบจะเติมรายวันถัดไปให้อัตโนมัติ`,
       });
       void (async () => {
         try {
