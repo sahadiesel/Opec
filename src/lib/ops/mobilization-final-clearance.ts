@@ -43,6 +43,11 @@ export function addDaysToYmd(ymd: string, deltaDays: number): string {
   return `${yy}-${mm}-${dd}`;
 }
 
+/** วันเริ่มงานหลัง Mob — วันปฏิทินถัดจากวัน M1 */
+export function workStartYmdAfterMob(mobYmd: string): string {
+  return addDaysToYmd(mobYmd.trim().slice(0, 10), 1);
+}
+
 function checklistPass(status: ChecklistItemStatus | string | undefined | null): boolean {
   return status === 'pass';
 }

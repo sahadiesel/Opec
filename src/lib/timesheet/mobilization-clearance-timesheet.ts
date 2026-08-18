@@ -386,7 +386,7 @@ export async function applyMobFinalClearanceWorkStartFill(
   const today = thailandTodayYmd();
   if (gapStart <= gapEnd) {
     for (const d of eachYmdInRange(gapStart, gapEnd)) {
-      /** อนาคตให้ auto เติมเมื่อถึงวัน — ไม่สร้าง SB/W ล่วงหน้า */
+      /** ช่องว่างก่อนเริ่มงาน — เติม SB เฉพาะวันที่ถึงแล้ว */
       if (d > today) continue;
       await upsertMobClearanceDailyTimesheet(db, user, {
         assignment: a,
@@ -404,20 +404,18 @@ export async function applyMobFinalClearanceWorkStartFill(
 
   /**
    * วันเริ่มงาน = work_day
-   * ถ้าเลือกวันในอนาคต (เช่น Mob วันนี้ → เริ่มพรุ่งนี้) ยังไม่ลง W ตอนนี้
-   * — รอ PO Active auto เมื่อถึงวันนั้น (หลัง ACTIVE)
+   * หลังยืนยัน Mob ระบบตั้งวันถัดไปเป็น W ทันที — เขียนแถวแม้ยังเป็นวันพรุ่งนี้
+   * เพื่อไม่ต้องรอ scheduler / กด Start working day
    */
-  if (wk <= today) {
-    await upsertMobClearanceDailyTimesheet(db, user, {
-      assignment: a,
-      po,
-      line,
-      workerDisplayName,
-      kind: 'work_day',
-      dateYmd: wk,
-      bypassPoMonthLock: bypass,
-      /** วันเริ่มงาน — ทับ standby/auto ที่ค้างบนวันนั้นได้ */
-      overwriteConflictingEventType: true,
-    });
-  }
+  await upsertMobClearanceDailyTimesheet(db, user, {
+    assignment: a,
+    po,
+    line,
+    workerDisplayName,
+    kind: 'work_day',
+    dateYmd: wk,
+    bypassPoMonthLock: bypass,
+    /** วันเริ่มงาน — ทับ standby/auto ที่ค้างบนวันนั้นได้ */
+    overwriteConflictingEventType: true,
+  });
 }
