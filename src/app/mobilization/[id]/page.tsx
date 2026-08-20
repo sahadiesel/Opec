@@ -93,6 +93,7 @@ import {
   mobStandbyMobDayChoiceLabel,
   mobStandbyMobDayStatusCode,
   thailandTodayYmd,
+  workStartYmdAfterMob,
 } from '@/lib/ops/mobilization-final-clearance';
 import type { MobStep2Choice } from '@/lib/ops/mob-day-charge';
 import {
@@ -458,12 +459,116 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   const beginEditStandby = () => {
     if (!assignment) return;
-    if (isFinalClearanceStep3Done(assignment)) {
-      setStep2CascadeOpen(true);
-      return;
-    }
     setClearanceEditMode(2);
     setStandbyDateDraft((assignment.mobStandbyDate || '').trim() || thailandTodayYmd());
+  };
+
+  const deletePreviousWorkStartFill = async (a: Assignment, standbyYmd: string) => {
+    if (!firestore) return;
+    const oldW = (a.mobWorkingStartDate || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(oldW)) return;
+    const hasStandby = /^\d{4}-\d{2}-\d{2}$/.test(standbyYmd);
+    if (hasStandby) {
+      const monthStart = `${standbyYmd.slice(0, 7)}-01`;
+      const beforeStandby = addDaysToYmd(standbyYmd, -1);
+      if (monthStart <= beforeStandby) {
+        await deleteDraftMobFinalClearanceTimesheetsInRange(
+          firestore,
+          a.workerId,
+          a.id,
+          monthStart,
+          beforeStandby,
+        );
+      }
+      const afterStandby = addDaysToYmd(standbyYmd, 1);
+      if (afterStandby <= oldW) {
+        await deleteDraftMobFinalClearanceTimesheetsInRange(
+          firestore,
+          a.workerId,
+          a.id,
+          afterStandby,
+          oldW,
+        );
+      }
+    } else {
+      await deleteDraftMobFinalClearanceTimesheetsInRange(firestore, a.workerId, a.id, oldW, oldW);
+    }
+  };
+
+  /** หลัง Mob (หรือแก้วันเริ่มงาน) — ตั้งวันทำงาน + ACTIVE แล้วซิงก์รายวัน */
+  const persistWorkStartAndActivate = async (args: {
+    assignment: Assignment;
+    line: POLine;
+    standbyYmd: string;
+    workYmd: string;
+    editingExisting: boolean;
+  }) => {
+    if (!firestore || !currentUser?.id || !po) {
+      throw new Error('ยังไม่พร้อมบันทึกวันเริ่มงาน');
+    }
+    const { assignment: a, line, standbyYmd, workYmd, editingExisting } = args;
+    const hasStandby = /^\d{4}-\d{2}-\d{2}$/.test(standbyYmd);
+    if (editingExisting) {
+      await deletePreviousWorkStartFill(a, hasStandby ? standbyYmd : '');
+    }
+    if (hasStandby) {
+      await applyMobFinalClearanceWorkStartFill(firestore, currentUser as AppUser, {
+        assignment: { ...a, mobStandbyDate: standbyYmd },
+        po,
+        line,
+        workerDisplayName: workerTimesheetName || a.workerId,
+        standbyYmd,
+        workYmd,
+      });
+    } else {
+      await upsertMobClearanceDailyTimesheet(firestore, currentUser as AppUser, {
+        assignment: a,
+        po,
+        line,
+        workerDisplayName: workerTimesheetName || a.workerId,
+        kind: 'work_day',
+        dateYmd: workYmd,
+        bypassPoMonthLock: true,
+        overwriteConflictingEventType: true,
+      });
+    }
+    const now = Date.now();
+    const mobRef = doc(firestore, 'mobilizations', id);
+    await updateDoc(mobRef, {
+      mobWorkingStartDate: workYmd,
+      mobWorkingStartedAt: now,
+      mobWorkingStartedByUserId: currentUser.id,
+      mobilizationStatus: 'ACTIVE',
+      deploymentStatus: 'ACTIVE',
+      mobLocationPhase: 'active_at_location',
+      poActiveAutoWorkSuspended: deleteField(),
+      poActiveStandbyAutoStartYmd: deleteField(),
+      poActiveStandbyAutoEndYmd: deleteField(),
+      updatedAt: now,
+    });
+    const snap = await getDoc(mobRef);
+    if (snap.exists()) {
+      setAssignment({ id: snap.id, ...(snap.data() as object) } as Assignment);
+    }
+    setWorkingStartDateDraft(workYmd);
+    if (a.workerId && a.customerId) {
+      void ensureWorkerAssignedCustomerId(firestore, a.workerId, a.customerId).catch((e) =>
+        console.error('[mob] assignedCustomerIds', e),
+      );
+    }
+    try {
+      const r = await syncPoActiveAutoDailyForAssignment(firestore, a.id, currentUser as AppUser, {
+        ignoreBundleAutoDisabled: true,
+      });
+      if (r.created + r.updated > 0) {
+        toast({
+          title: 'เติมรายวันอัตโนมัติแล้ว',
+          description: `สร้าง ${r.created} · อัปเดต ${r.updated} · ข้าม ${r.skipped}`,
+        });
+      }
+    } catch (e) {
+      console.warn('[mob] auto daily after work start', e);
+    }
   };
 
   const confirmStep2CascadeAndEdit = async () => {
@@ -502,7 +607,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       setStep2CascadeOpen(false);
       toast({
         title: 'ย้อนขั้นเริ่มงานแล้ว',
-        description: 'แก้วัน Mob ได้ — บันทึกขั้นที่ 5 ใหม่หลังแก้เสร็จ',
+        description: 'แก้วัน Mob ได้ — เมื่อบันทึก Mob ระบบจะตั้งวันทำงานเป็นวันถัดไปให้อัตโนมัติ',
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -763,7 +868,13 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         remarkOverride: `Mob — Final clearance · Mob · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
       });
       const now = Date.now();
-      patchMobilization({
+      const workYmd = workStartYmdAfterMob(ymd);
+      const hadWorkStart = /^\d{4}-\d{2}-\d{2}$/.test((assignment.mobWorkingStartDate || '').trim());
+      if (editing && hadWorkStart) {
+        await deletePreviousWorkStartFill(assignment, prevStandby);
+      }
+      const mobRef = doc(firestore, 'mobilizations', id);
+      await updateDoc(mobRef, {
         mobStandbyDate: ymd,
         mobStandbyDayEventType: dayKind,
         mobStep2Choice: mobChoice,
@@ -773,12 +884,25 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         mobStandbyRecordedByUserId: currentUser.id,
         mobilizationStatus: 'MOBILIZING',
         deploymentStatus: 'MOBILIZING',
+        updatedAt: now,
       });
-      setWorkingStartDateDraft((cur) => cur || addDaysToYmd(ymd, 1));
+      const mobSnap = await getDoc(mobRef);
+      const assignmentAfterMob = mobSnap.exists()
+        ? ({ id: mobSnap.id, ...(mobSnap.data() as object) } as Assignment)
+        : ({ ...assignment, mobStandbyDate: ymd, mobStandbyDayEventType: dayKind } as Assignment);
+      setAssignment(assignmentAfterMob);
+      setWorkingStartDateDraft(workYmd);
+      await persistWorkStartAndActivate({
+        assignment: assignmentAfterMob,
+        line,
+        standbyYmd: ymd,
+        workYmd,
+        editingExisting: false,
+      });
       setClearanceEditMode(0);
       toast({
         title: editing ? `แก้ไขวัน ${kindLabel} แล้ว` : `บันทึก ${kindLabel} (${statusCode}) แล้ว`,
-        description: `วันที่ ${ymd} = M1 เท่านั้น · เริ่ม W วันถัดไป (${addDaysToYmd(ymd, 1)}) หลังกดเริ่มงาน — ออโต้จะลง W ให้ · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
+        description: `วันที่ ${ymd} = M1 · วันถัดไป ${workYmd} เป็น W อัตโนมัติ · สถานะ ACTIVE · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -839,109 +963,18 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     }
     setClearanceSavingStep(3);
     try {
-      if (editing) {
-        const oldW = (assignment.mobWorkingStartDate || '').trim();
-        if (/^\d{4}-\d{2}-\d{2}$/.test(oldW)) {
-          if (hasStandby) {
-            const monthStart = `${standbyYmd.slice(0, 7)}-01`;
-            const beforeStandby = addDaysToYmd(standbyYmd, -1);
-            if (monthStart <= beforeStandby) {
-              await deleteDraftMobFinalClearanceTimesheetsInRange(
-                firestore,
-                assignment.workerId,
-                assignment.id,
-                monthStart,
-                beforeStandby,
-              );
-            }
-            const afterStandby = addDaysToYmd(standbyYmd, 1);
-            if (afterStandby <= oldW) {
-              await deleteDraftMobFinalClearanceTimesheetsInRange(
-                firestore,
-                assignment.workerId,
-                assignment.id,
-                afterStandby,
-                oldW,
-              );
-            }
-          } else {
-            await deleteDraftMobFinalClearanceTimesheetsInRange(
-              firestore,
-              assignment.workerId,
-              assignment.id,
-              oldW,
-              oldW,
-            );
-          }
-        }
-      }
-
-      if (hasStandby) {
-        await applyMobFinalClearanceWorkStartFill(firestore, currentUser as AppUser, {
-          assignment,
-          po,
-          line,
-          workerDisplayName: workerTimesheetName || assignment.workerId,
-          standbyYmd,
-          workYmd,
-        });
-      } else {
-        // ไม่มี Mob — บันทึกเฉพาะวันทำงานวันแรก (ถ้าเป็นวันในอนาคต รอออโต้)
-        const todayYmd = thailandTodayYmd();
-        if (workYmd <= todayYmd) {
-          await upsertMobClearanceDailyTimesheet(firestore, currentUser as AppUser, {
-            assignment,
-            po,
-            line,
-            workerDisplayName: workerTimesheetName || assignment.workerId,
-            kind: 'work_day',
-            dateYmd: workYmd,
-            bypassPoMonthLock: true,
-            overwriteConflictingEventType: true,
-          });
-        }
-      }
-
-      const now = Date.now();
-      patchMobilization({
-        mobWorkingStartDate: workYmd,
-        mobWorkingStartedAt: now,
-        mobWorkingStartedByUserId: currentUser.id,
-        mobilizationStatus: 'ACTIVE',
-        deploymentStatus: 'ACTIVE',
-        mobLocationPhase: 'active_at_location',
-        poActiveAutoWorkSuspended: deleteField(),
-        poActiveStandbyAutoStartYmd: deleteField(),
-        poActiveStandbyAutoEndYmd: deleteField(),
+      await persistWorkStartAndActivate({
+        assignment,
+        line,
+        standbyYmd: hasStandby ? standbyYmd : '',
+        workYmd,
+        editingExisting: editing,
       });
-      if (firestore && assignment.workerId && assignment.customerId) {
-        void ensureWorkerAssignedCustomerId(firestore, assignment.workerId, assignment.customerId).catch((e) =>
-          console.error('[mob] assignedCustomerIds', e),
-        );
-      }
       setClearanceEditMode(0);
       toast({
         title: editing ? 'แก้ไขวันเริ่มงานแล้ว' : 'เริ่มวันทำงานแล้ว',
-        description:
-          workYmd > thailandTodayYmd()
-            ? `ACTIVE · วันเริ่มงาน ${workYmd} (ยังไม่ถึง) — ระบบจะลง W อัตโนมัติเมื่อถึงวันนั้น · วัน Mob คงเป็น M1 อย่างเดียว`
-            : `ACTIVE ตั้งแต่ ${workYmd} — เติมช่วง Standby / ต่อเนื่องต้นเดือน (ถ้ามี) แล้ว · ระบบจะเติมรายวันถัดไปให้อัตโนมัติ`,
+        description: `ACTIVE · วันเริ่มงาน ${workYmd} เป็น W · วัน Mob คงเป็น M1 อย่างเดียว`,
       });
-      void (async () => {
-        try {
-          const r = await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser, {
-            ignoreBundleAutoDisabled: true,
-          });
-          if (r.created + r.updated > 0) {
-            toast({
-              title: 'เติมรายวันอัตโนมัติแล้ว',
-              description: `สร้าง ${r.created} · อัปเดต ${r.updated} · ข้าม ${r.skipped}`,
-            });
-          }
-        } catch (e) {
-          console.warn('[mob] auto daily after step3', e);
-        }
-      })();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast({ variant: 'destructive', title: 'เริ่มวันทำงานไม่สำเร็จ', description: msg });
@@ -1531,9 +1564,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                             onChange={(ms) => {
                               const v = timestampToHtmlDateValue(ms);
                               setStandbyDateDraft(v);
-                              if (/^\d{4}-\d{2}-\d{2}$/.test(v) && !isFinalClearanceStep3Done(assignment)) {
-                                // Start work day = Mob + 1 (ปรับเองภายหลังได้)
-                                setWorkingStartDateDraft(addDaysToYmd(v, 1));
+                              if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+                                setWorkingStartDateDraft(workStartYmdAfterMob(v));
                               }
                             }}
                             disabled={
@@ -1622,6 +1654,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                   : mobStandbyMobDayChoiceLabel(assignment.mobStandbyDayEventType ?? 'mobilization_day')}{' '}
                                 ({mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ?? 'MO'}) ·{' '}
                                 {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
+                                {assignment.mobWorkingStartDate
+                                  ? ` · วันทำงานอัตโนมัติ ${formatYmdLocalThaiBE(assignment.mobWorkingStartDate)}`
+                                  : ''}
                               </p>
                             )}
                             {assignment.mobStep2BillingCharge || assignment.mobStep2PayrollCharge ? (
@@ -1634,7 +1669,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           </div>
                         ) : (
                           <p className="text-xs text-muted-foreground">
-                            Mob = วัน M1 (MO) · หรือกด «ไม่มี Mob» หากไม่ต้องการวันเดินทาง — ตารางเวลาจะเริ่มที่วันทำงานเลย
+                            Mob = วัน M1 (MO) · วันถัดไปเป็นวันทำงานอัตโนมัติ · หรือกด «ไม่มี Mob» หากไม่ต้องการวันเดินทาง
                           </p>
                         )}
                         {(isFinalClearanceMobDone(assignment) && !assignment.mobMobSkipped && clearanceEditMode !== 2) ||
@@ -1666,65 +1701,66 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                       <Separator />
 
                       <div className="space-y-2">
-                        <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 5 · Start working day</p>
+                        <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 5 · วันเริ่มงาน (อัตโนมัติหลัง Mob)</p>
                         {assignment.poLineId && !primaryPoLine ? (
                           <p className="text-xs text-amber-800 dark:text-amber-200">กำลังโหลดบรรทัด PO…</p>
                         ) : null}
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                          <DatePickerThaiBE
-                            className="h-11 flex-1 min-w-0"
-                            value={htmlDateValueToTimestampMs(workingStartDateDraft)}
-                            onChange={(ms) => setWorkingStartDateDraft(timestampToHtmlDateValue(ms))}
-                            disabled={
-                              !canEditMobilization ||
-                              isMobUnassigned(assignment) ||
-                              clearanceSavingStep !== 0 ||
-                              !isFinalClearanceStep2Done(assignment) ||
-                              (isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3)
-                            }
-                          />
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex shrink-0">
-                                <Button
-                                  className="bg-blue-900 hover:bg-blue-950 h-11 w-[18.5rem]"
-                                  disabled={
-                                    !canEditMobilization ||
-                                    isMobUnassigned(assignment) ||
-                                    clearanceSavingStep !== 0 ||
-                                    !primaryPoLine ||
-                                    !isFinalClearanceStep2Done(assignment) ||
-                                    (isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3) ||
-                                    !step3SaveGate.ok
-                                  }
-                                  onClick={() => void runFinalClearanceStep3()}
-                                >
-                                  {clearanceSavingStep === 3 ? (
-                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                  ) : (
-                                    <CheckCircle className="h-4 w-4 mr-2" />
-                                  )}
-                                  {clearanceEditMode === 3 ? 'บันทึกวันเริ่มงาน (แก้ไข)' : 'Start working day'}
-                                </Button>
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
-                              {clearanceEditMode === 3
-                                ? 'บันทึกใหม่ — ช่วงระหว่างวัน Mob กับวันเริ่มงานจะเป็น Standby อัตโนมัติ · ต่อเนื่องต้นเดือน (ถ้ามี)'
-                                : isFinalClearanceStep3Done(assignment)
-                                  ? 'เริ่มวันทำงานแล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่'
-                                  : !step3SaveGate.ok
-                                    ? step3SaveGate.message
-                                    : 'วันเริ่มงานต้องหลังวัน Mob — ระบบจะเติมวัน Standby ในช่วงว่างอัตโนมัติ · ถ้าต่อจากเดือนก่อนจะเติมวันทำงานต้นเดือนจนถึงก่อนวัน Mob'}
-                            </TooltipContent>
-                          </Tooltip>
-                        </div>
-                        {isFinalClearanceStep3Done(assignment) ? (
+                        {isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3 ? (
                           <p className="text-sm">
-                            เริ่มแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobWorkingStartDate)} ·{' '}
+                            เริ่มอัตโนมัติวันถัดจาก Mob — วันที่ {formatYmdLocalThaiBE(assignment.mobWorkingStartDate)} ·{' '}
                             {formatDateTimeThaiBE(assignment.mobWorkingStartedAt)}
                           </p>
-                        ) : null}
+                        ) : !isFinalClearanceStep2Done(assignment) ? (
+                          <p className="text-xs text-muted-foreground">
+                            บันทึก Mob แล้วระบบจะตั้งวันถัดไปเป็นวันทำงานให้อัตโนมัติ — ไม่ต้องกดยืนยันขั้นนี้
+                          </p>
+                        ) : (
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <DatePickerThaiBE
+                              className="h-11 flex-1 min-w-0"
+                              value={htmlDateValueToTimestampMs(workingStartDateDraft)}
+                              onChange={(ms) => setWorkingStartDateDraft(timestampToHtmlDateValue(ms))}
+                              disabled={
+                                !canEditMobilization ||
+                                isMobUnassigned(assignment) ||
+                                clearanceSavingStep !== 0
+                              }
+                            />
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="inline-flex shrink-0">
+                                  <Button
+                                    className="bg-blue-900 hover:bg-blue-950 h-11 w-[18.5rem]"
+                                    disabled={
+                                      !canEditMobilization ||
+                                      isMobUnassigned(assignment) ||
+                                      clearanceSavingStep !== 0 ||
+                                      !primaryPoLine ||
+                                      !step3SaveGate.ok
+                                    }
+                                    onClick={() => void runFinalClearanceStep3()}
+                                  >
+                                    {clearanceSavingStep === 3 ? (
+                                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                    ) : (
+                                      <CheckCircle className="h-4 w-4 mr-2" />
+                                    )}
+                                    {clearanceEditMode === 3 ? 'บันทึกวันเริ่มงาน (แก้ไข)' : 'Start working day'}
+                                  </Button>
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
+                                {clearanceEditMode === 3
+                                  ? 'บันทึกใหม่ — ช่วงระหว่างวัน Mob กับวันเริ่มงานจะเป็น Standby อัตโนมัติ · ต่อเนื่องต้นเดือน (ถ้ามี)'
+                                  : assignment.mobMobSkipped
+                                    ? 'ข้าม Mob แล้ว — เลือกวันเริ่มงานแล้วกดบันทึก'
+                                    : !step3SaveGate.ok
+                                      ? step3SaveGate.message
+                                      : 'ใช้เฉพาะกรณีข้าม Mob หรือข้อมูลเก่ายังไม่มีวันเริ่มงาน'}
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
+                        )}
                         {(isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3) || clearanceEditMode === 3 ? (
                           <div className="flex flex-wrap items-center gap-2">
                             {isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3 ? (
@@ -1959,16 +1995,15 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                     <strong>Pre-Mob</strong> — SB 8 ชม. หรือกด «ไม่มี Pre-Mob»
                   </li>
                   <li>
-                    <strong>Mob</strong> — วัน M1 (แก้ค่าวางบิล/จ่ายได้) →{' '}
-                    <span className="font-mono">MOBILIZING</span> · หรือกด «ไม่มี Mob» — ตารางเวลาเริ่มที่วันทำงานเลย
+                    <strong>Mob</strong> — วัน M1 (แก้ค่าวางบิล/จ่ายได้) → วันถัดไปเป็น W อัตโนมัติ และสถานะ{' '}
+                    <span className="font-mono">ACTIVE</span> · หรือกด «ไม่มี Mob» แล้วเลือกวันเริ่มงาน
                   </li>
                   <li>
-                    <strong>Start working day</strong> — ค่าเริ่มต้น = วันรุ่งขึ้นหลัง Mob →{' '}
-                    <span className="font-mono">ACTIVE</span>
+                    <strong>วันเริ่มงาน</strong> — ตั้งอัตโนมัติวันถัดจาก Mob (แก้วันที่ได้ถ้าจำเป็น) ไม่ต้องกดยืนยัน
                   </li>
                 </ol>
                 <p className="text-xs text-blue-900/90">
-                  ห้ามข้ามขั้น — ถ้ากดเมื่อยังไม่ครบขั้นก่อนหน้า ระบบจะแจ้งเตือนและไม่บันทึก · ขั้น 3–5 จะเขียนลง{' '}
+                  ห้ามข้ามขั้น — ถ้ากดเมื่อยังไม่ครบขั้นก่อนหน้า ระบบจะแจ้งเตือนและไม่บันทึก · ขั้น 3–4 จะเขียนลง{' '}
                   <span className="font-mono">daily_timesheets</span> ทันที (ไม่เขียนลงงวด PO+เดือนที่ล็อกแล้ว)
                 </p>
               </CardContent>
@@ -1988,9 +2023,10 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                       </span>
                     )}
                     {assignment.deploymentStatus &&
-                      assignment.deploymentStatus !== 'ACTIVE' && (
+                      assignment.deploymentStatus !== 'ACTIVE' &&
+                      assignment.mobMobSkipped === true && (
                         <span className="block mt-1 text-amber-900/90 text-xs">
-                          แนะนำให้ทำขั้น 5 «Start working day» ให้ครบก่อนลงเวลา
+                          ข้าม Mob แล้ว — เลือกวันเริ่มงานในขั้น 5 เพื่อลงเวลาต่อเนื่อง
                         </span>
                       )}
                   </CardDescription>
@@ -2221,8 +2257,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
           <AlertDialogHeader>
             <AlertDialogTitle>แก้ไขวัน Mob หลังเริ่มงานแล้ว?</AlertDialogTitle>
             <AlertDialogDescription>
-              ระบบจะย้อนขั้นที่ 5 (วันเริ่มทำงาน) และลบรายวันที่สร้างจาก Mob ในช่วงหลังวัน Mob จนถึงวันเริ่มงานเดิม (เฉพาะแถว Draft ที่มาจาก Final
-              clearance) — จากนั้นให้บันทึก Mob และขั้นที่ 5 ใหม่
+              ระบบจะย้อนวันเริ่มทำงาน และลบรายวันที่สร้างจาก Mob ในช่วงหลังวัน Mob จนถึงวันเริ่มงานเดิม (เฉพาะแถว Draft ที่มาจาก Final
+              clearance) — จากนั้นบันทึก Mob ใหม่ วันถัดไปจะเป็นวันทำงานอัตโนมัติ
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

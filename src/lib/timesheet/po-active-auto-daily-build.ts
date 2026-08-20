@@ -83,7 +83,7 @@ export function resolvePoActiveAutoDailySyncKind(a: Assignment, dateYmd: string)
     return null;
   }
 
-  /** มี M1 แล้วยังไม่กด Start working day — ยังไม่ auto W */
+  /** มี M1 แล้วยังไม่มีวันเริ่มงาน (ข้าม Mob / ข้อมูลเก่า) — ยังไม่ auto W */
   if (hasNaturalSb && !hasMobStart) {
     return null;
   }
@@ -168,6 +168,10 @@ export function computePoActiveAutoDailyRange(
   const endFromPo = msToYmdUtc(po.endDate);
 
   let cap = throughYmd;
+  /** รวมวันเริ่มงานวันแรกแม้ยังเป็นวันพรุ่งนี้ — ให้แถว W หลัง Mob อยู่ในช่วงซิงก์ */
+  if (hasMobStart && mobStart > cap) {
+    cap = mobStart;
+  }
   if (/^\d{4}-\d{2}-\d{2}$/.test(assignEnd)) {
     cap = minYmd(cap, assignEnd);
   }
