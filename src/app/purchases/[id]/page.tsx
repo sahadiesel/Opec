@@ -990,9 +990,13 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                     <CardTitle className="text-base">หัก ณ ที่จ่าย (งานจ้างเหมา)</CardTitle>
                     <CardDescription>
                       {fiscalTermsEditable
-                        ? 'ตั้งค่าหัก ณ ที่จ่ายได้ในโหมดนี้ — ใช้ประกอบการจ่ายผ่านบัญชีและเอกสารรับวางบิลอ้างอิง PO (ไม่จัดงวดชำระใน PO)'
+                        ? hasPurchaseRequisition
+                          ? 'ปรับหัก ณ ที่จ่ายได้ในโหมดนี้ (ปกติตั้งตอนทำ PR แล้วคัดลอกมาอัตโนมัติ — ใช้เมื่อลืมตั้งหรือต้องแก้)'
+                          : 'ตั้งค่าหัก ณ ที่จ่ายได้ในโหมดนี้ — ใช้ประกอบการจ่ายผ่านบัญชีและเอกสารรับวางบิลอ้างอิง PO (ไม่จัดงวดชำระใน PO)'
                         : showPostApprovalEditButton
-                          ? 'กด「แก้ไข」ด้านบนเพื่อปรับหัก ณ ที่จ่าย — ใช้ประกอบการจ่ายผ่านบัญชีและเอกสารรับวางบิลอ้างอิง PO'
+                          ? hasPurchaseRequisition
+                            ? 'ค่าหัก ณ ที่จ่ายมาจาก PR — กด「แก้ไข」เฉพาะเมื่อลืมตั้งตอน PR หรือต้องการปรับ'
+                            : 'กด「แก้ไข」ด้านบนเพื่อปรับหัก ณ ที่จ่าย — ใช้ประกอบการจ่ายผ่านบัญชีและเอกสารรับวางบิลอ้างอิง PO'
                           : 'กำหนดได้ตอนฉบับร่าง ส่งกลับแก้ไข หรือหลังกด「แก้ไข」เมื่ออนุมัติ/ส่งคู่ค้าแล้ว — ใช้ประกอบการจ่ายผ่านบัญชี'}
                     </CardDescription>
                   </div>
@@ -1010,38 +1014,56 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   ) : null}
                 </CardHeader>
                 <CardContent className="pt-4 space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
-                    <div className="flex items-center gap-3">
-                      <Switch
-                        id="wht-enabled"
-                        checked={whtEnabled}
-                        onCheckedChange={setWhtEnabled}
-                        disabled={!fiscalTermsEditable}
-                      />
-                      <Label htmlFor="wht-enabled" className="cursor-pointer">
-                        ใช้การคำนวณหัก ณ ที่จ่ายตามยอด PO (ประกอบจ่ายผ่านใบรับวางบิล)
-                      </Label>
-                    </div>
-                    <div className="flex flex-wrap items-end gap-2">
-                      <div className="space-y-1">
-                        <Label htmlFor="wht-rate">อัตรา (%)</Label>
-                        <Input
-                          id="wht-rate"
-                          className="w-24"
-                          inputMode="decimal"
-                          disabled={!whtEnabled || !fiscalTermsEditable}
-                          value={whtRateInput}
-                          onChange={(e) => setWhtRateInput(e.target.value)}
+                  {fiscalTermsEditable ? (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
+                      <div className="flex items-center gap-3">
+                        <Switch
+                          id="wht-enabled"
+                          checked={whtEnabled}
+                          onCheckedChange={setWhtEnabled}
                         />
+                        <Label htmlFor="wht-enabled" className="cursor-pointer">
+                          ใช้การคำนวณหัก ณ ที่จ่ายตามยอด PO (ประกอบจ่ายผ่านใบรับวางบิล)
+                        </Label>
                       </div>
-                      {fiscalTermsEditable && (
+                      <div className="flex flex-wrap items-end gap-2">
+                        <div className="space-y-1">
+                          <Label htmlFor="wht-rate">อัตรา (%)</Label>
+                          <Input
+                            id="wht-rate"
+                            className="w-24"
+                            inputMode="decimal"
+                            disabled={!whtEnabled}
+                            value={whtRateInput}
+                            onChange={(e) => setWhtRateInput(e.target.value)}
+                          />
+                        </div>
                         <Button type="button" onClick={() => void saveSupplierWithholding()} disabled={whtSaving}>
                           {whtSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                           บันทึก
                         </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-md border bg-muted/30 px-3 py-2.5 text-sm print:hidden">
+                      {purchase.supplierWithholdingEnabled &&
+                      (purchase.supplierWithholdingRatePercent ?? 0) > 0 ? (
+                        <p>
+                          <span className="font-semibold text-foreground">เปิดใช้แล้ว</span>
+                          <span className="text-muted-foreground">
+                            {' '}
+                            · อัตรา {purchase.supplierWithholdingRatePercent}%
+                            {hasPurchaseRequisition ? ' (จาก PR / ตามที่บันทึกใน PO)' : ''}
+                          </span>
+                        </p>
+                      ) : (
+                        <p className="text-muted-foreground">
+                          ยังไม่เปิดใช้หัก ณ ที่จ่าย
+                          {hasPurchaseRequisition ? ' — กด「แก้ไข」หากลืมตั้งตอนทำ PR' : ''}
+                        </p>
                       )}
                     </div>
-                  </div>
+                  )}
                   <div className="hidden print:block text-sm">
                     {purchase.supplierWithholdingEnabled && (purchase.supplierWithholdingRatePercent ?? 0) > 0 ? (
                       <p>
@@ -1051,13 +1073,15 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                       <p>ไม่มีการหัก ณ ที่จ่ายตามการตั้งค่าเอกสารนี้</p>
                     )}
                   </div>
-                  {purchase.supplierWithholdingEnabled && (purchase.supplierWithholdingRatePercent ?? 0) > 0 ? (
-                    <p className="text-xs text-muted-foreground print:hidden">
-                      บันทึกแล้ว: หัก {purchase.supplierWithholdingRatePercent}% จากฐานก่อน VAT ตามสัดส่วนยอดสุทธิ PO
-                    </p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground print:hidden">ยังไม่เปิดใช้หัก ณ ที่จ่ายตามเอกสารนี้</p>
-                  )}
+                  {fiscalTermsEditable ? (
+                    purchase.supplierWithholdingEnabled && (purchase.supplierWithholdingRatePercent ?? 0) > 0 ? (
+                      <p className="text-xs text-muted-foreground print:hidden">
+                        บันทึกแล้ว: หัก {purchase.supplierWithholdingRatePercent}% จากฐานก่อน VAT ตามสัดส่วนยอดสุทธิ PO
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground print:hidden">ยังไม่เปิดใช้หัก ณ ที่จ่ายตามเอกสารนี้</p>
+                    )
+                  ) : null}
                 </CardContent>
               </Card>
             )}

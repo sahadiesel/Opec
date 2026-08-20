@@ -2046,12 +2046,19 @@ export function buildPurchaseRequestPrintHtml(params: {
 
   const payType = request.purchasePaymentType;
   const purchaseTypeLabel = L === 'en' ? purchaseTypeEn(payType) : purchaseTypeTh(payType);
+  const prWhtLine =
+    request.lineEntryMode === 'SERVICE' || request.supplierWithholdingEnabled
+      ? request.supplierWithholdingEnabled && (request.supplierWithholdingRatePercent ?? 0) > 0
+        ? `<p class="sd-wht"><strong>${escapeHtmlDoc(printT(L, 'wht'))}:</strong> ${request.supplierWithholdingRatePercent}% ${escapeHtmlDoc(printT(L, 'whtRateNote'))}</p>`
+        : `<p class="sd-wht"><strong>${escapeHtmlDoc(printT(L, 'wht'))}:</strong> ${escapeHtmlDoc(printT(L, 'whtNoneThisDoc'))}</p>`
+      : '';
   const mainHtml = `${partyHtml}
   ${titleBlock}
   ${tableHtml}
   ${totalsHtml}
   <h2 class="sd-section-title">${escapeHtmlDoc(printT(L, 'paymentTerms'))}</h2>
   <p class="sd-purchase-type-line"><strong>${escapeHtmlDoc(printT(L, 'purchaseType'))}:</strong> ${escapeHtmlDoc(purchaseTypeLabel)}</p>
+  ${prWhtLine}
   ${notesBlock}`;
 
   const footerHtml = buildStandardSignFooterHtml({

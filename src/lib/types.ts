@@ -3075,6 +3075,13 @@ export interface PurchaseRequest {
   /** เครดิตแบ่งงวด — ถ้า false ใช้งวดเดียวตามเครดิตคู่ค้าเมื่อสร้าง PO */
   paymentInstallmentsEnabled?: boolean;
   paymentMilestoneDrafts?: PrPaymentMilestoneDraft[];
+  /**
+   * หัก ณ ที่จ่าย (งานจ้างเหมา / SERVICE) — ตั้งตอนทำ PR แล้วคัดลอกไป PO
+   * โหมด INVENTORY ไม่ใช้
+   */
+  supplierWithholdingEnabled?: boolean;
+  /** อัตราหัก ณ ที่จ่าย เช่น 3 = 3% */
+  supplierWithholdingRatePercent?: number;
   status: PurchaseRequestStatus;
   requestedByUid?: string;
   requestedByName?: string;

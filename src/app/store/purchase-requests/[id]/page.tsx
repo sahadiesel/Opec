@@ -48,6 +48,11 @@ import {
   type PrLineDraft,
 } from '@/components/store/purchase-request-lines-editor';
 import { Switch } from '@/components/ui/switch';
+import {
+  PurchaseRequestWhtCard,
+  parsePrWhtRatePercent,
+  prWhtPersistFields,
+} from '@/components/store/purchase-request-wht-card';
 import { computePurchaseTotalsFromLines, sumLineAmounts } from '@/lib/purchase/pr-totals';
 import { replacePurchaseRequestLines } from '@/lib/purchase/pr-lines-repo';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
@@ -102,6 +107,8 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     { sequence: 1, label: 'งวดที่ 1', amount: 0 },
     { sequence: 2, label: 'งวดที่ 2', amount: 0 },
   ]);
+  const [whtEnabled, setWhtEnabled] = useState(false);
+  const [whtRateInput, setWhtRateInput] = useState('3');
 
   const [saving, setSaving] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -182,6 +189,8 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     setVatTreatment(pr.vatTreatment ?? 'EXCLUSIVE');
     setPurchasePaymentType(pr.purchasePaymentType ?? 'CREDIT');
     setPaymentInstallmentsEnabled(!!pr.paymentInstallmentsEnabled);
+    setWhtEnabled(!!pr.supplierWithholdingEnabled);
+    setWhtRateInput(String(pr.supplierWithholdingRatePercent ?? 3));
     if (pr.paymentMilestoneDrafts?.length) {
       setMilestones(pr.paymentMilestoneDrafts);
     }
@@ -283,6 +292,16 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         return false;
       }
     }
+    if (submitForApproval && lineEntryMode === 'SERVICE' && whtEnabled) {
+      if (parsePrWhtRatePercent(whtRateInput) == null) {
+        toast({
+          variant: 'destructive',
+          title: 'อัตราหัก ณ ที่จ่ายไม่ถูกต้อง',
+          description: 'ระบุเปอร์เซ็นต์มากกว่า 0 และไม่เกิน 100 หรือปิดการหัก',
+        });
+        return false;
+      }
+    }
     return true;
   };
 
@@ -339,6 +358,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         purchasePaymentType,
         paymentInstallmentsEnabled: purchasePaymentType === 'CREDIT' ? paymentInstallmentsEnabled : false,
         paymentMilestoneDrafts: milestonePayload ?? undefined,
+        ...prWhtPersistFields(lineEntryMode, whtEnabled, whtRateInput),
         updatedAt: Date.now(),
       });
       toast({ title: pr.status === 'REJECTED' ? 'บันทึกแล้ว' : 'บันทึกแล้ว' });
@@ -385,6 +405,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         purchasePaymentType,
         paymentInstallmentsEnabled: purchasePaymentType === 'CREDIT' ? paymentInstallmentsEnabled : false,
         paymentMilestoneDrafts: milestonePayload ?? undefined,
+        ...prWhtPersistFields(lineEntryMode, whtEnabled, whtRateInput),
         status: 'PENDING_APPROVAL' as PurchaseRequestStatus,
         requestedByUid: pr.requestedByUid || currentUser.id,
         requestedByName: pr.requestedByName || currentUser.displayName || currentUser.email || '',
@@ -524,9 +545,13 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           needByDate: formEditable ? needByDate : pr.needByDate,
           purchasePaymentType: formEditable ? purchasePaymentType : pr.purchasePaymentType,
           vatTreatment: formEditable ? vatTreatment : pr.vatTreatment,
+          lineEntryMode: formEditable ? lineEntryMode : pr.lineEntryMode,
           amountBeforeTax: formEditable ? totals.amountBeforeTax : pr.amountBeforeTax,
           vatAmount: formEditable ? totals.vatAmount : pr.vatAmount,
           totalAmount: formEditable ? totals.totalAmount : pr.totalAmount,
+          ...(formEditable
+            ? prWhtPersistFields(lineEntryMode, whtEnabled, whtRateInput)
+            : {}),
         },
         vendor: vendor ?? undefined,
         lines: printLines,
@@ -567,6 +592,9 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     needByDate,
     purchasePaymentType,
     vatTreatment,
+    lineEntryMode,
+    whtEnabled,
+    whtRateInput,
     totals,
     printLocale,
     toast,
@@ -789,6 +817,20 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
             ) : null}
           </CardContent>
         </Card>
+
+        {(formEditable ? lineEntryMode : pr.lineEntryMode || 'SERVICE') === 'SERVICE' ? (
+          <PurchaseRequestWhtCard
+            enabled={formEditable ? whtEnabled : !!pr.supplierWithholdingEnabled}
+            rateInput={
+              formEditable
+                ? whtRateInput
+                : String(pr.supplierWithholdingRatePercent ?? 3)
+            }
+            onEnabledChange={setWhtEnabled}
+            onRateChange={setWhtRateInput}
+            readOnly={!formEditable}
+          />
+        ) : null}
 
         <Card>
           <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">

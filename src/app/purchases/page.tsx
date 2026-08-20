@@ -360,6 +360,15 @@ export default function PurchasesPage() {
         vatAmount,
         totalAmount,
         vendorId: pr.vendorId,
+        /** คัดลอกหัก ณ ที่จ่ายจาก PR (SERVICE) — ไม่ต้องตั้งซ้ำที่ PO */
+        supplierWithholdingEnabled:
+          (pr.lineEntryMode ?? 'INVENTORY') === 'SERVICE' && !!pr.supplierWithholdingEnabled,
+        supplierWithholdingRatePercent:
+          (pr.lineEntryMode ?? 'INVENTORY') === 'SERVICE' &&
+          !!pr.supplierWithholdingEnabled &&
+          (Number(pr.supplierWithholdingRatePercent) || 0) > 0
+            ? Number(pr.supplierWithholdingRatePercent)
+            : null,
         createdByUid: currentUser.id,
         createdByName: currentUser.displayName || currentUser.email || '',
         createdAt: Date.now(),

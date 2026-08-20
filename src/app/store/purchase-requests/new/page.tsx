@@ -38,6 +38,11 @@ import {
   type PrLineDraft,
 } from '@/components/store/purchase-request-lines-editor';
 import { Switch } from '@/components/ui/switch';
+import {
+  PurchaseRequestWhtCard,
+  parsePrWhtRatePercent,
+  prWhtPersistFields,
+} from '@/components/store/purchase-request-wht-card';
 import { computePurchaseTotalsFromLines, sumLineAmounts } from '@/lib/purchase/pr-totals';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
@@ -72,6 +77,8 @@ export default function NewPurchaseRequestPage() {
     { sequence: 2, label: 'งวดที่ 2', amount: 0 },
   ]);
   const [needByDate, setNeedByDate] = useState(timestampToHtmlDateValue(Date.now()));
+  const [whtEnabled, setWhtEnabled] = useState(false);
+  const [whtRateInput, setWhtRateInput] = useState('3');
 
   const ok = useMemo(
     () => !!currentUser && canView(currentUser, 'store_inventory'),
@@ -146,6 +153,16 @@ export default function NewPurchaseRequestPage() {
         return false;
       }
     }
+    if (submitForApproval && lineEntryMode === 'SERVICE' && whtEnabled) {
+      if (parsePrWhtRatePercent(whtRateInput) == null) {
+        toast({
+          variant: 'destructive',
+          title: 'อัตราหัก ณ ที่จ่ายไม่ถูกต้อง',
+          description: 'ระบุเปอร์เซ็นต์มากกว่า 0 และไม่เกิน 100 หรือปิดการหัก',
+        });
+        return false;
+      }
+    }
     return true;
   };
 
@@ -174,6 +191,8 @@ export default function NewPurchaseRequestPage() {
               }))
           : undefined;
 
+      const whtFields = prWhtPersistFields(lineEntryMode, whtEnabled, whtRateInput);
+
       const batch = writeBatch(firestore);
       batch.set(prRef, {
         requestNo: code,
@@ -190,6 +209,8 @@ export default function NewPurchaseRequestPage() {
         paymentInstallmentsEnabled: purchasePaymentType === 'CREDIT' ? paymentInstallmentsEnabled : false,
         paymentMilestoneDrafts: milestonePayload || null,
         needByDate: needByDate || null,
+        supplierWithholdingEnabled: whtFields.supplierWithholdingEnabled,
+        supplierWithholdingRatePercent: whtFields.supplierWithholdingRatePercent,
         status: submitForApproval ? 'PENDING_APPROVAL' : 'DRAFT',
         requestedByUid: currentUser.id,
         requestedByName: currentUser.displayName || currentUser.email || '',
@@ -324,6 +345,15 @@ export default function NewPurchaseRequestPage() {
             </div>
           </CardContent>
         </Card>
+
+        {lineEntryMode === 'SERVICE' ? (
+          <PurchaseRequestWhtCard
+            enabled={whtEnabled}
+            rateInput={whtRateInput}
+            onEnabledChange={setWhtEnabled}
+            onRateChange={setWhtRateInput}
+          />
+        ) : null}
 
         <Card>
           <CardHeader>
