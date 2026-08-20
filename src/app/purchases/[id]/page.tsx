@@ -19,6 +19,7 @@ import {
   XCircle,
   RotateCcw,
   PackageCheck,
+  Pencil,
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, deleteField } from 'firebase/firestore';
@@ -93,6 +94,11 @@ function statusLabelTh(status: PurchaseStatus): string {
 
 function canEditLinesStatus(status: PurchaseStatus): boolean {
   return status === 'DRAFT' || status === 'RETURNED_FOR_REVISION';
+}
+
+/** หลังอนุมัติ / ส่งคู่ค้าแล้ว — เปิดโหมดแก้ไขด้วยปุ่ม (ไม่ต้องย้อนสถานะเป็นร่าง) */
+function canPostApprovalEdit(status: PurchaseStatus): boolean {
+  return status === 'APPROVED' || status === 'ISSUED';
 }
 
 function approvalStatusPillClass(status: PurchaseStatus): string {
@@ -197,16 +203,6 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   const vendor = vendors?.find((v) => v.id === purchase?.vendorId);
 
   const lineMode = purchase?.purchaseLineMode || 'SERVICE';
-  /** PO ที่อ้าง PR — รายการถือเป็นผลจาก PR ที่อนุมัติแล้ว ไม่ให้แก้บรรทัดใน PO */
-  const linesEditable =
-    purchase &&
-    canEditLinesStatus(purchase.status) &&
-    canEditPurchases &&
-    !hasPurchaseRequisition;
-  const fiscalTermsEditable =
-    purchase &&
-    (purchase.status === 'DRAFT' || purchase.status === 'RETURNED_FOR_REVISION') &&
-    canEditPurchases;
 
   const [isAddingLine, setIsAddingLine] = useState(false);
   const [newLine, setNewLine] = useState<Partial<PurchaseLine>>({
@@ -221,6 +217,8 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   const [whtSaving, setWhtSaving] = useState(false);
   const [discountInput, setDiscountInput] = useState('0');
   const [discountSaving, setDiscountSaving] = useState(false);
+  /** โหมดแก้ไขหลังอนุมัติ / ISSUED — กดปุ่ม「แก้ไข」 */
+  const [postApprovalEditing, setPostApprovalEditing] = useState(false);
 
   useEffect(() => {
     if (!purchase) return;
@@ -229,17 +227,52 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     setDiscountInput(String(purchase.discountAmount ?? 0));
   }, [purchase?.id, purchase?.supplierWithholdingEnabled, purchase?.supplierWithholdingRatePercent, purchase?.discountAmount]);
 
+  useEffect(() => {
+    if (!purchase || !canPostApprovalEdit(purchase.status)) {
+      setPostApprovalEditing(false);
+    }
+  }, [purchase?.id, purchase?.status]);
+
+  const draftOrReturnedEditable =
+    !!purchase && canEditLinesStatus(purchase.status) && canEditPurchases;
+  const postApprovalEditActive =
+    !!purchase && canPostApprovalEdit(purchase.status) && canEditPurchases && postApprovalEditing;
+
+  /**
+   * รายการ:
+   * - ฉบับร่าง/ส่งกลับแก้: PO ที่ไม่อ้าง PR แก้ได้ตามเดิม
+   * - หลังอนุมัติ/ISSUED เมื่อกด「แก้ไข」: แก้ได้รวม PO ที่อ้าง PR
+   */
+  const linesEditable = Boolean(
+    (draftOrReturnedEditable && !hasPurchaseRequisition) || postApprovalEditActive,
+  );
+
+  const fiscalTermsEditable = Boolean(
+    (purchase &&
+      (purchase.status === 'DRAFT' || purchase.status === 'RETURNED_FOR_REVISION') &&
+      canEditPurchases) ||
+      postApprovalEditActive,
+  );
+
   const lineSumGross = useMemo(
     () => sumLineAmounts((lines ?? []).map((l) => ({ amount: Number(l.amount) || 0 }))),
     [lines],
   );
 
-  /** PO อ้าง PR — ตั้งส่วนลดได้ก่อนส่งคู่ค้า (รายการล็อกแล้ว) */
-  const discountEditable =
+  /** ส่วนลด: ฉบับร่าง/อนุมัติ (PR) หรือหลังกดแก้ไขตอน APPROVED/ISSUED */
+  const discountEditable = Boolean(
     !!purchase &&
-    hasPurchaseRequisition &&
-    canEditPurchases &&
-    (purchase.status === 'DRAFT' || purchase.status === 'APPROVED');
+      canEditPurchases &&
+      (postApprovalEditActive ||
+        (hasPurchaseRequisition &&
+          (purchase.status === 'DRAFT' || purchase.status === 'APPROVED')) ||
+        (!hasPurchaseRequisition &&
+          (purchase.status === 'DRAFT' || purchase.status === 'RETURNED_FOR_REVISION'))),
+  );
+
+  const showPostApprovalEditButton = Boolean(
+    purchase && canEditPurchases && canPostApprovalEdit(purchase.status),
+  );
 
   const recalculateTotals = (currentLines: PurchaseLine[], discountAmount = purchase?.discountAmount ?? 0) => {
     if (!purchaseRef || !purchase) return;
@@ -508,7 +541,13 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
 
   const saveSupplierWithholding = async () => {
     if (!purchaseRef || !canEditPurchases || !purchase) return;
-    if (purchase.status !== 'DRAFT' && purchase.status !== 'RETURNED_FOR_REVISION') return;
+    if (
+      purchase.status !== 'DRAFT' &&
+      purchase.status !== 'RETURNED_FOR_REVISION' &&
+      !(canPostApprovalEdit(purchase.status) && postApprovalEditing)
+    ) {
+      return;
+    }
     const r = parseFloat(String(whtRateInput).replace(',', '.'));
     if (!Number.isFinite(r) || r < 0 || r > 100) {
       toast({ variant: 'destructive', title: 'อัตราไม่ถูกต้อง', description: 'ใส่ตัวเลข 0–100 (เช่น 3 สำหรับ 3%)' });
@@ -653,6 +692,17 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
             >
               {statusLabelTh(purchase.status)}
             </Badge>
+            {showPostApprovalEditButton && (
+              <Button
+                type="button"
+                variant={postApprovalEditing ? 'secondary' : 'outline'}
+                className="font-bold gap-2"
+                onClick={() => setPostApprovalEditing((v) => !v)}
+              >
+                <Pencil className="h-4 w-4" />
+                {postApprovalEditing ? 'ปิดโหมดแก้ไข' : 'แก้ไข'}
+              </Button>
+            )}
             {canPrintPurchase && (
               <>
                 <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} showLabel />
@@ -672,6 +722,14 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* โซนซ้าย: รายการ + สรุปยอด + หัก ณ ที่จ่าย (การชำระผ่านใบรับวางบิล — ไม่จัดการใน PO) */}
           <div className="order-2 lg:order-1 lg:col-span-7 space-y-6 w-full min-w-0">
+            {postApprovalEditActive ? (
+              <div className="rounded-lg border border-amber-300 bg-amber-50/90 px-4 py-3 text-sm text-amber-950 print:hidden">
+                <p className="font-semibold">โหมดแก้ไข — สถานะยังเป็น「{statusLabelTh(purchase.status)}」</p>
+                <p className="text-xs mt-1 text-amber-900/90">
+                  แก้รายการ ส่วนลด และหัก ณ ที่จ่ายได้โดยตรง · กด「ปิดโหมดแก้ไข」เมื่อเสร็จ
+                </p>
+              </div>
+            ) : null}
             <Card className="shadow-md">
               <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
                 <div>
@@ -679,7 +737,13 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   <CardDescription>
                     {hasPurchaseRequisition ? (
                       <>
-                        รายการถูกล็อกจาก PR ที่อนุมัติแล้ว — แก้ไม่ได้ใน PO (หากต้องแก้ให้ทำ PR ใหม่)
+                        {postApprovalEditActive ? (
+                          <>โหมดแก้ไข — แก้รายการใน PO ได้โดยตรง (อ้างอิงจาก PR)</>
+                        ) : (
+                          <>
+                            รายการมาจาก PR ที่อนุมัติแล้ว — กด「แก้ไข」ด้านบนหากต้องการปรับใน PO
+                          </>
+                        )}
                         {linkedPr?.requestNo ? (
                           <>
                             {' '}
@@ -849,7 +913,9 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                       <div className="space-y-1">
                         <Label htmlFor="po-discount">ส่วนลด (หักจากยอดก่อนภาษี)</Label>
                         <p className="text-xs text-muted-foreground">
-                          รายการจาก PR แก้ไม่ได้ — ใส่ส่วนลดรวมก่อนพิมพ์/ส่ง PO ให้คู่ค้า
+                          {hasPurchaseRequisition && !postApprovalEditActive
+                            ? 'ใส่ส่วนลดรวมก่อนพิมพ์/ส่ง PO ให้คู่ค้า — กด「แก้ไข」หากต้องการปรับรายการด้วย'
+                            : 'ส่วนลดหักจากยอดก่อนภาษี — บันทึกแล้วระบบคำนวณ VAT และยอดสุทธิใหม่'}
                         </p>
                       </div>
                       <div className="flex flex-wrap items-end gap-2">
@@ -919,11 +985,29 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
 
             {lineMode === 'SERVICE' && (
               <Card className="border-slate-200 shadow-md">
-                <CardHeader className="border-b bg-slate-50/60">
-                  <CardTitle className="text-base">หัก ณ ที่จ่าย (งานจ้างเหมา)</CardTitle>
-                  <CardDescription>
-                    กำหนดได้เฉพาะตอนสถานะฉบับร่างหรือส่งกลับแก้ไข — ใช้ประกอบการจ่ายผ่านบัญชีและเอกสารรับวางบิลอ้างอิง PO (ไม่จัดงวดชำระใน PO)
-                  </CardDescription>
+                <CardHeader className="border-b bg-slate-50/60 flex flex-row items-start justify-between gap-3">
+                  <div className="space-y-1.5 min-w-0">
+                    <CardTitle className="text-base">หัก ณ ที่จ่าย (งานจ้างเหมา)</CardTitle>
+                    <CardDescription>
+                      {fiscalTermsEditable
+                        ? 'ตั้งค่าหัก ณ ที่จ่ายได้ในโหมดนี้ — ใช้ประกอบการจ่ายผ่านบัญชีและเอกสารรับวางบิลอ้างอิง PO (ไม่จัดงวดชำระใน PO)'
+                        : showPostApprovalEditButton
+                          ? 'กด「แก้ไข」ด้านบนเพื่อปรับหัก ณ ที่จ่าย — ใช้ประกอบการจ่ายผ่านบัญชีและเอกสารรับวางบิลอ้างอิง PO'
+                          : 'กำหนดได้ตอนฉบับร่าง ส่งกลับแก้ไข หรือหลังกด「แก้ไข」เมื่ออนุมัติ/ส่งคู่ค้าแล้ว — ใช้ประกอบการจ่ายผ่านบัญชี'}
+                    </CardDescription>
+                  </div>
+                  {showPostApprovalEditButton && !postApprovalEditing ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0 gap-1.5 font-semibold"
+                      onClick={() => setPostApprovalEditing(true)}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      แก้ไข
+                    </Button>
+                  ) : null}
                 </CardHeader>
                 <CardContent className="pt-4 space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
@@ -1122,6 +1206,17 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                     </p>
                     {canEditPurchases && (
                       <Button
+                        type="button"
+                        variant="secondary"
+                        className="w-full bg-white/15 text-white hover:bg-white/25 font-bold border border-white/30"
+                        onClick={() => setPostApprovalEditing((v) => !v)}
+                      >
+                        <Pencil className="h-4 w-4 mr-2" />
+                        {postApprovalEditing ? 'ปิดโหมดแก้ไข' : 'แก้ไขรายการ / หัก ณ ที่จ่าย'}
+                      </Button>
+                    )}
+                    {canEditPurchases && (
+                      <Button
                         className="w-full bg-white text-primary hover:bg-slate-100 font-bold"
                         onClick={() => void confirmSentToVendor()}
                       >
@@ -1134,18 +1229,34 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   </>
                 )}
                 {purchase.status === 'ISSUED' && (
-                  <div className="text-sm text-white/90 space-y-1">
-                    <p className="font-semibold">ส่งให้คู่ค้าแล้ว (ISSUED)</p>
-                    {purchase.issuedAt ? (
-                      <p>
-                        บันทึกเมื่อ {new Date(purchase.issuedAt).toLocaleString('th-TH')}
-                        {purchase.issuedByName ? ` — ${purchase.issuedByName}` : ''}
-                      </p>
-                    ) : (
-                      <p className="text-white/70">รายการเก่า: ยังไม่มีวันที่บันทึกการส่ง</p>
+                  <div className="text-sm text-white/90 space-y-3">
+                    <div className="space-y-1">
+                      <p className="font-semibold">ส่งให้คู่ค้าแล้ว (ISSUED)</p>
+                      {purchase.issuedAt ? (
+                        <p>
+                          บันทึกเมื่อ {new Date(purchase.issuedAt).toLocaleString('th-TH')}
+                          {purchase.issuedByName ? ` — ${purchase.issuedByName}` : ''}
+                        </p>
+                      ) : (
+                        <p className="text-white/70">รายการเก่า: ยังไม่มีวันที่บันทึกการส่ง</p>
+                      )}
+                    </div>
+                    {canEditPurchases && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="w-full bg-white/15 text-white hover:bg-white/25 font-bold border border-white/30"
+                        onClick={() => setPostApprovalEditing((v) => !v)}
+                      >
+                        <Pencil className="h-4 w-4 mr-2" />
+                        {postApprovalEditing ? 'ปิดโหมดแก้ไข' : 'แก้ไขรายการ / หัก ณ ที่จ่าย'}
+                      </Button>
                     )}
-                    <p className="text-xs text-white/80 pt-2 leading-relaxed">
+                    <p className="text-xs text-white/80 leading-relaxed">
                       การชำระและบันทึกจ่ายผ่านใบรับวางบิล / บัญชี — ไม่ผูกสถานะชำระกับหน้า PO นี้
+                      {postApprovalEditing
+                        ? ' · กำลังแก้ไข PO โดยตรง (ภาษีในใบรับวางบิลหลังส่งบัญชีแก้ได้ที่หน้ารับวางบิล)'
+                        : ''}
                     </p>
                   </div>
                 )}
