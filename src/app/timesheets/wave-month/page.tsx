@@ -23,9 +23,10 @@ import {
   Unlock,
   Waves,
   RefreshCw,
+  Sparkles,
 } from 'lucide-react';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
+import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
+import { collection, deleteDoc, doc, getDoc, getDocs, onSnapshot, query, setDoc, where } from 'firebase/firestore';
 import type {
   Assignment,
   Customer,
@@ -44,6 +45,7 @@ import type {
   WaveMonthTimesheetReview,
   Worker,
   TimesheetRetroAdjustment,
+  PoActiveBundle,
 } from '@/lib/types';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import { useToast } from '@/hooks/use-toast';
@@ -52,7 +54,6 @@ import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permi
 import { PageGuidance } from '@/components/layout/page-guidance';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import {
-  assignmentHasAnyMobTimesheetDayInCalendarMonth,
   isYmdWithinAssignmentMobTimesheetWindow,
   isYmdEditableForAssignmentTimesheet,
   waveMonthCellTimesheetVisible,
@@ -119,6 +120,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TimesheetService } from '@/lib/services/timesheet-service';
 import { cn } from '@/lib/utils';
@@ -741,6 +743,19 @@ export default function WaveMonthTimesheetSummaryPage() {
 
   const needsBundlePick = bundleOptions.length > 1 && !effectiveBundleId;
 
+  const bundleRefForAuto = useMemoFirebase(
+    () =>
+      firestore && effectiveBundleId && !effectiveBundleId.startsWith('orphan:')
+        ? doc(firestore, 'po_active_bundles', effectiveBundleId)
+        : null,
+    [firestore, effectiveBundleId],
+  );
+  const { data: bundleForAutoSwitch } = useDoc<PoActiveBundle>(bundleRefForAuto as any);
+  const bundleAutoDailyDisabled = bundleForAutoSwitch?.poActiveAutoDailyDisabled === true;
+  const showAutoMasterSwitch = Boolean(effectiveBundleId && !effectiveBundleId.startsWith('orphan:'));
+  const [autoMasterSaving, setAutoMasterSaving] = useState(false);
+  const [autoGenBusy, setAutoGenBusy] = useState(false);
+
   const waveQuery = useMemoFirebase(() => {
     if (!firestore || !canViewTs) return null;
     return query(collection(firestore, 'waves'), where('status', 'in', OPEN_WAVE_STATUSES_FOR_TIMESHEET));
@@ -961,10 +976,8 @@ export default function WaveMonthTimesheetSummaryPage() {
     [monthYm, monthSheetsForOpenPos, poMonthRows],
   );
 
-  /** เติมรายวันอัตโนมัติของวันนี้ (เขตไทย) — เหมือน PO Daily Board เพื่อให้หน้ารายเดือนเห็นข้อมูลโดยไม่ต้องเปิดกระดานรายวัน */
-  const silentPoActiveAutoDailyIds = useMemo(() => {
-    const today = thailandTodayYmd();
-    if (!today.startsWith(monthYm)) return [];
+  /** คน ACTIVE ในชุดนี้ที่ยังแก้ตารางได้ — ใช้ทั้งซิงก์เงียบและปุ่ม Auto gen */
+  const poActiveAutoDailyEligibleIds = useMemo(() => {
     const ids: string[] = [];
     for (const a of mobAssignments) {
       if (!isAssignmentEligibleForPoActiveAutoDaily(a)) continue;
@@ -973,11 +986,16 @@ export default function WaveMonthTimesheetSummaryPage() {
       if (isPoMonthFullGridLock(poMonthByPoId.get(a.poId))) continue;
       const workerClosure = workerClosureByKey.get(`${a.poId}|${a.workerId}`);
       if (workerClosure && isWorkerMonthClosureGridLocked(workerClosure.status)) continue;
-      if (!assignmentHasAnyMobTimesheetDayInCalendarMonth(a, monthYm)) continue;
       ids.push(a.id);
     }
     return ids;
   }, [mobAssignments, monthYm, reviewByWaveId, poMonthByPoId, workerClosureByKey]);
+
+  const silentPoActiveAutoDailyIds = useMemo(() => {
+    const today = thailandTodayYmd();
+    if (!today.startsWith(monthYm)) return [];
+    return poActiveAutoDailyEligibleIds;
+  }, [monthYm, poActiveAutoDailyEligibleIds]);
 
   const poActiveAutoDailySyncLockRef = useRef(false);
   /** กันยิงซ้ำทั้งเดือน — คีย์ต่อเดือนปฏิทิน + วันนี้เขตไทย (วันใหม่จะรันเติมย้อนหลังในเดือนอีกครั้ง) */
@@ -989,6 +1007,7 @@ export default function WaveMonthTimesheetSummaryPage() {
 
   const runWaveMonthPoActiveAutoHeal = useCallback(async () => {
     if (!firestore || !currentUser || !canEditTs || silentPoActiveAutoDailyIds.length === 0) return;
+    if (bundleAutoDailyDisabled) return;
     const todayYmd = thailandTodayYmd();
     if (!todayYmd.startsWith(monthYm)) return;
     const idsFingerprint = [...silentPoActiveAutoDailyIds].sort().join(',');
@@ -1019,7 +1038,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     } finally {
       poActiveAutoDailySyncLockRef.current = false;
     }
-  }, [firestore, currentUser, canEditTs, silentPoActiveAutoDailyIds, mobAssignments, monthYm]);
+  }, [firestore, currentUser, canEditTs, silentPoActiveAutoDailyIds, mobAssignments, monthYm, bundleAutoDailyDisabled]);
 
   useEffect(() => {
     void runWaveMonthPoActiveAutoHeal();
@@ -1046,6 +1065,102 @@ export default function WaveMonthTimesheetSummaryPage() {
       window.removeEventListener('focus', onVis);
     };
   }, [canEditTs, firestore, runWaveMonthPoActiveAutoHeal]);
+
+  const handleBundleAutoDailyToggle = useCallback(
+    async (autoOn: boolean) => {
+      if (!firestore || !effectiveBundleId || effectiveBundleId.startsWith('orphan:')) return;
+      setAutoMasterSaving(true);
+      try {
+        await setDoc(
+          doc(firestore, 'po_active_bundles', effectiveBundleId),
+          {
+            poActiveAutoDailyDisabled: !autoOn,
+            updatedAt: Date.now(),
+          },
+          { merge: true },
+        );
+        toast({
+          title: autoOn ? 'เปิดลงเวลาอัตโนมัติแล้ว' : 'ปิดลงเวลาอัตโนมัติแล้ว',
+          description: autoOn
+            ? 'Scheduler จะลงวันนี้เป็นต้นไป — ช่องว่างเก่าในเดือนนี้กด Auto gen เพื่อเติมช่วงที่ยังอยู่ในรอบทำงาน'
+            : 'ต้องลงมือหรือกด Auto gen เพื่อเติมช่วงที่ขาด · ข้อมูลแถวเดิมไม่ถูกลบ',
+        });
+        if (autoOn) {
+          waveMonthPoAutoHealSucceededKeyRef.current = '';
+          void runWaveMonthPoActiveAutoHeal();
+        }
+      } catch (e: unknown) {
+        toast({
+          variant: 'destructive',
+          title: 'บันทึกไม่สำเร็จ',
+          description: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        setAutoMasterSaving(false);
+      }
+    },
+    [firestore, effectiveBundleId, toast, runWaveMonthPoActiveAutoHeal],
+  );
+
+  const handleWaveMonthAutoGen = useCallback(async () => {
+    if (!firestore || !currentUser || !canEditTs) {
+      toast({ variant: 'destructive', title: 'ไม่พร้อม', description: 'ไม่มีสิทธิ์แก้ไข timesheet หรือไม่ได้เชื่อมต่อ' });
+      return;
+    }
+    if (poActiveAutoDailyEligibleIds.length === 0) {
+      toast({
+        title: 'ไม่มีแถว ACTIVE ที่เติมได้',
+        description:
+          'ลงเวลาอัตโนมัติเฉพาะคนสถานะปฏิบัติงาน (ACTIVE) ที่ผูก PO ครบ และยังไม่ปิดงวด — คนที่รอ Mob / ยังไม่กดเริ่มวันทำงานจะยังไม่มี W',
+      });
+      return;
+    }
+    setAutoGenBusy(true);
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    try {
+      for (const a of mobAssignments) {
+        if ((a.mobLocationEndDate || '').trim()) {
+          try {
+            await purgeStalePoActiveAutoDailyForCalendarMonth(firestore, a.id, monthYm);
+          } catch {
+            /* best-effort */
+          }
+        }
+      }
+      for (const aid of poActiveAutoDailyEligibleIds) {
+        const r = await syncPoActiveAutoDailyForAssignment(firestore, aid, currentUser, {
+          backfillCalendarMonthYm: monthYm,
+          ignoreBundleAutoDisabled: true,
+        });
+        created += r.created;
+        updated += r.updated;
+        skipped += r.skipped;
+      }
+      waveMonthPoAutoHealSucceededKeyRef.current = '';
+      toast({
+        title: 'Auto gen เสร็จแล้ว',
+        description: `สร้าง ${created} · อัปเดต ${updated} · ข้าม ${skipped} — ช่วงรอ remob / ยังไม่เริ่มวันทำงานจะไม่ถูกเติม W`,
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Auto gen ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setAutoGenBusy(false);
+    }
+  }, [
+    firestore,
+    currentUser,
+    canEditTs,
+    poActiveAutoDailyEligibleIds,
+    mobAssignments,
+    monthYm,
+    toast,
+  ]);
 
   useEffect(() => {
     if (!firestore || !currentUser || !monthReviewRows?.length) return;
@@ -2586,7 +2701,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                 'จบงาน (ปิด mobilization / Demob): ใช้ปุ่ม «หยุด» แล้วเลือก «หยุดแบบจบงาน» บน Wave Board — ข้อมูลลงเวลาก่อนวันจบยังอยู่ในเดือนเดิมจนกว่าจะทำบิล · แก้ไขได้จนกว่าจะปิดงวด',
                 'คนที่จบงานแล้วรอ Mob รอบใหม่: ยังเห็นในเดือนที่มีลงเวลาจริง — แก้ไขวันก่อนวันจบไซต์ได้ หรือกด «ยกเลิกจบงาน» เพื่อกลับ ACTIVE',
                 'ช่วง Standby / เริ่มงาน: สรุปรายเดือนใช้ทั้งวัน Standby และวันเริ่มทำงานจาก Mobilization — คนสถานะ MOBILIZING ที่ความพร้อม READY ขึ้นตารางเมื่อช่วงมอบหมายทับเดือนนั้น (ยังไม่ ACTIVE จะยังไม่มี work_day อัตโนมัติ — ต้องผ่านขั้น Mobilization)',
-                'ลงเวลาอัตโนมัติ ACTIVE (PO Active): Scheduler เติมวันนี้ (~00:10 ไทย) + ซิงก์เมื่อเปิด Wave Board — ช่วงหยุดแบบ standby เป็น SB อัตโนมัติตามช่วงที่ตั้ง · ปุ่มหยุดแบบจบงานจะหยุดซิงก์ตามวันสิ้นสุด',
+                'ลงเวลาอัตโนมัติ ACTIVE: สวิตช์ + ปุ่ม Auto gen อยู่บนตารางนี้และบน Wave Board · Scheduler เติมวันนี้ (~00:10 ไทย) · ช่วงรอ remob / คนที่ยังไม่กดเริ่มวันทำงานจะยังไม่มี W',
               ]}
             />
             <Button variant="outline" size="sm" asChild>
@@ -2872,6 +2987,11 @@ export default function WaveMonthTimesheetSummaryPage() {
                       {activeBundleLabel ? (
                         <p className="font-medium text-foreground">{activeBundleLabel}</p>
                       ) : null}
+                      {canEditTs && bundleAutoDailyDisabled ? (
+                        <p className="text-amber-800 dark:text-amber-200">
+                          ลงเวลาอัตโนมัติปิดอยู่ — วันนี้จะไม่ขึ้น W จนกว่าจะเปิดสวิตช์ หรือกด Auto gen
+                        </p>
+                      ) : null}
                       <p>
                         พบ {sortedWaves.length} Wave สถานะเปิด · แสดงในตาราง {displayWaves.length} Wave
                         {pos != null ? ` · ${scopedPoIdSet.size} PO ในชุดนี้` : ''}
@@ -2967,22 +3087,62 @@ export default function WaveMonthTimesheetSummaryPage() {
                       ) : null}
                     </CardDescription>
                   </div>
-                  {dedupedTableRows.length > 0 ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-10 shrink-0 gap-2"
-                      disabled={gridPrintBusy}
-                      onClick={() => void handlePrintGridTable()}
-                    >
-                      {gridPrintBusy ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Printer className="h-4 w-4" />
-                      )}
-                      พิมพ์ตาราง
-                    </Button>
-                  ) : null}
+                  <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+                    {canEditTs && showAutoMasterSwitch ? (
+                      <div className="flex items-center gap-2 rounded-md border border-muted bg-background/90 px-2.5 py-1.5">
+                        <Switch
+                          id="wave-month-auto-daily-master"
+                          checked={!bundleAutoDailyDisabled}
+                          disabled={autoMasterSaving}
+                          onCheckedChange={(on) => void handleBundleAutoDailyToggle(on)}
+                          aria-label="เปิดหรือปิดการลงเวลารายวันอัตโนมัติ"
+                        />
+                        <Label
+                          htmlFor="wave-month-auto-daily-master"
+                          className="text-[10px] font-bold leading-tight cursor-pointer select-none max-w-[9.5rem]"
+                        >
+                          ลงเวลาอัตโนมัติ
+                          <span className="block font-normal text-muted-foreground font-mono text-[9px]">
+                            PO Active · Scheduler
+                          </span>
+                        </Label>
+                      </div>
+                    ) : null}
+                    {canEditTs ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-10 gap-1.5 border-dashed border-primary/25"
+                        disabled={autoGenBusy || poActiveAutoDailyEligibleIds.length === 0}
+                        onClick={() => void handleWaveMonthAutoGen()}
+                        title="เติม W/SB ที่ขาดในช่วงทำงานของคน ACTIVE — ไม่ทับแถวแก้มือ และไม่เติมช่วงรอ remob"
+                      >
+                        {autoGenBusy ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-3.5 w-3.5" />
+                        )}
+                        Auto gen
+                      </Button>
+                    ) : null}
+                    {dedupedTableRows.length > 0 ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 shrink-0 gap-2"
+                        disabled={gridPrintBusy}
+                        onClick={() => void handlePrintGridTable()}
+                      >
+                        {gridPrintBusy ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Printer className="h-4 w-4" />
+                        )}
+                        พิมพ์ตาราง
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">

@@ -445,7 +445,7 @@ export function isYmdInRemobGapBetweenCycles(
  * กรอง auto W ผิดช่วง / ไม่แสดงเซลล์ในงวดเดือนใหม่
  */
 export function isYmdAfterSiteEndAwaitingRemob(
-  a: Pick<Assignment, 'mobLocationEndDate' | 'mobWorkingStartDate' | 'mobStandbyDate'>,
+  a: Pick<Assignment, 'mobLocationEndDate' | 'mobWorkingStartDate' | 'mobStandbyDate' | 'deploymentStatus'>,
   ymd: string,
 ): boolean {
   const d = ymd.slice(0, 10);
@@ -457,6 +457,8 @@ export function isYmdAfterSiteEndAwaitingRemob(
     if (segStart && d >= segStart) return false;
     return true;
   }
+  /** ACTIVE แล้วแต่ mobLocationEndDate รอบเก่ายังค้าง — อย่าบล็อกลง W */
+  if (a.deploymentStatus === 'ACTIVE') return false;
   return true;
 }
 

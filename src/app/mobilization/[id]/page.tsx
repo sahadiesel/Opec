@@ -886,34 +886,34 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
           workYmd,
         });
       } else {
-        // ไม่มี Mob — บันทึกเฉพาะวันทำงานวันแรก (ถ้าเป็นวันในอนาคต รอออโต้)
-        const todayYmd = thailandTodayYmd();
-        if (workYmd <= todayYmd) {
-          await upsertMobClearanceDailyTimesheet(firestore, currentUser as AppUser, {
-            assignment,
-            po,
-            line,
-            workerDisplayName: workerTimesheetName || assignment.workerId,
-            kind: 'work_day',
-            dateYmd: workYmd,
-            bypassPoMonthLock: true,
-            overwriteConflictingEventType: true,
-          });
-        }
+        // ไม่มี Mob — บันทึกวันทำงานวันแรกทันที (รวมกรณีเลือกพรุ่งนี้หลังขั้นตอนอื่น)
+        await upsertMobClearanceDailyTimesheet(firestore, currentUser as AppUser, {
+          assignment,
+          po,
+          line,
+          workerDisplayName: workerTimesheetName || assignment.workerId,
+          kind: 'work_day',
+          dateYmd: workYmd,
+          bypassPoMonthLock: true,
+          overwriteConflictingEventType: true,
+        });
       }
 
       const now = Date.now();
-      patchMobilization({
+      const workPatch = {
         mobWorkingStartDate: workYmd,
         mobWorkingStartedAt: now,
         mobWorkingStartedByUserId: currentUser.id,
-        mobilizationStatus: 'ACTIVE',
-        deploymentStatus: 'ACTIVE',
+        mobilizationStatus: 'ACTIVE' as const,
+        deploymentStatus: 'ACTIVE' as const,
         mobLocationPhase: 'active_at_location',
         poActiveAutoWorkSuspended: deleteField(),
         poActiveStandbyAutoStartYmd: deleteField(),
         poActiveStandbyAutoEndYmd: deleteField(),
-      });
+        updatedAt: now,
+      };
+      await updateDoc(doc(firestore, 'mobilizations', assignment.id), workPatch);
+      setAssignment((prev) => (prev ? ({ ...prev, ...workPatch } as Assignment) : null));
       if (firestore && assignment.workerId && assignment.customerId) {
         void ensureWorkerAssignedCustomerId(firestore, assignment.workerId, assignment.customerId).catch((e) =>
           console.error('[mob] assignedCustomerIds', e),
@@ -922,26 +922,21 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       setClearanceEditMode(0);
       toast({
         title: editing ? 'แก้ไขวันเริ่มงานแล้ว' : 'เริ่มวันทำงานแล้ว',
-        description:
-          workYmd > thailandTodayYmd()
-            ? `ACTIVE · วันเริ่มงาน ${workYmd} (ยังไม่ถึง) — ระบบจะลง W อัตโนมัติเมื่อถึงวันนั้น · วัน Mob คงเป็น M1 อย่างเดียว`
-            : `ACTIVE ตั้งแต่ ${workYmd} — เติมช่วง Standby / ต่อเนื่องต้นเดือน (ถ้ามี) แล้ว · ระบบจะเติมรายวันถัดไปให้อัตโนมัติ`,
+        description: `ACTIVE ตั้งแต่ ${workYmd} — วัน Mob คงเป็น M1 · วันเริ่มงานลง W แล้ว · ระบบเติมรายวันถัดไปให้อัตโนมัติ`,
       });
-      void (async () => {
-        try {
-          const r = await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser, {
-            ignoreBundleAutoDisabled: true,
+      try {
+        const r = await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser, {
+          ignoreBundleAutoDisabled: true,
+        });
+        if (r.created + r.updated > 0) {
+          toast({
+            title: 'เติมรายวันอัตโนมัติแล้ว',
+            description: `สร้าง ${r.created} · อัปเดต ${r.updated} · ข้าม ${r.skipped}`,
           });
-          if (r.created + r.updated > 0) {
-            toast({
-              title: 'เติมรายวันอัตโนมัติแล้ว',
-              description: `สร้าง ${r.created} · อัปเดต ${r.updated} · ข้าม ${r.skipped}`,
-            });
-          }
-        } catch (e) {
-          console.warn('[mob] auto daily after step3', e);
         }
-      })();
+      } catch (e) {
+        console.warn('[mob] auto daily after step3', e);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast({ variant: 'destructive', title: 'เริ่มวันทำงานไม่สำเร็จ', description: msg });

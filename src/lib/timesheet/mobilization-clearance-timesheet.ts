@@ -403,21 +403,18 @@ export async function applyMobFinalClearanceWorkStartFill(
   }
 
   /**
-   * วันเริ่มงาน = work_day
-   * ถ้าเลือกวันในอนาคต (เช่น Mob วันนี้ → เริ่มพรุ่งนี้) ยังไม่ลง W ตอนนี้
-   * — รอ PO Active auto เมื่อถึงวันนั้น (หลัง ACTIVE)
+   * วันเริ่มงาน = work_day — ลงทันทีแม้เลือกวันพรุ่งนี้ (หลัง M1)
+   * ห้ามรอออโต้อย่างเดียว เพราะ Scheduler/สวิตช์ปิดแล้วคน remob จะไม่มี W
    */
-  if (wk <= today) {
-    await upsertMobClearanceDailyTimesheet(db, user, {
-      assignment: a,
-      po,
-      line,
-      workerDisplayName,
-      kind: 'work_day',
-      dateYmd: wk,
-      bypassPoMonthLock: bypass,
-      /** วันเริ่มงาน — ทับ standby/auto ที่ค้างบนวันนั้นได้ */
-      overwriteConflictingEventType: true,
-    });
-  }
+  await upsertMobClearanceDailyTimesheet(db, user, {
+    assignment: a,
+    po,
+    line,
+    workerDisplayName,
+    kind: 'work_day',
+    dateYmd: wk,
+    bypassPoMonthLock: bypass,
+    /** วันเริ่มงาน — ทับ standby/auto ที่ค้างบนวันนั้นได้ */
+    overwriteConflictingEventType: true,
+  });
 }

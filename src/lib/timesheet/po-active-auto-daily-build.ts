@@ -83,8 +83,9 @@ export function resolvePoActiveAutoDailySyncKind(a: Assignment, dateYmd: string)
     return null;
   }
 
-  /** มี M1 แล้วยังไม่กด Start working day — ยังไม่ auto W */
+  /** มี M1 แล้วยังไม่กด Start working day — ยังไม่ auto W ยกเว้นกลับ ACTIVE แล้ว (วันหลัง M1) */
   if (hasNaturalSb && !hasMobStart) {
+    if (a.deploymentStatus === 'ACTIVE' && dateYmd > mobStandby) return 'work_day';
     return null;
   }
 

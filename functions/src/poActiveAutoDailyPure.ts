@@ -139,7 +139,18 @@ export function resolvePoActiveAutoDailySyncKind(
   const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
   const hasNaturalSb = /^\d{4}-\d{2}-\d{2}$/.test(mobStandby);
   const hasMobStart = /^\d{4}-\d{2}-\d{2}$/.test(mobStart);
-  if (hasNaturalSb && hasMobStart && mobStandby < mobStart && dateYmd >= mobStandby && dateYmd < mobStart) {
+
+  /** วัน M1 ไม่ทับด้วย auto W — W เริ่มวันถัดไป */
+  if (hasNaturalSb && dateYmd === mobStandby) {
+    return null;
+  }
+
+  if (hasNaturalSb && !hasMobStart) {
+    if (a.deploymentStatus === 'ACTIVE' && dateYmd > mobStandby) return 'work_day';
+    return null;
+  }
+
+  if (hasNaturalSb && hasMobStart && mobStandby < mobStart && dateYmd > mobStandby && dateYmd < mobStart) {
     return 'standby_day';
   }
 
@@ -182,13 +193,21 @@ export function computePoActiveAutoDailyRange(
   const mobLocEnd = ((a.mobLocationEndDate || '') as string).trim().slice(0, 10);
   const assignEnd = ((a.endDate || '') as string).trim().slice(0, 10);
   const endFromPo = msToYmdUtc(po.endDate);
+  const remobNewCycle =
+    (/^\d{4}-\d{2}-\d{2}$/.test(mobStart) && /^\d{4}-\d{2}-\d{2}$/.test(mobLocEnd) && mobLocEnd < mobStart) ||
+    (/^\d{4}-\d{2}-\d{2}$/.test(mobStandby) && /^\d{4}-\d{2}-\d{2}$/.test(mobLocEnd) && mobLocEnd < mobStandby);
 
   let cap = throughYmd;
   if (/^\d{4}-\d{2}-\d{2}$/.test(assignEnd)) {
     cap = minYmd(cap, assignEnd);
   }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(mobLocEnd) && mobLocEnd >= startRaw) {
+  /** remob: mobLocationEndDate เป็นรอบเก่า — ห้ามเป็นเพดานช่วงรอบใหม่ */
+  if (/^\d{4}-\d{2}-\d{2}$/.test(mobLocEnd) && mobLocEnd >= startRaw && !remobNewCycle) {
     cap = minYmd(cap, mobLocEnd);
+  }
+  if (remobNewCycle && cap < startRaw) {
+    cap = throughYmd;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(assignEnd)) cap = minYmd(cap, assignEnd);
   }
   cap = minYmd(cap, endFromPo);
 
