@@ -187,13 +187,15 @@ export async function syncTodayOnlyForMobilization(
       totals.skipped++;
       return;
     }
-    /** ห้ามทับ SB ที่แก้มือกลับเป็น W — เหลือเฉพาะแถว auto «standby stop» ที่จบช่วงแล้ว */
+    /** ห้ามทับ SB ที่แก้มือ/ข้อ 4 สลับ SB↔W กลับเป็น W — เหลือเฉพาะแถว auto 「standby stop」ข้อ 3 */
     if (curEvent !== syncKind) {
       const allowWorkToStandby = curEvent === 'work_day' && syncKind === 'standby_day';
+      const remark = String(cur.remark || '');
       const allowAutoStandbyRevertToWork =
         curEvent === 'standby_day' &&
         syncKind === 'work_day' &&
-        String(cur.remark || '').includes('standby stop');
+        remark.includes('standby stop') &&
+        !remark.includes('SB/W toggle');
       if (!allowWorkToStandby && !allowAutoStandbyRevertToWork) {
         totals.skipped++;
         return;

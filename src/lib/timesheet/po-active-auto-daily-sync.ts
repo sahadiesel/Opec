@@ -25,6 +25,7 @@ import {
   buildPoActiveAutoDailyRowPayload,
   buildPoActiveAutoDemobRowPayload,
   buildPoActiveAutoStandbyRowPayload,
+  buildPoActiveAutoSbToggleRowPayload,
   computePoActiveAutoDailyRange,
   eachYmdInRange,
   isAssignmentEligibleForPoActiveAutoDaily,
@@ -252,15 +253,17 @@ export async function syncPoActiveAutoDailyForAssignment(
       /**
        * ห้ามแปลงประเภทวันข้ามกันแบบกว้าง ๆ:
        * - อนุญาต W→SB (ช่วงหยุด standby / SB ก่อนเริ่มงาน)
-       * - SB→W ได้เฉพาะแถวที่ระบบสร้างจาก «หยุดแบบ standby» เท่านั้น
-       *   (กัน SB ที่แก้มือในตารางรายเดือน แล้ววันถัดไป heal/scheduler ทับกลับเป็น W)
+       * - SB→W ได้เฉพาะแถว「หยุดแบบ standby」ข้อ 3 ที่จบช่วงแล้วเท่านั้น
+       *   (ไม่รวม SB จากข้อ 4 สลับ SB/W — ต้องคงประวัติช่วงที่สลับไว้)
        */
       if (curEvent !== kind) {
         const allowWorkToStandby = curEvent === 'work_day' && kind === 'standby_day';
+        const remark = String(cur.remark || '');
         const allowAutoStandbyRevertToWork =
           curEvent === 'standby_day' &&
           kind === 'work_day' &&
-          String(cur.remark || '').includes('standby stop');
+          remark.includes('standby stop') &&
+          !remark.includes('SB/W toggle');
         if (!allowWorkToStandby && !allowAutoStandbyRevertToWork) {
           skipped++;
           continue;
@@ -642,7 +645,7 @@ export async function upsertPoActiveStopTodayEvent(
 
 /**
  * ข้อ 4 — สลับ SB ↔ W โดยไม่กลับ Waiting MOB
- * SB: เติม SB อัตโนมัติจนสิ้นสุดมอบหมาย/PO · W: เคลียร์โหมด SB แล้วลง work_day วันนี้
+ * SB: เติม SB อัตโนมัติจนสิ้นสุดมอบหมาย/PO · W: ปิดช่วง SB ที่วันก่อนหน้า (เก็บประวัติ) แล้วลง work_day วันนี้
  */
 export async function togglePoActiveSbWStopMode(
   db: Firestore,
@@ -655,6 +658,12 @@ export async function togglePoActiveSbWStopMode(
   const now = Date.now();
 
   if (isAssignmentInPoActiveSbToggleMode(assignment, today)) {
+    const sbStart = (assignment.poActiveStandbyAutoStartYmd || '').trim().slice(0, 10);
+    const yesterday = addDaysToYmd(today, -1);
+    /** ปิดช่วง SB ที่วันก่อนหน้า — ห้ามลบ start/end ทั้งก้อน (sync จะทับ SB ย้อนหลังเป็น W) */
+    const closedEnd =
+      /^\d{4}-\d{2}-\d{2}$/.test(sbStart) && yesterday >= sbStart ? yesterday : '';
+
     const id = poActiveDailyTimesheetDocId(assignment.workerId, assignment.id, today);
     const dRef = doc(db, 'daily_timesheets', id);
     const existing = await getDoc(dRef);
@@ -667,20 +676,77 @@ export async function togglePoActiveSbWStopMode(
       poActiveBundleId: bundleId,
       laborCostContractTermId,
     });
-    const batch = writeBatch(db);
+    const laborTerms = await loadLaborCostTermsForPo(db, po.id);
+    let batch = writeBatch(db);
+    let batchCount = 0;
+    const flush = async () => {
+      if (batchCount === 0) return;
+      await batch.commit();
+      batch = writeBatch(db);
+      batchCount = 0;
+    };
+
+    /** คง/ซ่อม SB ในช่วงที่ปิดแล้ว (กันวันที่ sync ทับไปแล้ว) */
+    if (closedEnd) {
+      for (const date of eachYmdInRange(sbStart, closedEnd)) {
+        const sid = poActiveDailyTimesheetDocId(assignment.workerId, assignment.id, date);
+        const sRef = doc(db, 'daily_timesheets', sid);
+        const sExisting = await getDoc(sRef);
+        const sbPayload = buildPoActiveAutoSbToggleRowPayload({
+          assignment,
+          po,
+          line,
+          date,
+          workerNameSnapshot: workerName,
+          poActiveBundleId: bundleId,
+          laborCostContractTermId: pickLaborCostTermIdForDate(laborTerms, date),
+        });
+        if (sExisting.exists()) {
+          const cur = sExisting.data() as DailyTimesheet;
+          if (isTimesheetFinanciallyImmutable(cur.status)) continue;
+          if (cur.poActiveAutoDaily !== true) continue;
+          const curEvent = String(cur.eventType || '');
+          if (curEvent === 'mobilization_day' || curEvent === 'demobilization_day') continue;
+          batch.update(
+            sRef,
+            omitUndefined({
+              ...sbPayload,
+              ...clearMobAmountOverridesIfNotTripCharge(sbPayload),
+              updatedAt: now,
+              officeEnteredBy: user.displayName,
+              officeEnteredAt: now,
+            } as Record<string, unknown>) as DocumentData,
+          );
+        } else {
+          const parsed = DailyTimesheetSchema.parse({
+            ...sbPayload,
+            id: sid,
+            createdAt: now,
+            updatedAt: now,
+            officeEnteredBy: user.displayName,
+            officeEnteredAt: now,
+          });
+          batch.set(sRef, omitUndefined({ ...parsed } as Record<string, unknown>) as DocumentData);
+        }
+        batchCount++;
+        if (batchCount >= 400) await flush();
+      }
+    }
+
     if (existing.exists()) {
       const cur = existing.data() as DailyTimesheet;
       if (!isTimesheetFinanciallyImmutable(cur.status) && cur.poActiveAutoDaily === true) {
         batch.update(
           dRef,
-        omitUndefined({
-          ...workPayload,
-          ...clearMobAmountOverridesIfNotTripCharge(workPayload),
-          updatedAt: now,
-          officeEnteredBy: user.displayName,
-          officeEnteredAt: now,
-        } as Record<string, unknown>) as DocumentData,
+          omitUndefined({
+            ...workPayload,
+            ...clearMobAmountOverridesIfNotTripCharge(workPayload),
+            updatedAt: now,
+            officeEnteredBy: user.displayName,
+            officeEnteredAt: now,
+          } as Record<string, unknown>) as DocumentData,
         );
+        batchCount++;
       }
     } else {
       const parsed = DailyTimesheetSchema.parse({
@@ -692,16 +758,30 @@ export async function togglePoActiveSbWStopMode(
         officeEnteredAt: now,
       });
       batch.set(dRef, omitUndefined({ ...parsed } as Record<string, unknown>) as DocumentData);
+      batchCount++;
     }
-    batch.update(mobRef, {
-      poActiveAutoWorkSuspended: deleteField(),
-      poActiveStandbyAutoStartYmd: deleteField(),
-      poActiveStandbyAutoEndYmd: deleteField(),
-      updatedAt: now,
-      updatedBy: user.id,
-    } as DocumentData);
-    await batch.commit();
-    return { mode: 'w' };
+
+    if (closedEnd) {
+      batch.update(mobRef, {
+        /** คง suspended + ช่วงปิดแล้ว → resolve ยังคืน standby_day ในอดีต ไม่ให้ sync ทับเป็น W */
+        poActiveAutoWorkSuspended: true,
+        poActiveStandbyAutoStartYmd: sbStart,
+        poActiveStandbyAutoEndYmd: closedEnd,
+        updatedAt: now,
+        updatedBy: user.id,
+      } as DocumentData);
+    } else {
+      batch.update(mobRef, {
+        poActiveAutoWorkSuspended: deleteField(),
+        poActiveStandbyAutoStartYmd: deleteField(),
+        poActiveStandbyAutoEndYmd: deleteField(),
+        updatedAt: now,
+        updatedBy: user.id,
+      } as DocumentData);
+    }
+    batchCount++;
+    await flush();
+    return { mode: 'w', startYmd: closedEnd ? sbStart : undefined, endYmd: closedEnd || undefined };
   }
 
   const range = computePoActiveAutoDailyRange(assignment, po);
@@ -803,7 +883,7 @@ async function applyPoActiveStandbyStopWindowOpenEnded(
     const existing = await getDoc(dRef);
 
     const laborCostContractTermId = pickLaborCostTermIdForDate(laborTerms, date);
-    const basePayload = buildPoActiveAutoStandbyRowPayload({
+    const basePayload = buildPoActiveAutoSbToggleRowPayload({
       assignment,
       po,
       line,

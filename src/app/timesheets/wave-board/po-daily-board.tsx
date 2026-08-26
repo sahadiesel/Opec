@@ -1538,7 +1538,9 @@ export function PoDailyBoardCard({
           description:
             r.mode === 'sb'
               ? `ยัง ACTIVE — ระบบลง SB อัตโนมัติจนกว่าจะกดหยุดเลือกข้อ 1–3 เพื่อกลับ Waiting MOB${r.endYmd ? ` · ถึง ${formatYmdLocalThaiBE(r.endYmd)}` : ''}`
-              : 'ยัง ACTIVE — ระบบลง W อัตโนมัติตามปกติ · กดหยุดข้อ 4 อีกครั้งเพื่อสลับเป็น SB',
+              : r.startYmd && r.endYmd
+                ? `ยัง ACTIVE — คง SB ช่วง ${formatYmdLocalThaiBE(r.startYmd)}–${formatYmdLocalThaiBE(r.endYmd)} · วันนี้เป็น W · กดข้อ 4 อีกครั้งเพื่อสลับเป็น SB`
+                : 'ยัง ACTIVE — ระบบลง W อัตโนมัติตามปกติ · กดหยุดข้อ 4 อีกครั้งเพื่อสลับเป็น SB',
         });
         await loadRoster();
       } catch (e: unknown) {

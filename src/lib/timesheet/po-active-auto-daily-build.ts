@@ -301,6 +301,17 @@ export function buildPoActiveAutoStandbyRowPayload(p: PoActiveAutoDailyRowParams
   };
 }
 
+/**
+ * แถว SB จากปุ่มหยุดข้อ 4 (สลับ SB↔W) — ไม่ใช้ remark 「standby stop」
+ * เพื่อไม่ให้ heal/scheduler แปลง SB ย้อนหลังเป็น W เมื่อจบโหมดสลับ
+ */
+export function buildPoActiveAutoSbToggleRowPayload(p: PoActiveAutoDailyRowParams): Partial<DailyTimesheet> {
+  return {
+    ...buildPoActiveAutoStandbyRowPayload(p),
+    remark: 'Auto — PO Active SB/W toggle',
+  };
+}
+
 /** แถว D1 (demob) เมื่อหยุดจาก Wave Board — วันนี้เป็น D1 แล้วจบรอบ */
 export function buildPoActiveAutoDemobRowPayload(p: PoActiveAutoDailyRowParams): Partial<DailyTimesheet> {
   const row = buildPoActiveAutoDailyRowPayload(p);
