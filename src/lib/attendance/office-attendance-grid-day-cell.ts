@@ -178,6 +178,24 @@ function isScheduledWorkDay(
 
 type SlotKey = 'morningIn' | 'morningOut' | 'afternoonIn' | 'afternoonOut';
 
+type DayScanPattern =
+  | 'none'
+  | 'two_punch_full'
+  | 'morning_only'
+  | 'afternoon_only'
+  | 'four_punch'
+  | 'partial';
+
+function detectScanPattern(slots: FourScanSlots): DayScanPattern {
+  const { morningInMs, morningOutMs, afternoonInMs, afternoonOutMs } = slots;
+  if (!morningInMs && !morningOutMs && !afternoonInMs && !afternoonOutMs) return 'none';
+  if (morningInMs && afternoonOutMs && !morningOutMs && !afternoonInMs) return 'two_punch_full';
+  if (!morningInMs && afternoonInMs && afternoonOutMs && !morningOutMs) return 'afternoon_only';
+  if (morningInMs && morningOutMs && !afternoonInMs && !afternoonOutMs) return 'morning_only';
+  if (morningInMs && morningOutMs && afternoonInMs && afternoonOutMs) return 'four_punch';
+  return 'partial';
+}
+
 function absenceCutoffMinutes(slot: SlotKey, bounds: OfficeShiftMinuteBounds): number {
   switch (slot) {
     case 'morningIn':
@@ -195,6 +213,7 @@ function slotExpectsScan(
   slot: SlotKey,
   workingHalf: OfficePayrollWorkingHalf | 'NONE',
   slots: FourScanSlots,
+  pattern: DayScanPattern,
 ): boolean {
   if (workingHalf === 'NONE') return false;
   if (workingHalf === 'MORNING') {
@@ -203,10 +222,29 @@ function slotExpectsScan(
   if (workingHalf === 'AFTERNOON') {
     return slot === 'afternoonIn' || slot === 'afternoonOut';
   }
-  if (slot === 'morningIn' || slot === 'afternoonOut') return true;
-  if (slot === 'morningOut') return slots.morningInMs != null;
-  if (slot === 'afternoonIn') return slots.morningOutMs != null;
-  return false;
+
+  switch (pattern) {
+    case 'none':
+      return slot === 'morningIn' || slot === 'afternoonOut';
+    case 'two_punch_full':
+      /** เช้าเข้า + เย็นออก — ไม่บังคับสแกนกลางวัน */
+      return slot === 'morningIn' || slot === 'afternoonOut';
+    case 'afternoon_only':
+      /** เข้าบ่ายสายโดยไม่มีลาเช้า — นับขาดช่วงเช้า */
+      return slot === 'morningIn' || slot === 'afternoonIn' || slot === 'afternoonOut';
+    case 'morning_only':
+      return slot === 'morningIn' || slot === 'morningOut';
+    case 'four_punch':
+      if (slot === 'morningIn' || slot === 'afternoonOut') return true;
+      if (slot === 'morningOut') return slots.morningInMs != null;
+      if (slot === 'afternoonIn') return slots.morningOutMs != null;
+      return false;
+    default:
+      if (slot === 'morningIn' || slot === 'afternoonOut') return true;
+      if (slot === 'morningOut') return slots.morningInMs != null;
+      if (slot === 'afternoonIn') return slots.morningOutMs != null;
+      return false;
+  }
 }
 
 function missingScanLine(
@@ -234,6 +272,7 @@ function resolveSlotLine(params: {
   bounds: OfficeShiftMinuteBounds | null;
   workingHalf: OfficePayrollWorkingHalf | 'NONE';
   slots: FourScanSlots;
+  pattern: DayScanPattern;
 }): OfficeAttendanceGridLine {
   if (params.leaveOnSlot && params.leaveType) return leaveLine(params.leaveType);
   if (params.scanMs != null) return timeLine(params.scanMs);
@@ -246,7 +285,7 @@ function resolveSlotLine(params: {
     && params.slot === 'afternoonOut'
     && params.slots.afternoonOutMs == null
     && params.nowMinutes < params.bounds.afternoonStartMin
-    && params.slots.afternoonInMs == null
+    && (params.pattern === 'none' || params.pattern === 'two_punch_full')
   ) {
     return DASH_LINE;
   }
@@ -320,6 +359,7 @@ export function buildOfficeAttendanceGridDayCell(input: {
   const nowMinutes = getBangkokMinutesOfDay(now);
   const { ins, outs } = buildEffectivePunchLists(dayRow, dayPunches);
   const slots = assignFourScanSlots(ins, outs);
+  const scanPattern = detectScanPattern(slots);
 
   const leaveMorning =
     workingHalf === 'NONE'
@@ -340,7 +380,7 @@ export function buildOfficeAttendanceGridDayCell(input: {
       isWorkingDay
       && appliesScan
       && workingHalf !== 'NONE'
-      && slotExpectsScan(slot, workingHalf, slots);
+      && slotExpectsScan(slot, workingHalf, slots, scanPattern);
 
     return resolveSlotLine({
       slot,
@@ -354,6 +394,7 @@ export function buildOfficeAttendanceGridDayCell(input: {
       bounds,
       workingHalf,
       slots,
+      pattern: scanPattern,
     });
   };
 

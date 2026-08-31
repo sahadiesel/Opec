@@ -104,6 +104,14 @@ import {
   describeOfficeLeaveSummaryPrintFilters,
   type OfficeLeaveSummaryPrintRow,
 } from '@/lib/documents/office-leave-summary-list-print';
+import {
+  buildOfficeLeaveRequestListPrintHtml,
+  capOfficeLeaveRequestListPrintRows,
+  mapOfficeLeaveRequestToPrintRow,
+  officeLeaveApproverLabelTh,
+  officeLeaveCreatedByLabelTh,
+  officeLeaveDateRangeLabelTh,
+} from '@/lib/documents/office-leave-request-list-print';
 import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import { HrProxyLeaveDialog } from '@/components/leaves/hr-proxy-leave-dialog';
 import {
@@ -418,6 +426,7 @@ export default function HrLeavesManagementPage() {
   const [editingLeave, setEditingLeave] = useState<(OfficeLeaveRequestDoc & { id: string }) | null>(null);
   const [activeTab, setActiveTab] = useState<'summary' | 'requests'>('summary');
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [requestsPrintDialogOpen, setRequestsPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
 
   const selectedStaffName = useMemo(() => {
@@ -509,6 +518,72 @@ export default function HrLeavesManagementPage() {
       currentUser?.displayName,
       toast,
     ],
+  );
+
+  const allLeaveRequests = useMemo(
+    () => sortOfficeLeaveRequestsNewestFirst(leaves ?? []),
+    [leaves],
+  );
+
+  const runLeaveRequestsPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const source = scope === 'filtered' ? filteredLeaves : allLeaveRequests;
+      if (source.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบคำขอตามตัวกรอง — ปรับตัวกรองหรือพิมพ์ทั้งหมด'
+              : 'ยังไม่มีคำขอลาในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const printRows = source.map((r) => mapOfficeLeaveRequestToPrintRow(r));
+        const { rows: capped, truncated } = capOfficeLeaveRequestListPrintRows(printRows);
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines = scope === 'filtered' ? printFilterLines : [];
+        const scopeTitle =
+          scope === 'filtered'
+            ? 'พิมพ์ตามตัวกรองปัจจุบัน'
+            : 'พิมพ์ทั้งหมด (ไม่ใช้ตัวกรองย่อย)';
+
+        const body = buildOfficeLeaveRequestListPrintHtml({
+          rows: capped,
+          scopeTitle,
+          filterLines,
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const okPrint = await openStandardPrintWindow({
+          windowTitle: 'Office-Leave-Requests',
+          suggestedFileName: `Office-Leave-Requests-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!okPrint) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setRequestsPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [filteredLeaves, allLeaveRequests, printFilterLines, currentUser?.displayName, toast],
   );
 
   function openCreateLeaveDialog() {
@@ -986,11 +1061,22 @@ export default function HrLeavesManagementPage() {
 
           <TabsContent value="requests" className="mt-4 space-y-4">
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">คำขอลา ({filteredLeaves.length})</CardTitle>
-                <CardDescription>
-                  อนุมัติ / ปฏิเสธคำขอที่รออยู่ — ลาที่ยกเลิกแล้วจะคงประวัติไว้
-                </CardDescription>
+              <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+                <div className="space-y-1.5">
+                  <CardTitle className="text-base">คำขอลา ({filteredLeaves.length})</CardTitle>
+                  <CardDescription>
+                    อนุมัติ / ปฏิเสธคำขอที่รออยู่ — ลาที่ยกเลิกแล้วจะคงประวัติไว้
+                  </CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 shrink-0 gap-2"
+                  disabled={leavesLoading || printBusy || allLeaveRequests.length === 0}
+                  onClick={() => setRequestsPrintDialogOpen(true)}
+                >
+                  <Printer className="h-4 w-4" /> พิมพ์รายการ
+                </Button>
               </CardHeader>
               <CardContent className="p-0">
                 {leavesQueryError ? (
@@ -1013,6 +1099,8 @@ export default function HrLeavesManagementPage() {
                           <TableHead>วันที่ลา</TableHead>
                           <TableHead className="text-center">วัน</TableHead>
                           <TableHead>สถานะ</TableHead>
+                          <TableHead>ผู้จัดทำใบลา</TableHead>
+                          <TableHead>ผู้อนุมัติ</TableHead>
                           <TableHead>เหตุผล</TableHead>
                           <TableHead className="text-right">จัดการ</TableHead>
                         </TableRow>
@@ -1040,12 +1128,7 @@ export default function HrLeavesManagementPage() {
                               )}
                             </TableCell>
                             <TableCell className="text-xs whitespace-nowrap">
-                              {formatDateThaiBE(r.startDate)}
-                              {!r.isHalfDay && r.endDate !== r.startDate
-                                ? ` – ${formatDateThaiBE(r.endDate)}`
-                                : r.isHalfDay
-                                  ? ` (${r.halfDaySession === 'MORNING' ? 'ครึ่งเช้า' : 'ครึ่งบ่าย'})`
-                                  : ''}
+                              {officeLeaveDateRangeLabelTh(r)}
                             </TableCell>
                             <TableCell className="text-center font-mono">{r.days}</TableCell>
                             <TableCell>
@@ -1064,6 +1147,12 @@ export default function HrLeavesManagementPage() {
                               >
                                 {OFFICE_LEAVE_STATUS_LABELS[r.status]}
                               </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs whitespace-nowrap">
+                              {officeLeaveCreatedByLabelTh(r)}
+                            </TableCell>
+                            <TableCell className="text-xs whitespace-nowrap">
+                              {officeLeaveApproverLabelTh(r)}
                             </TableCell>
                             <TableCell
                               className="text-xs text-muted-foreground max-w-[220px] truncate"
@@ -1183,6 +1272,45 @@ export default function HrLeavesManagementPage() {
                 พิมพ์ทั้งหมด
               </Button>
               <Button disabled={printBusy || summaryRows.length === 0} onClick={() => void runLeaveSummaryPrint('filtered')}>
+                {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                พิมพ์ตามตัวกรอง
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={requestsPrintDialogOpen} onOpenChange={setRequestsPrintDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการคำขอลา</DialogTitle>
+              <DialogDescription>
+                เลือกพิมพ์ตามตัวกรองปัจจุบัน ({filteredLeaves.length} รายการ) หรือพิมพ์ทั้งหมดโดยไม่ใช้ตัวกรองย่อย (
+                {allLeaveRequests.length} รายการ)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              {printFilterLines.length > 0 ? (
+                printFilterLines.map((line) => <p key={line}>· {line}</p>)
+              ) : (
+                <p>· ไม่มีตัวกรองย่อย — แสดงทุกคำขอในชุดข้อมูล</p>
+              )}
+            </div>
+            <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button variant="outline" onClick={() => setRequestsPrintDialogOpen(false)} disabled={printBusy}>
+                ยกเลิก
+              </Button>
+              <Button
+                variant="outline"
+                disabled={printBusy || allLeaveRequests.length === 0}
+                onClick={() => void runLeaveRequestsPrint('all')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                พิมพ์ทั้งหมด
+              </Button>
+              <Button
+                disabled={printBusy || filteredLeaves.length === 0}
+                onClick={() => void runLeaveRequestsPrint('filtered')}
+              >
                 {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                 พิมพ์ตามตัวกรอง
               </Button>
