@@ -271,6 +271,8 @@ export function HrAttendanceManagePageContent() {
     subjectNameSnapshot: string;
     workDateYmd: string;
     previousOtHours: number | null;
+    previousOtStartHm?: string | null;
+    previousOtEndHm?: string | null;
     pendingRequestId: string | null;
     pendingStartHm?: string | null;
     pendingEndHm?: string | null;
@@ -982,25 +984,32 @@ export function HrAttendanceManagePageContent() {
                                                           className="h-7 w-7 shrink-0"
                                                           onClick={(e) => {
                                                             e.stopPropagation();
+                                                            const otReq = overtimeBySubjectDay.get(dayKey);
                                                             openOvertimeRequest({
                                                               subjectType: 'office_staff',
                                                               subjectId: row.staffId,
                                                               subjectNameSnapshot: row.name,
                                                               workDateYmd: d.ymd,
                                                               previousOtHours: otDisplay.hours,
+                                                              previousOtStartHm:
+                                                                otReq?.approvedOtStartHm ??
+                                                                otReq?.requestedOtStartHm ??
+                                                                null,
+                                                              previousOtEndHm:
+                                                                otReq?.approvedOtEndHm ??
+                                                                otReq?.requestedOtEndHm ??
+                                                                null,
                                                               pendingRequestId:
                                                                 otDisplay.status === 'PENDING_MANAGER_APPROVAL'
-                                                                  ? (overtimeBySubjectDay.get(dayKey)?.id ?? null)
+                                                                  ? (otReq?.id ?? null)
                                                                   : null,
                                                               pendingStartHm:
                                                                 otDisplay.status === 'PENDING_MANAGER_APPROVAL'
-                                                                  ? (overtimeBySubjectDay.get(dayKey)?.requestedOtStartHm ??
-                                                                    null)
+                                                                  ? (otReq?.requestedOtStartHm ?? null)
                                                                   : null,
                                                               pendingEndHm:
                                                                 otDisplay.status === 'PENDING_MANAGER_APPROVAL'
-                                                                  ? (overtimeBySubjectDay.get(dayKey)?.requestedOtEndHm ??
-                                                                    null)
+                                                                  ? (otReq?.requestedOtEndHm ?? null)
                                                                   : null,
                                                             });
                                                           }}
@@ -1172,6 +1181,8 @@ export function HrAttendanceManagePageContent() {
           payrollMonth={payrollMonth}
           workDateYmd={otCtx.workDateYmd}
           previousOtHours={otCtx.previousOtHours}
+          previousOtStartHm={otCtx.previousOtStartHm}
+          previousOtEndHm={otCtx.previousOtEndHm}
           pendingRequestId={otCtx.pendingRequestId}
           pendingStartHm={otCtx.pendingStartHm}
           pendingEndHm={otCtx.pendingEndHm}

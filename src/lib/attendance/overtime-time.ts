@@ -77,3 +77,18 @@ export function formatAttendanceHmRange(startHm: string, endHm: string): string 
   const e = normalizeAttendanceHmInput(endHm) ?? endHm;
   return `${s} – ${e}`;
 }
+
+/** เปรียบเทียบช่วงเวลา HH:mm (หลัง normalize) */
+export function isSameAttendanceHmRange(
+  startA: string | null | undefined,
+  endA: string | null | undefined,
+  startB: string | null | undefined,
+  endB: string | null | undefined,
+): boolean {
+  const sA = normalizeAttendanceHmInput(startA);
+  const eA = normalizeAttendanceHmInput(endA);
+  const sB = normalizeAttendanceHmInput(startB);
+  const eB = normalizeAttendanceHmInput(endB);
+  if (!sA || !eA || !sB || !eB) return false;
+  return sA === sB && eA === eB;
+}

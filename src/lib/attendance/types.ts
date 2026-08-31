@@ -32,6 +32,9 @@ export type AttendanceOvertimeRequestDoc = {
    * — null/undefined = คำขอ OT ใหม่ ไม่ใช่การแก้ตัวเลขเดิม
    */
   previousOtHours?: number | null;
+  /** ช่วงเวลา OT เดิมก่อนขอแก้ไข (ถ้ามี) */
+  previousOtStartHm?: string | null;
+  previousOtEndHm?: string | null;
   /** ชั่วโมง OT ที่ผู้จัดการอนุมัติ */
   approvedOtHours?: number | null;
   /** เวลาเริ่ม OT ที่อนุมัติ HH:mm */

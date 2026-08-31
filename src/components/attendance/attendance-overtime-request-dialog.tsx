@@ -22,6 +22,7 @@ import { ATTENDANCE_OVERTIME_REQUESTS_COLLECTION } from '@/lib/attendance/consta
 import { formatAttendanceOvertimeHours } from '@/lib/attendance/overtime-display';
 import {
   formatAttendanceHmRange,
+  isSameAttendanceHmRange,
   normalizeAttendanceHmInput,
 } from '@/lib/attendance/overtime-time';
 import { otHoursFromWorkNormHmRange, type MonthlyWorkNormPolicyConfig } from '@/lib/hr/monthly-work-norm-policy';
@@ -44,6 +45,8 @@ export function AttendanceOvertimeRequestDialog({
   pendingRequestId = null,
   pendingStartHm = null,
   pendingEndHm = null,
+  previousOtStartHm = null,
+  previousOtEndHm = null,
   monthlyWorkNorm,
 }: {
   open: boolean;
@@ -59,6 +62,9 @@ export function AttendanceOvertimeRequestDialog({
   pendingRequestId?: string | null;
   pendingStartHm?: string | null;
   pendingEndHm?: string | null;
+  /** ช่วงเวลา OT เดิม (จากคำขอที่อนุมัติแล้ว) — ถ้าไม่มี = legacy มีแค่ชั่วโมง */
+  previousOtStartHm?: string | null;
+  previousOtEndHm?: string | null;
   monthlyWorkNorm: MonthlyWorkNormPolicyConfig;
 }) {
   const { toast } = useToast();
@@ -71,6 +77,13 @@ export function AttendanceOvertimeRequestDialog({
   const isAmend =
     previousOtHours != null && Number.isFinite(previousOtHours) && previousOtHours > 0;
   const previousLabel = isAmend ? formatAttendanceOvertimeHours(Number(previousOtHours)) : null;
+  const normalizedPreviousStart = normalizeAttendanceHmInput(previousOtStartHm);
+  const normalizedPreviousEnd = normalizeAttendanceHmInput(previousOtEndHm);
+  const hasPreviousTimeRange = !!(normalizedPreviousStart && normalizedPreviousEnd);
+  const isLegacyHoursOnlyAmend = isAmend && !hasPreviousTimeRange;
+  const previousRangeLabel = hasPreviousTimeRange
+    ? formatAttendanceHmRange(normalizedPreviousStart!, normalizedPreviousEnd!)
+    : null;
 
   const computedHours = useMemo(() => {
     const start = normalizeAttendanceHmInput(otStartHm);
@@ -121,13 +134,15 @@ export function AttendanceOvertimeRequestDialog({
       return;
     }
 
-    if (isAmend && Math.abs(hours - Number(previousOtHours)) < 0.001) {
-      toast({
-        variant: 'destructive',
-        title: 'ยังไม่เปลี่ยนช่วงเวลา',
-        description: `กรุณาระบุช่วงเวลาใหม่ที่ต่างจากเดิม (${previousLabel} ชม.)`,
-      });
-      return;
+    if (isAmend && hasPreviousTimeRange) {
+      if (isSameAttendanceHmRange(startHm, endHm, normalizedPreviousStart, normalizedPreviousEnd)) {
+        toast({
+          variant: 'destructive',
+          title: 'ยังไม่เปลี่ยนช่วงเวลา',
+          description: `กรุณาระบุช่วงเวลาใหม่ที่ต่างจากเดิม (${previousRangeLabel})`,
+        });
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -143,7 +158,15 @@ export function AttendanceOvertimeRequestDialog({
         requestedByName: currentUser.displayName || currentUser.email || currentUser.id,
         requestedAt: now,
         ...(isAmend
-          ? { previousOtHours: Math.round(Number(previousOtHours) * 100) / 100 }
+          ? {
+              previousOtHours: Math.round(Number(previousOtHours) * 100) / 100,
+              ...(hasPreviousTimeRange
+                ? {
+                    previousOtStartHm: normalizedPreviousStart,
+                    previousOtEndHm: normalizedPreviousEnd,
+                  }
+                : {}),
+            }
           : {}),
       };
 
@@ -210,13 +233,29 @@ export function AttendanceOvertimeRequestDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{isAmend ? 'ขอแก้ไขชั่วโมง OT' : 'ขออนุมัติ OT (ล่วงเวลา)'}</DialogTitle>
+          <DialogTitle>
+            {isLegacyHoursOnlyAmend
+              ? 'บันทึกช่วงเวลา OT'
+              : isAmend
+                ? 'ขอแก้ไขช่วงเวลา OT'
+                : 'ขออนุมัติ OT (ล่วงเวลา)'}
+          </DialogTitle>
           <DialogDescription>
             {subjectNameSnapshot} · {formatDateThaiBE(workDateYmd)}
-            {isAmend ? (
+            {isLegacyHoursOnlyAmend ? (
               <span className="block text-xs mt-1 text-muted-foreground">
-                วันนี้มี OT อยู่แล้ว <span className="font-mono font-semibold text-foreground">{previousLabel}</span>{' '}
-                ชม. — ระบุช่วงเวลาใหม่และเหตุผล แล้วรอผู้จัดการอนุมัติ
+                วันนี้มี OT <span className="font-mono font-semibold text-foreground">{previousLabel}</span> ชม.
+                (ยังไม่มีช่วงเวลา) — ระบุเวลาเริ่ม–สิ้นสุดเพื่อคำนวณค่าจ้างตาม HR Settings
+              </span>
+            ) : isAmend ? (
+              <span className="block text-xs mt-1 text-muted-foreground">
+                ช่วงเดิม{' '}
+                {previousRangeLabel ? (
+                  <span className="font-mono font-semibold text-foreground">{previousRangeLabel}</span>
+                ) : (
+                  <span className="font-mono font-semibold text-foreground">{previousLabel} ชม.</span>
+                )}{' '}
+                — ระบุช่วงเวลาใหม่และเหตุผล แล้วรอผู้จัดการอนุมัติ
               </span>
             ) : (
               <span className="block text-xs mt-1 text-muted-foreground">
@@ -229,8 +268,18 @@ export function AttendanceOvertimeRequestDialog({
         <div className="space-y-3 py-2">
           {isAmend ? (
             <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
-              <span className="text-muted-foreground">ชั่วโมงเดิม: </span>
-              <span className="font-mono font-semibold">{previousLabel} ชม.</span>
+              {hasPreviousTimeRange ? (
+                <>
+                  <span className="text-muted-foreground">ช่วงเดิม: </span>
+                  <span className="font-mono font-semibold">{previousRangeLabel}</span>
+                  <span className="text-muted-foreground"> ({previousLabel} ชม.)</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-muted-foreground">ชั่วโมงเดิม (ไม่มีช่วงเวลา): </span>
+                  <span className="font-mono font-semibold">{previousLabel} ชม.</span>
+                </>
+              )}
             </div>
           ) : null}
           <div className="grid grid-cols-2 gap-3">
@@ -285,7 +334,7 @@ export function AttendanceOvertimeRequestDialog({
             ยกเลิก
           </Button>
           <Button type="button" onClick={() => void handleSubmit()} disabled={submitting}>
-            {submitting ? 'กำลังส่ง…' : isAmend ? 'ส่งคำขอแก้ไข' : 'ส่งคำขอ'}
+            {submitting ? 'กำลังส่ง…' : isLegacyHoursOnlyAmend ? 'บันทึกช่วงเวลา' : isAmend ? 'ส่งคำขอแก้ไข' : 'ส่งคำขอ'}
           </Button>
         </DialogFooter>
       </DialogContent>
