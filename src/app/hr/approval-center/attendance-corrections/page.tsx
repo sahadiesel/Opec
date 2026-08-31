@@ -41,12 +41,29 @@ import {
   ATTENDANCE_CORRECTION_REQUESTS_COLLECTION,
   ATTENDANCE_DAY_OVERRIDES_COLLECTION,
 } from '@/lib/attendance/constants';
-import { formatBangkokHmFromUtcMs } from '@/lib/attendance/bangkok-calendar';
+import {
+  deriveLegacyInOutFromFourSlots,
+  formatFourSlotTimesLabelTh,
+  previousFourSlotTimesFromCorrectionRequest,
+  proposedFourSlotTimesFromCorrectionRequest,
+} from '@/lib/attendance/attendance-four-slot-times';
 import { formatDateThaiBE } from '@/lib/date-thai';
 
-function hmOrDash(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms)) return '—';
-  return formatBangkokHmFromUtcMs(ms);
+function FourSlotTimesBlock({
+  title,
+  slots,
+  className,
+}: {
+  title: string;
+  slots: ReturnType<typeof previousFourSlotTimesFromCorrectionRequest>;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <div className="text-xs font-semibold text-muted-foreground mb-1">{title}</div>
+      <p className="text-xs leading-relaxed">{formatFourSlotTimesLabelTh(slots, '')}</p>
+    </div>
+  );
 }
 
 export default function AttendanceCorrectionsApprovalPage() {
@@ -100,6 +117,10 @@ export default function AttendanceCorrectionsApprovalPage() {
         workDateYmd: row.workDateYmd,
         effectiveInAtMs: row.proposedInAtMs,
         effectiveOutAtMs: row.proposedOutAtMs,
+        effectiveMorningInAtMs: row.proposedMorningInAtMs ?? null,
+        effectiveMorningOutAtMs: row.proposedMorningOutAtMs ?? null,
+        effectiveAfternoonInAtMs: row.proposedAfternoonInAtMs ?? null,
+        effectiveAfternoonOutAtMs: row.proposedAfternoonOutAtMs ?? null,
         correctionRequestId: row.id,
         appliedAt: now,
         appliedByUid: currentUser.id,
@@ -233,24 +254,16 @@ export default function AttendanceCorrectionsApprovalPage() {
                   </div>
 
                   <div className="grid gap-2 text-sm sm:grid-cols-2">
-                    <div className="rounded-md bg-muted/50 p-3 space-y-1">
-                      <div className="text-xs font-semibold text-muted-foreground">เดิม (ในระบบก่อนแก้)</div>
-                      <div>
-                        เข้า: <span className="font-mono">{hmOrDash(row.previousInAtMs)}</span>
-                      </div>
-                      <div>
-                        ออก: <span className="font-mono">{hmOrDash(row.previousOutAtMs)}</span>
-                      </div>
-                    </div>
-                    <div className="rounded-md bg-primary/5 p-3 space-y-1 border border-primary/15">
-                      <div className="text-xs font-semibold text-primary">ขอเปลี่ยนเป็น</div>
-                      <div>
-                        เข้า: <span className="font-mono">{hmOrDash(row.proposedInAtMs)}</span>
-                      </div>
-                      <div>
-                        ออก: <span className="font-mono">{hmOrDash(row.proposedOutAtMs)}</span>
-                      </div>
-                    </div>
+                    <FourSlotTimesBlock
+                      title="เดิม (ในระบบก่อนแก้)"
+                      slots={previousFourSlotTimesFromCorrectionRequest(row)}
+                      className="rounded-md bg-muted/50 p-3"
+                    />
+                    <FourSlotTimesBlock
+                      title="ขอเปลี่ยนเป็น"
+                      slots={proposedFourSlotTimesFromCorrectionRequest(row)}
+                      className="rounded-md bg-primary/5 p-3 border border-primary/15"
+                    />
                   </div>
 
                   <div className="text-sm">

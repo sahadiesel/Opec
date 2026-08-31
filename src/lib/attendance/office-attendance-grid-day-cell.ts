@@ -7,6 +7,7 @@ import {
   punchesGroupedByBangkokYmd,
   type AttendanceDayEffectiveRow,
 } from '@/lib/attendance/correction-merge';
+import { fourSlotTimesFromOverride } from '@/lib/attendance/attendance-four-slot-times';
 import {
   ATTENDANCE_SHIFT_WINDOWS,
   getBangkokMinutesOfDay,
@@ -63,7 +64,7 @@ function inScanWindow(ms: number, startMinutes: number, endMinutes: number): boo
   return m >= startMinutes && m <= endMinutes;
 }
 
-function buildEffectivePunchLists(
+export function buildEffectivePunchLists(
   dayRow: AttendanceDayEffectiveRow,
   dayPunches: AttendancePunchDoc[],
 ): { ins: number[]; outs: number[] } {
@@ -71,6 +72,18 @@ function buildEffectivePunchLists(
     return { ins: [], outs: [] };
   }
   if (dayRow.override && dayRow.override.correctionRequestId !== 'admin_reset') {
+    const four = fourSlotTimesFromOverride(dayRow.override);
+    if (four) {
+      const ins = [four.morningInAtMs, four.afternoonInAtMs].filter(
+        (ms): ms is number => ms != null && Number.isFinite(ms),
+      );
+      const outs = [four.morningOutAtMs, four.afternoonOutAtMs].filter(
+        (ms): ms is number => ms != null && Number.isFinite(ms),
+      );
+      ins.sort((a, b) => a - b);
+      outs.sort((a, b) => a - b);
+      return { ins, outs };
+    }
     return {
       ins: dayRow.effectiveInMs != null ? [dayRow.effectiveInMs] : [],
       outs: dayRow.effectiveOutMs != null ? [dayRow.effectiveOutMs] : [],

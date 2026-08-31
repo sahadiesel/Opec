@@ -19,8 +19,22 @@ import { useToast } from '@/hooks/use-toast';
 import type { User } from '@/lib/types';
 import type { AttendanceSubjectType } from '@/lib/attendance/types';
 import { ATTENDANCE_CORRECTION_REQUESTS_COLLECTION } from '@/lib/attendance/constants';
-import { formatBangkokHmFromUtcMs, utcMsFromBangkokYmdAndHm } from '@/lib/attendance/bangkok-calendar';
+import {
+  deriveLegacyInOutFromFourSlots,
+  formatFourSlotTimesLabelTh,
+  fourSlotHasAnyTime,
+  fourSlotHmFromMs,
+  parseFourSlotHmToMs,
+  type AttendanceFourSlotTimesMs,
+} from '@/lib/attendance/attendance-four-slot-times';
 import { formatDateThaiBE } from '@/lib/date-thai';
+
+const SLOT_FIELDS = [
+  { key: 'morningInHm' as const, id: 'corr-morning-in', label: 'เข้าเช้า (HH:mm)' },
+  { key: 'morningOutHm' as const, id: 'corr-morning-out', label: 'ออกเที่ยง (HH:mm)' },
+  { key: 'afternoonInHm' as const, id: 'corr-afternoon-in', label: 'เข้าบ่าย (HH:mm)' },
+  { key: 'afternoonOutHm' as const, id: 'corr-afternoon-out', label: 'ออกเย็น (HH:mm)' },
+];
 
 export function AttendanceCorrectionRequestDialog({
   open,
@@ -32,8 +46,7 @@ export function AttendanceCorrectionRequestDialog({
   subjectNameSnapshot,
   payrollMonth,
   workDateYmd,
-  previousInAtMs,
-  previousOutAtMs,
+  previousSlots,
   previousInPunchId,
   previousOutPunchId,
 }: {
@@ -46,31 +59,43 @@ export function AttendanceCorrectionRequestDialog({
   subjectNameSnapshot: string;
   payrollMonth: string;
   workDateYmd: string;
-  previousInAtMs: number | null;
-  previousOutAtMs: number | null;
+  previousSlots: AttendanceFourSlotTimesMs;
   previousInPunchId?: string | null;
   previousOutPunchId?: string | null;
 }) {
   const { toast } = useToast();
-  const [inHm, setInHm] = useState('');
-  const [outHm, setOutHm] = useState('');
+  const [morningInHm, setMorningInHm] = useState('');
+  const [morningOutHm, setMorningOutHm] = useState('');
+  const [afternoonInHm, setAfternoonInHm] = useState('');
+  const [afternoonOutHm, setAfternoonOutHm] = useState('');
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const subjectKey = useMemo(() => `${subjectType}:${subjectId}`, [subjectType, subjectId]);
 
-  const defaultsLabel = useMemo(() => {
-    const pi = previousInAtMs != null ? formatBangkokHmFromUtcMs(previousInAtMs) : '';
-    const po = previousOutAtMs != null ? formatBangkokHmFromUtcMs(previousOutAtMs) : '';
-    return `ปัจจุบันในระบบ: เข้า ${pi || '—'} · ออก ${po || '—'}`;
-  }, [previousInAtMs, previousOutAtMs]);
+  const defaultsLabel = useMemo(
+    () => formatFourSlotTimesLabelTh(previousSlots),
+    [previousSlots],
+  );
+
+  const hmSetters = {
+    morningInHm: setMorningInHm,
+    morningOutHm: setMorningOutHm,
+    afternoonInHm: setAfternoonInHm,
+    afternoonOutHm: setAfternoonOutHm,
+  } as const;
+
+  const hmValues = { morningInHm, morningOutHm, afternoonInHm, afternoonOutHm };
 
   useEffect(() => {
     if (!open) return;
-    setInHm(previousInAtMs != null ? formatBangkokHmFromUtcMs(previousInAtMs) : '');
-    setOutHm(previousOutAtMs != null ? formatBangkokHmFromUtcMs(previousOutAtMs) : '');
+    const hm = fourSlotHmFromMs(previousSlots);
+    setMorningInHm(hm.morningInHm);
+    setMorningOutHm(hm.morningOutHm);
+    setAfternoonInHm(hm.afternoonInHm);
+    setAfternoonOutHm(hm.afternoonOutHm);
     setReason('');
-  }, [open, previousInAtMs, previousOutAtMs, workDateYmd]);
+  }, [open, previousSlots, workDateYmd]);
 
   const handleSubmit = async () => {
     if (!firestore) return;
@@ -80,25 +105,23 @@ export function AttendanceCorrectionRequestDialog({
       return;
     }
 
-    const inTrim = inHm.trim();
-    const outTrim = outHm.trim();
+    const parsed = parseFourSlotHmToMs(workDateYmd, hmValues);
+    if (parsed.error) {
+      toast({ variant: 'destructive', title: 'รูปแบบเวลาไม่ถูกต้อง', description: parsed.error });
+      return;
+    }
 
-    if (!inTrim && !outTrim) {
+    if (!fourSlotHasAnyTime(parsed.slots)) {
       toast({
         variant: 'destructive',
         title: 'ไม่มีเวลาที่ขอแก้',
-        description: 'กรอกเวลาเข้าและ/หรือเวลาออกที่ต้องการให้ระบบใช้',
+        description: 'กรอกอย่างน้อย 1 ช่วงเวลาที่ต้องการให้ระบบใช้',
       });
       return;
     }
 
-    const proposedInAtMs = inTrim ? utcMsFromBangkokYmdAndHm(workDateYmd, inTrim) : null;
-    const proposedOutAtMs = outTrim ? utcMsFromBangkokYmdAndHm(workDateYmd, outTrim) : null;
-
-    if ((inTrim && proposedInAtMs == null) || (outTrim && proposedOutAtMs == null)) {
-      toast({ variant: 'destructive', title: 'รูปแบบเวลาไม่ถูกต้อง', description: 'ใช้รูปแบบ HH:mm เช่น 08:30 หรือ 08.30' });
-      return;
-    }
+    const previousLegacy = deriveLegacyInOutFromFourSlots(previousSlots);
+    const proposedLegacy = deriveLegacyInOutFromFourSlots(parsed.slots);
 
     setSubmitting(true);
     try {
@@ -128,10 +151,18 @@ export function AttendanceCorrectionRequestDialog({
         subjectKey,
         payrollMonth,
         workDateYmd,
-        previousInAtMs,
-        previousOutAtMs,
-        proposedInAtMs,
-        proposedOutAtMs,
+        previousInAtMs: previousLegacy.inAtMs,
+        previousOutAtMs: previousLegacy.outAtMs,
+        proposedInAtMs: proposedLegacy.inAtMs,
+        proposedOutAtMs: proposedLegacy.outAtMs,
+        previousMorningInAtMs: previousSlots.morningInAtMs,
+        previousMorningOutAtMs: previousSlots.morningOutAtMs,
+        previousAfternoonInAtMs: previousSlots.afternoonInAtMs,
+        previousAfternoonOutAtMs: previousSlots.afternoonOutAtMs,
+        proposedMorningInAtMs: parsed.slots.morningInAtMs,
+        proposedMorningOutAtMs: parsed.slots.morningOutAtMs,
+        proposedAfternoonInAtMs: parsed.slots.afternoonInAtMs,
+        proposedAfternoonOutAtMs: parsed.slots.afternoonOutAtMs,
         previousInPunchId: previousInPunchId ?? null,
         previousOutPunchId: previousOutPunchId ?? null,
         reason: r,
@@ -156,37 +187,30 @@ export function AttendanceCorrectionRequestDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>ขอแก้ไขเวลาลงเวลา</DialogTitle>
           <DialogDescription>
             {subjectNameSnapshot} · {formatDateThaiBE(workDateYmd)}
-            <span className="block text-xs mt-1 text-muted-foreground">{defaultsLabel}</span>
+            <span className="block text-xs mt-1 text-muted-foreground leading-snug">{defaultsLabel}</span>
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3 py-2">
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="corr-in">เวลาเข้า (HH:mm)</Label>
-              <Input
-                id="corr-in"
-                placeholder="เช่น 08:30"
-                value={inHm}
-                onChange={(e) => setInHm(e.target.value)}
-                autoComplete="off"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="corr-out">เวลาออก (HH:mm)</Label>
-              <Input
-                id="corr-out"
-                placeholder="เช่น 17:15"
-                value={outHm}
-                onChange={(e) => setOutHm(e.target.value)}
-                autoComplete="off"
-              />
-            </div>
+            {SLOT_FIELDS.map(({ key, id, label }) => (
+              <div key={key} className="space-y-1.5">
+                <Label htmlFor={id}>{label}</Label>
+                <Input
+                  id={id}
+                  placeholder="เช่น 08:30"
+                  value={hmValues[key]}
+                  onChange={(e) => hmSetters[key](e.target.value)}
+                  autoComplete="off"
+                  className="font-mono"
+                />
+              </div>
+            ))}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="corr-reason">เหตุผล (ส่งถึงผู้จัดการ)</Label>

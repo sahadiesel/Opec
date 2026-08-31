@@ -63,6 +63,11 @@ import type {
   AttendanceOvertimeRequestDoc,
   AttendancePunchDoc,
 } from '@/lib/attendance/types';
+import {
+  formatFourSlotTimesLabelTh,
+  previousFourSlotTimesFromCorrectionRequest,
+  proposedFourSlotTimesFromCorrectionRequest,
+} from '@/lib/attendance/attendance-four-slot-times';
 import { formatDateThaiBE, formatPayrollYearMonthThaiBE } from '@/lib/date-thai';
 import { OFFICE_LEAVE_REQUESTS_COLLECTION, OFFICE_LEAVE_STATUS_LABELS, OFFICE_LEAVE_TYPE_LABELS } from '@/lib/leaves/policy';
 import type { OfficeLeaveRequestDoc } from '@/lib/leaves/types';
@@ -465,13 +470,13 @@ function AttendanceDayDetailPageContent() {
                           })}
                         </span>
                       </div>
-                      <p>
-                        <span className="text-muted-foreground">เดิม:</span> เข้า {hmOrDash(r.previousInAtMs)} · ออก{' '}
-                        {hmOrDash(r.previousOutAtMs)}
+                      <p className="text-xs leading-relaxed">
+                        <span className="text-muted-foreground">เดิม:</span>{' '}
+                        {formatFourSlotTimesLabelTh(previousFourSlotTimesFromCorrectionRequest(r), '')}
                       </p>
-                      <p>
-                        <span className="text-muted-foreground">ขอแก้เป็น:</span> เข้า {hmOrDash(r.proposedInAtMs)} · ออก{' '}
-                        {hmOrDash(r.proposedOutAtMs)}
+                      <p className="text-xs leading-relaxed">
+                        <span className="text-muted-foreground">ขอแก้เป็น:</span>{' '}
+                        {formatFourSlotTimesLabelTh(proposedFourSlotTimesFromCorrectionRequest(r), '')}
                       </p>
                       <p>
                         <span className="text-muted-foreground">เหตุผล:</span> {r.reason || '—'}

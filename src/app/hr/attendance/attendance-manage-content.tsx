@@ -115,9 +115,14 @@ import {
   attendanceOutCorrectedByOverride,
   buildAttendanceDayRows,
   countDaysWithEffectiveRecord,
+  punchesGroupedByBangkokYmd,
 } from '@/lib/attendance/correction-merge';
 import { adminResetAttendanceDay } from '@/lib/attendance/admin-day-reset';
 import { AttendanceCorrectionRequestDialog } from '@/components/attendance/attendance-correction-request-dialog';
+import {
+  resolveFourScanSlotMs,
+  type AttendanceFourSlotTimesMs,
+} from '@/lib/attendance/attendance-four-slot-times';
 import { AttendanceOvertimeRequestDialog } from '@/components/attendance/attendance-overtime-request-dialog';
 import {
   AlertDialog,
@@ -254,8 +259,7 @@ export function HrAttendanceManagePageContent() {
     subjectId: string;
     subjectNameSnapshot: string;
     workDateYmd: string;
-    previousInAtMs: number | null;
-    previousOutAtMs: number | null;
+    previousSlots: AttendanceFourSlotTimesMs;
     previousInPunchId: string | null;
     previousOutPunchId: string | null;
   } | null>(null);
@@ -947,8 +951,13 @@ export function HrAttendanceManagePageContent() {
                                                               subjectId: row.staffId,
                                                               subjectNameSnapshot: row.name,
                                                               workDateYmd: d.ymd,
-                                                              previousInAtMs: d.effectiveInMs,
-                                                              previousOutAtMs: d.effectiveOutMs,
+                                                              previousSlots: resolveFourScanSlotMs({
+                                                                dayRow: d,
+                                                                dayPunches:
+                                                                  punchesGroupedByBangkokYmd(row.punches).get(d.ymd)
+                                                                  ?? [],
+                                                                monthlyWorkNorm,
+                                                              }),
                                                               previousInPunchId: d.rawFirstIn?.id ?? null,
                                                               previousOutPunchId: d.rawLastOut?.id ?? null,
                                                             });
@@ -1130,8 +1139,7 @@ export function HrAttendanceManagePageContent() {
           subjectNameSnapshot={corrCtx.subjectNameSnapshot}
           payrollMonth={payrollMonth}
           workDateYmd={corrCtx.workDateYmd}
-          previousInAtMs={corrCtx.previousInAtMs}
-          previousOutAtMs={corrCtx.previousOutAtMs}
+          previousSlots={corrCtx.previousSlots}
           previousInPunchId={corrCtx.previousInPunchId}
           previousOutPunchId={corrCtx.previousOutPunchId}
         />

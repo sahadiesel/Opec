@@ -58,11 +58,19 @@ export type AttendanceCorrectionRequestDoc = {
   payrollMonth: string;
   /** YYYY-MM-DD Bangkok */
   workDateYmd: string;
-  /** Snapshot before request (null = no punch that day) */
+  /** Snapshot before request (null = no punch that day) — legacy first in / last out */
   previousInAtMs: number | null;
   previousOutAtMs: number | null;
   proposedInAtMs: number | null;
   proposedOutAtMs: number | null;
+  previousMorningInAtMs?: number | null;
+  previousMorningOutAtMs?: number | null;
+  previousAfternoonInAtMs?: number | null;
+  previousAfternoonOutAtMs?: number | null;
+  proposedMorningInAtMs?: number | null;
+  proposedMorningOutAtMs?: number | null;
+  proposedAfternoonInAtMs?: number | null;
+  proposedAfternoonOutAtMs?: number | null;
   previousInPunchId?: string | null;
   previousOutPunchId?: string | null;
   reason: string;
@@ -86,6 +94,10 @@ export type AttendanceDayOverrideDoc = {
   workDateYmd: string;
   effectiveInAtMs: number | null;
   effectiveOutAtMs: number | null;
+  effectiveMorningInAtMs?: number | null;
+  effectiveMorningOutAtMs?: number | null;
+  effectiveAfternoonInAtMs?: number | null;
+  effectiveAfternoonOutAtMs?: number | null;
   correctionRequestId: string;
   appliedAt: number;
   appliedByUid: string;
