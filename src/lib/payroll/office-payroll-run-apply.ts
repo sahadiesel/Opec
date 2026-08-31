@@ -185,6 +185,8 @@ export async function applyStandardOfficeRunLines(
       {
         monthlySalary: contractBaseSalary,
         monthlyWorkNorm: payrollCtx.monthlyWorkNorm,
+        weeklyRestPattern: payrollCtx.weeklyRestPattern,
+        calendarHolidays: payrollCtx.calendarHolidays,
       },
     );
 

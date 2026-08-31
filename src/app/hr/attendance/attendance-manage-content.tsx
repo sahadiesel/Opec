@@ -272,6 +272,8 @@ export function HrAttendanceManagePageContent() {
     workDateYmd: string;
     previousOtHours: number | null;
     pendingRequestId: string | null;
+    pendingStartHm?: string | null;
+    pendingEndHm?: string | null;
   } | null>(null);
 
   const [resetOpen, setResetOpen] = useState(false);
@@ -990,6 +992,16 @@ export function HrAttendanceManagePageContent() {
                                                                 otDisplay.status === 'PENDING_MANAGER_APPROVAL'
                                                                   ? (overtimeBySubjectDay.get(dayKey)?.id ?? null)
                                                                   : null,
+                                                              pendingStartHm:
+                                                                otDisplay.status === 'PENDING_MANAGER_APPROVAL'
+                                                                  ? (overtimeBySubjectDay.get(dayKey)?.requestedOtStartHm ??
+                                                                    null)
+                                                                  : null,
+                                                              pendingEndHm:
+                                                                otDisplay.status === 'PENDING_MANAGER_APPROVAL'
+                                                                  ? (overtimeBySubjectDay.get(dayKey)?.requestedOtEndHm ??
+                                                                    null)
+                                                                  : null,
                                                             });
                                                           }}
                                                         >
@@ -1161,6 +1173,8 @@ export function HrAttendanceManagePageContent() {
           workDateYmd={otCtx.workDateYmd}
           previousOtHours={otCtx.previousOtHours}
           pendingRequestId={otCtx.pendingRequestId}
+          pendingStartHm={otCtx.pendingStartHm}
+          pendingEndHm={otCtx.pendingEndHm}
         />
       ) : null}
 

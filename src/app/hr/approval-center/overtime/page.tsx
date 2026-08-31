@@ -43,10 +43,21 @@ import type { OfficeStaff, User } from '@/lib/types';
 import type { AttendanceOvertimeRequestDoc } from '@/lib/attendance/types';
 import { ATTENDANCE_OVERTIME_REQUESTS_COLLECTION } from '@/lib/attendance/constants';
 import { formatAttendanceOvertimeHours } from '@/lib/attendance/overtime-display';
+import {
+  formatAttendanceHmRange,
+  normalizeAttendanceHmInput,
+  otHoursFromHmRange,
+} from '@/lib/attendance/overtime-time';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { loadPayrollPoliciesFromFirestore, resolvePayrollPoliciesForDate } from '@/lib/payroll/d8';
+import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import { monthlyWorkNormFromPolicyRecord } from '@/lib/payroll/office-payroll-period-deductions';
-import { computeOfficeOvertimePayAmount } from '@/lib/payroll/office-overtime-pay';
+import {
+  computeOfficeOvertimePayForApprovedRequest,
+  isOfficeRestOrHolidayDay,
+} from '@/lib/payroll/office-overtime-pay';
+import { validateOfficeOvertimeHmRange } from '@/lib/payroll/office-overtime-interval-pay';
+import { workerGlobalLaborContextFromPolicy } from '@/lib/payroll/worker-global-labor-policy';
 
 export default function AttendanceOvertimeApprovalPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -56,8 +67,13 @@ export default function AttendanceOvertimeApprovalPage() {
   const [rejectReason, setRejectReason] = useState('');
   const [rejectTargetId, setRejectTargetId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [approveHoursById, setApproveHoursById] = useState<Record<string, string>>({});
+  const [approveRangeById, setApproveRangeById] = useState<
+    Record<string, { start: string; end: string; hours: string }>
+  >({});
   const [normByAsOf, setNormByAsOf] = useState<Record<string, ReturnType<typeof monthlyWorkNormFromPolicyRecord>>>({});
+  const [laborCtxLoaded, setLaborCtxLoaded] = useState<ReturnType<typeof workerGlobalLaborContextFromPolicy> | null>(
+    null,
+  );
 
   const approvalGate = useMemo(
     () =>
@@ -85,12 +101,25 @@ export default function AttendanceOvertimeApprovalPage() {
 
   useEffect(() => {
     if (!pendingRows?.length) return;
-    const next: Record<string, string> = {};
+    const next: Record<string, { start: string; end: string; hours: string }> = {};
     for (const row of pendingRows) {
-      next[row.id] = String(row.requestedOtHours ?? '');
+      next[row.id] = {
+        start: row.requestedOtStartHm ?? '',
+        end: row.requestedOtEndHm ?? '',
+        hours: String(row.requestedOtHours ?? ''),
+      };
     }
-    setApproveHoursById(next);
+    setApproveRangeById(next);
   }, [pendingRows]);
+
+  async function loadLaborContext() {
+    if (!firestore || laborCtxLoaded) return laborCtxLoaded;
+    const policies = await loadPayrollPoliciesFromFirestore(firestore);
+    const laborRec = policies.find((p) => p.id === HR_WORKER_GLOBAL_LABOR_POLICY_ID) ?? null;
+    const ctx = workerGlobalLaborContextFromPolicy(laborRec);
+    setLaborCtxLoaded(ctx);
+    return ctx;
+  }
 
   async function loadNormForDate(asOfYmd: string) {
     if (!firestore || normByAsOf[asOfYmd]) return normByAsOf[asOfYmd];
@@ -103,11 +132,33 @@ export default function AttendanceOvertimeApprovalPage() {
 
   const handleApprove = async (row: AttendanceOvertimeRequestDoc) => {
     if (!firestore || !currentUser || !canApprove) return;
-    const hoursRaw = approveHoursById[row.id] ?? String(row.requestedOtHours);
-    const approvedHours = Number(hoursRaw);
-    if (!Number.isFinite(approvedHours) || approvedHours <= 0 || approvedHours > 24) {
-      toast({ variant: 'destructive', title: 'ชั่วโมง OT ไม่ถูกต้อง', description: 'กรอก 0.25–24 ชม.' });
-      return;
+    const draft = approveRangeById[row.id];
+    const startRaw = draft?.start ?? row.requestedOtStartHm ?? '';
+    const endRaw = draft?.end ?? row.requestedOtEndHm ?? '';
+    const startHm = normalizeAttendanceHmInput(startRaw);
+    const endHm = normalizeAttendanceHmInput(endRaw);
+    const hasTimeRange = !!(startHm && endHm);
+    let approvedHours = 0;
+
+    if (hasTimeRange) {
+      const rangeErr = validateOfficeOvertimeHmRange(startRaw, endRaw);
+      if (rangeErr) {
+        toast({ variant: 'destructive', title: 'ช่วงเวลา OT ไม่ถูกต้อง', description: rangeErr });
+        return;
+      }
+      const hours = otHoursFromHmRange(startHm!, endHm!);
+      if (hours === null || hours <= 0) {
+        toast({ variant: 'destructive', title: 'ช่วงเวลา OT ไม่ถูกต้อง', description: 'เวลาสิ้นสุดต้องหลังเวลาเริ่ม' });
+        return;
+      }
+      approvedHours = hours;
+    } else {
+      const hoursRaw = draft?.hours ?? String(row.requestedOtHours);
+      approvedHours = Number(hoursRaw);
+      if (!Number.isFinite(approvedHours) || approvedHours <= 0 || approvedHours > 24) {
+        toast({ variant: 'destructive', title: 'ชั่วโมง OT ไม่ถูกต้อง', description: 'กรอก 0.25–24 ชม. หรือระบุช่วงเวลา' });
+        return;
+      }
     }
 
     setBusyId(row.id);
@@ -121,23 +172,56 @@ export default function AttendanceOvertimeApprovalPage() {
       }
 
       const norm = (await loadNormForDate(row.workDateYmd)) ?? monthlyWorkNormFromPolicyRecord(null);
-      const breakdown = computeOfficeOvertimePayAmount(monthlySalary, norm, approvedHours);
+      const laborCtx = (await loadLaborContext()) ?? workerGlobalLaborContextFromPolicy(null);
+      const isHoliday = isOfficeRestOrHolidayDay(
+        row.workDateYmd,
+        laborCtx.weeklyRestPattern,
+        laborCtx.calendarHolidays,
+      );
+      const pay = computeOfficeOvertimePayForApprovedRequest(monthlySalary, norm, {
+        workDateYmd: row.workDateYmd,
+        approvedHours,
+        approvedStartHm: hasTimeRange ? startHm : null,
+        approvedEndHm: hasTimeRange ? endHm : null,
+        isHoliday,
+      });
+
+      const amount = 'totalAmount' in pay ? pay.totalAmount : pay.amount;
+      const hourlyRate = pay.hourlyRate;
+      const multiplier = 'effectiveMultiplier' in pay ? pay.effectiveMultiplier : pay.multiplier;
+      const totalHours = 'totalHours' in pay ? pay.totalHours : pay.approvedHours;
+      const segments =
+        'segments' in pay
+          ? pay.segments.map((seg) => ({
+              category: seg.category,
+              startHm: seg.startHm,
+              endHm: seg.endHm,
+              hours: seg.hours,
+              multiplier: seg.multiplier,
+              amount: seg.amount,
+              label: seg.label,
+            }))
+          : undefined;
+
       const now = Date.now();
       const batch = writeBatch(firestore);
       const reqRef = doc(firestore, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION, row.id);
       batch.update(reqRef, {
         status: 'APPROVED',
-        approvedOtHours: breakdown.approvedHours,
-        monthlySalarySnapshot: breakdown.monthlySalary,
-        hourlyRateSnapshot: breakdown.hourlyRate,
-        otMultiplierSnapshot: breakdown.multiplier,
-        otPayAmountSnapshot: breakdown.amount,
+        approvedOtHours: Math.round(totalHours * 100) / 100,
+        ...(hasTimeRange
+          ? { approvedOtStartHm: startHm, approvedOtEndHm: endHm }
+          : {}),
+        monthlySalarySnapshot: pay.monthlySalary,
+        hourlyRateSnapshot: hourlyRate,
+        otMultiplierSnapshot: multiplier,
+        otPayAmountSnapshot: amount,
+        ...(segments ? { otPaySegmentsSnapshot: segments } : {}),
         reviewedByUid: currentUser.id,
         reviewedByName: currentUser.displayName || currentUser.email || currentUser.id,
         reviewedAt: now,
       });
 
-      // แทนที่ OT ที่อนุมัติไว้แล้วในวันเดียวกัน (กรณีขอแก้ไขชั่วโมง)
       const priorApproved = await getDocs(
         query(
           collection(firestore, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION),
@@ -154,14 +238,19 @@ export default function AttendanceOvertimeApprovalPage() {
           reviewedByUid: currentUser.id,
           reviewedByName: currentUser.displayName || currentUser.email || currentUser.id,
           reviewedAt: now,
-          rejectReason: `ถูกแทนที่ด้วยคำขอแก้ไข OT (${breakdown.approvedHours} ชม.)`,
+          rejectReason: `ถูกแทนที่ด้วยคำขอแก้ไข OT (${formatAttendanceOvertimeHours(totalHours)} ชม.)`,
         });
       }
 
       await batch.commit();
+
+      const segmentNote =
+        segments && segments.length > 1
+          ? ` · ${segments.map((s) => `${s.startHm}–${s.endHm}×${s.multiplier}`).join(', ')}`
+          : '';
       toast({
         title: 'อนุมัติ OT แล้ว',
-        description: `${breakdown.approvedHours} ชม. · ตัวคูณ OT ${breakdown.multiplier} · ประมาณ ${breakdown.amount.toLocaleString('th-TH')} บาท (รวมในงวดเงินเดือนเมื่อคำนวณใหม่)`,
+        description: `${formatAttendanceOvertimeHours(totalHours)} ชม. · ประมาณ ${amount.toLocaleString('th-TH')} บาท${segmentNote} (รวมในงวดเงินเดือนเมื่อคำนวณใหม่)`,
       });
     } catch (e) {
       toast({
@@ -242,7 +331,7 @@ export default function AttendanceOvertimeApprovalPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-primary">อนุมัติ OT (ล่วงเวลา)</h1>
           <p className="mt-2 text-sm text-muted-foreground max-w-2xl">
-            คำขอจากฝ่ายเงินเดือน — ปรับชั่วโมงที่อนุมัติได้ · ค่า OT = ค่าจ้าง/ชม. × ตัวคูณ (HR Settings) × ชม.ที่อนุมัติ
+            คำขอจากฝ่ายเงินเดือน — ปรับช่วงเวลาที่อนุมัติได้ · ค่า OT แบ่งตามตัวคูณ A/B/C ใน HR Settings
           </p>
           {isPayrollOfficer(currentUser) && !canApprove ? (
             <p className="mt-2 text-sm text-amber-700 dark:text-amber-400">
@@ -264,7 +353,18 @@ export default function AttendanceOvertimeApprovalPage() {
             ) : !pendingRows?.length ? (
               <p className="text-sm text-muted-foreground py-6 text-center">ไม่มีคำขอ OT ที่รออนุมัติ</p>
             ) : (
-              pendingRows.map((row) => (
+              pendingRows.map((row) => {
+                const draft = approveRangeById[row.id];
+                const hasRequestedRange = !!(row.requestedOtStartHm && row.requestedOtEndHm);
+                const computedHours =
+                  draft?.start && draft?.end
+                    ? otHoursFromHmRange(
+                        normalizeAttendanceHmInput(draft.start) ?? '',
+                        normalizeAttendanceHmInput(draft.end) ?? '',
+                      )
+                    : null;
+
+                return (
                 <div key={row.id} className="rounded-lg border bg-card p-4 space-y-3 shadow-sm">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
@@ -284,7 +384,14 @@ export default function AttendanceOvertimeApprovalPage() {
                           ? 'ขอแก้ไข OT'
                           : 'ขอ OT'}
                       </div>
-                      {row.previousOtHours != null && Number(row.previousOtHours) > 0 ? (
+                      {hasRequestedRange ? (
+                        <div className="font-mono text-lg font-bold">
+                          {formatAttendanceHmRange(row.requestedOtStartHm!, row.requestedOtEndHm!)}
+                          <span className="text-sm font-normal text-muted-foreground ml-2">
+                            ({formatAttendanceOvertimeHours(Number(row.requestedOtHours))} ชม.)
+                          </span>
+                        </div>
+                      ) : row.previousOtHours != null && Number(row.previousOtHours) > 0 ? (
                         <div className="font-mono text-lg font-bold">
                           {formatAttendanceOvertimeHours(Number(row.previousOtHours))} →{' '}
                           {formatAttendanceOvertimeHours(Number(row.requestedOtHours))} ชม.
@@ -293,23 +400,77 @@ export default function AttendanceOvertimeApprovalPage() {
                         <div className="font-mono text-lg font-bold">{row.requestedOtHours} ชม.</div>
                       )}
                     </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor={`ot-approve-${row.id}`} className="text-xs">
-                        ชั่วโมงที่อนุมัติ (แก้ไขได้)
-                      </Label>
-                      <Input
-                        id={`ot-approve-${row.id}`}
-                        type="number"
-                        min={0.25}
-                        max={24}
-                        step={0.25}
-                        className="font-mono"
-                        disabled={!canApprove || busyId === row.id}
-                        value={approveHoursById[row.id] ?? ''}
-                        onChange={(e) =>
-                          setApproveHoursById((prev) => ({ ...prev, [row.id]: e.target.value }))
-                        }
-                      />
+                    <div className="space-y-2">
+                      {hasRequestedRange || draft?.start || draft?.end ? (
+                        <>
+                          <Label className="text-xs">ช่วงเวลาที่อนุมัติ (แก้ไขได้)</Label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input
+                              type="time"
+                              className="font-mono"
+                              disabled={!canApprove || busyId === row.id}
+                              value={draft?.start ?? ''}
+                              onChange={(e) =>
+                                setApproveRangeById((prev) => ({
+                                  ...prev,
+                                  [row.id]: {
+                                    start: e.target.value,
+                                    end: prev[row.id]?.end ?? '',
+                                    hours: prev[row.id]?.hours ?? '',
+                                  },
+                                }))
+                              }
+                            />
+                            <Input
+                              type="time"
+                              className="font-mono"
+                              disabled={!canApprove || busyId === row.id}
+                              value={draft?.end ?? ''}
+                              onChange={(e) =>
+                                setApproveRangeById((prev) => ({
+                                  ...prev,
+                                  [row.id]: {
+                                    start: prev[row.id]?.start ?? '',
+                                    end: e.target.value,
+                                    hours: prev[row.id]?.hours ?? '',
+                                  },
+                                }))
+                              }
+                            />
+                          </div>
+                          {computedHours != null ? (
+                            <p className="text-xs text-muted-foreground font-mono">
+                              รวม {formatAttendanceOvertimeHours(computedHours)} ชม.
+                            </p>
+                          ) : null}
+                        </>
+                      ) : (
+                        <>
+                          <Label htmlFor={`ot-approve-${row.id}`} className="text-xs">
+                            ชั่วโมงที่อนุมัติ (คำขอเก่า — แก้ไขได้)
+                          </Label>
+                          <Input
+                            id={`ot-approve-${row.id}`}
+                            type="number"
+                            min={0.25}
+                            max={24}
+                            step={0.25}
+                            className="font-mono"
+                            disabled={!canApprove || busyId === row.id}
+                            value={draft?.hours ?? ''}
+                            onChange={(e) =>
+                              setApproveRangeById((prev) => ({
+                                ...prev,
+                                [row.id]: {
+                                  start: prev[row.id]?.start ?? '',
+                                  end: prev[row.id]?.end ?? '',
+                                  hours: e.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -340,7 +501,8 @@ export default function AttendanceOvertimeApprovalPage() {
                     </Button>
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
           </CardContent>
         </Card>

@@ -1,4 +1,5 @@
 import type { AttendanceOvertimeRequestDoc, AttendanceOvertimeRequestStatus } from '@/lib/attendance/types';
+import { otHoursFromHmRange } from '@/lib/attendance/overtime-time';
 
 export type AttendanceOvertimeDayDisplay = {
   hours: number | null;
@@ -43,6 +44,18 @@ function requestEventMs(r: {
 }
 
 function overtimeHoursFromRequest(request: AttendanceOvertimeRequestDoc): number | null {
+  const startHm =
+    request.status === 'APPROVED'
+      ? (request.approvedOtStartHm ?? request.requestedOtStartHm)
+      : request.requestedOtStartHm;
+  const endHm =
+    request.status === 'APPROVED'
+      ? (request.approvedOtEndHm ?? request.requestedOtEndHm)
+      : request.requestedOtEndHm;
+  if (startHm && endHm) {
+    const fromRange = otHoursFromHmRange(String(startHm), String(endHm));
+    if (fromRange != null && fromRange > 0) return fromRange;
+  }
   const hours = Number(
     request.status === 'APPROVED'
       ? (request.approvedOtHours ?? request.requestedOtHours)

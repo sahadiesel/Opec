@@ -20,6 +20,12 @@ import type { User } from '@/lib/types';
 import type { AttendanceSubjectType } from '@/lib/attendance/types';
 import { ATTENDANCE_OVERTIME_REQUESTS_COLLECTION } from '@/lib/attendance/constants';
 import { formatAttendanceOvertimeHours } from '@/lib/attendance/overtime-display';
+import {
+  formatAttendanceHmRange,
+  normalizeAttendanceHmInput,
+  otHoursFromHmRange,
+} from '@/lib/attendance/overtime-time';
+import { validateOfficeOvertimeHmRange } from '@/lib/payroll/office-overtime-interval-pay';
 import { formatDateThaiBE } from '@/lib/date-thai';
 
 export function AttendanceOvertimeRequestDialog({
@@ -36,6 +42,8 @@ export function AttendanceOvertimeRequestDialog({
   previousOtHours = null,
   /** ถ้ามีคำขอรออนุมัติ — อัปเดตคำขอนั้นแทนการสร้างใหม่ */
   pendingRequestId = null,
+  pendingStartHm = null,
+  pendingEndHm = null,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -48,9 +56,12 @@ export function AttendanceOvertimeRequestDialog({
   workDateYmd: string;
   previousOtHours?: number | null;
   pendingRequestId?: string | null;
+  pendingStartHm?: string | null;
+  pendingEndHm?: string | null;
 }) {
   const { toast } = useToast();
-  const [otHours, setOtHours] = useState('');
+  const [otStartHm, setOtStartHm] = useState('');
+  const [otEndHm, setOtEndHm] = useState('');
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -59,15 +70,24 @@ export function AttendanceOvertimeRequestDialog({
     previousOtHours != null && Number.isFinite(previousOtHours) && previousOtHours > 0;
   const previousLabel = isAmend ? formatAttendanceOvertimeHours(Number(previousOtHours)) : null;
 
+  const computedHours = useMemo(() => {
+    const start = normalizeAttendanceHmInput(otStartHm);
+    const end = normalizeAttendanceHmInput(otEndHm);
+    if (!start || !end) return null;
+    return otHoursFromHmRange(start, end);
+  }, [otStartHm, otEndHm]);
+
   useEffect(() => {
     if (!open) return;
-    if (isAmend) {
-      setOtHours(String(Number(previousOtHours)));
+    if (pendingStartHm && pendingEndHm) {
+      setOtStartHm(pendingStartHm);
+      setOtEndHm(pendingEndHm);
     } else {
-      setOtHours('');
+      setOtStartHm('');
+      setOtEndHm('');
     }
     setReason('');
-  }, [open, workDateYmd, isAmend, previousOtHours]);
+  }, [open, workDateYmd, isAmend, previousOtHours, pendingStartHm, pendingEndHm]);
 
   const handleSubmit = async () => {
     if (!firestore) return;
@@ -76,20 +96,34 @@ export function AttendanceOvertimeRequestDialog({
       toast({ variant: 'destructive', title: 'ระบุเหตุผล', description: 'กรุณากรอกเหตุผลอย่างน้อย 3 ตัวอักษร' });
       return;
     }
-    const hours = Number(otHours);
-    if (!Number.isFinite(hours) || hours <= 0 || hours > 24) {
+
+    const startHm = normalizeAttendanceHmInput(otStartHm);
+    const endHm = normalizeAttendanceHmInput(otEndHm);
+    const rangeErr = validateOfficeOvertimeHmRange(otStartHm, otEndHm);
+    if (rangeErr || !startHm || !endHm) {
       toast({
         variant: 'destructive',
-        title: 'ชั่วโมง OT ไม่ถูกต้อง',
-        description: 'กรอกจำนวนชั่วโมงมากกว่า 0 และไม่เกิน 24 ชม./วัน',
+        title: 'ช่วงเวลา OT ไม่ถูกต้อง',
+        description: rangeErr ?? 'กรุณาระบุเวลาเริ่มและเวลาสิ้นสุด',
       });
       return;
     }
+
+    const hours = otHoursFromHmRange(startHm, endHm);
+    if (hours === null || hours <= 0) {
+      toast({
+        variant: 'destructive',
+        title: 'ช่วงเวลา OT ไม่ถูกต้อง',
+        description: 'เวลาสิ้นสุดต้องหลังเวลาเริ่ม',
+      });
+      return;
+    }
+
     if (isAmend && Math.abs(hours - Number(previousOtHours)) < 0.001) {
       toast({
         variant: 'destructive',
-        title: 'ยังไม่เปลี่ยนชั่วโมง',
-        description: `กรุณาระบุชั่วโมงใหม่ที่ต่างจากเดิม (${previousLabel} ชม.)`,
+        title: 'ยังไม่เปลี่ยนช่วงเวลา',
+        description: `กรุณาระบุช่วงเวลาใหม่ที่ต่างจากเดิม (${previousLabel} ชม.)`,
       });
       return;
     }
@@ -98,23 +132,25 @@ export function AttendanceOvertimeRequestDialog({
     try {
       const roundedHours = Math.round(hours * 100) / 100;
       const now = Date.now();
+      const payload = {
+        requestedOtHours: roundedHours,
+        requestedOtStartHm: startHm,
+        requestedOtEndHm: endHm,
+        reason: r,
+        requestedByUid: currentUser.id,
+        requestedByName: currentUser.displayName || currentUser.email || currentUser.id,
+        requestedAt: now,
+        ...(isAmend
+          ? { previousOtHours: Math.round(Number(previousOtHours) * 100) / 100 }
+          : {}),
+      };
 
-      // มีคำขอค้าง — แก้ตัวเลข/เหตุผลบนคำขอเดิม
       if (pendingRequestId) {
-        await updateDoc(doc(firestore, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION, pendingRequestId), {
-          requestedOtHours: roundedHours,
-          reason: r,
-          requestedByUid: currentUser.id,
-          requestedByName: currentUser.displayName || currentUser.email || currentUser.id,
-          requestedAt: now,
-          ...(isAmend
-            ? { previousOtHours: Math.round(Number(previousOtHours) * 100) / 100 }
-            : {}),
-        });
+        await updateDoc(doc(firestore, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION, pendingRequestId), payload);
         toast({
           title: 'อัปเดตคำขอ OT แล้ว',
           description: isAmend
-            ? `จาก ${previousLabel} → ${formatAttendanceOvertimeHours(roundedHours)} ชม. · ยังรอผู้จัดการอนุมัติ`
+            ? `จาก ${previousLabel} → ${formatAttendanceHmRange(startHm, endHm)} (${formatAttendanceOvertimeHours(roundedHours)} ชม.) · ยังรอผู้จัดการอนุมัติ`
             : 'ยังรอผู้จัดการอนุมัติที่ศูนย์อนุมัติ',
         });
         onOpenChange(false);
@@ -146,21 +182,14 @@ export function AttendanceOvertimeRequestDialog({
         subjectKey,
         payrollMonth,
         workDateYmd,
-        requestedOtHours: roundedHours,
-        ...(isAmend
-          ? { previousOtHours: Math.round(Number(previousOtHours) * 100) / 100 }
-          : {}),
-        reason: r,
+        ...payload,
         status: 'PENDING_MANAGER_APPROVAL',
-        requestedByUid: currentUser.id,
-        requestedByName: currentUser.displayName || currentUser.email || currentUser.id,
-        requestedAt: now,
       });
 
       toast({
         title: isAmend ? 'ส่งคำขอแก้ไข OT แล้ว' : 'ส่งคำขอ OT แล้ว',
         description: isAmend
-          ? `จาก ${previousLabel} → ${formatAttendanceOvertimeHours(roundedHours)} ชม. · รอผู้จัดการอนุมัติ`
+          ? `จาก ${previousLabel} → ${formatAttendanceHmRange(startHm, endHm)} (${formatAttendanceOvertimeHours(roundedHours)} ชม.) · รอผู้จัดการอนุมัติ`
           : 'รอผู้จัดการ HR / ปฏิบัติการอนุมัติที่ศูนย์อนุมัติ',
       });
       onOpenChange(false);
@@ -185,11 +214,11 @@ export function AttendanceOvertimeRequestDialog({
             {isAmend ? (
               <span className="block text-xs mt-1 text-muted-foreground">
                 วันนี้มี OT อยู่แล้ว <span className="font-mono font-semibold text-foreground">{previousLabel}</span>{' '}
-                ชม. — ระบุชั่วโมงใหม่และเหตุผลเหมือนการขอปกติ แล้วรอผู้จัดการอนุมัติ
+                ชม. — ระบุช่วงเวลาใหม่และเหตุผล แล้วรอผู้จัดการอนุมัติ
               </span>
             ) : (
               <span className="block text-xs mt-1 text-muted-foreground">
-                ผู้จัดการจะปรับจำนวนชั่วโมงที่อนุมัติได้ — ค่า OT คำนวณจากเงินเดือนรายวันและตัวคูณใน HR Settings
+                ระบุเวลาเริ่ม–สิ้นสุด ระบบคำนวณชั่วโมง OT และใช้ตัวคูณ A/B/C จาก HR Settings ตอนอนุมัติ/จ่ายเงินเดือน
               </span>
             )}
           </DialogDescription>
@@ -202,20 +231,37 @@ export function AttendanceOvertimeRequestDialog({
               <span className="font-mono font-semibold">{previousLabel} ชม.</span>
             </div>
           ) : null}
-          <div className="space-y-1.5">
-            <Label htmlFor="ot-hours">{isAmend ? 'ชั่วโมง OT ใหม่ที่ขอ' : 'จำนวนชั่วโมง OT ที่ขอ'}</Label>
-            <Input
-              id="ot-hours"
-              type="number"
-              min={0.25}
-              max={24}
-              step={0.25}
-              placeholder={isAmend ? `เดิม ${previousLabel}` : 'เช่น 2'}
-              value={otHours}
-              onChange={(e) => setOtHours(e.target.value)}
-              className="font-mono"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="ot-start">เวลาเริ่ม OT</Label>
+              <Input
+                id="ot-start"
+                type="time"
+                value={otStartHm}
+                onChange={(e) => setOtStartHm(e.target.value)}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ot-end">เวลาสิ้นสุด OT</Label>
+              <Input
+                id="ot-end"
+                type="time"
+                value={otEndHm}
+                onChange={(e) => setOtEndHm(e.target.value)}
+                className="font-mono"
+              />
+            </div>
           </div>
+          {computedHours != null ? (
+            <p className="text-sm text-muted-foreground">
+              รวม{' '}
+              <span className="font-mono font-semibold text-foreground">
+                {formatAttendanceOvertimeHours(computedHours)}
+              </span>{' '}
+              ชม.
+            </p>
+          ) : null}
           <div className="space-y-1.5">
             <Label htmlFor="ot-reason">เหตุผล (ส่งถึงผู้จัดการ)</Label>
             <Textarea
@@ -223,7 +269,7 @@ export function AttendanceOvertimeRequestDialog({
               rows={3}
               placeholder={
                 isAmend
-                  ? 'เช่น ปรับชั่วโมง OT จากที่ขอไว้ เพราะงานเสร็จช้ากว่าแผน'
+                  ? 'เช่น ปรับช่วง OT จากที่ขอไว้ เพราะงานเสร็จช้ากว่าแผน'
                   : 'เช่น ทำงานล่วงเวลาเพื่อปิดงานด่วน'
               }
               value={reason}

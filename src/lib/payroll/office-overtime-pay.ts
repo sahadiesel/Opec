@@ -1,4 +1,13 @@
 import {
+  computeOfficeOvertimePayFromTimeRange,
+  resolveOfficeHolidayNormalWorkMultiplier,
+  resolveOfficeHolidayOvertimeMultiplier,
+  resolveOfficeWeekdayOvertimeMultiplier,
+  type OfficeOvertimeIntervalPayResult,
+  type OfficeOvertimePaySegment,
+} from '@/lib/payroll/office-overtime-interval-pay';
+import { normalizeAttendanceHmInput } from '@/lib/attendance/overtime-time';
+import {
   DEFAULT_MONTHLY_WORK_NORM,
   absenceLatePayrollRates,
   evaluateOfficeScanInForPayrollHalf,
@@ -36,6 +45,8 @@ type ApprovedOvertimeRequestForPay = {
   reviewedAt?: number | null;
   requestedOtHours?: number | null;
   approvedOtHours?: number | null;
+  approvedOtStartHm?: string | null;
+  approvedOtEndHm?: string | null;
   monthlySalarySnapshot?: number | null;
   otPayAmountSnapshot?: number | null;
 };
@@ -52,19 +63,23 @@ function resolveMonthlyWorkNormHoursPerDay(norm: MonthlyWorkNormPolicyConfig): n
   return DEFAULT_MONTHLY_WORK_NORM.normalWorkingHoursPerDay;
 }
 
-/** ตัวคูณ OT ชั่วโมงที่อนุมัติ — ใช้ช่อง OT เสมอ (รวม OT ในวันอาทิตย์/วันหยุด) */
+/** @deprecated ใช้ resolveOfficeWeekdayOvertimeMultiplier */
 export function resolveOfficeOvertimeHourMultiplier(norm: MonthlyWorkNormPolicyConfig): number {
-  const multiplier = Number(norm.officeOvertimeHourMultiplier);
-  if (Number.isFinite(multiplier) && multiplier > 0) return Math.min(10, multiplier);
-  return DEFAULT_MONTHLY_WORK_NORM.officeOvertimeHourMultiplier ?? 1.5;
+  return resolveOfficeWeekdayOvertimeMultiplier(norm);
 }
 
-/** ตัวคูณค่าลงเวลาวันหยุด — ค่าเริ่มต้น 1.0 */
+/** ตัวคูณค่าลงเวลาวันหยุด (เวลาปกติ) — ค่าเริ่มต้น 1.0 */
 export function resolveOfficeHolidayWorkMultiplier(norm: MonthlyWorkNormPolicyConfig): number {
-  const multiplier = Number(norm.officeHolidayHourMultiplier);
-  if (Number.isFinite(multiplier) && multiplier > 0) return Math.min(10, multiplier);
-  return DEFAULT_MONTHLY_WORK_NORM.officeHolidayHourMultiplier ?? 1;
+  return resolveOfficeHolidayNormalWorkMultiplier(norm);
 }
+
+export type { OfficeOvertimeIntervalPayResult, OfficeOvertimePaySegment };
+export {
+  computeOfficeOvertimePayFromTimeRange,
+  resolveOfficeHolidayNormalWorkMultiplier,
+  resolveOfficeHolidayOvertimeMultiplier,
+  resolveOfficeWeekdayOvertimeMultiplier,
+};
 
 /** วันหยุดประจำสัปดาห์หรือวันหยุดในปฏิทิน HR */
 export function isOfficeRestOrHolidayDay(
@@ -136,7 +151,7 @@ export function officeRestDayWorkedFractionFromScan(
   return 1;
 }
 
-/** ค่า OT พนักงานออฟฟิศ = (เงินเดือน ÷ วันทำงาน/เดือน ÷ ชม./วัน) × ตัวคูณ OT × ชม.ที่อนุมัติ */
+/** ค่า OT แบบ legacy (ชั่วโมงเดียว × ตัวคูณ B) — ใช้เมื่อไม่มีช่วงเวลา */
 export function computeOfficeOvertimePayAmount(
   monthlySalary: number,
   norm: MonthlyWorkNormPolicyConfig,
@@ -146,7 +161,7 @@ export function computeOfficeOvertimePayAmount(
   const hours = Math.max(0, Number(approvedHours) || 0);
   const days = resolveMonthlyWorkNormDays(norm);
   const hoursPerDay = resolveMonthlyWorkNormHoursPerDay(norm);
-  const multiplier = resolveOfficeOvertimeHourMultiplier(norm);
+  const multiplier = resolveOfficeWeekdayOvertimeMultiplier(norm);
   const dailyRate = round2(salary / days);
   const hourlyRate = round2(dailyRate / hoursPerDay);
   const amount = round2(hourlyRate * multiplier * hours);
@@ -160,7 +175,35 @@ export function computeOfficeOvertimePayAmount(
   };
 }
 
-/** รวมยอด OT ที่อนุมัติแล้วในช่วงงวดจ่าย — ใช้ตัวคูณ OT เสมอ (รวมวันอาทิตย์)
+export function computeOfficeOvertimePayForApprovedRequest(
+  monthlySalary: number,
+  norm: MonthlyWorkNormPolicyConfig,
+  input: {
+    workDateYmd: string;
+    approvedHours?: number | null;
+    approvedStartHm?: string | null;
+    approvedEndHm?: string | null;
+    isHoliday: boolean;
+  },
+): OfficeOvertimeIntervalPayResult | OfficeOvertimePayBreakdown {
+  const startHm = normalizeAttendanceHmInput(input.approvedStartHm);
+  const endHm = normalizeAttendanceHmInput(input.approvedEndHm);
+  if (startHm && endHm) {
+    const interval = computeOfficeOvertimePayFromTimeRange({
+      monthlySalary,
+      norm,
+      startHm,
+      endHm,
+      isHoliday: input.isHoliday,
+    });
+    if (interval) return interval;
+  }
+
+  const hours = Number(input.approvedHours);
+  return computeOfficeOvertimePayAmount(monthlySalary, norm, hours);
+}
+
+/** รวมยอด OT ที่อนุมัติแล้วในช่วงงวดจ่าย — ใช้ช่วงเวลา + ตัวคูณ A/B/C
  * นับเฉพาะคำขอล่าสุดต่อคนต่อวัน (กันซ้ำเมื่อขอแก้ไขแล้วอนุมัติใหม่)
  */
 export function sumApprovedOfficeOvertimePayInPeriod(
@@ -171,6 +214,8 @@ export function sumApprovedOfficeOvertimePayInPeriod(
   computeOpts: {
     monthlySalary: number;
     monthlyWorkNorm: MonthlyWorkNormPolicyConfig;
+    weeklyRestPattern: WeeklyRestPatternForCalendar;
+    calendarHolidays: CalendarHolidayEntry[];
   },
 ): number {
   const ps = periodStart.slice(0, 10);
@@ -193,13 +238,18 @@ export function sumApprovedOfficeOvertimePayInPeriod(
 
   let total = 0;
   for (const r of latestByDay.values()) {
+    const ymd = r.workDateYmd.slice(0, 10);
     const approvedHours = Number(r.approvedOtHours ?? r.requestedOtHours);
     const snapshotAmt = Number(r.otPayAmountSnapshot);
     if (Number.isFinite(snapshotAmt) && snapshotAmt >= 0 && snapshotAmt > 0) {
       total += round2(snapshotAmt);
       continue;
     }
-    if (!Number.isFinite(approvedHours) || approvedHours <= 0) continue;
+    if (!Number.isFinite(approvedHours) || approvedHours <= 0) {
+      const startHm = normalizeAttendanceHmInput(r.approvedOtStartHm);
+      const endHm = normalizeAttendanceHmInput(r.approvedOtEndHm);
+      if (!startHm || !endHm) continue;
+    }
 
     const payrollSalary = Math.max(0, Number(computeOpts.monthlySalary) || 0);
     const salarySnapshot = Number(r.monthlySalarySnapshot);
@@ -210,12 +260,19 @@ export function sumApprovedOfficeOvertimePayInPeriod(
           ? salarySnapshot
           : 0;
 
-    const breakdown = computeOfficeOvertimePayAmount(
-      salary,
-      computeOpts.monthlyWorkNorm,
-      approvedHours,
+    const isHoliday = isOfficeRestOrHolidayDay(
+      ymd,
+      computeOpts.weeklyRestPattern,
+      computeOpts.calendarHolidays,
     );
-    total += breakdown.amount;
+    const pay = computeOfficeOvertimePayForApprovedRequest(salary, computeOpts.monthlyWorkNorm, {
+      workDateYmd: ymd,
+      approvedHours,
+      approvedStartHm: r.approvedOtStartHm,
+      approvedEndHm: r.approvedOtEndHm,
+      isHoliday,
+    });
+    total += 'totalAmount' in pay ? pay.totalAmount : pay.amount;
   }
   return round2(total);
 }

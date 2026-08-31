@@ -224,11 +224,14 @@ export default function HrSettingsPage() {
   const [lateGraceMinutes, setLateGraceMinutes] = useState(
     DEFAULT_MONTHLY_WORK_NORM.lateGraceMinutes ?? 0,
   );
-  const [officeOvertimeHourMultiplier, setOfficeOvertimeHourMultiplier] = useState(
-    DEFAULT_MONTHLY_WORK_NORM.officeOvertimeHourMultiplier ?? 1.5,
+  const [officeHolidayNormalWorkMultiplier, setOfficeHolidayNormalWorkMultiplier] = useState(
+    DEFAULT_MONTHLY_WORK_NORM.officeHolidayNormalWorkMultiplier ?? 1.0,
   );
-  const [officeHolidayHourMultiplier, setOfficeHolidayHourMultiplier] = useState(
-    DEFAULT_MONTHLY_WORK_NORM.officeHolidayHourMultiplier ?? 1.0,
+  const [officeWeekdayOvertimeMultiplier, setOfficeWeekdayOvertimeMultiplier] = useState(
+    DEFAULT_MONTHLY_WORK_NORM.officeWeekdayOvertimeMultiplier ?? 1.5,
+  );
+  const [officeHolidayOvertimeMultiplier, setOfficeHolidayOvertimeMultiplier] = useState(
+    DEFAULT_MONTHLY_WORK_NORM.officeHolidayOvertimeMultiplier ?? 1.5,
   );
   /** เงินเดือนสมมุติเพื่อแสดงตัวอย่างหักรายวัน/รายนาที (ไม่บันทึก) */
   const [absenceDemoSalary, setAbsenceDemoSalary] = useState(26000);
@@ -287,10 +290,9 @@ export default function HrSettingsPage() {
         setWorkStartTime(cfg.workStartTime);
         setBreakStartTime(cfg.breakStartTime ?? '12:00');
         setLateGraceMinutes(cfg.lateGraceMinutes ?? 0);
-        setOfficeOvertimeHourMultiplier(cfg.officeOvertimeHourMultiplier ?? 1.5);
-        setOfficeHolidayHourMultiplier(
-          cfg.officeHolidayHourMultiplier ?? 1.0,
-        );
+        setOfficeHolidayNormalWorkMultiplier(cfg.officeHolidayNormalWorkMultiplier ?? 1.0);
+        setOfficeWeekdayOvertimeMultiplier(cfg.officeWeekdayOvertimeMultiplier ?? 1.5);
+        setOfficeHolidayOvertimeMultiplier(cfg.officeHolidayOvertimeMultiplier ?? 1.5);
       }
       const wlRec = policies.find((p) => p.id === HR_WORKER_GLOBAL_LABOR_POLICY_ID);
       setWorkerLaborDraft(workerGlobalLaborContextFromPolicy(wlRec ?? null));
@@ -427,8 +429,26 @@ export default function HrSettingsPage() {
       workStartTime: workStartTime.trim(),
       breakStartTime: breakStartTime?.trim() || undefined,
       lateGraceMinutes: Math.max(0, Math.round(Number(lateGraceMinutes) || 0)),
-      officeOvertimeHourMultiplier: Math.max(0.5, Math.min(10, Number(officeOvertimeHourMultiplier) || 1.5)),
-      officeHolidayHourMultiplier: Math.max(0.5, Math.min(10, Number(officeHolidayHourMultiplier) || 1)),
+      officeHolidayNormalWorkMultiplier: Math.max(
+        0.5,
+        Math.min(10, Number(officeHolidayNormalWorkMultiplier) || 1),
+      ),
+      officeWeekdayOvertimeMultiplier: Math.max(
+        0.5,
+        Math.min(10, Number(officeWeekdayOvertimeMultiplier) || 1.5),
+      ),
+      officeHolidayOvertimeMultiplier: Math.max(
+        0.5,
+        Math.min(10, Number(officeHolidayOvertimeMultiplier) || 1.5),
+      ),
+      officeOvertimeHourMultiplier: Math.max(
+        0.5,
+        Math.min(10, Number(officeWeekdayOvertimeMultiplier) || 1.5),
+      ),
+      officeHolidayHourMultiplier: Math.max(
+        0.5,
+        Math.min(10, Number(officeHolidayNormalWorkMultiplier) || 1),
+      ),
     };
     const mwErr = validateMonthlyWorkNormForSave(monthlyWorkCfg);
     if (mwErr) {
@@ -515,8 +535,11 @@ export default function HrSettingsPage() {
           workStartTime: monthlyWorkCfg.workStartTime,
           breakStartTime: monthlyWorkCfg.breakStartTime ?? '12:00',
           lateGraceMinutes: monthlyWorkCfg.lateGraceMinutes ?? 0,
-          officeOvertimeHourMultiplier: monthlyWorkCfg.officeOvertimeHourMultiplier ?? 1.5,
-          officeHolidayHourMultiplier: monthlyWorkCfg.officeHolidayHourMultiplier ?? 1,
+          officeHolidayNormalWorkMultiplier: monthlyWorkCfg.officeHolidayNormalWorkMultiplier ?? 1,
+          officeWeekdayOvertimeMultiplier: monthlyWorkCfg.officeWeekdayOvertimeMultiplier ?? 1.5,
+          officeHolidayOvertimeMultiplier: monthlyWorkCfg.officeHolidayOvertimeMultiplier ?? 1.5,
+          officeOvertimeHourMultiplier: monthlyWorkCfg.officeWeekdayOvertimeMultiplier ?? 1.5,
+          officeHolidayHourMultiplier: monthlyWorkCfg.officeHolidayNormalWorkMultiplier ?? 1,
         },
         updatedAt: now,
         createdAt: mwCreated,
@@ -727,10 +750,12 @@ export default function HrSettingsPage() {
                 onBreakStartTime={setBreakStartTime}
                 lateGraceMinutes={lateGraceMinutes}
                 onLateGraceMinutes={setLateGraceMinutes}
-                officeOvertimeHourMultiplier={officeOvertimeHourMultiplier}
-                onOfficeOvertimeHourMultiplier={setOfficeOvertimeHourMultiplier}
-                officeHolidayHourMultiplier={officeHolidayHourMultiplier}
-                onOfficeHolidayHourMultiplier={setOfficeHolidayHourMultiplier}
+                officeHolidayNormalWorkMultiplier={officeHolidayNormalWorkMultiplier}
+                onOfficeHolidayNormalWorkMultiplier={setOfficeHolidayNormalWorkMultiplier}
+                officeWeekdayOvertimeMultiplier={officeWeekdayOvertimeMultiplier}
+                onOfficeWeekdayOvertimeMultiplier={setOfficeWeekdayOvertimeMultiplier}
+                officeHolidayOvertimeMultiplier={officeHolidayOvertimeMultiplier}
+                onOfficeHolidayOvertimeMultiplier={setOfficeHolidayOvertimeMultiplier}
                 absenceDemoSalary={absenceDemoSalary}
                 onAbsenceDemoSalary={setAbsenceDemoSalary}
                 hideAbsenceDemo
@@ -849,8 +874,9 @@ export default function HrSettingsPage() {
                 workStartTime,
                 breakStartTime,
                 lateGraceMinutes,
-                officeOvertimeHourMultiplier,
-                officeHolidayHourMultiplier,
+                officeHolidayNormalWorkMultiplier,
+                officeWeekdayOvertimeMultiplier,
+                officeHolidayOvertimeMultiplier,
               })}
             />
 

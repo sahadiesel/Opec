@@ -21,8 +21,12 @@ export type AttendanceOvertimeRequestDoc = {
   subjectKey: string;
   payrollMonth: string;
   workDateYmd: string;
-  /** ชั่วโมง OT ที่ขอ */
+  /** ชั่วโมง OT ที่ขอ (คำนวณจากช่วงเวลา หรือกรอก legacy) */
   requestedOtHours: number;
+  /** เวลาเริ่ม OT ที่ขอ HH:mm */
+  requestedOtStartHm?: string | null;
+  /** เวลาสิ้นสุด OT ที่ขอ HH:mm */
+  requestedOtEndHm?: string | null;
   /**
    * ชั่วโมง OT เดิมที่มีอยู่ก่อนคำขอแก้ไข (ถ้ามี)
    * — null/undefined = คำขอ OT ใหม่ ไม่ใช่การแก้ตัวเลขเดิม
@@ -30,11 +34,24 @@ export type AttendanceOvertimeRequestDoc = {
   previousOtHours?: number | null;
   /** ชั่วโมง OT ที่ผู้จัดการอนุมัติ */
   approvedOtHours?: number | null;
+  /** เวลาเริ่ม OT ที่อนุมัติ HH:mm */
+  approvedOtStartHm?: string | null;
+  /** เวลาสิ้นสุด OT ที่อนุมัติ HH:mm */
+  approvedOtEndHm?: string | null;
   /** snapshot ตอนอนุมัติ */
   monthlySalarySnapshot?: number;
   hourlyRateSnapshot?: number;
   otMultiplierSnapshot?: number;
   otPayAmountSnapshot?: number;
+  otPaySegmentsSnapshot?: Array<{
+    category: string;
+    startHm: string;
+    endHm: string;
+    hours: number;
+    multiplier: number;
+    amount: number;
+    label: string;
+  }>;
   reason: string;
   status: AttendanceOvertimeRequestStatus;
   requestedByUid: string;

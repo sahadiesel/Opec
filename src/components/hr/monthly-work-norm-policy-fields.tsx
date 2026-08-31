@@ -25,10 +25,12 @@ export type MonthlyWorkNormPolicyFieldsProps = {
   onBreakStartTime: (v: string) => void;
   lateGraceMinutes: number;
   onLateGraceMinutes: (v: number) => void;
-  officeOvertimeHourMultiplier: number;
-  onOfficeOvertimeHourMultiplier: (v: number) => void;
-  officeHolidayHourMultiplier: number;
-  onOfficeHolidayHourMultiplier: (v: number) => void;
+  officeHolidayNormalWorkMultiplier: number;
+  onOfficeHolidayNormalWorkMultiplier: (v: number) => void;
+  officeWeekdayOvertimeMultiplier: number;
+  onOfficeWeekdayOvertimeMultiplier: (v: number) => void;
+  officeHolidayOvertimeMultiplier: number;
+  onOfficeHolidayOvertimeMultiplier: (v: number) => void;
   absenceDemoSalary: number;
   onAbsenceDemoSalary: (v: number) => void;
   /** ซ่อนกล่องตัวอย่างการคำนวณ (แสดงที่อื่นแทน) */
@@ -53,10 +55,12 @@ export function MonthlyWorkNormPolicyFields({
   onBreakStartTime,
   lateGraceMinutes,
   onLateGraceMinutes,
-  officeOvertimeHourMultiplier,
-  onOfficeOvertimeHourMultiplier,
-  officeHolidayHourMultiplier,
-  onOfficeHolidayHourMultiplier,
+  officeHolidayNormalWorkMultiplier,
+  onOfficeHolidayNormalWorkMultiplier,
+  officeWeekdayOvertimeMultiplier,
+  onOfficeWeekdayOvertimeMultiplier,
+  officeHolidayOvertimeMultiplier,
+  onOfficeHolidayOvertimeMultiplier,
   absenceDemoSalary,
   onAbsenceDemoSalary,
   hideAbsenceDemo,
@@ -70,8 +74,9 @@ export function MonthlyWorkNormPolicyFields({
     workStartTime,
     breakStartTime,
     lateGraceMinutes,
-    officeOvertimeHourMultiplier,
-    officeHolidayHourMultiplier,
+    officeHolidayNormalWorkMultiplier,
+    officeWeekdayOvertimeMultiplier,
+    officeHolidayOvertimeMultiplier,
   };
   const computedWorkEndLabel = computeWorkDayEndDisplay(preview);
   const shiftWindows = computeShiftWindowsLabels(preview);
@@ -187,40 +192,58 @@ export function MonthlyWorkNormPolicyFields({
             className="font-mono max-w-[120px]"
           />
         </div>
-        <div className="grid gap-3 sm:col-span-2 rounded-md border border-dashed bg-muted/40 px-3 py-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:col-span-2 rounded-md border border-dashed bg-muted/40 px-3 py-3 sm:grid-cols-3">
           <div className="grid gap-2">
-            <Label className="text-muted-foreground">ตัวคูณชั่วโมง OT</Label>
+            <Label className="text-muted-foreground">
+              A. ตัวคูณทำงานวันหยุด/อาทิตย์ (เวลาปกติ)
+            </Label>
             <Input
               type="number"
               min={0.5}
               max={10}
               step={0.1}
               disabled={disabled}
-              value={officeOvertimeHourMultiplier}
-              onChange={(e) => onOfficeOvertimeHourMultiplier(Number(e.target.value))}
+              value={officeHolidayNormalWorkMultiplier}
+              onChange={(e) => onOfficeHolidayNormalWorkMultiplier(Number(e.target.value))}
               className="font-mono max-w-[120px] bg-muted"
             />
             <p className="text-[11px] text-muted-foreground leading-snug">
-              ใช้กับคำขอ OT ที่อนุมัติทุกวัน (รวมอาทิตย์/วันหยุด) = (เงินเดือน ÷ {workDaysPerMonth} ÷{' '}
-              {normalWorkHoursPerDay}) × {officeOvertimeHourMultiplier} × ชม.ที่อนุมัติ
+              สแกน/OT ในช่วงเวลางานปกติของวันหยุด = (เงินเดือน ÷ {workDaysPerMonth} ÷ {normalWorkHoursPerDay}) ×{' '}
+              {officeHolidayNormalWorkMultiplier} × ชม.
             </p>
           </div>
           <div className="grid gap-2">
-            <Label className="text-muted-foreground">ตัวคูณค่าทำงานวันหยุด</Label>
+            <Label className="text-muted-foreground">B. ตัวคูณ OT วันทำงานปกติ</Label>
             <Input
               type="number"
               min={0.5}
               max={10}
               step={0.1}
               disabled={disabled}
-              value={officeHolidayHourMultiplier}
-              onChange={(e) => onOfficeHolidayHourMultiplier(Number(e.target.value))}
+              value={officeWeekdayOvertimeMultiplier}
+              onChange={(e) => onOfficeWeekdayOvertimeMultiplier(Number(e.target.value))}
               className="font-mono max-w-[120px] bg-muted"
             />
             <p className="text-[11px] text-muted-foreground leading-snug">
-              เมื่อลงเวลาในวันหยุดประจำสัปดาห์/ปฏิทิน (เช่น อาทิตย์) = (เงินเดือน ÷ {workDaysPerMonth}) ×{' '}
-              {officeHolidayHourMultiplier} × สัดส่วนวันจากสแกน (เช้า/บ่าย/ทั้งวัน) · ค่าเริ่มต้น 1.0 =
-              เท่าวันทำงานปกติ
+              OT ก่อน/หลังเวลางานวันธรรมดา = (เงินเดือน ÷ {workDaysPerMonth} ÷ {normalWorkHoursPerDay}) ×{' '}
+              {officeWeekdayOvertimeMultiplier} × ชม.
+            </p>
+          </div>
+          <div className="grid gap-2">
+            <Label className="text-muted-foreground">C. ตัวคูณ OT วันหยุด/อาทิตย์</Label>
+            <Input
+              type="number"
+              min={0.5}
+              max={10}
+              step={0.1}
+              disabled={disabled}
+              value={officeHolidayOvertimeMultiplier}
+              onChange={(e) => onOfficeHolidayOvertimeMultiplier(Number(e.target.value))}
+              className="font-mono max-w-[120px] bg-muted"
+            />
+            <p className="text-[11px] text-muted-foreground leading-snug">
+              OT นอกเวลางานปกติในวันหยุด (เช่น หลัง {shiftWindows?.afternoonEnd ?? '17:00'}) = (เงินเดือน ÷{' '}
+              {workDaysPerMonth} ÷ {normalWorkHoursPerDay}) × {officeHolidayOvertimeMultiplier} × ชม.
             </p>
           </div>
         </div>
