@@ -110,7 +110,9 @@ import {
 } from '@/lib/payroll/aggregate-payroll-timesheet-chunks';
 import { computeWorkDayPackagePayslipSplit } from '@/lib/payroll/work-day-payslip-split';
 import {
+  applyCashAdvanceRecoveryToOfficeD8Line,
   CASH_ADVANCE_PAYROLL_DEDUCTION_KEY,
+  fetchOfficeStaffCashAdvancesPendingSalaryRecovery,
   fetchWorkerCashAdvancesPendingSalaryRecovery,
 } from '@/lib/payroll/cash-advance-recovery';
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
@@ -2589,6 +2591,21 @@ export class PayrollService {
       pitManualAmountBaht: pitMode === 'MANUAL_AMOUNT' ? Number(input.pitManualAmountBaht) || 0 : undefined,
     });
 
+    let lineDeductions = d8.deductions;
+    let lineNetPay = d8.netPay;
+    let lineSnapshot = d8.snapshot;
+    if (runCollection === 'office_payroll_runs') {
+      const recovery = await fetchOfficeStaffCashAdvancesPendingSalaryRecovery(
+        this.db,
+        line.staffId,
+        runId,
+      );
+      const withCashAdvance = applyCashAdvanceRecoveryToOfficeD8Line(d8, recovery);
+      lineDeductions = withCashAdvance.deductions;
+      lineNetPay = withCashAdvance.netPay;
+      lineSnapshot = withCashAdvance.snapshot;
+    }
+
     const trimmedNotes = input.notes?.trim();
     const pitManualIncomeLabel =
       pitMode === 'MANUAL_PERCENT' || pitMode === 'MANUAL_AMOUNT'
@@ -2615,9 +2632,9 @@ export class PayrollService {
       grossPay: d8.grossPay,
       tax: d8.tax,
       socialSecurity: d8.socialSecurity,
-      deductions: d8.deductions,
-      netPay: d8.netPay,
-      d8Snapshot: d8.snapshot,
+      deductions: lineDeductions,
+      netPay: lineNetPay,
+      d8Snapshot: lineSnapshot,
       hrLineAdjustments,
       updatedAt: Date.now(),
       ...(isExecutivePayrollRun ? { overtimeAmount: 0, otherIncome: 0 } : {}),

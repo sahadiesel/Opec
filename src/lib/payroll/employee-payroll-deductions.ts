@@ -1,6 +1,7 @@
 /**
  * หักภาษีเงินได้บุคคลรายเดือน (พนักงาน/ลูกจ้างที่ไม่ใช้เหมาจ่าย 40(1))
- * ตามที่ตกลง: ประมาณรายได้จากฐานเงินได้รายเดือน × 12 ถึงสิ้นปี → หักลดหย่อนรายปี → ภาษีขั้นบันได → หาร 12
+ * ตามที่ตกลง: ประมาณรายได้ประจำ × 12 + รายได้ไม่ประจำในเดือน (เช่น OT ครั้งเดียว)
+ * → หักลดหย่อนรายปี → ภาษีขั้นบันได → หาร 12
  */
 
 import {
@@ -17,8 +18,10 @@ import {
 export const DEFAULT_ANNUAL_PERSONAL_ALLOWANCE = 60_000;
 
 export interface MonthlyPitInput {
-  /** ฐานรายได้รายเดือนที่ใช้ประมาณการ (เงินเดือน + เบี้ยเลี้ยงในเดือนนั้น ฯลฯ) */
+  /** ฐานรายได้รายเดือนที่ใช้ประมาณการ — นำไป × 12 (ไม่รวม OT ไม่ประจำ) */
   monthlyTaxableGross: number;
+  /** รายได้ไม่ประจำในเดือนนี้ (เช่น OT) — บวกเข้ารายได้รายปีครั้งเดียว ไม่ × 12 */
+  annualIrregularAddOnBaht?: number;
   /** รวมลดหย่อนรายปี (ไม่มีเหมาจ่ายตามที่ตกลง) */
   annualDeductions?: number;
   /** ถ้ามี — ใช้แทนตารางค่าเริ่มต้น (จากหน้าตั้งค่า HR / payroll_policies) */
@@ -32,7 +35,9 @@ export function projectedAnnualGrossFromMonthly(monthlyGross: number): number {
 
 /** ภาษีที่หักได้ต่อเดือน (บาท) */
 export function monthlyEmployeePITWithholding(input: MonthlyPitInput): number {
-  const annualGross = projectedAnnualGrossFromMonthly(input.monthlyTaxableGross);
+  const regularMonthly = Math.max(0, input.monthlyTaxableGross);
+  const irregularAddOn = Math.max(0, Number(input.annualIrregularAddOnBaht) || 0);
+  const annualGross = projectedAnnualGrossFromMonthly(regularMonthly) + irregularAddOn;
   const deductions = input.annualDeductions ?? DEFAULT_ANNUAL_PERSONAL_ALLOWANCE;
   const net = Math.max(0, annualGross - deductions);
   const bands = input.pitProgressiveBands;
@@ -55,7 +60,9 @@ export type MonthlyPitWithMarginalCeilingInput = MonthlyPitInput & {
 export function monthlyEmployeePITWithholdingWithMarginalCeiling(
   input: MonthlyPitWithMarginalCeilingInput,
 ): number {
-  const annualGross = projectedAnnualGrossFromMonthly(input.monthlyTaxableGross);
+  const regularMonthly = Math.max(0, input.monthlyTaxableGross);
+  const irregularAddOn = Math.max(0, Number(input.annualIrregularAddOnBaht) || 0);
+  const annualGross = projectedAnnualGrossFromMonthly(regularMonthly) + irregularAddOn;
   const deductions = input.annualDeductions ?? DEFAULT_ANNUAL_PERSONAL_ALLOWANCE;
   const net = Math.max(0, annualGross - deductions);
   const bands =

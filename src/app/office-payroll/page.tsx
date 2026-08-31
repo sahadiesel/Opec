@@ -80,6 +80,7 @@ import {
   getStaffIdsUsedInOtherRunsForSameMonth,
   isOfficeStaffEligibleForStandardOfficeRun,
 } from '@/lib/payroll/office-payroll-run-apply';
+import { clearCashAdvanceRecoveriesForPayrollBatch } from '@/lib/payroll/cash-advance-recovery';
 import { listOfficeStaffPayrollIdentityBlockers } from '@/lib/payroll/office-staff-payroll-identity';
 import {
   loadOfficeScanAttendanceBlockersForRun,
@@ -109,6 +110,7 @@ function initNewRunState(): Partial<OfficePayrollRun> {
 
 /** ลบบรรทัดใน subcollection แล้วลบเอกสารงวด — ใช้เมื่อ admin ลบรายการจากรายการ */
 async function deleteOfficePayrollRunCascade(firestore: Firestore, runId: string): Promise<void> {
+  await clearCashAdvanceRecoveriesForPayrollBatch(firestore, runId);
   const linesCol = collection(firestore, 'office_payroll_runs', runId, 'lines');
   const snap = await getDocs(linesCol);
   const refs = snap.docs.map((d) => d.ref);
@@ -1080,12 +1082,12 @@ export default function OfficePayrollPage() {
                 กำลังคำนวณสรุปรายเดือน…
               </p>
             )}
-            <div className="grid gap-2">
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {summaryMonths.map((ym) => {
                 const s = monthlyByYm[ym];
                 return (
-                  <Card key={ym} className="border-dashed border-primary/25 bg-muted/10">
-                    <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+                  <Card key={ym} className="border-dashed border-primary/25 bg-muted/10 h-full">
+                    <CardContent className="flex h-full flex-col justify-between gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                       <div className="space-y-1 min-w-0">
                         <p className="text-sm font-semibold">
                           {formatPayrollYearMonthEnAbbrev(ym)}{' '}

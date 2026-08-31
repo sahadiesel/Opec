@@ -34,6 +34,12 @@ import {
   officeStaffSelfPayrollLineIndexRef,
 } from '@/lib/payroll/self-payroll-line-index';
 import { isActiveOfficeStaffStatus } from '@/lib/hr/office-staff-active';
+import {
+  applyCashAdvanceRecoveryToOfficeD8Line,
+  clearCashAdvanceRecoveriesForPayrollBatch,
+  fetchOfficeStaffCashAdvancesPendingSalaryRecovery,
+  linkCashAdvancesToPayrollRecoveryBatch,
+} from '@/lib/payroll/cash-advance-recovery';
 
 /** วันที่ 1 และวันสุดท้ายของเดือน (ปฏิทินเกรกอเรียน YYYY-MM-DD) */
 export function getPayrollMonthPeriodBounds(yyyyMm: string): { payrollPeriodStart: string; payrollPeriodEnd: string } {
@@ -137,6 +143,7 @@ export async function applyStandardOfficeRunLines(
     throw new Error(scanAttendanceBlockersErrorMessage(scanAttendanceBlockers));
   }
 
+  await clearCashAdvanceRecoveriesForPayrollBatch(firestore, runId);
   await deleteAllLinesForOfficeRun(firestore, runId);
 
   const linesCol = collection(firestore, 'office_payroll_runs', runId, 'lines');
@@ -146,6 +153,7 @@ export async function applyStandardOfficeRunLines(
   let totalNet = 0;
   let totalAllowances = 0;
   let totalDeductions = 0;
+  const advanceIdsToLink: string[] = [];
 
   for (const staff of staffList) {
     const lineId = standardOfficePayrollLineDocId(staff.staffCode, runId);
@@ -209,6 +217,12 @@ export async function applyStandardOfficeRunLines(
       preStatutoryDeductions: payrollPreStatutoryDeductions,
     });
 
+    const cashAdvanceRecovery = await fetchOfficeStaffCashAdvancesPendingSalaryRecovery(firestore, staff.id);
+    const withCashAdvance = applyCashAdvanceRecoveryToOfficeD8Line(d8, cashAdvanceRecovery);
+    if (withCashAdvance.advanceIds.length > 0) {
+      advanceIdsToLink.push(...withCashAdvance.advanceIds);
+    }
+
     const attendanceSummary = periodAdj.attendanceSummary
       ? {
           ...periodAdj.attendanceSummary,
@@ -248,12 +262,12 @@ export async function applyStandardOfficeRunLines(
       overtimeAmount,
       otherIncome: restDayWorked.amount,
       restDayWorkedAmount: restDayWorked.amount > 0 ? restDayWorked.amount : undefined,
-      deductions: d8.deductions,
+      deductions: withCashAdvance.deductions,
       tax: d8.tax,
       socialSecurity: d8.socialSecurity,
       grossPay: d8.grossPay,
-      netPay: d8.netPay,
-      d8Snapshot: d8.snapshot,
+      netPay: withCashAdvance.netPay,
+      d8Snapshot: withCashAdvance.snapshot,
       leaveSummary: periodAdj.leaveSummary.length ? periodAdj.leaveSummary : undefined,
       attendanceSummary,
       periodPreStatutoryDeductions: payrollPreStatutoryDeductions.length
@@ -274,9 +288,9 @@ export async function applyStandardOfficeRunLines(
     }
 
     totalGross += d8.grossPay;
-    totalNet += d8.netPay;
+    totalNet += withCashAdvance.netPay;
     totalAllowances += allowance + bonus;
-    totalDeductions += d8.deductions;
+    totalDeductions += withCashAdvance.deductions;
   }
 
   const runRef = doc(firestore, 'office_payroll_runs', runId);
@@ -293,6 +307,7 @@ export async function applyStandardOfficeRunLines(
   });
 
   await batch.commit();
+  await linkCashAdvancesToPayrollRecoveryBatch(firestore, runId, advanceIdsToLink);
 
   return {
     staffCount: staffList.length,

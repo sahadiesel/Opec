@@ -63,6 +63,7 @@ function snapshotDeductionLabel(
   if (key === 'late_deduction') return 'หักมาสาย';
   if (key === 'absence_deduction') return 'หักขาดงาน (จากสแกน)';
   if (key === 'unpaid_leave_deduction') return 'หักลาเกินสิทธิ์ / ลาไม่อนุมัติ';
+  if (key === 'cash_advance_recovery') return 'หักคืนเบิกล่วงหน้า';
   const m = /^manual_ded_(\d+)$/.exec(key);
   if (m) {
     const idx = Number(m[1]);

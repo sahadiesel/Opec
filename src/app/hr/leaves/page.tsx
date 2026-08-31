@@ -783,7 +783,7 @@ export default function HrLeavesManagementPage() {
           </Button>
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
-              <CalendarOff className="h-6 w-6" /> การจัดการการลา (พนักงานออฟฟิศ)
+              <CalendarOff className="h-6 w-6" /> จัดการการลา (พนักงานออฟฟิศ)
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
               สรุปวันลาและตรวจสอบคำขอลาของพนักงาน — ค่าสิทธิ์มาจาก{' '}

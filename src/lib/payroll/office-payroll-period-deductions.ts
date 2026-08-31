@@ -2,14 +2,11 @@ import {
   isBangkokWeeklyRestDayYmd,
   type WeeklyRestPatternForCalendar,
 } from '@/lib/attendance/bangkok-calendar';
-import { assignFourScanSlots } from '@/lib/attendance/office-attendance-grid-day-cell';
 import type { AttendanceDayEffectiveRow } from '@/lib/attendance/correction-merge';
 import type { AttendancePunchDoc, OfficeLeaveEntitlementsDoc } from '@/lib/attendance/types';
 import {
   absenceLatePayrollRates,
-  evaluateOfficeScanInForPayrollHalf,
   monthlyWorkNormFromUnknownConfig,
-  officeShiftMinuteBounds,
   type MonthlyWorkNormPolicyConfig,
   type OfficePayrollWorkingHalf,
 } from '@/lib/hr/monthly-work-norm-policy';
@@ -21,6 +18,11 @@ import {
 } from '@/lib/leaves/policy';
 import type { OfficeLeaveRequestDoc, OfficeLeaveHalfDaySession, OfficeLeaveType } from '@/lib/leaves/types';
 import { officeStaffAppliesScanTimeDeductions } from '@/lib/payroll/office-staff-payroll-attendance-basis';
+import {
+  currentBangkokYmd,
+  evaluateOfficePayrollScanDay,
+  resolveOfficePayrollDayFourScanSlots,
+} from '@/lib/payroll/office-payroll-scan-day-evaluation';
 import { countPartialMonthUnpaidWorkDays } from '@/lib/payroll/office-payroll-partial-month';
 import { normalizeStaffDateYmd } from '@/lib/payroll/office-staff-date-ymd';
 import { formatYmdLocalThaiBE } from '@/lib/date-thai';
@@ -48,19 +50,6 @@ export function enumerateYmdsInclusive(startYmd: string, endYmd: string): string
     out.push(new Date(t).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }));
   }
   return out;
-}
-
-function bangkokMinutesFromMidnight(ms: number): number {
-  const fmt = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Bangkok',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-  const parts = fmt.formatToParts(new Date(ms));
-  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
-  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
-  return h * 60 + m;
 }
 
 function isScheduledWorkDay(
@@ -253,6 +242,7 @@ export function computeOfficePayrollPeriodAdjustments(
 
   const applyScan = officeStaffAppliesScanTimeDeductions(input.staff);
   const periodYmds = enumerateYmdsInclusive(input.periodStart, input.periodEnd);
+  const todayBangkokYmd = currentBangkokYmd();
   const year = Number(input.periodStart.slice(0, 4)) || new Date().getFullYear();
 
   const staffLeaves = input.leaveRequests.filter((r) => r.staffId === input.staff.id);
@@ -282,51 +272,37 @@ export function computeOfficePayrollPeriodAdjustments(
     const hasScan = row?.effectiveInMs != null;
 
     if (applyScan && approvedFraction < 1 && rejectedFraction > 0 && !hasScan) {
-      unpaidLeaveDays += Math.min(1 - approvedFraction, rejectedFraction);
+      if (ymd <= todayBangkokYmd) {
+        unpaidLeaveDays += Math.min(1 - approvedFraction, rejectedFraction);
+      }
       continue;
     }
 
     if (approvedFraction >= 1) continue;
 
     if (applyScan) {
+      if (ymd > todayBangkokYmd) continue;
+
       const remainingFraction = Math.max(0, 1 - approvedFraction);
       const workingHalf = resolvePayrollWorkingHalf(approvedFraction, approvedLeave);
-      if (!hasScan) {
-        totalScanAbsenceDays += remainingFraction;
-        continue;
-      }
-      const inMin = bangkokMinutesFromMidnight(row!.effectiveInMs!);
-      const ev = evaluateOfficeScanInForPayrollHalf(inMin, input.monthlyWorkNorm, workingHalf);
-      totalScanAbsenceDays += ev.absenceDayFraction * remainingFraction;
-      totalLateMinutes += ev.lateMinutes;
-
-      if (workingHalf === 'FULL' && input.attendancePunches?.length) {
-        const bounds = officeShiftMinuteBounds(input.monthlyWorkNorm);
-        if (bounds) {
-          const dayPunches = input.attendancePunches.filter((p) => {
-            const pYmd = new Date(p.punchedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
-            return pYmd === ymd;
-          });
-          const ins = dayPunches
-            .filter((p) => p.direction === 'IN')
-            .map((p) => p.punchedAt)
-            .sort((a, b) => a - b);
-          const outs = dayPunches
-            .filter((p) => p.direction === 'OUT')
-            .map((p) => p.punchedAt)
-            .sort((a, b) => a - b);
-          const slots = assignFourScanSlots(ins, outs, bounds);
-          if (slots.morningInMs != null && slots.afternoonInMs != null) {
-            const afternoonInMin = bangkokMinutesFromMidnight(slots.afternoonInMs);
-            if (
-              afternoonInMin > bounds.afternoonLateCutoffMin
-              && afternoonInMin <= bounds.afternoonEndMin
-            ) {
-              totalLateMinutes += afternoonInMin - bounds.afternoonLateCutoffMin;
-            }
-          }
-        }
-      }
+      const dayPunches =
+        input.attendancePunches?.filter((p) => {
+          const pYmd = new Date(p.punchedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+          return pYmd === ymd;
+        }) ?? [];
+      const slots = resolveOfficePayrollDayFourScanSlots({
+        dayRow: row,
+        dayPunches,
+        monthlyWorkNorm: input.monthlyWorkNorm,
+      });
+      const scanEval = evaluateOfficePayrollScanDay({
+        workingHalf,
+        remainingWorkFraction: remainingFraction,
+        slots,
+        monthlyWorkNorm: input.monthlyWorkNorm,
+      });
+      totalScanAbsenceDays += scanEval.absenceDayFraction * remainingFraction;
+      totalLateMinutes += scanEval.lateMinutes;
     }
   }
 

@@ -75,7 +75,12 @@ export function computeOfficePayrollLineD8(input: OfficePayrollD8Input): {
     if (pit > statutoryEarningsBase) pit = Math.round(statutoryEarningsBase * 100) / 100;
   } else {
     const pitMonthlyTaxableAfterSs = Math.max(0, Math.round((statutoryEarningsBase - ss - fund) * 100) / 100);
-    pit = pitFromPolicy(pitMonthlyTaxableAfterSs, input.policies.tax);
+    /** OT เป็นรายได้ไม่ประจำ — บวกเข้ารายได้รายปีครั้งเดียว ไม่ annualize × 12 */
+    const irregularOt = Math.max(0, Math.round(ot * 100) / 100);
+    const regularPitMonthly = Math.max(0, Math.round((pitMonthlyTaxableAfterSs - irregularOt) * 100) / 100);
+    pit = pitFromPolicy(regularPitMonthly, input.policies.tax, {
+      annualIrregularAddOnBaht: irregularOt > 0 ? irregularOt : undefined,
+    });
   }
   const fixed = fixedDeductionsFromPolicy(input.policies.allowanceDeduction);
 

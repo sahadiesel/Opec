@@ -78,7 +78,11 @@ export function pitFromMonthlyGrossWithMarginalCeiling(
 }
 
 /** @param monthlyTaxableGross ฐานหลังหัก ปสง. แล้ว — ถ้ามีแค่ gross เต็มให้ใช้ {@link pitFromMonthlyGross} */
-export function pitFromPolicy(monthlyTaxableGross: number, policy: PayrollPolicyRecord | null): number {
+export function pitFromPolicy(
+  monthlyTaxableGross: number,
+  policy: PayrollPolicyRecord | null,
+  options?: { annualIrregularAddOnBaht?: number },
+): number {
   if (!policy) return 0;
   const mode = String(policy.config.mode ?? 'none');
   if (mode !== 'th_pit_monthly_annualized') return 0;
@@ -86,6 +90,7 @@ export function pitFromPolicy(monthlyTaxableGross: number, policy: PayrollPolicy
   const bands = normalizePitBands(policy.config.pitProgressiveBands) ?? undefined;
   return monthlyEmployeePITWithholding({
     monthlyTaxableGross,
+    annualIrregularAddOnBaht: options?.annualIrregularAddOnBaht,
     annualDeductions: Number.isFinite(annual) ? annual : undefined,
     pitProgressiveBands: bands,
   });

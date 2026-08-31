@@ -194,6 +194,11 @@ export function sumApprovedOfficeOvertimePayInPeriod(
   let total = 0;
   for (const r of latestByDay.values()) {
     const approvedHours = Number(r.approvedOtHours ?? r.requestedOtHours);
+    const snapshotAmt = Number(r.otPayAmountSnapshot);
+    if (Number.isFinite(snapshotAmt) && snapshotAmt >= 0 && snapshotAmt > 0) {
+      total += round2(snapshotAmt);
+      continue;
+    }
     if (!Number.isFinite(approvedHours) || approvedHours <= 0) continue;
 
     const payrollSalary = Math.max(0, Number(computeOpts.monthlySalary) || 0);
