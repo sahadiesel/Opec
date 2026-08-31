@@ -1,5 +1,9 @@
 import type { AttendanceOvertimeRequestDoc, AttendanceOvertimeRequestStatus } from '@/lib/attendance/types';
-import { otHoursFromWorkNormHmRange, DEFAULT_MONTHLY_WORK_NORM } from '@/lib/hr/monthly-work-norm-policy';
+import {
+  otHoursFromWorkNormHmRange,
+  DEFAULT_MONTHLY_WORK_NORM,
+  type MonthlyWorkNormPolicyConfig,
+} from '@/lib/hr/monthly-work-norm-policy';
 
 export type AttendanceOvertimeDayDisplay = {
   hours: number | null;
@@ -43,14 +47,10 @@ function requestEventMs(r: {
   return Math.max(toMs(r.reviewedAt), toMs(r.requestedAt));
 }
 
-function overtimeHoursFromRequest(request: AttendanceOvertimeRequestDoc): number | null {
-  const hoursStored = Number(
-    request.status === 'APPROVED'
-      ? (request.approvedOtHours ?? request.requestedOtHours)
-      : request.requestedOtHours,
-  );
-  if (Number.isFinite(hoursStored) && hoursStored > 0) return hoursStored;
-
+function overtimeHoursFromRequest(
+  request: AttendanceOvertimeRequestDoc,
+  norm: MonthlyWorkNormPolicyConfig = DEFAULT_MONTHLY_WORK_NORM,
+): number | null {
   const startHm =
     request.status === 'APPROVED'
       ? (request.approvedOtStartHm ?? request.requestedOtStartHm)
@@ -60,9 +60,16 @@ function overtimeHoursFromRequest(request: AttendanceOvertimeRequestDoc): number
       ? (request.approvedOtEndHm ?? request.requestedOtEndHm)
       : request.requestedOtEndHm;
   if (startHm && endHm) {
-    const fromRange = otHoursFromWorkNormHmRange(String(startHm), String(endHm), DEFAULT_MONTHLY_WORK_NORM);
+    const fromRange = otHoursFromWorkNormHmRange(String(startHm), String(endHm), norm);
     if (fromRange != null && fromRange > 0) return fromRange;
   }
+
+  const hoursStored = Number(
+    request.status === 'APPROVED'
+      ? (request.approvedOtHours ?? request.requestedOtHours)
+      : request.requestedOtHours,
+  );
+  if (Number.isFinite(hoursStored) && hoursStored > 0) return hoursStored;
   return null;
 }
 
@@ -89,12 +96,13 @@ export function latestOvertimeRequestBySubjectDay(
 
 export function attendanceOvertimeHoursForRequest(
   request: AttendanceOvertimeRequestDoc | null | undefined,
+  norm: MonthlyWorkNormPolicyConfig = DEFAULT_MONTHLY_WORK_NORM,
 ): AttendanceOvertimeDayDisplay {
   if (!request) return { hours: null, status: null };
   if (request.status === 'REJECTED' || request.status === 'SUPERSEDED') {
     return { hours: null, status: request.status };
   }
-  const hours = overtimeHoursFromRequest(request);
+  const hours = overtimeHoursFromRequest(request, norm);
   if (request.status === 'APPROVED') {
     return { hours, status: 'APPROVED' };
   }
@@ -109,11 +117,13 @@ export function sumShownOvertimeHoursForSubjectDays(
   subjectKey: string,
   dayYmds: readonly string[],
   bySubjectDay: Map<string, AttendanceOvertimeRequestDoc>,
+  norm: MonthlyWorkNormPolicyConfig = DEFAULT_MONTHLY_WORK_NORM,
 ): number {
   let total = 0;
   for (const ymd of dayYmds) {
     const disp = attendanceOvertimeHoursForRequest(
       bySubjectDay.get(overtimeRequestDayKey(subjectKey, ymd)),
+      norm,
     );
     if (disp.hours != null) total += disp.hours;
   }
@@ -128,6 +138,7 @@ export function sumApprovedOvertimeHoursForSubject(
   subjectKey: string,
   requests: AttendanceOvertimeRequestDoc[],
   payrollMonth?: string,
+  norm: MonthlyWorkNormPolicyConfig = DEFAULT_MONTHLY_WORK_NORM,
 ): number {
   const monthPrefix = payrollMonth?.slice(0, 7);
   const latestByDay = new Map<string, AttendanceOvertimeRequestDoc>();
@@ -141,7 +152,7 @@ export function sumApprovedOvertimeHoursForSubject(
   }
   let total = 0;
   for (const r of latestByDay.values()) {
-    const hours = overtimeHoursFromRequest(r);
+    const hours = overtimeHoursFromRequest(r, norm);
     if (hours != null) total += hours;
   }
   return Math.round(total * 100) / 100;

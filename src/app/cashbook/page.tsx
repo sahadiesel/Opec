@@ -57,6 +57,11 @@ import {
   fmtCashbookPrintBaht,
 } from '@/lib/documents/cashbook-list-print';
 import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
+  CashbookDirectionFilter,
+  matchesCashbookDirectionFilter,
+  useCashbookDirectionFilter,
+} from '@/components/accounting/cashbook-direction-filter';
 
 export default function CashbookPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -92,6 +97,8 @@ export default function CashbookPage() {
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [directionFilter, setDirectionFilter] = useCashbookDirectionFilter();
+  const [bankAccountFilter, setBankAccountFilter] = useState<'ALL' | string>('ALL');
   const [monthYm, setMonthYm] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -132,8 +139,29 @@ export default function CashbookPage() {
     return m;
   }, [bankAccounts]);
 
+  const bankAccountFilterOptions = useMemo(
+    () =>
+      [...(bankAccounts ?? [])].sort((a, b) =>
+        String(a.accountCode || '').localeCompare(String(b.accountCode || ''), undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        }),
+      ),
+    [bankAccounts],
+  );
+
+  const selectedBankAccountCode = useMemo(() => {
+    if (bankAccountFilter === 'ALL') return undefined;
+    return bankById.get(bankAccountFilter)?.accountCode;
+  }, [bankAccountFilter, bankById]);
+
   const filteredEntries = useMemo(() => {
-    const list = monthFilteredEntries;
+    let list = monthFilteredEntries.filter((entry) =>
+      matchesCashbookDirectionFilter(entry.direction === 'IN' ? 'IN' : 'OUT', directionFilter),
+    );
+    if (bankAccountFilter !== 'ALL') {
+      list = list.filter((entry) => entry.bankAccountId === bankAccountFilter);
+    }
     const q = searchQuery.trim().toLowerCase();
     if (!q) return list;
     return list.filter((entry) => {
@@ -156,11 +184,17 @@ export default function CashbookPage() {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [monthFilteredEntries, searchQuery, bankById]);
+  }, [monthFilteredEntries, searchQuery, bankById, directionFilter, bankAccountFilter]);
 
   const printFilterLines = useMemo(
-    () => describeCashbookListPrintFilters(searchQuery, monthYm),
-    [searchQuery, monthYm],
+    () =>
+      describeCashbookListPrintFilters(
+        searchQuery,
+        monthYm,
+        directionFilter,
+        selectedBankAccountCode,
+      ),
+    [searchQuery, monthYm, directionFilter, selectedBankAccountCode],
   );
 
   const runCashbookListPrint = useCallback(
@@ -191,7 +225,7 @@ export default function CashbookPage() {
           dateStyle: 'medium',
           timeStyle: 'short',
         });
-        const filterLines = scope === 'filtered' ? printFilterLines : describeCashbookListPrintFilters('', monthYm);
+        const filterLines = scope === 'filtered' ? printFilterLines : describeCashbookListPrintFilters('', monthYm, directionFilter, selectedBankAccountCode);
         const scopeTitle =
           scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งเดือนที่เลือก';
 
@@ -234,6 +268,8 @@ export default function CashbookPage() {
       bankAccounts,
       printFilterLines,
       monthYm,
+      directionFilter,
+      selectedBankAccountCode,
       currentUser?.displayName,
       toast,
     ],
@@ -371,179 +407,195 @@ export default function CashbookPage() {
           </Card>
         </div>
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="relative w-full max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="ค้นหาตามรายละเอียด หรือ บัญชี..."
-                className="pl-9 h-11"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Calendar className="h-4 w-4 text-muted-foreground hidden sm:block" aria-hidden />
-              <Input
-                type="month"
-                className="h-11 w-[min(100%,11rem)] font-mono"
-                value={monthYm}
-                onChange={(e) => setMonthYm(e.target.value)}
-                aria-label="กรองตามเดือน"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 gap-2 px-4"
-              disabled={isLoading || monthFilteredEntries.length === 0}
-              onClick={() => setPrintDialogOpen(true)}
-            >
-              <Printer className="h-4 w-4" />
-              พิมพ์รายการ
-            </Button>
-
-            <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
-              <DialogContent className="max-w-md">
-                <DialogHeader>
-                  <DialogTitle>พิมพ์รายการรายรับรายจ่าย</DialogTitle>
-                  <DialogDescription>
-                    เลือกพิมพ์ตามคำค้นหาในเดือนที่เลือก หรือพิมพ์ทุกรายการในเดือนนั้น (สูงสุด 500 รายการ)
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-3 text-sm">
-                  <div className="rounded-md border bg-muted/30 p-3 space-y-1">
-                    <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
-                    <ul className="list-disc list-inside text-xs text-muted-foreground">
-                      {printFilterLines.length > 0 ? (
-                        printFilterLines.map((line) => <li key={line}>{line}</li>)
-                      ) : (
-                        <li>เดือน: {formatPayrollYearMonthThaiBE(monthYm)} ({monthYm})</li>
-                      )}
-                    </ul>
-                    <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredEntries.length} รายการ</p>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    ทั้งเดือน {formatPayrollYearMonthThaiBE(monthYm)}: {monthFilteredEntries.length} รายการ
-                  </p>
-                </div>
-                <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={printBusy || filteredEntries.length === 0}
-                    onClick={() => void runCashbookListPrint('filtered')}
-                  >
-                    {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    พิมพ์ตามตัวกรอง ({filteredEntries.length})
-                  </Button>
-                  <Button
-                    type="button"
-                    disabled={printBusy || monthFilteredEntries.length === 0}
-                    onClick={() => void runCashbookListPrint('all')}
-                  >
-                    {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                    พิมพ์ทั้งเดือน ({monthFilteredEntries.length})
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-
-            <Dialog open={canWriteCashbook && isDialogOpen} onOpenChange={setIsDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!canWriteCashbook}>
-                <Plus className="h-5 w-5" /> บันทึกรายการใหม่ (Manual Entry)
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-xl">
-              <DialogHeader>
-                <DialogTitle>บันทึกรายรับ-รายจ่าย</DialogTitle>
-                <DialogDescription>บันทึกความเคลื่อนไหวทางการเงินที่ไม่ได้เกิดจากใบแจ้งหนี้โดยตรง</DialogDescription>
-              </DialogHeader>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
-                <div className="space-y-2 md:col-span-2">
-                  <Label>เลขที่รายการ (Entry No.)</Label>
-                  <Input value={newEntry.entryNo} disabled className="bg-muted font-mono font-bold text-primary" />
-                </div>
-                <div className="space-y-2">
-                  <Label>ทิศทางเงิน</Label>
-                  <Select onValueChange={(v: any) => setNewEntry({...newEntry, direction: v})} defaultValue={newEntry.direction}>
-                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="IN">เงินรับเข้า (IN)</SelectItem>
-                      <SelectItem value="OUT">เงินจ่ายออก (OUT)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>วันที่ทำรายการ</Label>
-                  <DatePickerThaiBE
-                    className="h-11"
-                    value={htmlDateValueToTimestampMs(newEntry.entryDate)}
-                    onChange={(ms) => setNewEntry({ ...newEntry, entryDate: timestampToHtmlDateValue(ms) })}
-                  />
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>บัญชีธนาคาร (Bank Account)</Label>
-                  <Select onValueChange={v => setNewEntry({...newEntry, bankAccountId: v})}>
-                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกบัญชี..." /></SelectTrigger>
-                    <SelectContent>
-                      {bankAccounts?.map(b => (
-                        <SelectItem key={b.id} value={b.id}>{b.accountCode} - {b.bankName}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2 md:col-span-2">
-                  <Label>รายละเอียด (Description)</Label>
-                  <Input value={newEntry.description} onChange={e => setNewEntry({...newEntry, description: e.target.value})} placeholder="เช่น ค่าที่พักพนักงาน, โอนเงินระหว่างบัญชี" className="h-11" />
-                </div>
-                <div className="space-y-2">
-                  <Label>จำนวนเงิน (Amount)</Label>
-                  <Input type="number" className="h-11 font-bold text-lg" value={newEntry.amount} onChange={e => setNewEntry({...newEntry, amount: parseFloat(e.target.value)})} />
-                </div>
-                <div className="space-y-2">
-                  <Label>วิธีชำระเงิน</Label>
-                  <Select onValueChange={(v: any) => setNewEntry({...newEntry, paymentMethod: v})} defaultValue={newEntry.paymentMethod}>
-                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="TRANSFER">โอนเงิน (Transfer)</SelectItem>
-                      <SelectItem value="CASH">เงินสด (Cash)</SelectItem>
-                      <SelectItem value="CHEQUE">เช็ค (Cheque)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+        <div className="bg-card p-4 rounded-lg border shadow-sm">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+              <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="ค้นหาตามรายละเอียด หรือ บัญชี..."
+                  className="pl-9 h-11"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
               </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
-                <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
-                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  บันทึกข้อมูล (Confirm)
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+              <div className="flex items-center gap-2 shrink-0">
+                <Calendar className="h-4 w-4 text-muted-foreground hidden sm:block" aria-hidden />
+                <Input
+                  type="month"
+                  className="h-11 w-[min(100%,11rem)] font-mono"
+                  value={monthYm}
+                  onChange={(e) => setMonthYm(e.target.value)}
+                  aria-label="กรองตามเดือน"
+                />
+              </div>
+              <CashbookDirectionFilter value={directionFilter} onChange={setDirectionFilter} />
+              <Select value={bankAccountFilter} onValueChange={setBankAccountFilter}>
+                <SelectTrigger className="h-11 w-[10.5rem] shrink-0 font-semibold" aria-label="กรองตามบัญชีธนาคาร">
+                  <SelectValue placeholder="ทุกบัญชี" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">ทุกบัญชี</SelectItem>
+                  {bankAccountFilterOptions.map((bank) => (
+                    <SelectItem key={bank.id} value={bank.id}>
+                      {bank.accountCode}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0 justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 gap-2 px-4 whitespace-nowrap"
+                disabled={isLoading || monthFilteredEntries.length === 0}
+                onClick={() => setPrintDialogOpen(true)}
+              >
+                <Printer className="h-4 w-4" />
+                พิมพ์รายการ
+              </Button>
+
+              <Dialog open={canWriteCashbook && isDialogOpen} onOpenChange={setIsDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold whitespace-nowrap" disabled={!canWriteCashbook}>
+                    <Plus className="h-5 w-5" /> บันทึกรายการใหม่ (Manual Entry)
+                  </Button>
+                </DialogTrigger>
+                    <DialogContent className="max-w-xl">
+                      <DialogHeader>
+                        <DialogTitle>บันทึกรายรับ-รายจ่าย</DialogTitle>
+                        <DialogDescription>บันทึกความเคลื่อนไหวทางการเงินที่ไม่ได้เกิดจากใบแจ้งหนี้โดยตรง</DialogDescription>
+                      </DialogHeader>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
+                        <div className="space-y-2 md:col-span-2">
+                          <Label>เลขที่รายการ (Entry No.)</Label>
+                          <Input value={newEntry.entryNo} disabled className="bg-muted font-mono font-bold text-primary" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>ทิศทางเงิน</Label>
+                          <Select onValueChange={(v: any) => setNewEntry({...newEntry, direction: v})} defaultValue={newEntry.direction}>
+                            <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="IN">เงินรับเข้า (IN)</SelectItem>
+                              <SelectItem value="OUT">เงินจ่ายออก (OUT)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>วันที่ทำรายการ</Label>
+                          <DatePickerThaiBE
+                            className="h-11"
+                            value={htmlDateValueToTimestampMs(newEntry.entryDate)}
+                            onChange={(ms) => setNewEntry({ ...newEntry, entryDate: timestampToHtmlDateValue(ms) })}
+                          />
+                        </div>
+                        <div className="space-y-2 md:col-span-2">
+                          <Label>บัญชีธนาคาร (Bank Account)</Label>
+                          <Select onValueChange={v => setNewEntry({...newEntry, bankAccountId: v})}>
+                            <SelectTrigger className="h-11"><SelectValue placeholder="เลือกบัญชี..." /></SelectTrigger>
+                            <SelectContent>
+                              {bankAccounts?.map(b => (
+                                <SelectItem key={b.id} value={b.id}>{b.accountCode} - {b.bankName}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2 md:col-span-2">
+                          <Label>รายละเอียด (Description)</Label>
+                          <Input value={newEntry.description} onChange={e => setNewEntry({...newEntry, description: e.target.value})} placeholder="เช่น ค่าที่พักพนักงาน, โอนเงินระหว่างบัญชี" className="h-11" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>จำนวนเงิน (Amount)</Label>
+                          <Input type="number" className="h-11 font-bold text-lg" value={newEntry.amount} onChange={e => setNewEntry({...newEntry, amount: parseFloat(e.target.value)})} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>วิธีชำระเงิน</Label>
+                          <Select onValueChange={(v: any) => setNewEntry({...newEntry, paymentMethod: v})} defaultValue={newEntry.paymentMethod}>
+                            <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="TRANSFER">โอนเงิน (Transfer)</SelectItem>
+                              <SelectItem value="CASH">เงินสด (Cash)</SelectItem>
+                              <SelectItem value="CHEQUE">เช็ค (Cheque)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>
+                        <Button onClick={handleCreate} className="bg-primary font-bold" disabled={isCreating}>
+                          {isCreating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                          บันทึกข้อมูล (Confirm)
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+            </div>
           </div>
         </div>
+
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการรายรับรายจ่าย</DialogTitle>
+              <DialogDescription>
+                เลือกพิมพ์ตามคำค้นหาในเดือนที่เลือก หรือพิมพ์ทุกรายการในเดือนนั้น (สูงสุด 500 รายการ)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                <ul className="list-disc list-inside text-xs text-muted-foreground">
+                  {printFilterLines.length > 0 ? (
+                    printFilterLines.map((line) => <li key={line}>{line}</li>)
+                  ) : (
+                    <li>เดือน: {formatPayrollYearMonthThaiBE(monthYm)} ({monthYm})</li>
+                  )}
+                </ul>
+                <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredEntries.length} รายการ</p>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                ทั้งเดือน {formatPayrollYearMonthThaiBE(monthYm)}: {monthFilteredEntries.length} รายการ
+              </p>
+            </div>
+            <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={printBusy || filteredEntries.length === 0}
+                onClick={() => void runCashbookListPrint('filtered')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                พิมพ์ตามตัวกรอง ({filteredEntries.length})
+              </Button>
+              <Button
+                type="button"
+                disabled={printBusy || monthFilteredEntries.length === 0}
+                onClick={() => void runCashbookListPrint('all')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                พิมพ์ทั้งเดือน ({monthFilteredEntries.length})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
             {isLoading ? (
               <div className="py-20 text-center text-muted-foreground animate-pulse">กำลังโหลดข้อมูล Cashbook...</div>
             ) : (
-              <Table>
+              <Table className="table-fixed w-full">
                 <TableHeader className="bg-muted/50">
-                  <TableRow>
-                    <TableHead className="font-bold py-4 pl-6">เลขที่ / วันที่</TableHead>
-                    <TableHead className="font-bold">รายละเอียด (Description)</TableHead>
-                    <TableHead className="font-bold">บัญชีธนาคาร</TableHead>
-                    <TableHead className="font-bold">วิธีชำระ</TableHead>
-                    <TableHead className="font-bold text-right">เงินเข้า (In)</TableHead>
-                    <TableHead className="font-bold text-right">เงินออก (Out)</TableHead>
-                    <TableHead className="text-right pr-6">จัดการ</TableHead>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="h-10 w-[10%] px-2 py-2 text-center text-xs font-bold">เลขที่ / วันที่</TableHead>
+                    <TableHead className="h-10 w-[42%] px-2 py-2 text-center text-xs font-bold">รายละเอียด (Description)</TableHead>
+                    <TableHead className="h-10 w-[10%] px-2 py-2 text-center text-xs font-bold">บัญชีธนาคาร</TableHead>
+                    <TableHead className="h-10 w-[8%] px-2 py-2 text-center text-xs font-bold">วิธีชำระ</TableHead>
+                    <TableHead className="h-10 w-[12%] px-2 py-2 text-center text-xs font-bold">เงินเข้า (In)</TableHead>
+                    <TableHead className="h-10 w-[12%] px-2 py-2 text-center text-xs font-bold">เงินออก (Out)</TableHead>
+                    <TableHead className="h-10 w-[6%] px-2 py-2 text-center text-xs font-bold">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -559,55 +611,60 @@ export default function CashbookPage() {
                         : '';
                     return (
                       <TableRow key={entry.id} className="hover:bg-muted/20">
-                        <TableCell className="py-4 pl-6 font-medium text-xs">
-                          <div className="flex flex-col gap-1">
-                            <span className="font-mono font-bold text-primary">{entry.entryNo || entry.id.substring(0,8)}</span>
-                            <span className="flex items-center gap-1 text-muted-foreground">
-                              <Calendar className="h-3 w-3" /> {formatStoredDateThaiBE(entry.entryDate)}
+                        <TableCell className="w-[10%] py-2 pl-4 align-middle text-xs">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="whitespace-nowrap font-mono text-[11px] font-bold text-primary leading-tight">
+                              {entry.entryNo || entry.id.substring(0, 8)}
+                            </span>
+                            <span className="flex items-center gap-1 whitespace-nowrap text-muted-foreground leading-tight">
+                              <Calendar className="h-3 w-3 shrink-0" /> {formatStoredDateThaiBE(entry.entryDate)}
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-bold text-sm text-primary">
+                        <TableCell className="w-[42%] min-w-0 py-2 align-middle">
+                          <div className="flex min-w-0 flex-col gap-0.5">
+                            <span className="line-clamp-2 font-bold text-xs text-primary leading-snug">
                               {entry.description}
                               {payrollBankHint}
                             </span>
-                            <span className="text-[10px] text-muted-foreground uppercase">{entry.entryType} {entry.referenceId ? `| Ref: ${entry.referenceId.substring(0,8)}` : ''}</span>
+                            <span className="truncate text-[10px] uppercase leading-tight text-muted-foreground">
+                              {entry.entryType} {entry.referenceId ? `| Ref: ${entry.referenceId.substring(0, 8)}` : ''}
+                            </span>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2 text-xs font-semibold text-primary">
-                            <Wallet className="h-3.5 w-3.5 text-muted-foreground" />
-                            {bankAccount?.accountCode || 'N/A'}
+                        <TableCell className="w-[10%] py-2 align-middle">
+                          <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+                            <Wallet className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate">{bankAccount?.accountCode || 'N/A'}</span>
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-[9px] font-bold uppercase">{entry.paymentMethod}</Badge>
+                        <TableCell className="w-[8%] py-2 align-middle text-center">
+                          <Badge variant="outline" className="text-[9px] font-bold uppercase px-1.5 py-0">{entry.paymentMethod}</Badge>
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="w-[12%] py-2 align-middle text-right text-sm">
                           {entry.direction === 'IN' ? (
-                            <span className="font-black text-green-700">฿ {safeAmt.toLocaleString()}</span>
+                            <span className="whitespace-nowrap font-black tabular-nums text-green-700">฿ {safeAmt.toLocaleString()}</span>
                           ) : '-'}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="w-[12%] py-2 align-middle text-right text-sm">
                           {entry.direction === 'OUT' ? (
-                            <span className="font-black text-red-600">฿ {safeAmt.toLocaleString()}</span>
+                            <span className="whitespace-nowrap font-black tabular-nums text-red-600">฿ {safeAmt.toLocaleString()}</span>
                           ) : '-'}
                         </TableCell>
-                        <TableCell className="text-right pr-6">
+                        <TableCell className="w-[6%] py-2 pr-6 align-middle text-right">
                           {canAdminEditCashbook ? (
                             <Button
                               type="button"
                               variant="ghost"
                               size="icon"
+                              className="h-8 w-8"
                               title="แก้ไขรายละเอียด / ยอดเงิน"
                               onClick={() => openEditEntry(entry)}
                             >
                               <ChevronRight className="h-4 w-4" />
                             </Button>
                           ) : (
-                            <span className="inline-flex h-9 w-9 items-center justify-center text-muted-foreground/40">
+                            <span className="inline-flex h-8 w-8 items-center justify-center text-muted-foreground/40">
                               <ChevronRight className="h-4 w-4" />
                             </span>
                           )}
@@ -618,8 +675,8 @@ export default function CashbookPage() {
                   {(!filteredEntries || filteredEntries.length === 0) && !isLoading && (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
-                        {searchQuery.trim()
-                          ? `ไม่พบรายการที่ตรงกับ "${searchQuery.trim()}" ในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`
+                        {searchQuery.trim() || directionFilter !== 'BOTH' || bankAccountFilter !== 'ALL'
+                          ? `ไม่พบรายการที่ตรงกับตัวกรองในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`
                           : `ไม่มีรายการในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`}
                       </TableCell>
                     </TableRow>

@@ -48,10 +48,10 @@ import {
   normalizeAttendanceHmInput,
 } from '@/lib/attendance/overtime-time';
 import { DEFAULT_MONTHLY_WORK_NORM, otHoursFromWorkNormHmRange } from '@/lib/hr/monthly-work-norm-policy';
+import { monthlyWorkNormFromPolicyRecord } from '@/lib/payroll/office-payroll-period-deductions';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { loadPayrollPoliciesFromFirestore, resolvePayrollPoliciesForDate } from '@/lib/payroll/d8';
 import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
-import { monthlyWorkNormFromPolicyRecord } from '@/lib/payroll/office-payroll-period-deductions';
 import {
   computeOfficeOvertimePayForApprovedRequest,
   isOfficeRestOrHolidayDay,
@@ -197,7 +197,12 @@ export default function AttendanceOvertimeApprovalPage() {
       const amount = 'totalAmount' in pay ? pay.totalAmount : pay.amount;
       const hourlyRate = pay.hourlyRate;
       const multiplier = 'effectiveMultiplier' in pay ? pay.effectiveMultiplier : pay.multiplier;
-      const totalHours = 'totalHours' in pay ? pay.totalHours : pay.approvedHours;
+      const payHours = 'totalHours' in pay ? pay.totalHours : pay.approvedHours;
+      /** ชม.ที่บันทึก = ความยาวช่วงเวลา (หักพัก) — แยกจากชม.ที่ได้ค่าจ้างตาม A/B/C */
+      const recordedHours =
+        hasTimeRange && startHm && endHm
+          ? (otHoursFromWorkNormHmRange(startHm, endHm, norm) ?? payHours)
+          : payHours;
       const segments =
         'segments' in pay
           ? pay.segments.map((seg) => ({
@@ -216,7 +221,7 @@ export default function AttendanceOvertimeApprovalPage() {
       const reqRef = doc(firestore, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION, row.id);
       batch.update(reqRef, {
         status: 'APPROVED',
-        approvedOtHours: Math.round(totalHours * 100) / 100,
+        approvedOtHours: Math.round(recordedHours * 100) / 100,
         ...(hasTimeRange
           ? { approvedOtStartHm: startHm, approvedOtEndHm: endHm }
           : {}),
@@ -246,7 +251,7 @@ export default function AttendanceOvertimeApprovalPage() {
           reviewedByUid: currentUser.id,
           reviewedByName: currentUser.displayName || currentUser.email || currentUser.id,
           reviewedAt: now,
-          rejectReason: `ถูกแทนที่ด้วยคำขอแก้ไข OT (${formatAttendanceOvertimeHours(totalHours)} ชม.)`,
+          rejectReason: `ถูกแทนที่ด้วยคำขอแก้ไข OT (${formatAttendanceOvertimeHours(recordedHours)} ชม.)`,
         });
       }
 
@@ -258,7 +263,9 @@ export default function AttendanceOvertimeApprovalPage() {
           : '';
       toast({
         title: 'อนุมัติ OT แล้ว',
-        description: `${formatAttendanceOvertimeHours(totalHours)} ชม. · ประมาณ ${amount.toLocaleString('th-TH')} บาท${segmentNote} (รวมในงวดเงินเดือนเมื่อคำนวณใหม่)`,
+        description: hasTimeRange && startHm && endHm
+          ? `${formatAttendanceHmRange(startHm, endHm)} · ${formatAttendanceOvertimeHours(recordedHours)} ชม. · ประมาณ ${amount.toLocaleString('th-TH')} บาท${segmentNote} (รวมในงวดเงินเดือนเมื่อคำนวณใหม่)`
+          : `${formatAttendanceOvertimeHours(recordedHours)} ชม. · ประมาณ ${amount.toLocaleString('th-TH')} บาท (รวมในงวดเงินเดือนเมื่อคำนวณใหม่)`,
       });
     } catch (e) {
       toast({

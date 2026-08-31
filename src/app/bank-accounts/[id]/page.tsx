@@ -39,6 +39,11 @@ import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numb
 import { formatDateTimeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import {
+  CashbookDirectionFilter,
+  matchesCashbookDirectionFilter,
+  useCashbookDirectionFilter,
+} from '@/components/accounting/cashbook-direction-filter';
 
 function endOfMonthYmd(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
@@ -152,6 +157,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
+  const [directionFilter, setDirectionFilter] = useCashbookDirectionFilter();
 
   const monthStart = useMemo(() => `${selectedMonth}-01`, [selectedMonth]);
   const monthEnd = useMemo(() => endOfMonthYmd(selectedMonth), [selectedMonth]);
@@ -299,10 +305,20 @@ function BankAccountDetailContent({ id }: { id: string }) {
     });
   }, [movementRowsChronological, balanceAtStartOfSelectedMonth]);
 
+  const displayedMovementRows = useMemo(
+    () =>
+      movementRowsWithBalance.filter((row) => matchesCashbookDirectionFilter(row.direction, directionFilter)),
+    [movementRowsWithBalance, directionFilter],
+  );
+
   const monthTotals = useMemo(() => {
+    const rows =
+      directionFilter === 'BOTH'
+        ? movementRows
+        : movementRows.filter((row) => matchesCashbookDirectionFilter(row.direction, directionFilter));
     let totalIn = 0;
     let totalOut = 0;
-    for (const r of movementRows) {
+    for (const r of rows) {
       if (r.direction === 'IN') totalIn += r.amount;
       else totalOut += r.amount;
     }
@@ -311,7 +327,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
       totalOut: roundMoney2(totalOut),
       net: roundMoney2(totalIn - totalOut),
     };
-  }, [movementRows]);
+  }, [movementRows, directionFilter]);
 
   const movementBlockLoading =
     cashbookLoad || (isPettyAccount && pettyLoad) || preCbLoad || (isPettyAccount && prePtLoad);
@@ -616,7 +632,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
 
         {!isNew && (
           <Card>
-            <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <CardHeader className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <List className="h-5 w-5 text-primary" />
@@ -628,21 +644,20 @@ function BankAccountDetailContent({ id }: { id: string }) {
                     : 'รายรับ/รายจ่ายผ่าน Cashbook — ใช้เทียบกับ statement ได้'}
                 </CardDescription>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">กรองตามเดือน</Label>
-                  <Input
-                    type="month"
-                    className="w-[min(100%,14rem)] font-mono"
-                    value={selectedMonth}
-                    onChange={(e) => setSelectedMonth(e.target.value)}
-                  />
-                </div>
-                <Button type="button" variant="outline" size="sm" asChild>
+              <div className="flex shrink-0 flex-nowrap items-center gap-2 overflow-x-auto lg:justify-end">
+                <Input
+                  type="month"
+                  className="h-11 w-[11rem] shrink-0 font-mono"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  aria-label="กรองตามเดือน"
+                />
+                <CashbookDirectionFilter value={directionFilter} onChange={setDirectionFilter} />
+                <Button type="button" variant="outline" className="h-11 shrink-0 whitespace-nowrap" asChild>
                   <Link href="/cashbook">Cashbook</Link>
                 </Button>
                 {isPettyAccount && (
-                  <Button type="button" variant="outline" size="sm" asChild>
+                  <Button type="button" variant="outline" className="h-11 shrink-0 whitespace-nowrap" asChild>
                     <Link href="/operations/petty-cash">Petty หน้างาน</Link>
                   </Button>
                 )}
@@ -702,7 +717,7 @@ function BankAccountDetailContent({ id }: { id: string }) {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {movementRowsWithBalance.map((row) => {
+                        {displayedMovementRows.map((row) => {
                           const inAm = row.direction === 'IN' ? row.amount : 0;
                           const outAm = row.direction === 'OUT' ? row.amount : 0;
                           return (
@@ -745,10 +760,12 @@ function BankAccountDetailContent({ id }: { id: string }) {
                             </TableRow>
                           );
                         })}
-                        {movementRowsWithBalance.length === 0 && (
+                        {displayedMovementRows.length === 0 && (
                           <TableRow>
                             <TableCell colSpan={6} className="py-10 text-center text-sm text-muted-foreground">
-                              ไม่มีรายการในช่วง {formatStoredDateThaiBE(monthStart)} – {formatStoredDateThaiBE(monthEnd)} — ลองเปลี่ยนเดือน
+                              {movementRowsWithBalance.length === 0
+                                ? `ไม่มีรายการในช่วง ${formatStoredDateThaiBE(monthStart)} – ${formatStoredDateThaiBE(monthEnd)} — ลองเปลี่ยนเดือน`
+                                : 'ไม่พบรายการตามตัวกรองทิศทางเงิน — ลองเลือก รับ/จ่าย'}
                             </TableCell>
                           </TableRow>
                         )}

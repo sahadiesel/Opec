@@ -40,13 +40,30 @@ function fmtBahtPrint(amount: number): string {
 
 
 
-export function describeCashbookListPrintFilters(searchTerm: string, monthYyyyMm: string): string[] {
+export function describeCashbookListPrintFilters(
+  searchTerm: string,
+  monthYyyyMm: string,
+  directionFilter: 'IN' | 'OUT' | 'BOTH' = 'BOTH',
+  bankAccountCode?: string,
+): string[] {
 
   const lines: string[] = [];
 
   if (monthYyyyMm.trim()) {
 
     lines.push(`เดือน: ${formatPayrollYearMonthThaiBE(monthYyyyMm)} (${monthYyyyMm})`);
+
+  }
+
+  if (directionFilter !== 'BOTH') {
+
+    lines.push(`ทิศทาง: ${directionFilter === 'IN' ? 'รายรับ' : 'รายจ่าย'}`);
+
+  }
+
+  if (bankAccountCode?.trim()) {
+
+    lines.push(`บัญชี: ${bankAccountCode.trim()}`);
 
   }
 

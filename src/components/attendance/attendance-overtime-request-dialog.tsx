@@ -97,12 +97,25 @@ export function AttendanceOvertimeRequestDialog({
     if (pendingStartHm && pendingEndHm) {
       setOtStartHm(pendingStartHm);
       setOtEndHm(pendingEndHm);
+    } else if (hasPreviousTimeRange && normalizedPreviousStart && normalizedPreviousEnd) {
+      setOtStartHm(normalizedPreviousStart);
+      setOtEndHm(normalizedPreviousEnd);
     } else {
       setOtStartHm('');
       setOtEndHm('');
     }
     setReason('');
-  }, [open, workDateYmd, isAmend, previousOtHours, pendingStartHm, pendingEndHm]);
+  }, [
+    open,
+    workDateYmd,
+    isAmend,
+    previousOtHours,
+    pendingStartHm,
+    pendingEndHm,
+    hasPreviousTimeRange,
+    normalizedPreviousStart,
+    normalizedPreviousEnd,
+  ]);
 
   const handleSubmit = async () => {
     if (!firestore) return;

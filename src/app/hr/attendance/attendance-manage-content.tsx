@@ -458,6 +458,7 @@ export function HrAttendanceManagePageContent() {
         key,
         ymDs,
         overtimeBySubjectDay,
+        monthlyWorkNorm,
       );
       const gridCellsByYmd = buildStaffAttendanceGridCellsByYmd({
         staff,
@@ -857,6 +858,7 @@ export function HrAttendanceManagePageContent() {
                                     const dayKey = `${row.key}:${d.ymd}`;
                                     const otDisplay = attendanceOvertimeHoursForRequest(
                                       overtimeBySubjectDay.get(dayKey),
+                                      monthlyWorkNorm,
                                     );
                                     const pendingNotes = attendanceDayPendingNotes({
                                       correction: correctionBySubjectDay.get(dayKey),

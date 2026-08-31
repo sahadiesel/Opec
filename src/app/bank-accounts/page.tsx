@@ -10,7 +10,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { 
   Plus, 
   Search, 
-  Filter, 
   ChevronRight, 
   CreditCard, 
   Info, 
@@ -95,6 +94,7 @@ export default function BankAccountsPage() {
   const [transferAmount, setTransferAmount] = useState(0);
   const [transferDate, setTransferDate] = useState(timestampToHtmlDateValue(Date.now()));
   const [transferMemo, setTransferMemo] = useState('โอนระหว่างบัญชี');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const accountsQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
@@ -102,6 +102,26 @@ export default function BankAccountsPage() {
   }, [firestore, isUserLoading, firebaseUser, isAuthorized]);
 
   const { data: accounts, isLoading } = useCollection<BankAccount>(accountsQuery as any);
+
+  const filteredAccounts = useMemo(() => {
+    const list = accounts ?? [];
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((acc) => {
+      const haystack = [
+        acc.accountCode,
+        acc.bankName,
+        acc.accountName,
+        acc.accountNumber,
+        acc.accountType,
+        acc.status,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [accounts, searchQuery]);
 
   const accountIdsKey = useMemo(() => (accounts ?? []).map((a) => a.id).sort().join(','), [accounts]);
 
@@ -178,61 +198,65 @@ export default function BankAccountsPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <CreditCard className="h-8 w-8" /> บัญชีธนาคาร (Bank Accounts)
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            จัดการข้อมูลบัญชีธนาคารของบริษัท สำหรับการจ่ายเงินเดือน จ่ายคู่ค้า และรับชำระเงินจากลูกค้า
-          </p>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between lg:gap-6">
+          <div className="min-w-0 lg:max-w-[44%] flex flex-col gap-1">
+            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+              <CreditCard className="h-8 w-8 shrink-0" /> บัญชีธนาคาร (Bank Accounts)
+            </h1>
+            <p className="text-muted-foreground text-lg">
+              จัดการข้อมูลบัญชีธนาคารของบริษัท สำหรับการจ่ายเงินเดือน จ่ายคู่ค้า และรับชำระเงินจากลูกค้า
+            </p>
+          </div>
+
+          <Alert className="w-full shrink-0 bg-primary/5 border-primary/20 shadow-sm py-2 px-3 lg:flex-1 lg:max-w-[56%] [&>svg]:left-3 [&>svg]:top-2.5 [&>svg+div]:translate-y-0 [&>svg~*]:pl-6">
+            <Info className="h-4 w-4 text-primary" />
+            <AlertTitle className="mb-0 font-bold text-sm leading-tight">
+              นโยบายข้อมูลการเงิน (Financial Data Policy)
+            </AlertTitle>
+            <AlertDescription className="text-xs leading-tight [&_p]:leading-tight">
+              บัญชีธนาคารจะถูกใช้ในระบบรับเงิน จ่ายเงิน และรายงาน Cashbook กรุณาตรวจสอบเลขที่บัญชีให้ถูกต้องเพื่อป้องกันความผิดพลาดในการโอนเงิน
+            </AlertDescription>
+          </Alert>
         </div>
 
-        <Alert className="bg-primary/5 border-primary/20 shadow-sm">
-          <Info className="h-5 w-5 text-primary" />
-          <AlertTitle className="font-bold text-lg">นโยบายข้อมูลการเงิน (Financial Data Policy)</AlertTitle>
-          <AlertDescription className="text-sm">
-            บัญชีธนาคารจะถูกใช้ในระบบรับเงิน จ่ายเงิน และรายงาน Cashbook กรุณาตรวจสอบเลขที่บัญชีให้ถูกต้องเพื่อป้องกันความผิดพลาดในการโอนเงิน
-          </AlertDescription>
-        </Alert>
-
-        <div className="flex flex-col gap-3 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3 flex-1">
-              <div className="relative w-full max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input placeholder="ค้นหาตามรหัส หรือ ชื่อบัญชี..." className="pl-9 h-11" />
-              </div>
-              <Button variant="outline" className="h-11 px-4 gap-2">
-                <Filter className="h-4 w-4" /> ตัวกรอง
+        <div className="bg-card p-4 rounded-lg border shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="relative min-w-0 flex-1 sm:max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="ค้นหาตามรหัส หรือ ชื่อบัญชี..."
+                className="pl-9 h-11"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0 justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 gap-2 font-semibold whitespace-nowrap"
+                disabled={!canWriteBank}
+                onClick={() => setTransferOpen(true)}
+              >
+                <ArrowLeftRight className="h-4 w-4" /> โอนระหว่างบัญชี
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 gap-2 font-semibold whitespace-nowrap"
+                disabled={!canWriteBank}
+                onClick={() => router.push('/bank-accounts/new?preset=petty')}
+              >
+                <Wallet className="h-4 w-4" /> สร้างรายการบัญชี Petty Cash
+              </Button>
+              <Button
+                className="gap-2 h-11 px-6 bg-primary font-bold shadow-md whitespace-nowrap"
+                disabled={!canWriteBank}
+                onClick={() => router.push('/bank-accounts/new')}
+              >
+                <Plus className="h-5 w-5" /> เพิ่มบัญชีธนาคาร (Add Account)
               </Button>
             </div>
-          </div>
-          <div className="flex flex-wrap gap-2 justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 gap-2 font-semibold"
-              disabled={!canWriteBank}
-              onClick={() => setTransferOpen(true)}
-            >
-              <ArrowLeftRight className="h-4 w-4" /> โอนระหว่างบัญชี
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 gap-2 font-semibold"
-              disabled={!canWriteBank}
-              onClick={() => router.push('/bank-accounts/new?preset=petty')}
-            >
-              <Wallet className="h-4 w-4" /> สร้างรายการบัญชี Petty Cash
-            </Button>
-            <Button
-              className="gap-2 h-11 px-6 bg-primary font-bold shadow-md"
-              disabled={!canWriteBank}
-              onClick={() => router.push('/bank-accounts/new')}
-            >
-              <Plus className="h-5 w-5" /> เพิ่มบัญชีธนาคาร (Add Account)
-            </Button>
           </div>
         </div>
 
@@ -328,7 +352,7 @@ export default function BankAccountsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {accounts?.map((acc) => (
+                  {filteredAccounts.map((acc) => (
                     <TableRow 
                       key={acc.id} 
                       className="cursor-pointer hover:bg-muted/30 group transition-all"
@@ -389,9 +413,13 @@ export default function BankAccountsPage() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {(!accounts || accounts.length === 0) && !isLoading && (
+                  {filteredAccounts.length === 0 && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">ไม่มีข้อมูลบัญชีธนาคารในระบบ</TableCell>
+                      <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
+                        {searchQuery.trim()
+                          ? `ไม่พบบัญชีที่ตรงกับ "${searchQuery.trim()}"`
+                          : 'ไม่มีข้อมูลบัญชีธนาคารในระบบ'}
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>

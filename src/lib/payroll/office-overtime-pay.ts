@@ -203,7 +203,48 @@ export function computeOfficeOvertimePayForApprovedRequest(
   return computeOfficeOvertimePayAmount(monthlySalary, norm, hours);
 }
 
-/** รวมยอด OT ที่อนุมัติแล้วในช่วงงวดจ่าย — ใช้ช่วงเวลา + ตัวคูณ A/B/C
+function latestApprovedOvertimeByDayForStaff(
+  staffId: string,
+  periodStart: string,
+  periodEnd: string,
+  requests: ApprovedOvertimeRequestForPay[],
+): Map<string, ApprovedOvertimeRequestForPay> {
+  const ps = periodStart.slice(0, 10);
+  const pe = periodEnd.slice(0, 10);
+  const latestByDay = new Map<string, ApprovedOvertimeRequestForPay>();
+  for (const r of requests) {
+    if (r.subjectId !== staffId || r.status !== 'APPROVED') continue;
+    const ymd = r.workDateYmd.slice(0, 10);
+    if (ymd < ps || ymd > pe) continue;
+    const cur = latestByDay.get(ymd);
+    const rAt = Number(r.requestedAt) || 0;
+    const cAt = cur ? Number(cur.requestedAt) || 0 : 0;
+    const rReviewed = Number(r.reviewedAt) || 0;
+    const cReviewed = cur ? Number(cur.reviewedAt) || 0 : 0;
+    const rScore = Math.max(rReviewed, rAt);
+    const cScore = Math.max(cReviewed, cAt);
+    if (!cur || rScore >= cScore) latestByDay.set(ymd, r);
+  }
+  return latestByDay;
+}
+
+/** วันที่มี OT อนุมัติพร้อมช่วงเวลา — ไม่จ่ายซ้ำจากสแกนวันหยุด */
+export function approvedOvertimeTimeRangeDaysForStaff(
+  staffId: string,
+  periodStart: string,
+  periodEnd: string,
+  requests: ApprovedOvertimeRequestForPay[],
+): Set<string> {
+  const out = new Set<string>();
+  for (const [ymd, r] of latestApprovedOvertimeByDayForStaff(staffId, periodStart, periodEnd, requests)) {
+    const startHm = normalizeAttendanceHmInput(r.approvedOtStartHm);
+    const endHm = normalizeAttendanceHmInput(r.approvedOtEndHm);
+    if (startHm && endHm) out.add(ymd);
+  }
+  return out;
+}
+
+/** รวมยอด OT ที่อนุมัติแล้วในช่วงงวดจ่าย — ใช้ช่วงเวลา + ตัวคูณ A/B/C (คำนวณสดทุกครั้ง)
  * นับเฉพาะคำขอล่าสุดต่อคนต่อวัน (กันซ้ำเมื่อขอแก้ไขแล้วอนุมัติใหม่)
  */
 export function sumApprovedOfficeOvertimePayInPeriod(
@@ -218,33 +259,12 @@ export function sumApprovedOfficeOvertimePayInPeriod(
     calendarHolidays: CalendarHolidayEntry[];
   },
 ): number {
-  const ps = periodStart.slice(0, 10);
-  const pe = periodEnd.slice(0, 10);
-  const latestByDay = new Map<string, ApprovedOvertimeRequestForPay>();
-  for (const r of requests) {
-    if (r.subjectId !== staffId || r.status !== 'APPROVED') continue;
-    const ymd = r.workDateYmd.slice(0, 10);
-    if (ymd < ps || ymd > pe) continue;
-    const cur = latestByDay.get(ymd);
-    const rAt = Number(r.requestedAt) || 0;
-    const cAt = cur ? Number(cur.requestedAt) || 0 : 0;
-    // Prefer reviewedAt when present (amend / re-approve), then requestedAt
-    const rReviewed = Number(r.reviewedAt) || 0;
-    const cReviewed = cur ? Number(cur.reviewedAt) || 0 : 0;
-    const rScore = Math.max(rReviewed, rAt);
-    const cScore = Math.max(cReviewed, cAt);
-    if (!cur || rScore >= cScore) latestByDay.set(ymd, r);
-  }
+  const latestByDay = latestApprovedOvertimeByDayForStaff(staffId, periodStart, periodEnd, requests);
 
   let total = 0;
   for (const r of latestByDay.values()) {
     const ymd = r.workDateYmd.slice(0, 10);
     const approvedHours = Number(r.approvedOtHours ?? r.requestedOtHours);
-    const snapshotAmt = Number(r.otPayAmountSnapshot);
-    if (Number.isFinite(snapshotAmt) && snapshotAmt >= 0 && snapshotAmt > 0) {
-      total += round2(snapshotAmt);
-      continue;
-    }
     if (!Number.isFinite(approvedHours) || approvedHours <= 0) {
       const startHm = normalizeAttendanceHmInput(r.approvedOtStartHm);
       const endHm = normalizeAttendanceHmInput(r.approvedOtEndHm);
@@ -296,6 +316,8 @@ export function sumOfficeRestDayWorkedPayInPeriod(
     monthlyWorkNorm: MonthlyWorkNormPolicyConfig;
     weeklyRestPattern: WeeklyRestPatternForCalendar;
     calendarHolidays: CalendarHolidayEntry[];
+    /** ถ้ามี OT อนุมัติพร้อมช่วงเวลาในวันนั้น — ไม่จ่ายซ้ำจากสแกน */
+    approvedOvertimeRequests?: ApprovedOvertimeRequestForPay[];
   },
 ): OfficeRestDayWorkedPayResult {
   if (staff.excludeFromPayrollRuns) return { days: 0, amount: 0 };
@@ -307,6 +329,12 @@ export function sumOfficeRestDayWorkedPayInPeriod(
   const staffEnd = normalizeStaffDateYmd(staff.employmentEndDate);
   const rates = absenceLatePayrollRates(computeOpts.monthlySalary, computeOpts.monthlyWorkNorm);
   const mult = resolveOfficeHolidayWorkMultiplier(computeOpts.monthlyWorkNorm);
+  const otTimeRangeDays = approvedOvertimeTimeRangeDaysForStaff(
+    staff.id,
+    ps,
+    pe,
+    computeOpts.approvedOvertimeRequests ?? [],
+  );
 
   let days = 0;
   let amount = 0;
@@ -315,6 +343,7 @@ export function sumOfficeRestDayWorkedPayInPeriod(
     if (ymd < ps || ymd > pe) continue;
     if (staffStart && ymd < staffStart) continue;
     if (staffEnd && ymd > staffEnd) continue;
+    if (otTimeRangeDays.has(ymd)) continue;
     if (
       !isOfficeRestOrHolidayDay(
         ymd,

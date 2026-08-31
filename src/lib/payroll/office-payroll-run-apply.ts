@@ -200,6 +200,7 @@ export async function applyStandardOfficeRunLines(
         monthlyWorkNorm: payrollCtx.monthlyWorkNorm,
         weeklyRestPattern: payrollCtx.weeklyRestPattern,
         calendarHolidays: payrollCtx.calendarHolidays,
+        approvedOvertimeRequests: payrollCtx.approvedOvertimeRequests,
       },
     );
 
