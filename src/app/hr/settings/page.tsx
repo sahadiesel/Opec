@@ -222,7 +222,7 @@ export default function HrSettingsPage() {
     DEFAULT_MONTHLY_WORK_NORM.breakStartTime ?? '12:00',
   );
   const [lateGraceMinutes, setLateGraceMinutes] = useState(
-    DEFAULT_MONTHLY_WORK_NORM.lateGraceMinutes ?? 5,
+    DEFAULT_MONTHLY_WORK_NORM.lateGraceMinutes ?? 0,
   );
   const [officeOvertimeHourMultiplier, setOfficeOvertimeHourMultiplier] = useState(
     DEFAULT_MONTHLY_WORK_NORM.officeOvertimeHourMultiplier ?? 1.5,
@@ -286,7 +286,7 @@ export default function HrSettingsPage() {
         setBreakHoursPerDay(cfg.breakHoursPerDay);
         setWorkStartTime(cfg.workStartTime);
         setBreakStartTime(cfg.breakStartTime ?? '12:00');
-        setLateGraceMinutes(cfg.lateGraceMinutes ?? 5);
+        setLateGraceMinutes(cfg.lateGraceMinutes ?? 0);
         setOfficeOvertimeHourMultiplier(cfg.officeOvertimeHourMultiplier ?? 1.5);
         setOfficeHolidayHourMultiplier(
           cfg.officeHolidayHourMultiplier ?? 1.0,

@@ -162,6 +162,7 @@ export async function applyStandardOfficeRunLines(
       periodEndMs: payrollCtx.periodEndMs,
       leaveRequests: payrollCtx.leaveRequests,
       attendanceDayRows: payrollCtx.attendanceRowsByStaffId.get(staff.id) ?? [],
+      attendancePunches: payrollCtx.punchesBySubjectKey.get(`office_staff:${staff.id}`) ?? [],
       leaveEntitlements: payrollCtx.leaveEntitlements,
       monthlyWorkNorm: payrollCtx.monthlyWorkNorm,
       weeklyRestPattern: payrollCtx.weeklyRestPattern,

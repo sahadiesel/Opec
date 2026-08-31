@@ -29,7 +29,7 @@ export const DEFAULT_MONTHLY_WORK_NORM: MonthlyWorkNormPolicyConfig = {
   breakHoursPerDay: 1,
   workStartTime: '08:00',
   breakStartTime: '12:00',
-  lateGraceMinutes: 5,
+  lateGraceMinutes: 0,
   officeOvertimeHourMultiplier: 1.5,
   officeHolidayHourMultiplier: 1.0,
 };
@@ -60,7 +60,8 @@ export function monthlyWorkNormFromUnknownConfig(raw: Record<string, unknown> | 
       ? raw.breakStartTime.trim()
       : d.breakStartTime;
   const lateRaw = Number(raw.lateGraceMinutes);
-  const lateGrace = Number.isFinite(lateRaw) && lateRaw >= 0 ? Math.min(120, Math.round(lateRaw)) : (d.lateGraceMinutes ?? 0);
+  const lateGrace =
+    Number.isFinite(lateRaw) && lateRaw >= 0 ? Math.min(120, Math.round(lateRaw)) : 0;
   const otMultRaw = Number(raw.officeOvertimeHourMultiplier);
   const officeOvertimeHourMultiplier =
     Number.isFinite(otMultRaw) && otMultRaw > 0 ? Math.min(10, Math.round(otMultRaw * 100) / 100) : (d.officeOvertimeHourMultiplier ?? 1.5);
@@ -278,8 +279,10 @@ export interface ShiftWindowsLabels {
   morningEnd: string;
   breakEnd: string;
   afternoonEnd: string;
-  /** เวลาคัตที่จะเริ่มนับว่าสาย */
-  lateCutoff: string;
+  /** เวลาเริ่มคิดสายช่วงเช้า (= เริ่มงาน + ผ่อนผัน) */
+  morningLateCutoff: string;
+  /** เวลาเริ่มคิดสายช่วงบ่าย (= เริ่มบ่าย + ผ่อนผัน) */
+  afternoonLateCutoff: string;
 }
 
 export function computeShiftWindowsLabels(cfg: MonthlyWorkNormPolicyConfig): ShiftWindowsLabels | null {
@@ -290,7 +293,8 @@ export function computeShiftWindowsLabels(cfg: MonthlyWorkNormPolicyConfig): Shi
     morningEnd: fmtHmm(b.morningEndMin),
     breakEnd: fmtHmm(b.afternoonStartMin),
     afternoonEnd: fmtHmm(b.afternoonEndMin),
-    lateCutoff: fmtHmm(b.morningLateCutoffMin),
+    morningLateCutoff: fmtHmm(b.morningLateCutoffMin),
+    afternoonLateCutoff: fmtHmm(b.afternoonLateCutoffMin),
   };
 }
 

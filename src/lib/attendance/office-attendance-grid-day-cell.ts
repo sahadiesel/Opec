@@ -3,7 +3,10 @@ import {
   isBangkokWeeklyRestDayYmd,
   type WeeklyRestPatternForCalendar,
 } from '@/lib/attendance/bangkok-calendar';
-import type { AttendanceDayEffectiveRow } from '@/lib/attendance/correction-merge';
+import {
+  punchesGroupedByBangkokYmd,
+  type AttendanceDayEffectiveRow,
+} from '@/lib/attendance/correction-merge';
 import {
   ATTENDANCE_SHIFT_WINDOWS,
   getBangkokMinutesOfDay,
@@ -25,7 +28,7 @@ import { isHrSettingsCalendarHolidayYmd } from '@/lib/payroll/worker-global-labo
 import type { CalendarHolidayEntry } from '@/lib/contract-position-rate-extras';
 import type { OfficeStaff } from '@/lib/types';
 
-export type OfficeAttendanceGridLineTone = 'time' | 'leave' | 'absent' | 'waiting' | 'off';
+export type OfficeAttendanceGridLineTone = 'time' | 'leave' | 'absent' | 'waiting' | 'late' | 'off';
 
 export type OfficeAttendanceGridLine = {
   label: string;
@@ -84,7 +87,7 @@ function buildEffectivePunchLists(
   return { ins, outs };
 }
 
-function assignFourScanSlots(ins: number[], outs: number[]): FourScanSlots {
+function assignFourScanSlotsLegacy(ins: number[], outs: number[]): FourScanSlots {
   const [morningWin, middayWin, eveningWin] = ATTENDANCE_SHIFT_WINDOWS;
   const morningIns = ins.filter((ms) => inScanWindow(ms, morningWin.startMinutes, morningWin.endMinutes));
   const middayIns = ins.filter((ms) => inScanWindow(ms, middayWin.startMinutes, middayWin.endMinutes));
@@ -107,6 +110,54 @@ function assignFourScanSlots(ins: number[], outs: number[]): FourScanSlots {
   afternoonOutMs = eveningOuts[eveningOuts.length - 1] ?? null;
   if (afternoonOutMs == null && afternoonInMs != null && middayOuts.length > 0) {
     afternoonOutMs = middayOuts[middayOuts.length - 1] ?? null;
+  }
+
+  return { morningInMs, morningOutMs, afternoonInMs, afternoonOutMs };
+}
+
+/** แยกสแกน 4 ช่วงตาม HR Settings (เช้า / ออกพัก / เข้าบ่าย / ออกเย็น) */
+export function assignFourScanSlots(
+  ins: number[],
+  outs: number[],
+  bounds: OfficeShiftMinuteBounds | null,
+): FourScanSlots {
+  if (!bounds) return assignFourScanSlotsLegacy(ins, outs);
+
+  const morningPeriodIns = ins.filter((ms) => {
+    const m = getBangkokMinutesOfDay(new Date(ms));
+    return m >= 5 * 60 && m <= bounds.morningEndMin;
+  });
+  const breakOuts = outs.filter((ms) => {
+    const m = getBangkokMinutesOfDay(new Date(ms));
+    return m > bounds.morningEndMin && m <= bounds.afternoonStartMin;
+  });
+  const afternoonPeriodIns = ins.filter((ms) => {
+    const m = getBangkokMinutesOfDay(new Date(ms));
+    return m > bounds.morningEndMin && m <= bounds.afternoonEndMin;
+  });
+  const afternoonPeriodOuts = outs.filter((ms) => {
+    const m = getBangkokMinutesOfDay(new Date(ms));
+    return m > bounds.afternoonStartMin;
+  });
+
+  const morningInMs = morningPeriodIns[0] ?? null;
+  let morningOutMs: number | null = null;
+  let afternoonInMs: number | null = null;
+  let afternoonOutMs: number | null = null;
+
+  if (morningInMs != null) {
+    morningOutMs = breakOuts[0] ?? null;
+    const afternoonInCandidate = afternoonPeriodIns.find((ms) =>
+      morningOutMs == null ? true : ms > morningOutMs,
+    );
+    afternoonInMs = afternoonInCandidate ?? null;
+  } else {
+    afternoonInMs = afternoonPeriodIns[0] ?? null;
+  }
+
+  afternoonOutMs = afternoonPeriodOuts[afternoonPeriodOuts.length - 1] ?? null;
+  if (afternoonOutMs == null && afternoonInMs != null && breakOuts.length > 0) {
+    afternoonOutMs = breakOuts[breakOuts.length - 1] ?? null;
   }
 
   return { morningInMs, morningOutMs, afternoonInMs, afternoonOutMs };
@@ -158,6 +209,21 @@ function timeLine(ms: number): OfficeAttendanceGridLine {
   return { label: formatBangkokHmFromUtcMs(ms), tone: 'time' };
 }
 
+function scanInTimeLine(
+  ms: number,
+  slot: 'morningIn' | 'afternoonIn',
+  bounds: OfficeShiftMinuteBounds,
+): OfficeAttendanceGridLine {
+  const m = getBangkokMinutesOfDay(new Date(ms));
+  const cutoff = slot === 'morningIn' ? bounds.morningLateCutoffMin : bounds.afternoonLateCutoffMin;
+  const periodEnd = slot === 'morningIn' ? bounds.morningEndMin : bounds.afternoonEndMin;
+  const label = formatBangkokHmFromUtcMs(ms);
+  if (m > cutoff && m <= periodEnd) {
+    return { label, tone: 'late' };
+  }
+  return { label, tone: 'time' };
+}
+
 function waitingLine(): OfficeAttendanceGridLine {
   return { label: 'รอสแกน', tone: 'waiting' };
 }
@@ -199,6 +265,7 @@ function detectScanPattern(slots: FourScanSlots): DayScanPattern {
 function absenceCutoffMinutes(slot: SlotKey, bounds: OfficeShiftMinuteBounds): number {
   switch (slot) {
     case 'morningIn':
+      /** ยังรอสแกนเข้าเช้าได้จนจบช่วงเช้า — ผ่อนผันใช้กับเวลาที่สแกนแล้วเท่านั้น */
       return bounds.morningEndMin;
     case 'morningOut':
       return bounds.afternoonStartMin;
@@ -275,7 +342,15 @@ function resolveSlotLine(params: {
   pattern: DayScanPattern;
 }): OfficeAttendanceGridLine {
   if (params.leaveOnSlot && params.leaveType) return leaveLine(params.leaveType);
-  if (params.scanMs != null) return timeLine(params.scanMs);
+  if (params.scanMs != null) {
+    if (
+      params.bounds
+      && (params.slot === 'morningIn' || params.slot === 'afternoonIn')
+    ) {
+      return scanInTimeLine(params.scanMs, params.slot, params.bounds);
+    }
+    return timeLine(params.scanMs);
+  }
   if (!params.expectsScan) return DASH_LINE;
   if (!params.bounds) return absentLine();
 
@@ -358,7 +433,7 @@ export function buildOfficeAttendanceGridDayCell(input: {
   const bounds = officeShiftMinuteBounds(monthlyWorkNorm);
   const nowMinutes = getBangkokMinutesOfDay(now);
   const { ins, outs } = buildEffectivePunchLists(dayRow, dayPunches);
-  const slots = assignFourScanSlots(ins, outs);
+  const slots = assignFourScanSlots(ins, outs, bounds);
   const scanPattern = detectScanPattern(slots);
 
   const leaveMorning =
@@ -404,4 +479,34 @@ export function buildOfficeAttendanceGridDayCell(input: {
     afternoonIn: build('afternoonIn', slots.afternoonInMs, leaveAfternoon),
     afternoonOut: build('afternoonOut', slots.afternoonOutMs, leaveAfternoon),
   };
+}
+
+export function buildStaffAttendanceGridCellsByYmd(input: {
+  staff: OfficeStaff;
+  punches: AttendancePunchDoc[];
+  dayRows: AttendanceDayEffectiveRow[];
+  approvedLeaves: OfficeLeaveRequestDoc[];
+  weeklyRestPattern: WeeklyRestPatternForCalendar;
+  calendarHolidays: CalendarHolidayEntry[];
+  todayBangkokYmd: string;
+  monthlyWorkNorm: MonthlyWorkNormPolicyConfig;
+  now?: Date;
+}): Record<string, OfficeAttendanceGridDayCell> {
+  const punchesByYmd = punchesGroupedByBangkokYmd(input.punches);
+  const cells: Record<string, OfficeAttendanceGridDayCell> = {};
+  for (const dayRow of input.dayRows) {
+    cells[dayRow.ymd] = buildOfficeAttendanceGridDayCell({
+      dayRow,
+      dayPunches: punchesByYmd.get(dayRow.ymd) ?? [],
+      staff: input.staff,
+      ymd: dayRow.ymd,
+      approvedLeaves: input.approvedLeaves,
+      weeklyRestPattern: input.weeklyRestPattern,
+      calendarHolidays: input.calendarHolidays,
+      todayBangkokYmd: input.todayBangkokYmd,
+      monthlyWorkNorm: input.monthlyWorkNorm,
+      now: input.now,
+    });
+  }
+  return cells;
 }

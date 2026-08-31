@@ -136,9 +136,9 @@ export function MonthlyWorkNormPolicyFields({
             className="font-mono max-w-[120px]"
           />
           <p className="text-[11px] text-muted-foreground leading-snug">
-            เช่น 5 นาที → ช่วงเช้าเริ่มนับสายตั้งแต่{' '}
-            <span className="font-mono">{shiftWindows?.lateCutoff ?? '—'}</span> · ช่วงบ่ายเริ่มนับสายหลังเริ่มบ่าย +
-            ผ่อนผันเท่ากัน
+            ผ่อนผัน {lateGraceMinutes} นาที → ช่วงเช้าเริ่มนับสายตั้งแต่{' '}
+            <span className="font-mono">{shiftWindows?.morningLateCutoff ?? '—'}</span> · ช่วงบ่ายเริ่มนับสายตั้งแต่{' '}
+            <span className="font-mono">{shiftWindows?.afternoonLateCutoff ?? '—'}</span>
           </p>
         </div>
         <div className="grid gap-2">
@@ -254,7 +254,8 @@ export function MonthlyWorkNormPolicyFields({
             </span>
           </li>
           <li className="sm:col-span-2 text-muted-foreground">
-            เวลาเริ่มคิดสายช่วงเช้า: <span className="font-mono">{shiftWindows?.lateCutoff ?? '—'}</span> · ทำงานปกติ{' '}
+            เริ่มคิดสายช่วงเช้า: <span className="font-mono">{shiftWindows?.morningLateCutoff ?? '—'}</span> · เริ่มคิดสายช่วงบ่าย:{' '}
+            <span className="font-mono">{shiftWindows?.afternoonLateCutoff ?? '—'}</span> · ทำงานปกติ{' '}
             {normalWorkHoursPerDay} ชม. ({Math.round(normalWorkHoursPerDay * 60)} นาที) · พัก {breakHoursPerDay} ชม.
           </li>
         </ul>

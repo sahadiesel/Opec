@@ -2,12 +2,14 @@ import {
   isBangkokWeeklyRestDayYmd,
   type WeeklyRestPatternForCalendar,
 } from '@/lib/attendance/bangkok-calendar';
+import { assignFourScanSlots } from '@/lib/attendance/office-attendance-grid-day-cell';
 import type { AttendanceDayEffectiveRow } from '@/lib/attendance/correction-merge';
-import type { OfficeLeaveEntitlementsDoc } from '@/lib/attendance/types';
+import type { AttendancePunchDoc, OfficeLeaveEntitlementsDoc } from '@/lib/attendance/types';
 import {
   absenceLatePayrollRates,
   evaluateOfficeScanInForPayrollHalf,
   monthlyWorkNormFromUnknownConfig,
+  officeShiftMinuteBounds,
   type MonthlyWorkNormPolicyConfig,
   type OfficePayrollWorkingHalf,
 } from '@/lib/hr/monthly-work-norm-policy';
@@ -174,6 +176,8 @@ export type ComputeOfficePayrollPeriodAdjustmentsInput = {
   periodEndMs: number;
   leaveRequests: OfficeLeaveRequestDoc[];
   attendanceDayRows: AttendanceDayEffectiveRow[];
+  /** สแกนดิบ — ใช้คำนวณสายเข้าบ่ายเมื่อมาเช้าตรงเวลา */
+  attendancePunches?: AttendancePunchDoc[];
   leaveEntitlements: Pick<
     OfficeLeaveEntitlementsDoc,
     'sickDaysPerYear' | 'personalDaysPerYear' | 'annualVacationDaysPerYear'
@@ -295,6 +299,34 @@ export function computeOfficePayrollPeriodAdjustments(
       const ev = evaluateOfficeScanInForPayrollHalf(inMin, input.monthlyWorkNorm, workingHalf);
       totalScanAbsenceDays += ev.absenceDayFraction * remainingFraction;
       totalLateMinutes += ev.lateMinutes;
+
+      if (workingHalf === 'FULL' && input.attendancePunches?.length) {
+        const bounds = officeShiftMinuteBounds(input.monthlyWorkNorm);
+        if (bounds) {
+          const dayPunches = input.attendancePunches.filter((p) => {
+            const pYmd = new Date(p.punchedAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+            return pYmd === ymd;
+          });
+          const ins = dayPunches
+            .filter((p) => p.direction === 'IN')
+            .map((p) => p.punchedAt)
+            .sort((a, b) => a - b);
+          const outs = dayPunches
+            .filter((p) => p.direction === 'OUT')
+            .map((p) => p.punchedAt)
+            .sort((a, b) => a - b);
+          const slots = assignFourScanSlots(ins, outs, bounds);
+          if (slots.morningInMs != null && slots.afternoonInMs != null) {
+            const afternoonInMin = bangkokMinutesFromMidnight(slots.afternoonInMs);
+            if (
+              afternoonInMin > bounds.afternoonLateCutoffMin
+              && afternoonInMin <= bounds.afternoonEndMin
+            ) {
+              totalLateMinutes += afternoonInMin - bounds.afternoonLateCutoffMin;
+            }
+          }
+        }
+      }
     }
   }
 
