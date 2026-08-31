@@ -1,4 +1,17 @@
+import type { OfficeShiftMinuteBounds } from '@/lib/hr/monthly-work-norm-policy';
+
 const TIME_RE = /^(\d{1,2}):(\d{2})$/;
+
+function overlapMinutes(
+  rangeStart: number,
+  rangeEnd: number,
+  blockStart: number,
+  blockEnd: number,
+): number {
+  const start = Math.max(rangeStart, blockStart);
+  const end = Math.min(rangeEnd, blockEnd);
+  return Math.max(0, end - start);
+}
 
 /** แปลง HH:mm → นาทีจากเที่ยงคืน (null ถ้าผิดรูปแบบ) */
 export function parseAttendanceHm(hm: string | null | undefined): number | null {
@@ -27,12 +40,36 @@ export function formatAttendanceHm(totalMin: number): string {
   return `${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}`;
 }
 
-/** ชั่วโมง OT จากช่วงเวลา (end ต้องหลัง start ในวันเดียวกัน) */
-export function otHoursFromHmRange(startHm: string, endHm: string): number | null {
+/** นาที OT ที่นับจริง — หักช่วงพักที่คล่อม (ถ้าระบุ bounds) */
+export function otBillableMinutesFromHmRange(
+  startHm: string,
+  endHm: string,
+  bounds?: OfficeShiftMinuteBounds | null,
+): number | null {
   const startMin = parseAttendanceHm(startHm);
   const endMin = parseAttendanceHm(endHm);
   if (startMin === null || endMin === null || endMin <= startMin) return null;
-  return Math.round(((endMin - startMin) / 60) * 100) / 100;
+  let billable = endMin - startMin;
+  if (bounds && bounds.afternoonStartMin > bounds.morningEndMin) {
+    billable -= overlapMinutes(
+      startMin,
+      endMin,
+      bounds.morningEndMin,
+      bounds.afternoonStartMin,
+    );
+  }
+  return billable > 0 ? billable : null;
+}
+
+/** ชั่วโมง OT จากช่วงเวลา (end ต้องหลัง start ในวันเดียวกัน) — หักพักเมื่อส่ง bounds */
+export function otHoursFromHmRange(
+  startHm: string,
+  endHm: string,
+  bounds?: OfficeShiftMinuteBounds | null,
+): number | null {
+  const billable = otBillableMinutesFromHmRange(startHm, endHm, bounds);
+  if (billable === null) return null;
+  return Math.round((billable / 60) * 100) / 100;
 }
 
 export function formatAttendanceHmRange(startHm: string, endHm: string): string {

@@ -116,11 +116,16 @@ function segmentLabel(category: OfficeOvertimePaySegmentCategory): string {
   }
 }
 
+function isBreakMinute(minute: number, bounds: OfficeShiftMinuteBounds): boolean {
+  return minute >= bounds.morningEndMin && minute < bounds.afternoonStartMin;
+}
+
 function classifySegment(
   midMin: number,
   isHoliday: boolean,
   bounds: OfficeShiftMinuteBounds,
 ): OfficeOvertimePaySegmentCategory | null {
+  if (isBreakMinute(midMin, bounds)) return null;
   const inNormal = isNormalWorkMinute(midMin, bounds);
   if (isHoliday) {
     return inNormal ? 'holiday_normal_work' : 'holiday_overtime';
@@ -216,12 +221,17 @@ export function computeOfficeOvertimePayFromTimeRange(input: {
 }
 
 /** ตรวจสอบช่วงเวลา OT ก่อนบันทึก */
-export function validateOfficeOvertimeHmRange(startHm: string, endHm: string): string | null {
+export function validateOfficeOvertimeHmRange(
+  startHm: string,
+  endHm: string,
+  norm?: MonthlyWorkNormPolicyConfig | null,
+): string | null {
   const start = normalizeAttendanceHmInput(startHm);
   const end = normalizeAttendanceHmInput(endHm);
   if (!start || !end) return 'กรุณาระบุเวลาเริ่มและเวลาสิ้นสุด (HH:mm)';
-  const hours = otHoursFromHmRange(start, end);
-  if (hours === null || hours <= 0) return 'เวลาสิ้นสุดต้องหลังเวลาเริ่ม';
+  const bounds = norm ? officeShiftMinuteBounds(norm) : null;
+  const hours = otHoursFromHmRange(start, end, bounds);
+  if (hours === null || hours <= 0) return 'เวลาสิ้นสุดต้องหลังเวลาเริ่ม (หลังหักพัก)';
   if (hours > 24) return 'ช่วง OT ต้องไม่เกิน 24 ชม.';
   return null;
 }

@@ -1,5 +1,7 @@
 /** นโยบายวันทำงานมาตรฐานต่อเดือน / เวลาทำงานปกติ — เก็บใน payroll_policies kind=monthly_work_norm */
 
+import { otHoursFromHmRange } from '@/lib/attendance/overtime-time';
+
 export type MonthlyWorkNormPolicyConfig = {
   /** จำนวนวันทำงานมาตรฐานต่อเดือน (หารเงินเดือนเมื่อขาดงาน / ไม่ครบวัน) */
   standardWorkingDaysPerMonth: number;
@@ -38,6 +40,15 @@ export const DEFAULT_MONTHLY_WORK_NORM: MonthlyWorkNormPolicyConfig = {
   officeOvertimeHourMultiplier: 1.5,
   officeHolidayHourMultiplier: 1.0,
 };
+
+/** ชั่วโมง OT จากช่วงเวลา — หักช่วงพักตามนโยบายเวลางาน */
+export function otHoursFromWorkNormHmRange(
+  startHm: string,
+  endHm: string,
+  cfg: MonthlyWorkNormPolicyConfig,
+): number | null {
+  return otHoursFromHmRange(startHm, endHm, officeShiftMinuteBounds(cfg));
+}
 
 /** จำนวนนาทีต่อวันทำงานปกติ — ใช้หารรายวัน → นาที (ไม่รวมพัก) */
 export function dailyWorkingMinutes(cfg: MonthlyWorkNormPolicyConfig): number {

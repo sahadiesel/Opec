@@ -1,5 +1,5 @@
 import type { AttendanceOvertimeRequestDoc, AttendanceOvertimeRequestStatus } from '@/lib/attendance/types';
-import { otHoursFromHmRange } from '@/lib/attendance/overtime-time';
+import { otHoursFromWorkNormHmRange, DEFAULT_MONTHLY_WORK_NORM } from '@/lib/hr/monthly-work-norm-policy';
 
 export type AttendanceOvertimeDayDisplay = {
   hours: number | null;
@@ -44,6 +44,13 @@ function requestEventMs(r: {
 }
 
 function overtimeHoursFromRequest(request: AttendanceOvertimeRequestDoc): number | null {
+  const hoursStored = Number(
+    request.status === 'APPROVED'
+      ? (request.approvedOtHours ?? request.requestedOtHours)
+      : request.requestedOtHours,
+  );
+  if (Number.isFinite(hoursStored) && hoursStored > 0) return hoursStored;
+
   const startHm =
     request.status === 'APPROVED'
       ? (request.approvedOtStartHm ?? request.requestedOtStartHm)
@@ -53,15 +60,10 @@ function overtimeHoursFromRequest(request: AttendanceOvertimeRequestDoc): number
       ? (request.approvedOtEndHm ?? request.requestedOtEndHm)
       : request.requestedOtEndHm;
   if (startHm && endHm) {
-    const fromRange = otHoursFromHmRange(String(startHm), String(endHm));
+    const fromRange = otHoursFromWorkNormHmRange(String(startHm), String(endHm), DEFAULT_MONTHLY_WORK_NORM);
     if (fromRange != null && fromRange > 0) return fromRange;
   }
-  const hours = Number(
-    request.status === 'APPROVED'
-      ? (request.approvedOtHours ?? request.requestedOtHours)
-      : request.requestedOtHours,
-  );
-  return Number.isFinite(hours) && hours > 0 ? hours : null;
+  return null;
 }
 
 /** Latest OT request per subject + calendar day — prefers approved over pending over rejected. */

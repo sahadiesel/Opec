@@ -46,8 +46,8 @@ import { formatAttendanceOvertimeHours } from '@/lib/attendance/overtime-display
 import {
   formatAttendanceHmRange,
   normalizeAttendanceHmInput,
-  otHoursFromHmRange,
 } from '@/lib/attendance/overtime-time';
+import { DEFAULT_MONTHLY_WORK_NORM, otHoursFromWorkNormHmRange } from '@/lib/hr/monthly-work-norm-policy';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { loadPayrollPoliciesFromFirestore, resolvePayrollPoliciesForDate } from '@/lib/payroll/d8';
 import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
@@ -100,6 +100,13 @@ export default function AttendanceOvertimeApprovalPage() {
   const { data: pendingRows, isLoading } = useCollection<AttendanceOvertimeRequestDoc>(pendingQ as any);
 
   useEffect(() => {
+    if (!pendingRows?.length || !firestore) return;
+    for (const row of pendingRows) {
+      void loadNormForDate(row.workDateYmd);
+    }
+  }, [pendingRows, firestore]);
+
+  useEffect(() => {
     if (!pendingRows?.length) return;
     const next: Record<string, { start: string; end: string; hours: string }> = {};
     for (const row of pendingRows) {
@@ -141,12 +148,13 @@ export default function AttendanceOvertimeApprovalPage() {
     let approvedHours = 0;
 
     if (hasTimeRange) {
-      const rangeErr = validateOfficeOvertimeHmRange(startRaw, endRaw);
+      const norm = (await loadNormForDate(row.workDateYmd)) ?? monthlyWorkNormFromPolicyRecord(null);
+      const rangeErr = validateOfficeOvertimeHmRange(startRaw, endRaw, norm);
       if (rangeErr) {
         toast({ variant: 'destructive', title: 'ช่วงเวลา OT ไม่ถูกต้อง', description: rangeErr });
         return;
       }
-      const hours = otHoursFromHmRange(startHm!, endHm!);
+      const hours = otHoursFromWorkNormHmRange(startHm!, endHm!, norm);
       if (hours === null || hours <= 0) {
         toast({ variant: 'destructive', title: 'ช่วงเวลา OT ไม่ถูกต้อง', description: 'เวลาสิ้นสุดต้องหลังเวลาเริ่ม' });
         return;
@@ -355,12 +363,14 @@ export default function AttendanceOvertimeApprovalPage() {
             ) : (
               pendingRows.map((row) => {
                 const draft = approveRangeById[row.id];
+                const rowNorm = normByAsOf[row.workDateYmd] ?? DEFAULT_MONTHLY_WORK_NORM;
                 const hasRequestedRange = !!(row.requestedOtStartHm && row.requestedOtEndHm);
                 const computedHours =
                   draft?.start && draft?.end
-                    ? otHoursFromHmRange(
+                    ? otHoursFromWorkNormHmRange(
                         normalizeAttendanceHmInput(draft.start) ?? '',
                         normalizeAttendanceHmInput(draft.end) ?? '',
+                        rowNorm,
                       )
                     : null;
 

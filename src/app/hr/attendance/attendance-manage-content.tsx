@@ -1175,6 +1175,7 @@ export function HrAttendanceManagePageContent() {
           pendingRequestId={otCtx.pendingRequestId}
           pendingStartHm={otCtx.pendingStartHm}
           pendingEndHm={otCtx.pendingEndHm}
+          monthlyWorkNorm={monthlyWorkNorm}
         />
       ) : null}
 

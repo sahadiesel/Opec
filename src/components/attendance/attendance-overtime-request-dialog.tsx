@@ -23,8 +23,8 @@ import { formatAttendanceOvertimeHours } from '@/lib/attendance/overtime-display
 import {
   formatAttendanceHmRange,
   normalizeAttendanceHmInput,
-  otHoursFromHmRange,
 } from '@/lib/attendance/overtime-time';
+import { otHoursFromWorkNormHmRange, type MonthlyWorkNormPolicyConfig } from '@/lib/hr/monthly-work-norm-policy';
 import { validateOfficeOvertimeHmRange } from '@/lib/payroll/office-overtime-interval-pay';
 import { formatDateThaiBE } from '@/lib/date-thai';
 
@@ -44,6 +44,7 @@ export function AttendanceOvertimeRequestDialog({
   pendingRequestId = null,
   pendingStartHm = null,
   pendingEndHm = null,
+  monthlyWorkNorm,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -58,6 +59,7 @@ export function AttendanceOvertimeRequestDialog({
   pendingRequestId?: string | null;
   pendingStartHm?: string | null;
   pendingEndHm?: string | null;
+  monthlyWorkNorm: MonthlyWorkNormPolicyConfig;
 }) {
   const { toast } = useToast();
   const [otStartHm, setOtStartHm] = useState('');
@@ -74,8 +76,8 @@ export function AttendanceOvertimeRequestDialog({
     const start = normalizeAttendanceHmInput(otStartHm);
     const end = normalizeAttendanceHmInput(otEndHm);
     if (!start || !end) return null;
-    return otHoursFromHmRange(start, end);
-  }, [otStartHm, otEndHm]);
+    return otHoursFromWorkNormHmRange(start, end, monthlyWorkNorm);
+  }, [otStartHm, otEndHm, monthlyWorkNorm]);
 
   useEffect(() => {
     if (!open) return;
@@ -99,7 +101,7 @@ export function AttendanceOvertimeRequestDialog({
 
     const startHm = normalizeAttendanceHmInput(otStartHm);
     const endHm = normalizeAttendanceHmInput(otEndHm);
-    const rangeErr = validateOfficeOvertimeHmRange(otStartHm, otEndHm);
+    const rangeErr = validateOfficeOvertimeHmRange(otStartHm, otEndHm, monthlyWorkNorm);
     if (rangeErr || !startHm || !endHm) {
       toast({
         variant: 'destructive',
@@ -109,7 +111,7 @@ export function AttendanceOvertimeRequestDialog({
       return;
     }
 
-    const hours = otHoursFromHmRange(startHm, endHm);
+    const hours = otHoursFromWorkNormHmRange(startHm, endHm, monthlyWorkNorm);
     if (hours === null || hours <= 0) {
       toast({
         variant: 'destructive',
