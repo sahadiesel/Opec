@@ -142,6 +142,14 @@ function beYearFromCe(ceYear: number): number {
   return ceYear + BE_YEAR_OFFSET;
 }
 
+function currentLeaveFilterMonthYear(): { yearBe: number; month: number } {
+  const ymd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+  return {
+    yearBe: beYearFromCe(Number(ymd.slice(0, 4))),
+    month: Number(ymd.slice(5, 7)),
+  };
+}
+
 const yearOptionsBe = (() => {
   const cy = new Date().getFullYear();
   return Array.from({ length: 8 }, (_, i) => beYearFromCe(cy - i));
@@ -297,8 +305,12 @@ export default function HrLeavesManagementPage() {
     [currentUser],
   );
 
-  const [yearFilter, setYearFilter] = useState<'ALL' | number>('ALL');
-  const [monthFilter, setMonthFilter] = useState<'ALL' | number>('ALL');
+  const [yearFilter, setYearFilter] = useState<'ALL' | number>(
+    () => currentLeaveFilterMonthYear().yearBe,
+  );
+  const [monthFilter, setMonthFilter] = useState<'ALL' | number>(
+    () => currentLeaveFilterMonthYear().month,
+  );
   const [statusFilter, setStatusFilter] = useState<'ALL' | OfficeLeaveStatus>('ALL');
   const [typeFilter, setTypeFilter] = useState<'ALL' | OfficeLeaveType>('ALL');
   const [staffFilter, setStaffFilter] = useState<string>('ALL');

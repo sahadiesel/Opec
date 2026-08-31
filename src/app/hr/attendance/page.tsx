@@ -87,18 +87,18 @@ import {
   Timer,
 } from 'lucide-react';
 import { formatDateThaiBE, formatPayrollYearMonthThaiBE } from '@/lib/date-thai';
-import type { AttendanceDayEffectiveRow } from '@/lib/attendance/correction-merge';
 import {
   buildOfficeAttendanceMonthlySummaryListPrintHtml,
   capOfficeAttendanceMonthlyStaffPrintRows,
   describeOfficeAttendanceMonthlySummaryPrintFilters,
-  officeLeaveTypeShortTh,
-  type OfficeAttendanceGridDayCell,
   type OfficeAttendanceMonthlyStaffPrintRow,
 } from '@/lib/documents/office-attendance-monthly-summary-list-print';
+import {
+  buildOfficeAttendanceGridDayCell,
+  type OfficeAttendanceGridDayCell,
+} from '@/lib/attendance/office-attendance-grid-day-cell';
 import { OFFICE_LEAVE_REQUESTS_COLLECTION } from '@/lib/leaves/policy';
-import type { OfficeLeaveRequestDoc, OfficeLeaveType } from '@/lib/leaves/types';
-import { officeStaffAppliesScanTimeDeductions } from '@/lib/payroll/office-staff-payroll-attendance-basis';
+import type { OfficeLeaveRequestDoc } from '@/lib/leaves/types';
 import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import { cn } from '@/lib/utils';
 import {
@@ -114,6 +114,7 @@ import {
   attendanceOutCorrectedByOverride,
   buildAttendanceDayRows,
   countDaysWithEffectiveRecord,
+  punchesGroupedByBangkokYmd,
 } from '@/lib/attendance/correction-merge';
 import { adminResetAttendanceDay } from '@/lib/attendance/admin-day-reset';
 import { AttendanceCorrectionRequestDialog } from '@/components/attendance/attendance-correction-request-dialog';
@@ -129,12 +130,16 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import {
+  HR_STATUTORY_POLICY_MONTHLY_WORK_ID,
+  HR_WORKER_GLOBAL_LABOR_POLICY_ID,
+} from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import {
   hrSettingsCalendarHolidayLabelForYmd,
   isHrSettingsCalendarHolidayYmd,
   workerGlobalLaborContextFromPolicy,
 } from '@/lib/payroll/worker-global-labor-policy';
+import { monthlyWorkNormFromPolicyRecord } from '@/lib/payroll/office-payroll-period-deductions';
 import type { PayrollPolicyRecord } from '@/lib/types';
 
 /** พนักงานออฟฟิศที่อยู่ในทะเบียนปัจจุบัน — ไม่รวมผู้บริหาร (แยกทะเบียน/งวด) */
@@ -204,72 +209,6 @@ function leaveOverlapsPayrollMonth(r: OfficeLeaveRequestDoc, payrollMonth: strin
   const start = r.startDate.slice(0, 10);
   const end = r.endDate.slice(0, 10);
   return start <= monthEnd && end >= monthStart;
-}
-
-function approvedLeaveTypeOnYmd(
-  staffId: string,
-  ymd: string,
-  leaves: OfficeLeaveRequestDoc[],
-): OfficeLeaveType | null {
-  for (const r of leaves) {
-    if (r.staffId !== staffId || r.status !== 'APPROVED') continue;
-    const start = r.startDate.slice(0, 10);
-    const end = r.endDate.slice(0, 10);
-    if (ymd >= start && ymd <= end) return r.leaveType;
-  }
-  return null;
-}
-
-function buildAttendanceGridDayCell(
-  d: AttendanceDayEffectiveRow,
-  staff: OfficeStaff,
-  ymd: string,
-  approvedLeaves: OfficeLeaveRequestDoc[],
-  weeklyRestPattern: WeeklyRestPatternForCalendar,
-  calendarHolidays: Parameters<typeof isHrSettingsCalendarHolidayYmd>[1],
-  todayBangkokYmd: string,
-): OfficeAttendanceGridDayCell {
-  const hasIn = d.effectiveInMs != null;
-  const hasOut = d.effectiveOutMs != null;
-  if (hasIn || hasOut) {
-    return {
-      inLabel: hasIn ? formatBangkokHmFromUtcMs(d.effectiveInMs!) : '—',
-      outLabel: hasOut ? formatBangkokHmFromUtcMs(d.effectiveOutMs!) : '—',
-      tone: 'time',
-    };
-  }
-
-  const staffStartYmd = staff.startDate?.slice(0, 10);
-  if (staffStartYmd && ymd < staffStartYmd) {
-    return { inLabel: '', outLabel: '', tone: 'off' };
-  }
-
-  const employmentEndYmd = staff.employmentEndDate?.slice(0, 10);
-  if (employmentEndYmd && ymd > employmentEndYmd) {
-    return { inLabel: '', outLabel: '', tone: 'off' };
-  }
-
-  if (ymd > todayBangkokYmd) {
-    return { inLabel: '', outLabel: '', tone: 'off' };
-  }
-
-  const leaveType = approvedLeaveTypeOnYmd(staff.id, ymd, approvedLeaves);
-  if (leaveType) {
-    return {
-      inLabel: officeLeaveTypeShortTh(leaveType),
-      outLabel: '',
-      tone: 'leave',
-    };
-  }
-
-  const isWorkingDay =
-    !isBangkokWeeklyRestDayYmd(ymd, weeklyRestPattern)
-    && !isHrSettingsCalendarHolidayYmd(ymd, calendarHolidays);
-  if (isWorkingDay && officeStaffAppliesScanTimeDeductions(staff)) {
-    return { inLabel: 'ขาด', outLabel: '', tone: 'absent' };
-  }
-
-  return { inLabel: '', outLabel: '', tone: 'off' };
 }
 
 function dayKindBadges(
@@ -355,6 +294,16 @@ export default function HrAttendanceManagePage() {
   );
   const weeklyRestPattern: WeeklyRestPatternForCalendar = workerGlobalLabor.weeklyRestPattern;
   const calendarHolidays = workerGlobalLabor.calendarHolidays;
+
+  const monthlyWorkNormPolicyRef = useMemoFirebase(
+    () => (firestore ? doc(firestore as Firestore, 'payroll_policies', HR_STATUTORY_POLICY_MONTHLY_WORK_ID) : null),
+    [firestore],
+  );
+  const { data: monthlyWorkNormPolicy } = useDoc<PayrollPolicyRecord>(monthlyWorkNormPolicyRef as any);
+  const monthlyWorkNorm = useMemo(
+    () => monthlyWorkNormFromPolicyRecord(monthlyWorkNormPolicy ?? null),
+    [monthlyWorkNormPolicy],
+  );
 
   /** วันทำงาน = วันที่ไม่ใช่วันหยุดประจำสัปดาห์ (ตามนโยบาย) และไม่ใช่วันหยุดในปฏิทิน HR Settings */
   const workingDaysInCalendarMonth = useMemo(() => {
@@ -523,17 +472,20 @@ export default function HrAttendanceManagePage() {
 
   const mapAttendanceStaffToPrintRow = useCallback(
     (row: (typeof summaryRowsAll)[number]): OfficeAttendanceMonthlyStaffPrintRow => {
+      const punchesByYmd = punchesGroupedByBangkokYmd(row.punches);
       const cellsByYmd: Record<string, OfficeAttendanceGridDayCell> = {};
       for (const d of row.dayRows) {
-        cellsByYmd[d.ymd] = buildAttendanceGridDayCell(
-          d,
-          row.staff,
-          d.ymd,
-          approvedLeavesInMonth,
+        cellsByYmd[d.ymd] = buildOfficeAttendanceGridDayCell({
+          dayRow: d,
+          dayPunches: punchesByYmd.get(d.ymd) ?? [],
+          staff: row.staff,
+          ymd: d.ymd,
+          approvedLeaves: approvedLeavesInMonth,
           weeklyRestPattern,
           calendarHolidays,
           todayBangkokYmd,
-        );
+          monthlyWorkNorm,
+        });
       }
       return {
         staffName: row.name,
@@ -541,7 +493,7 @@ export default function HrAttendanceManagePage() {
         cellsByYmd,
       };
     },
-    [approvedLeavesInMonth, calendarHolidays, weeklyRestPattern, todayBangkokYmd],
+    [approvedLeavesInMonth, calendarHolidays, monthlyWorkNorm, weeklyRestPattern, todayBangkokYmd],
   );
 
   const runAttendanceSummaryPrint = useCallback(

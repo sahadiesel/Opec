@@ -1,12 +1,12 @@
 import { formatPayrollYearMonthThaiBE } from '@/lib/date-thai';
 import { escapeHtmlDoc } from '@/lib/documents/standard-document-print';
 import type { OfficeLeaveType } from '@/lib/leaves/types';
+import type {
+  OfficeAttendanceGridDayCell,
+  OfficeAttendanceGridLine,
+} from '@/lib/attendance/office-attendance-grid-day-cell';
 
-export type OfficeAttendanceGridDayCell = {
-  inLabel: string;
-  outLabel: string;
-  tone: 'time' | 'leave' | 'absent' | 'off';
-};
+export type { OfficeAttendanceGridDayCell } from '@/lib/attendance/office-attendance-grid-day-cell';
 
 export type OfficeAttendanceMonthlyStaffPrintRow = {
   staffName: string;
@@ -50,12 +50,17 @@ function splitMonthYmDs(ymDs: string[]): { page1: string[]; page2: string[] } {
   };
 }
 
+function renderGridLine(line: OfficeAttendanceGridLine): string {
+  const html = line.label ? escapeHtmlDoc(line.label) : '&nbsp;';
+  return `<div class="oam-line oam-tone-${line.tone}">${html}</div>`;
+}
+
 function renderGridCell(c: OfficeAttendanceGridDayCell): string {
-  const inHtml = c.inLabel ? escapeHtmlDoc(c.inLabel) : '&nbsp;';
-  const outHtml = c.outLabel ? escapeHtmlDoc(c.outLabel) : '&nbsp;';
-  return `<td class="oam-grid-cell oam-tone-${c.tone}">
-    <div class="oam-in">${inHtml}</div>
-    <div class="oam-out">${outHtml}</div>
+  return `<td class="oam-grid-cell">
+    ${renderGridLine(c.morningIn)}
+    ${renderGridLine(c.morningOut)}
+    ${renderGridLine(c.afternoonIn)}
+    ${renderGridLine(c.afternoonOut)}
   </td>`;
 }
 
@@ -78,7 +83,16 @@ function renderGridPage(params: {
       : staffRows
           .map((staff) => {
             const dayCells = dayYmDs
-              .map((ymd) => renderGridCell(staff.cellsByYmd[ymd] ?? { inLabel: '', outLabel: '', tone: 'off' }))
+              .map((ymd) =>
+                renderGridCell(
+                  staff.cellsByYmd[ymd] ?? {
+                    morningIn: { label: '', tone: 'off' },
+                    morningOut: { label: '', tone: 'off' },
+                    afternoonIn: { label: '', tone: 'off' },
+                    afternoonOut: { label: '', tone: 'off' },
+                  },
+                ),
+              )
               .join('');
             return `<tr>
               <td class="oam-name">${escapeHtmlDoc(staff.staffName)}</td>
@@ -89,7 +103,7 @@ function renderGridPage(params: {
 
   return `<section class="oam-page">
     <h2 class="oam-page-title">${escapeHtmlDoc(pageLabel)} · ${escapeHtmlDoc(formatPayrollYearMonthThaiBE(payrollMonth))}</h2>
-    <p class="oam-page-hint">บรรทัดบน = เข้างาน · บรรทัดล่าง = ออกงาน · ไม่มีเวลา: กิจ/ป่วย/พักร้อน (ใบลาอนุมัติ) · ขาด = วันทำงานที่ผ่านมาแล้วและใช้ฐานสแกน · ว่าง = วันหยุด / ก่อนเริ่มงาน / ยังไม่ถึงวัน / ฐานเงินเดือน</p>
+    <p class="oam-page-hint">4 บรรทัดต่อวัน: เข้าเช้า · ออกเที่ยง · เข้าบ่าย · ออกเย็น · ลาครึ่งวัน/ทั้งวัน · รอสแกน = ยังไม่ถึงเวลาตัดขาด · ขาด = เกินเวลาตาม HR Settings · ว่าง/— = วันหยุด / ก่อนเริ่มงาน / ยังไม่ถึงวัน / ฐานเงินเดือน</p>
     <table class="oam-grid">
       <thead>
         <tr>
@@ -175,12 +189,13 @@ export function buildOfficeAttendanceMonthlySummaryListPrintHtml(params: {
   .oam-name-head { width: 9.5rem; text-align: left !important; padding-left: 6px !important; }
   .oam-day-head { min-width: 1.75rem; }
   .oam-name { font-size: 8.5pt; font-weight: 600; padding: 4px 6px !important; text-align: left; vertical-align: middle; word-wrap: break-word; }
-  .oam-grid-cell { height: 2.6rem; text-align: center; vertical-align: middle; padding: 0 !important; }
-  .oam-in, .oam-out { font-family: ui-monospace, monospace; font-size: 7.5pt; line-height: 1.25; padding: 1px 2px; min-height: 1.1rem; }
-  .oam-in { border-bottom: 1px solid #ddd; }
-  .oam-tone-leave .oam-in { color: #1d4ed8; font-weight: 700; font-family: Sarabun, sans-serif; font-size: 7pt; }
-  .oam-tone-absent .oam-in { color: #b91c1c; font-weight: 800; font-family: Sarabun, sans-serif; font-size: 7.5pt; }
-  .oam-tone-off .oam-in, .oam-tone-off .oam-out { color: #ccc; }
+  .oam-grid-cell { height: 4.8rem; text-align: center; vertical-align: middle; padding: 0 !important; }
+  .oam-line { font-family: ui-monospace, monospace; font-size: 7pt; line-height: 1.2; padding: 1px 2px; min-height: 1rem; border-bottom: 1px solid #eee; }
+  .oam-line:last-child { border-bottom: none; }
+  .oam-tone-leave { color: #1d4ed8; font-weight: 700; font-family: Sarabun, sans-serif; font-size: 6.5pt; }
+  .oam-tone-absent { color: #b91c1c; font-weight: 800; font-family: Sarabun, sans-serif; font-size: 6.5pt; }
+  .oam-tone-waiting { color: #b45309; font-weight: 700; font-family: Sarabun, sans-serif; font-size: 6.5pt; }
+  .oam-tone-off { color: #ccc; }
   .oam-empty { text-align: center; padding: 16px; color: #666; font-style: italic; }
   .oam-foot { margin-top: 6px; font-size: 8pt; color: #666; }
 </style>
