@@ -378,6 +378,42 @@ export function canSaveFinalClearanceWorkStart(
   return { ok: true };
 }
 
+/**
+ * ลำดับวันที่ Final Clearance:
+ * - ขั้น 3 (Pre-Mob) ต้องอยู่ก่อนขั้น 4 (Mob) — ห้ามวันเดียวกันหรือหลัง
+ * - ขั้น 4 (Mob) ต้องอยู่ก่อนขั้น 5 (Start working) — ห้ามวันเดียวกันหรือหลัง
+ * ข้ามขั้นที่ไม่มีวันที่ (skipped / ว่าง) จะไม่ตรวจคู่ที่ขาด
+ */
+export function validateFinalClearanceDateOrder(opts: {
+  preMobYmd?: string | null;
+  preMobSkipped?: boolean;
+  mobYmd?: string | null;
+  mobSkipped?: boolean;
+  workStartYmd?: string | null;
+}): FinalClearanceGate {
+  const isYmd = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const pre = (opts.preMobYmd || '').trim();
+  const mob = (opts.mobYmd || '').trim();
+  const work = (opts.workStartYmd || '').trim();
+  const preActive = !opts.preMobSkipped && isYmd(pre);
+  const mobActive = !opts.mobSkipped && isYmd(mob);
+  const workActive = isYmd(work);
+
+  if (preActive && mobActive && pre >= mob) {
+    return {
+      ok: false,
+      message: 'วัน Pre-Mob (ขั้น 3) ต้องอยู่ก่อนวัน Mob (ขั้น 4) — ห้ามวันเดียวกันหรือหลังกว่า',
+    };
+  }
+  if (mobActive && workActive && mob >= work) {
+    return {
+      ok: false,
+      message: 'วัน Mob (ขั้น 4) ต้องอยู่ก่อนวันเริ่มงาน (ขั้น 5) — ห้ามวันเดียวกันหรือหลังกว่า',
+    };
+  }
+  return { ok: true };
+}
+
 /** ย้อนขั้น 1 ได้เมื่อยังไม่บันทึก Standby/Mob */
 export function canRevertFinalClearanceStep1(a: Assignment): FinalClearanceGate {
   if (isMobUnassigned(a)) {

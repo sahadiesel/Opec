@@ -94,6 +94,7 @@ import {
   mobStandbyMobDayStatusCode,
   thailandTodayYmd,
   travelReadyBadgeState,
+  validateFinalClearanceDateOrder,
 } from '@/lib/ops/mobilization-final-clearance';
 import type { MobStep2Choice } from '@/lib/ops/mob-day-charge';
 import {
@@ -553,6 +554,17 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวัน Pre-Mob (รูปแบบ yyyy-mm-dd)' });
       return false;
     }
+    const orderGate = validateFinalClearanceDateOrder({
+      preMobYmd: ymd,
+      preMobSkipped: false,
+      mobYmd: (standbyDateDraft || '').trim() || (assignment.mobStandbyDate || '').trim(),
+      mobSkipped: assignment.mobMobSkipped === true,
+      workStartYmd: (workingStartDateDraft || '').trim() || (assignment.mobWorkingStartDate || '').trim(),
+    });
+    if (!orderGate.ok) {
+      toast({ variant: 'destructive', title: 'ลำดับวันที่ไม่ถูกต้อง', description: orderGate.message });
+      return false;
+    }
     const editing = clearanceFormEditing || clearanceEditMode === 1;
     const gate = canSaveFinalClearancePreMob(assignment, {
       editingExisting: editing,
@@ -769,6 +781,17 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวัน Mob (รูปแบบ yyyy-mm-dd)' });
       return false;
     }
+    const orderGate = validateFinalClearanceDateOrder({
+      preMobYmd: (preMobDateDraft || '').trim() || (assignment.mobPreMobDate || '').trim(),
+      preMobSkipped: assignment.mobPreMobSkipped === true,
+      mobYmd: ymd,
+      mobSkipped: false,
+      workStartYmd: (workingStartDateDraft || '').trim() || (assignment.mobWorkingStartDate || '').trim(),
+    });
+    if (!orderGate.ok) {
+      toast({ variant: 'destructive', title: 'ลำดับวันที่ไม่ถูกต้อง', description: orderGate.message });
+      return false;
+    }
     const editing = clearanceFormEditing || clearanceEditMode === 2;
     const gate = canSaveFinalClearanceMob(assignment, {
       editingExisting: editing,
@@ -923,6 +946,17 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         title: 'วันเริ่มงานไม่ถูกต้อง',
         description: 'ต้องเลือกวันที่หลังวัน Mob — ช่วงว่างจะถูกบันทึกเป็น Standby อัตโนมัติ',
       });
+      return false;
+    }
+    const orderGate = validateFinalClearanceDateOrder({
+      preMobYmd: (preMobDateDraft || '').trim() || (assignment.mobPreMobDate || '').trim(),
+      preMobSkipped: assignment.mobPreMobSkipped === true,
+      mobYmd: hasStandby ? standbyYmd : '',
+      mobSkipped: mobSkipped || !hasStandby,
+      workStartYmd: workYmd,
+    });
+    if (!orderGate.ok) {
+      toast({ variant: 'destructive', title: 'ลำดับวันที่ไม่ถูกต้อง', description: orderGate.message });
       return false;
     }
     const editing = clearanceFormEditing || clearanceEditMode === 3;
@@ -1173,6 +1207,22 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     }
     if (locDirty && !locDraft) {
       toast({ variant: 'destructive', title: 'ระบุสถานที่', description: 'สถานที่ว่างไม่ได้' });
+      return;
+    }
+
+    // ตรวจลำดับวันที่จากค่าที่จะบันทึก (draft ที่ dirty + ค่าเดิมที่ไม่ได้แก้)
+    const effectivePre = isYmd(preDraft) ? preDraft : prevPre;
+    const effectiveMob = isYmd(mobDraft) ? mobDraft : prevMob;
+    const effectiveWork = isYmd(workDraft) ? workDraft : prevWork;
+    const orderGate = validateFinalClearanceDateOrder({
+      preMobYmd: effectivePre,
+      preMobSkipped: assignment.mobPreMobSkipped === true && !preDirty,
+      mobYmd: effectiveMob,
+      mobSkipped: assignment.mobMobSkipped === true && !mobDirty,
+      workStartYmd: effectiveWork,
+    });
+    if (!orderGate.ok) {
+      toast({ variant: 'destructive', title: 'ลำดับวันที่ไม่ถูกต้อง', description: orderGate.message });
       return;
     }
 
