@@ -635,14 +635,16 @@ function AssignmentsPageContent() {
     // 2. Readiness Compliance Check
     if (!isWorkerDispatchReady(worker)) {
       const policyHint = worker.readinessManualHold
-        ? 'HR ปิดสถานะพร้อมชั่วคราว — เปิดสวิตช์ «พร้อม» ที่แท็บข้อมูลประวัติ (ข้อมูลส่วนตัว)'
+        ? 'ไม่พร้อมทำงาน (Not Ready to Work) — HR ปิดสถานะพร้อมทำงาน · เปิดสวิตช์ «พร้อมทำงาน» ที่แท็บข้อมูลส่วนตัว'
         : worker.readinessStatus === 'BLOCKED'
-          ? `เอกสารเข้าเงื่อนไขบล็อกการ Assign (ใกล้หมดอายุใน ${worker.nearestExpiryInDays ?? '-'} วัน)`
-          : `คนงานมีสถานะ ${worker.readinessStatus}`;
+          ? `ไม่พร้อมมอบหมายจากเอกสาร (Not Ready to Assign) — เอกสารเข้าเงื่อนไขบล็อก (ใกล้หมดอายุใน ${worker.nearestExpiryInDays ?? '-'} วัน)`
+          : `ไม่พร้อมมอบหมายจากเอกสาร (Not Ready to Assign) — สถานะ ${worker.readinessStatus}`;
       toast({ 
         variant: "destructive", 
-        title: "ความพร้อมไม่ผ่านเกณฑ์ (Not Ready)", 
-        description: `${policyHint} กรุณาตรวจสอบเอกสาร/ใบเซอร์ก่อนมอบหมายงาน` 
+        title: worker.readinessManualHold
+          ? 'ไม่พร้อมทำงาน (Not Ready to Work)'
+          : 'ไม่พร้อมมอบหมายจากเอกสาร (Not Ready to Assign)', 
+        description: `${policyHint} กรุณาตรวจสอบก่อนมอบหมายงาน` 
       });
       return;
     }

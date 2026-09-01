@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -23,10 +23,11 @@ import {
   Info,
   Loader2,
   Package,
+  Printer,
 } from 'lucide-react';
 import Link from 'next/link';
 import { Input } from '@/components/ui/input';
-import { Worker, ReadinessStatus, User, Position, DailyTimesheet, Assignment, WorkerStatus } from '@/lib/types';
+import { Worker, ReadinessStatus, User, Position, DailyTimesheet, Assignment, WorkerStatus, Customer } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -69,11 +70,38 @@ import { assertWorkerCanBeDeleted, deleteWorkerWithAuditLog } from '@/lib/servic
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
-import { effectiveWorkerJobStatus, displayWorkerRegistryJobStatus, workerRegistryJobStatusBadgeProps, type WorkerRegistryJobStatusDisplay } from '@/lib/ops/worker-effective-job-status';
+import { effectiveWorkerJobStatus, displayWorkerRegistryJobStatus, workerRegistryJobStatusBadgeProps, resolveWorkerOnSiteAssignment, resolveWorkerAssignedAssignment, formatWorkerOnSiteCompanyLocation, type WorkerRegistryJobStatusDisplay } from '@/lib/ops/worker-effective-job-status';
 import { isWorkerDispatchReady } from '@/lib/worker-readiness';
+import { formatWorkerNotReadyReasonDisplay } from '@/lib/hr/worker-not-ready-reason';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import {
+  buildWorkerListPrintHtml,
+  capWorkerListPrintRows,
+  describeWorkerListPrintFilters,
+  type WorkerListPrintRow,
+} from '@/lib/documents/worker-list-print';
 
 type WorkerSortKey = 'name' | 'hours';
 type WorkerSortDir = 'asc' | 'desc';
+
+function readinessStatusPrintLabel(status: ReadinessStatus | undefined): string {
+  switch (status) {
+    case 'READY':
+      return 'READY';
+    case 'MISSING_CERTIFICATE':
+      return 'เซอร์ไม่ครบ';
+    case 'MEDICAL_EXPIRED':
+      return 'MED EXPIRED';
+    case 'DRUG_TEST_EXPIRED':
+      return 'DRUG EXPIRED';
+    case 'DOCUMENT_EXPIRED':
+      return 'DOC EXPIRED';
+    case 'BLOCKED':
+      return 'BLOCKED';
+    default:
+      return status ? String(status) : 'PENDING';
+  }
+}
 
 function workerDisplayNameKey(w: Worker): string {
   return `${w.firstName || ''} ${w.lastName || ''}`.trim() || w.workerCode || w.id;
@@ -115,7 +143,8 @@ type WorkerJobStatusFilter = 'all' | WorkerRegistryJobStatusDisplay;
 const WORKER_JOB_STATUS_FILTER_OPTIONS: { value: WorkerJobStatusFilter; label: string }[] = [
   { value: 'all', label: 'ทุกสถานะงาน' },
   { value: 'AVAILABLE', label: 'AVAILABLE' },
-  { value: 'NOT_READY', label: 'NOT READY' },
+  { value: 'NOT_READY_TO_ASSIGN', label: 'NOT READY TO ASSIGN' },
+  { value: 'NOT_READY_TO_WORK', label: 'NOT READY TO WORK' },
   { value: 'ASSIGNED', label: 'ASSIGNED' },
   { value: 'ON_SITE', label: 'ON_SITE' },
   { value: 'ON_LEAVE', label: 'ON_LEAVE' },
@@ -194,6 +223,21 @@ export default function WorkersPage() {
   }, [firestore, firebaseUser, canViewWorkers]);
   const { data: allMobilizations } = useCollection<Assignment>(mobilizationsQuery as any);
 
+  const customersQuery = useMemoFirebase(() => {
+    if (!firestore || !firebaseUser || !canViewWorkers) return null;
+    return collection(firestore, 'customers');
+  }, [firestore, firebaseUser, canViewWorkers]);
+  const { data: allCustomers } = useCollection<Customer>(customersQuery as any);
+
+  const customerNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of allCustomers ?? []) {
+      const name = (c.name || '').trim();
+      if (name) m.set(c.id, name);
+    }
+    return m;
+  }, [allCustomers]);
+
   const workerHoursById = useMemo(() => {
     const bucket = new Map<string, { totalHours: number; firstWorkedAt: number | null; lastWorkedAt: number | null }>();
     (allTimesheets || []).forEach((ts) => {
@@ -265,6 +309,8 @@ export default function WorkersPage() {
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
   const [positionFilter, setPositionFilter] = useState('all');
   const [jobStatusFilter, setJobStatusFilter] = useState<WorkerJobStatusFilter>('all');
   const [workerSearchQuery, setWorkerSearchQuery] = useState('');
@@ -304,8 +350,37 @@ export default function WorkersPage() {
         ? compareWorkersByName(a, b, workerSort.dir)
         : compareWorkersByHours(a, b, workerSort.dir, workerHoursById),
     );
-    return list;
-  }, [searchFilteredWorkers, workerSort, workerHoursById]);
+    const mobs = allMobilizations ?? [];
+    /** เอกสารไม่ครบ (NOT READY TO ASSIGN) อยู่ในรายการหลัก — เฉพาะ HR hold (TO WORK) ไปท้าย */
+    const active: Worker[] = [];
+    const notReadyToWork: Worker[] = [];
+    for (const w of list) {
+      if (displayWorkerRegistryJobStatus(w, mobs) === 'NOT_READY_TO_WORK') notReadyToWork.push(w);
+      else active.push(w);
+    }
+    return { active, notReadyToWork, all: [...active, ...notReadyToWork] };
+  }, [searchFilteredWorkers, workerSort, workerHoursById, allMobilizations]);
+
+  /** ลำดับเดียวกับตารางทะเบียน — ใช้กับพิมพ์ทั้งหมดให้ตรงเรียงบนหน้าจอ */
+  const orderWorkersForPrint = useCallback(
+    (source: Worker[]) => {
+      const list = [...source];
+      list.sort((a, b) =>
+        workerSort.key === 'name'
+          ? compareWorkersByName(a, b, workerSort.dir)
+          : compareWorkersByHours(a, b, workerSort.dir, workerHoursById),
+      );
+      const mobs = allMobilizations ?? [];
+      const active: Worker[] = [];
+      const notReadyToWork: Worker[] = [];
+      for (const w of list) {
+        if (displayWorkerRegistryJobStatus(w, mobs) === 'NOT_READY_TO_WORK') notReadyToWork.push(w);
+        else active.push(w);
+      }
+      return [...active, ...notReadyToWork];
+    },
+    [workerSort, workerHoursById, allMobilizations],
+  );
 
   const toggleNameColumnSort = () => {
     setWorkerSort((prev) =>
@@ -320,6 +395,155 @@ export default function WorkersPage() {
         : { key: 'hours', dir: 'desc' },
     );
   };
+
+  const mapWorkerToPrintRow = useCallback(
+    (worker: Worker): WorkerListPrintRow => {
+      const position = positions?.find((p) => p.id === worker.currentPositionId);
+      const workedHours = Number(workerHoursById.get(worker.id)?.totalHours || worker.totalWorkedHours || 0);
+      const displayJobStatus = displayWorkerRegistryJobStatus(worker, allMobilizations ?? []);
+      const jobBadge = workerRegistryJobStatusBadgeProps(displayJobStatus);
+      const onSiteAssignment =
+        displayJobStatus === 'ON_SITE'
+          ? resolveWorkerOnSiteAssignment(worker.id, allMobilizations ?? [])
+          : null;
+      const assignedAssignment =
+        displayJobStatus === 'ASSIGNED'
+          ? resolveWorkerAssignedAssignment(worker.id, allMobilizations ?? [])
+          : null;
+      const site = (() => {
+        const a = onSiteAssignment || assignedAssignment;
+        return a ? formatWorkerOnSiteCompanyLocation(a, customerNameById) : '';
+      })();
+      const holdReason = formatWorkerNotReadyReasonDisplay(
+        worker.readinessManualHoldReason,
+        worker.readinessManualHoldReasonNote,
+      );
+      let assignmentDetail = site;
+      if (displayJobStatus === 'NOT_READY_TO_WORK') {
+        assignmentDetail = holdReason || 'ยังไม่ระบุเหตุผล';
+      } else if (displayJobStatus === 'NOT_READY_TO_ASSIGN') {
+        assignmentDetail = 'เอกสาร/เซอร์ไม่ครบ';
+      }
+      const readinessLabel =
+        worker.readinessManualHold && worker.readinessStatus === 'READY'
+          ? `NOT READY TO WORK${holdReason ? ` · ${holdReason}` : ''}`
+          : readinessStatusPrintLabel(worker.readinessStatus);
+
+      return {
+        workerCode: worker.workerCode || worker.id.slice(0, 8),
+        fullName: `${worker.firstName || ''} ${worker.lastName || ''}`.trim() || '—',
+        nationalId: (worker.thaiNationalId || '').trim(),
+        hoursLabel: `${workedHours.toLocaleString()} ชม.`,
+        positionLabel: position?.positionName || position?.positionNameTh || worker.currentPositionId || 'N/A',
+        readinessLabel,
+        jobStatusLabel: jobBadge.label,
+        assignmentDetail,
+      };
+    },
+    [positions, workerHoursById, allMobilizations, customerNameById],
+  );
+
+  const printFilterSummary = useMemo(() => {
+    const positionLabel =
+      positionFilter === 'all'
+        ? 'ทุกตำแหน่ง'
+        : positions?.find((p) => p.id === positionFilter)?.positionName ||
+          positions?.find((p) => p.id === positionFilter)?.positionNameTh ||
+          positionFilter;
+    const jobStatusLabel =
+      WORKER_JOB_STATUS_FILTER_OPTIONS.find((o) => o.value === jobStatusFilter)?.label || jobStatusFilter;
+    const sortLabel =
+      workerSort.key === 'name'
+        ? workerSort.dir === 'asc'
+          ? 'ชื่อ A–Z'
+          : 'ชื่อ Z–A'
+        : workerSort.dir === 'desc'
+          ? 'ชั่วโมง มาก → น้อย'
+          : 'ชั่วโมง น้อย → มาก';
+    return {
+      searchTerm: workerSearchQuery,
+      positionFilterLabel: positionLabel,
+      jobStatusFilterLabel: jobStatusLabel,
+      sortLabel,
+    };
+  }, [positionFilter, positions, jobStatusFilter, workerSort, workerSearchQuery]);
+
+  const runWorkerListPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      // ใช้ลำดับเดียวกับหน้าจอ: ตามตัวกรอง/เรียงที่เลือก (และ NOT READY TO WORK ไว้ท้าย)
+      const source =
+        scope === 'filtered' ? filteredWorkers.all : orderWorkersForPrint(workers ?? []);
+      if (source.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบคนงานตามตัวกรอง — ล้างตัวกรองหรือพิมพ์ทั้งหมด'
+              : 'ยังไม่มีลูกจ้างในระบบ',
+        });
+        return;
+      }
+
+      setPrintBusy(true);
+      try {
+        const printRows = source.map(mapWorkerToPrintRow);
+        const { rows: capped, truncated } = capWorkerListPrintRows(printRows);
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines =
+          scope === 'filtered'
+            ? describeWorkerListPrintFilters(printFilterSummary)
+            : describeWorkerListPrintFilters({
+                searchTerm: '',
+                positionFilterLabel: 'ทุกตำแหน่ง',
+                jobStatusFilterLabel: 'ทุกสถานะงาน',
+                sortLabel: printFilterSummary.sortLabel,
+              });
+        const scopeTitle =
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (เรียงตามที่เลือกบนหน้าจอ)';
+
+        const body = buildWorkerListPrintHtml({
+          rows: capped,
+          scopeTitle,
+          filterLines,
+          generatedAt,
+          printedBy: currentUser?.displayName,
+          truncated,
+        });
+
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Worker-List',
+          suggestedFileName: `Workers-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: body,
+          htmlLang: 'th',
+        });
+
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [
+      filteredWorkers.all,
+      orderWorkersForPrint,
+      workers,
+      mapWorkerToPrintRow,
+      printFilterSummary,
+      currentUser?.displayName,
+      toast,
+    ],
+  );
 
   const handleCreate = async () => {
     if (!canCreateWorkers) {
@@ -406,12 +630,25 @@ export default function WorkersPage() {
     return (
       <div className="flex flex-col gap-1 items-start max-w-[240px]">
         {worker.readinessManualHold && worker.readinessStatus === 'READY' ? (
-          <Badge variant="outline" className="border-amber-600 text-amber-900 bg-amber-50 font-semibold">
-            <AlertCircle className="h-3 w-3 mr-1" /> NOT READY (HR)
+          <Badge variant="outline" className="border-orange-500 text-orange-900 bg-orange-50 font-semibold">
+            <AlertCircle className="h-3 w-3 mr-1" /> NOT READY TO WORK
           </Badge>
         ) : (
           getReadinessBadge(worker.readinessStatus)
         )}
+        {worker.readinessManualHold
+          ? (() => {
+              const reason = formatWorkerNotReadyReasonDisplay(
+                worker.readinessManualHoldReason,
+                worker.readinessManualHoldReasonNote,
+              );
+              return reason ? (
+                <span className="text-[10px] leading-snug font-semibold text-orange-900">{reason}</span>
+              ) : (
+                <span className="text-[10px] leading-snug text-orange-800/80 italic">ยังไม่ระบุเหตุผล</span>
+              );
+            })()
+          : null}
         {showDrugHint && drugText ? (
           <span className="text-[10px] leading-snug text-destructive font-medium">
             {mobDrugExpired ? 'รอตรวจใหม่ (mob)' : drugText}
@@ -525,6 +762,16 @@ export default function WorkersPage() {
             </Select>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 gap-2 whitespace-nowrap"
+              disabled={!canViewWorkers || isCollectionLoading || printBusy || (workers?.length ?? 0) === 0}
+              onClick={() => setPrintDialogOpen(true)}
+            >
+              {printBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4 shrink-0" />}
+              พิมพ์รายชื่อ
+            </Button>
             {canCreateWorkers && payroll('worker', 'create') && (
               <Dialog
                 open={isCreateOpen}
@@ -602,109 +849,211 @@ export default function WorkersPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="py-4 pl-6">
+                    <TableHead className="py-2.5 pl-6">
                       <button
                         type="button"
                         onClick={toggleNameColumnSort}
                         className={cn(
-                          'inline-flex max-w-full items-center gap-1.5 rounded-md px-1 py-1 -ml-1 text-left text-sm font-bold',
+                          'inline-flex max-w-full items-start gap-1.5 rounded-md px-1 py-0.5 -ml-1 text-left text-sm font-bold',
                           'hover:bg-muted/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                         )}
                       >
-                        <span className="min-w-0 leading-snug">รหัส / ชื่อคนงาน (Field Worker)</span>
+                        <span className="min-w-0 leading-tight flex flex-col">
+                          <span>รหัส / ชื่อคนงาน</span>
+                          <span className="text-[10px] font-semibold text-muted-foreground">Field Worker</span>
+                        </span>
                         {workerSort.key === 'name' ? (
                           workerSort.dir === 'asc' ? (
-                            <ArrowUp className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                            <ArrowUp className="h-4 w-4 shrink-0 text-primary mt-0.5" aria-hidden />
                           ) : (
-                            <ArrowDown className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                            <ArrowDown className="h-4 w-4 shrink-0 text-primary mt-0.5" aria-hidden />
                           )
                         ) : (
-                          <ArrowUpDown className="h-4 w-4 shrink-0 text-muted-foreground opacity-60" aria-hidden />
+                          <ArrowUpDown className="h-4 w-4 shrink-0 text-muted-foreground opacity-60 mt-0.5" aria-hidden />
                         )}
                       </button>
                     </TableHead>
-                    <TableHead>
+                    <TableHead className="py-2.5 text-center">
                       <button
                         type="button"
                         onClick={toggleHoursColumnSort}
                         className={cn(
-                          'inline-flex items-center gap-1.5 rounded-md px-1 py-1 text-left text-sm font-bold',
+                          'inline-flex items-start justify-center gap-1.5 rounded-md px-1 py-0.5 text-sm font-bold mx-auto',
                           'hover:bg-muted/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                         )}
                       >
-                        ชั่วโมงสะสม (Total Hours)
+                        <span className="leading-tight flex flex-col items-center">
+                          <span>ชั่วโมงสะสม</span>
+                          <span className="text-[10px] font-semibold text-muted-foreground">Total Hours</span>
+                        </span>
                         {workerSort.key === 'hours' ? (
                           workerSort.dir === 'desc' ? (
-                            <ArrowDown className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                            <ArrowDown className="h-4 w-4 shrink-0 text-primary mt-0.5" aria-hidden />
                           ) : (
-                            <ArrowUp className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                            <ArrowUp className="h-4 w-4 shrink-0 text-primary mt-0.5" aria-hidden />
                           )
                         ) : (
-                          <ArrowUpDown className="h-4 w-4 shrink-0 text-muted-foreground opacity-60" aria-hidden />
+                          <ArrowUpDown className="h-4 w-4 shrink-0 text-muted-foreground opacity-60 mt-0.5" aria-hidden />
                         )}
                       </button>
                     </TableHead>
-                    <TableHead className="font-bold">ตำแหน่งหลัก (Position)</TableHead>
-                    <TableHead className="font-bold min-w-[200px]">ความพร้อม (Readiness)</TableHead>
-                    <TableHead className="font-bold">สถานะงาน (Job Status)</TableHead>
-                    <TableHead className="text-right font-bold pr-6">การจัดการ</TableHead>
+                    <TableHead className="py-2.5 text-center font-bold">
+                      <span className="leading-tight flex flex-col items-center">
+                        <span>ตำแหน่งหลัก</span>
+                        <span className="text-[10px] font-semibold text-muted-foreground">Position</span>
+                      </span>
+                    </TableHead>
+                    <TableHead className="py-2.5 font-bold min-w-[200px]">
+                      <span className="leading-tight flex flex-col">
+                        <span>ความพร้อม</span>
+                        <span className="text-[10px] font-semibold text-muted-foreground">Readiness</span>
+                      </span>
+                    </TableHead>
+                    <TableHead className="py-2.5 font-bold">
+                      <span className="leading-tight flex flex-col">
+                        <span>สถานะงาน</span>
+                        <span className="text-[10px] font-semibold text-muted-foreground">Job Status</span>
+                      </span>
+                    </TableHead>
+                    <TableHead className="py-2.5 text-right font-bold pr-6">
+                      <span className="leading-tight inline-flex flex-col items-end">
+                        <span>การจัดการ</span>
+                        <span className="text-[10px] font-semibold text-muted-foreground">Actions</span>
+                      </span>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredWorkers?.map((worker) => {
-                    const position = positions?.find(p => p.id === worker.currentPositionId);
-                    const workedHours = Number(workerHoursById.get(worker.id)?.totalHours || worker.totalWorkedHours || 0);
-                    const displayJobStatus = displayWorkerRegistryJobStatus(worker, allMobilizations ?? []);
-                    const jobBadge = workerRegistryJobStatusBadgeProps(displayJobStatus);
-                    return (
-                      <TableRow key={worker.id} className="cursor-pointer hover:bg-muted/30 group transition-colors" onClick={() => router.push(`/workers/${worker.id}`)}>
-                        <TableCell className="py-4 pl-6">
-                          <div className="flex flex-col">
-                            <span className="text-[10px] font-mono font-bold text-primary bg-primary/5 w-fit px-1.5 rounded border border-primary/10 mb-1">{worker.workerCode || 'NO CODE'}</span>
-                            <span className="font-bold text-base text-primary">{worker.firstName} {worker.lastName}</span>
-                            <span className="text-[10px] text-muted-foreground font-mono">{worker.thaiNationalId}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="font-black text-primary">{workedHours.toLocaleString()} ชม.</div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20">
-                            {position?.positionName || position?.positionNameTh || worker.currentPositionId || 'N/A'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell onClick={(e) => e.stopPropagation()}>{renderReadinessCell(worker)}</TableCell>
-                        <TableCell>
-                          <Badge variant={jobBadge.variant} className={jobBadge.className}>
-                            {jobBadge.label}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right pr-6">
-                          <div className="flex items-center justify-end gap-1">
-                            {canDeleteWorkerRecord && (
+                  {(() => {
+                    const renderWorkerRow = (worker: Worker) => {
+                      const position = positions?.find((p) => p.id === worker.currentPositionId);
+                      const workedHours = Number(workerHoursById.get(worker.id)?.totalHours || worker.totalWorkedHours || 0);
+                      const displayJobStatus = displayWorkerRegistryJobStatus(worker, allMobilizations ?? []);
+                      const jobBadge = workerRegistryJobStatusBadgeProps(displayJobStatus);
+                      const onSiteAssignment =
+                        displayJobStatus === 'ON_SITE'
+                          ? resolveWorkerOnSiteAssignment(worker.id, allMobilizations ?? [])
+                          : null;
+                      const assignedAssignment =
+                        displayJobStatus === 'ASSIGNED'
+                          ? resolveWorkerAssignedAssignment(worker.id, allMobilizations ?? [])
+                          : null;
+                      const jobSiteLabel = (() => {
+                        const a = onSiteAssignment || assignedAssignment;
+                        return a ? formatWorkerOnSiteCompanyLocation(a, customerNameById) : '';
+                      })();
+                      const notReadyToWorkReason =
+                        displayJobStatus === 'NOT_READY_TO_WORK'
+                          ? formatWorkerNotReadyReasonDisplay(
+                              worker.readinessManualHoldReason,
+                              worker.readinessManualHoldReasonNote,
+                            )
+                          : '';
+                      return (
+                        <TableRow
+                          key={worker.id}
+                          className="cursor-pointer hover:bg-muted/30 group transition-colors"
+                          onClick={() => router.push(`/workers/${worker.id}`)}
+                        >
+                          <TableCell className="py-2.5 pl-6">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[10px] font-mono font-bold text-primary bg-primary/5 w-fit px-1.5 rounded border border-primary/10">
+                                {worker.workerCode || 'NO CODE'}
+                              </span>
+                              <span className="font-bold text-sm text-primary leading-snug">
+                                {worker.firstName} {worker.lastName}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground font-mono leading-none">{worker.thaiNationalId}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-2.5 text-center">
+                            <div className="font-black text-primary">{workedHours.toLocaleString()} ชม.</div>
+                          </TableCell>
+                          <TableCell className="py-2.5 text-center">
+                            <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20">
+                              {position?.positionName || position?.positionNameTh || worker.currentPositionId || 'N/A'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-2.5" onClick={(e) => e.stopPropagation()}>{renderReadinessCell(worker)}</TableCell>
+                          <TableCell className="py-2.5">
+                            <div className="flex flex-col gap-0.5 min-w-0 max-w-[16rem]">
+                              <Badge variant={jobBadge.variant} className={cn(jobBadge.className, 'w-fit')}>
+                                {jobBadge.label}
+                              </Badge>
+                              {jobSiteLabel ? (
+                                <span
+                                  className="text-[11px] leading-snug text-muted-foreground line-clamp-2"
+                                  title={jobSiteLabel}
+                                >
+                                  {jobSiteLabel}
+                                </span>
+                              ) : null}
+                              {displayJobStatus === 'NOT_READY_TO_WORK' ? (
+                                notReadyToWorkReason ? (
+                                  <span className="text-[11px] leading-snug font-semibold text-orange-800">
+                                    {notReadyToWorkReason}
+                                  </span>
+                                ) : (
+                                  <span className="text-[11px] leading-snug text-orange-700/80 italic">ยังไม่ระบุเหตุผล</span>
+                                )
+                              ) : displayJobStatus === 'NOT_READY_TO_ASSIGN' ? (
+                                <span className="text-[11px] leading-snug text-amber-800/90">เอกสาร/เซอร์ไม่ครบ</span>
+                              ) : null}
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-2.5 text-right pr-6">
+                            <div className="flex items-center justify-end gap-1">
+                              {canDeleteWorkerRecord && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                  title="ลบทะเบียนคนงาน (เฉพาะผู้จัดการ/แอดมิน)"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDeleteReason('');
+                                    setDeleteTarget(worker);
+                                  }}
+                                >
+                                  <Trash2 className="h-5 w-5" />
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                title="ลบทะเบียนคนงาน (เฉพาะผู้จัดการ/แอดมิน)"
+                                className="group-hover:text-primary transition-colors"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setDeleteReason('');
-                                  setDeleteTarget(worker);
+                                  router.push(`/workers/${worker.id}`);
                                 }}
                               >
-                                <Trash2 className="h-5 w-5" />
+                                <ChevronRight className="h-5 w-5" />
                               </Button>
-                            )}
-                            <Button variant="ghost" size="icon" className="group-hover:text-primary transition-colors" onClick={(e) => { e.stopPropagation(); router.push(`/workers/${worker.id}`); }}>
-                              <ChevronRight className="h-5 w-5" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                  {(!filteredWorkers || filteredWorkers.length === 0) && !isCollectionLoading && (
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    };
+
+                    const rows: ReactNode[] = [];
+                    if (filteredWorkers.active.length > 0) {
+                      rows.push(...filteredWorkers.active.map(renderWorkerRow));
+                    }
+                    if (filteredWorkers.notReadyToWork.length > 0) {
+                      if (filteredWorkers.active.length > 0) {
+                        rows.push(
+                          <TableRow key="__not-ready-to-work-section__" className="bg-orange-50/80 hover:bg-orange-50/80">
+                            <TableCell colSpan={6} className="py-2.5 pl-6 text-xs font-bold uppercase tracking-wide text-orange-900">
+                              ไม่พร้อมทำงาน (Not Ready to Work) — {filteredWorkers.notReadyToWork.length} คน
+                            </TableCell>
+                          </TableRow>,
+                        );
+                      }
+                      rows.push(...filteredWorkers.notReadyToWork.map(renderWorkerRow));
+                    }
+                    return rows;
+                  })()}
+                  {filteredWorkers.all.length === 0 && !isCollectionLoading && (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">
                         {(workers?.length ?? 0) === 0
@@ -722,6 +1071,45 @@ export default function WorkersPage() {
             )}
           </CardContent>
         </Card>
+
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายชื่อลูกจ้าง</DialogTitle>
+              <DialogDescription>
+                เลือกพิมพ์ตามตัวกรองปัจจุบัน หรือพิมพ์ทุกรายการในชุดข้อมูลล่าสุด (สูงสุด 500 รายการ)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <p>
+                ตามตัวกรองตอนนี้: <strong className="text-foreground">{filteredWorkers.all.length}</strong> คน
+              </p>
+              <p>
+                ทั้งหมดในระบบ: <strong className="text-foreground">{workers?.length ?? 0}</strong> คน
+              </p>
+            </div>
+            <DialogFooter className="flex-col gap-2 sm:flex-col sm:space-x-0">
+              <Button
+                type="button"
+                className="w-full gap-2"
+                disabled={printBusy || filteredWorkers.all.length === 0}
+                onClick={() => void runWorkerListPrint('filtered')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                พิมพ์ตามตัวกรอง ({filteredWorkers.all.length})
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full gap-2"
+                disabled={printBusy || (workers?.length ?? 0) === 0}
+                onClick={() => void runWorkerListPrint('all')}
+              >
+                พิมพ์ทั้งหมด ({workers?.length ?? 0})
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <AlertDialog open={deleteTarget != null} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteReason(''); } }}>
           <AlertDialogContent>

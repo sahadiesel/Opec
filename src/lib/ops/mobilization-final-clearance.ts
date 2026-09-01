@@ -50,6 +50,9 @@ function checklistPass(status: ChecklistItemStatus | string | undefined | null):
 /**
  * ขั้น 1 (แสดงผล) — พร้อมเดินทางเมื่อ checklist 1–4 ผ่าน:
  * พาส/บัตร · แพทย์ · ใบเซอร์ · ผลตรวจสารเสพติด
+ *
+ * หมายเหตุ: ใช้ตรวจ live checklist เท่านั้น — คนที่ผ่านขั้นเดินทาง/กำลังทำงานแล้ว
+ * ใช้ `isFinalClearanceStep1Done` / `travelReadyBadgeState` แทนเมื่อแสดง badge
  */
 export function isTravelReadyDisplay(
   a: Pick<Assignment, 'readinessSummary'>,
@@ -71,6 +74,32 @@ export function isFinalClearanceStep1Done(
   if (typeof a.mobReadyToTravelAt === 'number' && a.mobReadyToTravelAt > 0) return true;
   const ds = a.deploymentStatus;
   return ds === 'READY_TO_MOB' || ds === 'MOBILIZING' || ds === 'ACTIVE';
+}
+
+/** สถานะ badge ขั้น 1 — คนที่เดินทาง/ทำงานแล้วไม่ติด «ยังไม่พร้อม» จาก checklist หมดอายุ */
+export function travelReadyBadgeState(
+  a: Pick<Assignment, 'readinessSummary' | 'mobReadyToTravelAt' | 'deploymentStatus'>,
+  drugOk: boolean,
+): { ready: boolean; label: 'ready' | 'passed' | 'blocked' } {
+  if (isFinalClearanceStep1Done(a)) {
+    return {
+      ready: true,
+      label: isTravelReadyDisplay(a, drugOk) ? 'ready' : 'passed',
+    };
+  }
+  return isTravelReadyDisplay(a, drugOk)
+    ? { ready: true, label: 'ready' }
+    : { ready: false, label: 'blocked' };
+}
+
+/** ผ่านขั้นเดินทางแล้ว — ไม่บังคับ checklist/ยาสำหรับแก้วันที่หรือสถานที่ย้อนหลัง */
+export function shouldEnforceTravelChecklistForClearanceEdit(
+  a: Pick<Assignment, 'mobReadyToTravelAt' | 'deploymentStatus'>,
+  editingExisting?: boolean,
+): boolean {
+  if (editingExisting) return false;
+  if (isFinalClearanceStep1Done(a)) return false;
+  return true;
 }
 
 /** ขั้น Pre-Mob เสร็จ — มีวันที่ SB หรือข้าม หรือ legacy step2 */
@@ -202,11 +231,11 @@ export function canRunFinalClearanceStep(
     if (!assignmentHasMobLocationForPhase1(a)) {
       return { ok: false, message: 'ต้องบันทึกสถานที่ (ขั้นที่ 2) ก่อน' };
     }
-    if (options && !options.readinessOk) {
+    if (shouldEnforceTravelChecklistForClearanceEdit(a) && options && !options.readinessOk) {
       return { ok: false, message: 'ยังไม่พร้อมเดินทาง — ตรวจ checklist 1–4 ให้ผ่านก่อน' };
     }
     if (isFinalClearanceStep2Done(a)) return { ok: false, message: 'บันทึก Mob แล้ว' };
-    if (options?.drugOk === false) {
+    if (shouldEnforceTravelChecklistForClearanceEdit(a) && options?.drugOk === false) {
       return {
         ok: false,
         message: options.drugMessage || 'ผลตรวจสารเสพติดหมดอายุหรือยังไม่ครบ — ตรวจใหม่ก่อน mob',
@@ -218,7 +247,7 @@ export function canRunFinalClearanceStep(
     return { ok: false, message: 'ต้องบันทึกวัน Mob (ขั้นที่ 4) ก่อนเริ่มวันทำงาน' };
   }
   if (isFinalClearanceStep3Done(a)) return { ok: false, message: 'เริ่มวันทำงานแล้ว' };
-  if (options?.drugOk === false) {
+  if (shouldEnforceTravelChecklistForClearanceEdit(a) && options?.drugOk === false) {
     return {
       ok: false,
       message: options.drugMessage || 'ผลตรวจสารเสพติดหมดอายุหรือยังไม่ครบ — ตรวจใหม่ก่อนเริ่มงาน',
@@ -271,16 +300,14 @@ export function canSaveFinalClearancePreMob(
   if (!assignmentHasMobLocationForPhase1(a)) {
     return { ok: false, message: 'ต้องบันทึกสถานที่ (ขั้นที่ 2) ก่อน' };
   }
-  if (opts?.travelReady === false) {
+  const enforceChecklist = shouldEnforceTravelChecklistForClearanceEdit(a, opts?.editingExisting);
+  if (enforceChecklist && opts?.travelReady === false) {
     return { ok: false, message: 'ยังไม่พร้อมเดินทาง — ตรวจ checklist 1–4 ให้ผ่านก่อน' };
   }
   if (isFinalClearancePreMobDone(a) && !opts?.editingExisting) {
-    return { ok: false, message: 'บันทึก / ข้าม Pre-Mob แล้ว' };
+    return { ok: false, message: 'บันทึก / ข้าม Pre-Mob แล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่' };
   }
-  if (isFinalClearanceMobDone(a) && !opts?.editingExisting) {
-    return { ok: false, message: 'บันทึก Mob แล้ว — ไม่สามารถแก้ Pre-Mob ได้' };
-  }
-  if (opts?.drugOk === false) {
+  if (enforceChecklist && opts?.drugOk === false) {
     return {
       ok: false,
       message: opts.drugMessage || 'ผลตรวจสารเสพติดหมดอายุหรือยังไม่ครบ — ตรวจใหม่ก่อน',
@@ -300,7 +327,8 @@ export function canSaveFinalClearanceMob(
   if (!assignmentHasMobLocationForPhase1(a)) {
     return { ok: false, message: 'ต้องบันทึกสถานที่ (ขั้นที่ 2) ก่อน' };
   }
-  if (opts?.travelReady === false) {
+  const enforceChecklist = shouldEnforceTravelChecklistForClearanceEdit(a, opts?.editingExisting);
+  if (enforceChecklist && opts?.travelReady === false) {
     return { ok: false, message: 'ยังไม่พร้อมเดินทาง — ตรวจ checklist 1–4 ให้ผ่านก่อน' };
   }
   if (!isFinalClearancePreMobDone(a)) {
@@ -309,7 +337,7 @@ export function canSaveFinalClearanceMob(
   if (isFinalClearanceMobDone(a) && !opts?.editingExisting) {
     return { ok: false, message: 'บันทึก Mob แล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่' };
   }
-  if (opts?.drugOk === false) {
+  if (enforceChecklist && opts?.drugOk === false) {
     return {
       ok: false,
       message: opts.drugMessage || 'ผลตรวจสารเสพติดหมดอายุหรือยังไม่ครบ — ตรวจใหม่ก่อน mob',
@@ -340,7 +368,8 @@ export function canSaveFinalClearanceWorkStart(
   if (isFinalClearanceStep3Done(a) && !opts?.editingExisting) {
     return { ok: false, message: 'เริ่มวันทำงานแล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่' };
   }
-  if (opts?.drugOk === false) {
+  const enforceChecklist = shouldEnforceTravelChecklistForClearanceEdit(a, opts?.editingExisting);
+  if (enforceChecklist && opts?.drugOk === false) {
     return {
       ok: false,
       message: opts.drugMessage || 'ผลตรวจสารเสพติดหมดอายุหรือยังไม่ครบ — ตรวจใหม่ก่อนเริ่มงาน',

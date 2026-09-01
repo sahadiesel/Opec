@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useFirestore, useDoc, useCollection, useMemoFirebase, useUser } from '@/firebase';
-import { doc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
+import { doc, collection, query, where, getDocs, updateDoc, deleteField } from 'firebase/firestore';
 import {
   computeWorkerStoreEquipmentReadiness,
   MOBILIZATION_STATUSES_NOT_CLOSED,
@@ -31,6 +31,8 @@ import {
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { isStoredExpiryPast } from '@/lib/date-thai';
+import type { WorkerNotReadyReasonCode } from '@/lib/hr/worker-not-ready-reason';
+import { formatWorkerNotReadyReasonDisplay } from '@/lib/hr/worker-not-ready-reason';
 import {
   Worker,
   WorkerCertificate,
@@ -407,7 +409,10 @@ function WorkerDetailContent({ id }: { id: string }) {
       });
   };
 
-  const handleReadinessManualHoldChange = (hold: boolean) => {
+  const handleReadinessManualHoldChange = (
+    hold: boolean,
+    reason?: { code: WorkerNotReadyReasonCode; note?: string },
+  ) => {
     if (!canToggleWorkerReadiness || !workerRef) {
       toast({
         variant: 'destructive',
@@ -421,21 +426,56 @@ function WorkerDetailContent({ id }: { id: string }) {
       if (job === 'ASSIGNED' || job === 'ON_SITE') {
         toast({
           variant: 'destructive',
-          title: 'ตั้งเป็นไม่พร้อมไม่ได้',
-          description: `คนงานยังถูกมอบหมายงานอยู่ (${job}) — ต้อง Unassign ออกจากงานก่อนจึงตั้งเป็นไม่พร้อมได้`,
+          title: 'ตั้งเป็นไม่พร้อมทำงานไม่ได้',
+          description: `คนงานยังถูกมอบหมายงานอยู่ (${job}) — ต้อง Unassign ออกจากงานก่อนจึงตั้งเป็นไม่พร้อมทำงานได้`,
+        });
+        return;
+      }
+      if (!reason?.code) {
+        toast({
+          variant: 'destructive',
+          title: 'ระบุเหตุผล',
+          description: 'เลือกเหตุผลที่ไม่พร้อมทำงานก่อนบันทึก',
+        });
+        return;
+      }
+      if (reason.code === 'OTHER' && !(reason.note || '').trim()) {
+        toast({
+          variant: 'destructive',
+          title: 'ระบุเหตุผล',
+          description: 'กรุณาระบุรายละเอียดเมื่อเลือก «อื่นๆ»',
         });
         return;
       }
     }
+    const now = Date.now();
+    if (hold && reason?.code) {
+      const note = reason.code === 'OTHER' ? (reason.note || '').trim().slice(0, 200) : '';
+      updateDocumentNonBlocking(workerRef, {
+        readinessManualHold: true,
+        readinessManualHoldReason: reason.code,
+        readinessManualHoldReasonNote: note || deleteField(),
+        readinessManualHoldReasonAt: now,
+        readinessManualHoldReasonByUserId: currentUser?.id || deleteField(),
+        updatedAt: now,
+      });
+      toast({
+        title: 'ตั้งเป็นไม่พร้อมทำงาน (Not Ready to Work)',
+        description: formatWorkerNotReadyReasonDisplay(reason.code, note) || 'ไม่ปรากฏในรายการมอบหมายจนกว่าจะเปิดสวิตช์พร้อมทำงานอีกครั้ง',
+      });
+      return;
+    }
     updateDocumentNonBlocking(workerRef, {
-      readinessManualHold: hold,
-      updatedAt: Date.now(),
+      readinessManualHold: false,
+      readinessManualHoldReason: deleteField(),
+      readinessManualHoldReasonNote: deleteField(),
+      readinessManualHoldReasonAt: deleteField(),
+      readinessManualHoldReasonByUserId: deleteField(),
+      updatedAt: now,
     });
     toast({
-      title: hold ? 'ตั้งเป็นไม่พร้อม (Not Ready)' : 'ตั้งเป็นพร้อม (Ready)',
-      description: hold
-        ? 'คนงานจะไม่ปรากฏในรายการมอบหมายจนกว่าจะเปิดสวิตช์พร้อมอีกครั้ง'
-        : 'ระบบใช้เกณฑ์เอกสารและความพร้อมตามที่คำนวณได้',
+      title: 'ตั้งเป็นพร้อมทำงาน (Ready to Work)',
+      description: 'ระบบใช้เกณฑ์เอกสารและความพร้อมตามที่คำนวณได้',
     });
   };
 

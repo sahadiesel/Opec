@@ -93,6 +93,7 @@ import {
   mobStandbyMobDayChoiceLabel,
   mobStandbyMobDayStatusCode,
   thailandTodayYmd,
+  travelReadyBadgeState,
 } from '@/lib/ops/mobilization-final-clearance';
 import type { MobStep2Choice } from '@/lib/ops/mob-day-charge';
 import {
@@ -169,8 +170,11 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   const [unassignDialogOpen, setUnassignDialogOpen] = useState(false);
   const [autoDailySyncing, setAutoDailySyncing] = useState(false);
   const [clearanceSavingStep, setClearanceSavingStep] = useState<0 | 2 | 3>(0);
-  /** แก้ไขวันที่หลังบันทึกแล้ว — 2 = Mob, 3 = เริ่มงาน */
-  const [clearanceEditMode, setClearanceEditMode] = useState<0 | 2 | 3>(0);
+  /** แก้ไขวันที่หลังบันทึกแล้ว — ใช้ร่วมกับโหมดแก้ทั้งฟอร์ม (legacy cascade) */
+  const [clearanceEditMode, setClearanceEditMode] = useState<0 | 1 | 2 | 3>(0);
+  /** โหมดแก้ไขทั้ง Final Clearance — ปุ่มแก้ไข/บันทึกด้านบน */
+  const [clearanceFormEditing, setClearanceFormEditing] = useState(false);
+  const [clearanceFormSaving, setClearanceFormSaving] = useState(false);
   const [step2CascadeOpen, setStep2CascadeOpen] = useState(false);
   const [preMobConfigOpen, setPreMobConfigOpen] = useState(false);
   const [step2ChoiceDraft, setStep2ChoiceDraft] = useState<MobStep2Choice>('MOB');
@@ -182,7 +186,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   );
   const [locationCustomDraft, setLocationCustomDraft] = useState('');
   const [locationSaving, setLocationSaving] = useState(false);
-  const [locationEditing, setLocationEditing] = useState(false);
   const [viewingCert, setViewingCert] = useState<WorkerCertificate | null>(null);
   const certPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
 
@@ -323,6 +326,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   useEffect(() => {
     if (!assignment) return;
+    // Do not clobber in-progress Final Clearance form edits (e.g. Pre-Mob-only date change).
+    if (clearanceFormEditing) return;
     const preMob = (assignment.mobPreMobDate || '').trim();
     setPreMobDateDraft(preMob || thailandTodayYmd());
     const standby = (assignment.mobStandbyDate || '').trim();
@@ -330,12 +335,19 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     const work = (assignment.mobWorkingStartDate || '').trim();
     const baseStandby = standby || thailandTodayYmd();
     setWorkingStartDateDraft(work || addDaysToYmd(baseStandby, 1));
-  }, [assignment?.id, assignment?.mobPreMobDate, assignment?.mobStandbyDate, assignment?.mobWorkingStartDate]);
+  }, [
+    assignment?.id,
+    assignment?.mobPreMobDate,
+    assignment?.mobStandbyDate,
+    assignment?.mobWorkingStartDate,
+    clearanceFormEditing,
+  ]);
 
   useEffect(() => {
     if (!assignment) return;
+    if (clearanceFormEditing) return;
     setLocationCustomDraft((assignment.workLocation || '').trim());
-  }, [assignment?.id, assignment?.workLocation]);
+  }, [assignment?.id, assignment?.workLocation, clearanceFormEditing]);
 
   /** เมื่อสถานที่บันทึกแล้วและ checklist 1–4 ผ่านทีหลัง — stamp READY_TO_MOB อัตโนมัติ */
   useEffect(() => {
@@ -428,42 +440,66 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     [assignment, mobDrugOk],
   );
 
+  const travelBadge = useMemo(
+    () => (assignment ? travelReadyBadgeState(assignment, mobDrugOk) : { ready: false, label: 'blocked' as const }),
+    [assignment, mobDrugOk],
+  );
+
   const preMobSaveGate = useMemo(() => {
     if (!assignment) return { ok: false as const, message: '' };
     return canSaveFinalClearancePreMob(assignment, {
+      editingExisting: clearanceFormEditing || clearanceEditMode === 1,
       drugOk: mobDrugOk,
       drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
       travelReady,
     });
-  }, [assignment, mobDrugOk, travelReady]);
+  }, [assignment, clearanceFormEditing, clearanceEditMode, mobDrugOk, travelReady]);
 
   const mobSaveGate = useMemo(() => {
     if (!assignment) return { ok: false as const, message: '' };
     const drugOpts = { drugOk: mobDrugOk, drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH, travelReady };
-    if (clearanceEditMode === 2) return canSaveFinalClearanceMob(assignment, { editingExisting: true, ...drugOpts });
+    if (clearanceFormEditing || clearanceEditMode === 2) {
+      return canSaveFinalClearanceMob(assignment, { editingExisting: true, ...drugOpts });
+    }
     return canSaveFinalClearanceMob(assignment, drugOpts);
-  }, [assignment, clearanceEditMode, mobDrugOk, travelReady]);
+  }, [assignment, clearanceFormEditing, clearanceEditMode, mobDrugOk, travelReady]);
 
   const step3SaveGate = useMemo(() => {
     if (!assignment) return { ok: false as const, message: '' };
     const drugOpts = { drugOk: mobDrugOk, drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH };
-    if (clearanceEditMode === 3) return canSaveFinalClearanceWorkStart(assignment, { editingExisting: true, ...drugOpts });
+    if (clearanceFormEditing || clearanceEditMode === 3) {
+      return canSaveFinalClearanceWorkStart(assignment, { editingExisting: true, ...drugOpts });
+    }
     return canRunFinalClearanceStep(assignment, 3, {
       readinessOk: true,
       ...drugOpts,
     });
-  }, [assignment, clearanceEditMode, mobDrugOk]);
+  }, [assignment, clearanceFormEditing, clearanceEditMode, mobDrugOk]);
 
-  const cancelClearanceEdit = () => setClearanceEditMode(0);
+  const syncClearanceDraftsFromAssignment = (a: Assignment) => {
+    setLocationCustomDraft((a.workLocation || '').trim());
+    // Prefer saved ymd; fall back to today only when the step has no saved date yet
+    // (matches the non-edit draft init effect — avoids empty pickers after «แก้ไข»).
+    const pre = (a.mobPreMobDate || '').trim();
+    const standby = (a.mobStandbyDate || '').trim();
+    const work = (a.mobWorkingStartDate || '').trim();
+    setPreMobDateDraft(pre || (a.mobPreMobSkipped ? '' : thailandTodayYmd()));
+    setStandbyDateDraft(standby || (a.mobMobSkipped ? '' : thailandTodayYmd()));
+    const baseStandby = standby || thailandTodayYmd();
+    setWorkingStartDateDraft(work || addDaysToYmd(baseStandby, 1));
+  };
 
-  const beginEditStandby = () => {
+  const beginClearanceFormEdit = () => {
     if (!assignment) return;
-    if (isFinalClearanceStep3Done(assignment)) {
-      setStep2CascadeOpen(true);
-      return;
-    }
-    setClearanceEditMode(2);
-    setStandbyDateDraft((assignment.mobStandbyDate || '').trim() || thailandTodayYmd());
+    syncClearanceDraftsFromAssignment(assignment);
+    setClearanceEditMode(0);
+    setClearanceFormEditing(true);
+  };
+
+  const cancelClearanceFormEdit = () => {
+    if (assignment) syncClearanceDraftsFromAssignment(assignment);
+    setClearanceFormEditing(false);
+    setClearanceEditMode(0);
   };
 
   const confirmStep2CascadeAndEdit = async () => {
@@ -510,31 +546,23 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     }
   };
 
-  const beginEditWorkStart = () => {
-    if (!assignment) return;
-    setClearanceEditMode(3);
-    const st = (assignment.mobStandbyDate || '').trim();
-    const cur = (assignment.mobWorkingStartDate || '').trim();
-    setWorkingStartDateDraft(
-      /^\d{4}-\d{2}-\d{2}$/.test(cur) ? cur : /^\d{4}-\d{2}-\d{2}$/.test(st) ? addDaysToYmd(st, 1) : thailandTodayYmd(),
-    );
-  };
-
-  const runSavePreMob = async () => {
-    if (!firestore || !assignment || !currentUser?.id || !po) return;
+  const runSavePreMob = async (opts?: { quiet?: boolean }) => {
+    if (!firestore || !assignment || !currentUser?.id || !po) return false;
     const ymd = (preMobDateDraft || '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
       toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวัน Pre-Mob (รูปแบบ yyyy-mm-dd)' });
-      return;
+      return false;
     }
+    const editing = clearanceFormEditing || clearanceEditMode === 1;
     const gate = canSaveFinalClearancePreMob(assignment, {
+      editingExisting: editing,
       drugOk: mobDrugOk,
       drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
       travelReady,
     });
     if (!gate.ok) {
       toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
-      return;
+      return false;
     }
     let line = primaryPoLine;
     if (!line && assignment.poId && assignment.poLineId) {
@@ -547,17 +575,30 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         title: 'ไม่พบบรรทัด PO',
         description: 'ต้องมี poLineId และข้อมูลบรรทัด PO เพื่อบันทึก timesheet',
       });
-      return;
+      return false;
     }
     if (!canEditTimesheets) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'ต้องมีสิทธิ์แก้ไข Timesheets เพื่อบันทึกลงตารางรายวัน' });
-      return;
+      return false;
     }
     const defaults = defaultMobDayCharges('PRE_MOB');
     const billing = normalizeMobDayChargeSpec(defaults.billing);
     const payroll = normalizeMobDayChargeSpec(defaults.payroll);
     setClearanceSavingStep(2);
     try {
+      const prevPreMob = (assignment.mobPreMobDate || '').trim();
+      if (editing && prevPreMob && /^\d{4}-\d{2}-\d{2}$/.test(prevPreMob) && prevPreMob !== ymd) {
+        await deleteDraftMobFinalClearanceTimesheetsInRange(
+          firestore,
+          assignment.workerId,
+          assignment.id,
+          prevPreMob,
+          prevPreMob,
+        );
+      }
+      if (editing && /^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
+        await deleteDraftMobFinalClearanceTimesheetsInRange(firestore, assignment.workerId, assignment.id, ymd, ymd);
+      }
       await upsertMobClearanceDailyTimesheet(firestore, currentUser as AppUser, {
         assignment,
         po,
@@ -568,6 +609,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         bypassPoMonthLock: true,
         billingCharge: billing,
         payrollCharge: payroll,
+        overwriteConflictingEventType: true,
         remarkOverride: `Mob — Final clearance · Pre-Mob · SB 8 ชม. · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
       });
       const now = Date.now();
@@ -578,13 +620,36 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         mobPreMobSkipped: false,
         mobStep2Choice: 'PRE_MOB',
       });
-      toast({
-        title: 'บันทึก Pre-Mob แล้ว',
-        description: `วันที่ ${ymd} · SB 8 ชม. (วางบิล / จ่ายลูกจ้าง)`,
-      });
+      setClearanceEditMode(0);
+      if (isFinalClearanceStep3Done(assignment)) {
+        try {
+          const r = await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser, {
+            ignoreBundleAutoDisabled: true,
+          });
+          if (r.created + r.updated > 0) {
+            if (!opts?.quiet) {
+              toast({
+                title: editing ? 'แก้ไขวัน Pre-Mob และซิงค์ตารางแล้ว' : 'บันทึก Pre-Mob และซิงค์ตารางแล้ว',
+                description: `วันที่ ${ymd} · สร้าง ${r.created} · อัปเดต ${r.updated}`,
+              });
+            }
+            return true;
+          }
+        } catch (e) {
+          console.warn('[mob] auto daily after pre-mob edit', e);
+        }
+      }
+      if (!opts?.quiet) {
+        toast({
+          title: editing ? 'แก้ไขวัน Pre-Mob แล้ว' : 'บันทึก Pre-Mob แล้ว',
+          description: `วันที่ ${ymd} · SB 8 ชม. (วางบิล / จ่ายลูกจ้าง)`,
+        });
+      }
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast({ variant: 'destructive', title: 'บันทึก Pre-Mob ไม่สำเร็จ', description: msg });
+      return false;
     } finally {
       setClearanceSavingStep(0);
     }
@@ -696,14 +761,15 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     choice: MobStep2Choice,
     billingCharge: MobDayChargeSpec,
     payrollCharge: MobDayChargeSpec,
+    opts?: { quiet?: boolean },
   ) => {
-    if (!firestore || !assignment || !currentUser?.id || !po) return;
+    if (!firestore || !assignment || !currentUser?.id || !po) return false;
     const ymd = (standbyDateDraft || '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) {
       toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวัน Mob (รูปแบบ yyyy-mm-dd)' });
-      return;
+      return false;
     }
-    const editing = clearanceEditMode === 2;
+    const editing = clearanceFormEditing || clearanceEditMode === 2;
     const gate = canSaveFinalClearanceMob(assignment, {
       editingExisting: editing,
       drugOk: mobDrugOk,
@@ -712,7 +778,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     });
     if (!gate.ok) {
       toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
-      return;
+      return false;
     }
     let line = primaryPoLine;
     if (!line && assignment.poId && assignment.poLineId) {
@@ -725,11 +791,11 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         title: 'ไม่พบบรรทัด PO',
         description: 'ต้องมี poLineId และข้อมูลบรรทัด PO เพื่อบันทึก timesheet',
       });
-      return;
+      return false;
     }
     if (!canEditTimesheets) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'ต้องมีสิทธิ์แก้ไข Timesheets เพื่อบันทึกลงตารางรายวัน' });
-      return;
+      return false;
     }
     /** Mob = ตามค่าที่เลือก (มาตรฐาน M1) — Pre-Mob บันทึกแยกผ่าน runSavePreMob */
     const dayKind = mobStep2ChoiceToLegacyEventType(choice === 'PRE_MOB' ? 'MOB' : choice);
@@ -763,6 +829,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         remarkOverride: `Mob — Final clearance · Mob · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
       });
       const now = Date.now();
+      const keepActive = editing && isFinalClearanceStep3Done(assignment);
       patchMobilization({
         mobStandbyDate: ymd,
         mobStandbyDayEventType: dayKind,
@@ -771,36 +838,84 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         mobStep2PayrollCharge: payroll,
         mobStandbyRecordedAt: now,
         mobStandbyRecordedByUserId: currentUser.id,
-        mobilizationStatus: 'MOBILIZING',
-        deploymentStatus: 'MOBILIZING',
+        mobMobSkipped: false,
+        ...(keepActive
+          ? {
+              mobilizationStatus: 'ACTIVE',
+              deploymentStatus: 'ACTIVE',
+            }
+          : {
+              mobilizationStatus: 'MOBILIZING',
+              deploymentStatus: 'MOBILIZING',
+            }),
       });
       setWorkingStartDateDraft((cur) => cur || addDaysToYmd(ymd, 1));
       setClearanceEditMode(0);
-      toast({
-        title: editing ? `แก้ไขวัน ${kindLabel} แล้ว` : `บันทึก ${kindLabel} (${statusCode}) แล้ว`,
-        description: `วันที่ ${ymd} = M1 เท่านั้น · เริ่ม W วันถัดไป (${addDaysToYmd(ymd, 1)}) หลังกดเริ่มงาน — ออโต้จะลง W ให้ · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
-      });
+      if (keepActive) {
+        try {
+          const workYmd = (assignment.mobWorkingStartDate || '').trim();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(workYmd) && workYmd > ymd) {
+            await applyMobFinalClearanceWorkStartFill(firestore, currentUser as AppUser, {
+              assignment: {
+                ...assignment,
+                mobStandbyDate: ymd,
+                mobStandbyDayEventType: dayKind,
+                mobWorkingStartDate: workYmd,
+              },
+              po,
+              line,
+              workerDisplayName: workerTimesheetName || assignment.workerId,
+              standbyYmd: ymd,
+              workYmd,
+            });
+          }
+          const r = await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser, {
+            ignoreBundleAutoDisabled: true,
+          });
+          if (!opts?.quiet) {
+            toast({
+              title: `แก้ไขวัน ${kindLabel} และซิงค์ตารางแล้ว`,
+              description: `วันที่ ${ymd} = M1 · สร้าง ${r.created} · อัปเดต ${r.updated} · ข้าม ${r.skipped}`,
+            });
+          }
+          return true;
+        } catch (e) {
+          console.warn('[mob] auto daily after mob date edit', e);
+        }
+      }
+      if (!opts?.quiet) {
+        toast({
+          title: editing ? `แก้ไขวัน ${kindLabel} แล้ว` : `บันทึก ${kindLabel} (${statusCode}) แล้ว`,
+          description: `วันที่ ${ymd} = M1 เท่านั้น · เริ่ม W วันถัดไป (${addDaysToYmd(ymd, 1)}) หลังกดเริ่มงาน — ออโต้จะลง W ให้ · วางบิล ${formatMobDayChargeSummary(billing)} · จ่าย ${formatMobDayChargeSummary(payroll)}`,
+        });
+      }
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: msg });
+      return false;
     } finally {
       setClearanceSavingStep(0);
     }
   };
 
-  const runFinalClearanceStep3 = async () => {
-    if (!firestore || !assignment || !currentUser?.id || !po) return;
+  const runFinalClearanceStep3 = async (opts?: { quiet?: boolean }) => {
+    if (!firestore || !assignment || !currentUser?.id || !po) return false;
     const mobSkipped = assignment.mobMobSkipped === true;
-    const standbyYmd = (assignment.mobStandbyDate || '').trim();
+    // ใช้ draft เมื่อแก้ทั้งฟอร์ม — หลังบันทึก Mob ในรอบเดียวกัน assignment ใน closure อาจยังเป็นค่าเก่า
+    const draftStandby = (standbyDateDraft || '').trim();
+    const standbyYmd = /^\d{4}-\d{2}-\d{2}$/.test(draftStandby)
+      ? draftStandby
+      : (assignment.mobStandbyDate || '').trim();
     const hasStandby = /^\d{4}-\d{2}-\d{2}$/.test(standbyYmd);
     const workYmd = (workingStartDateDraft || '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(workYmd)) {
       toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'เลือกวันเริ่มทำงาน' });
-      return;
+      return false;
     }
     if (!hasStandby && !mobSkipped) {
       toast({ variant: 'destructive', title: 'ยังไม่มีวัน Mob', description: 'บันทึกขั้นที่ 4 หรือกด «ไม่มี Mob» ก่อน' });
-      return;
+      return false;
     }
     if (hasStandby && workYmd <= standbyYmd) {
       toast({
@@ -808,9 +923,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         title: 'วันเริ่มงานไม่ถูกต้อง',
         description: 'ต้องเลือกวันที่หลังวัน Mob — ช่วงว่างจะถูกบันทึกเป็น Standby อัตโนมัติ',
       });
-      return;
+      return false;
     }
-    const editing = clearanceEditMode === 3;
+    const editing = clearanceFormEditing || clearanceEditMode === 3;
     const gate = canSaveFinalClearanceWorkStart(assignment, {
       editingExisting: editing,
       drugOk: mobDrugOk,
@@ -818,7 +933,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     });
     if (!gate.ok) {
       toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
-      return;
+      return false;
     }
     let line = primaryPoLine;
     if (!line && assignment.poId && assignment.poLineId) {
@@ -831,11 +946,11 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         title: 'ไม่พบบรรทัด PO',
         description: 'ต้องมี poLineId และข้อมูลบรรทัด PO เพื่อบันทึก timesheet',
       });
-      return;
+      return false;
     }
     if (!canEditTimesheets) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'ต้องมีสิทธิ์แก้ไข Timesheets เพื่อบันทึกวันทำงานลงตารางรายวัน' });
-      return;
+      return false;
     }
     setClearanceSavingStep(3);
     try {
@@ -878,7 +993,11 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
       if (hasStandby) {
         await applyMobFinalClearanceWorkStartFill(firestore, currentUser as AppUser, {
-          assignment,
+          assignment: {
+            ...assignment,
+            mobStandbyDate: standbyYmd,
+            mobWorkingStartDate: workYmd,
+          },
           po,
           line,
           workerDisplayName: workerTimesheetName || assignment.workerId,
@@ -920,15 +1039,17 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         );
       }
       setClearanceEditMode(0);
-      toast({
-        title: editing ? 'แก้ไขวันเริ่มงานแล้ว' : 'เริ่มวันทำงานแล้ว',
-        description: `ACTIVE ตั้งแต่ ${workYmd} — วัน Mob คงเป็น M1 · วันเริ่มงานลง W แล้ว · ระบบเติมรายวันถัดไปให้อัตโนมัติ`,
-      });
+      if (!opts?.quiet) {
+        toast({
+          title: editing ? 'แก้ไขวันเริ่มงานแล้ว' : 'เริ่มวันทำงานแล้ว',
+          description: `ACTIVE ตั้งแต่ ${workYmd} — วัน Mob คงเป็น M1 · วันเริ่มงานลง W แล้ว · ระบบเติมรายวันถัดไปให้อัตโนมัติ`,
+        });
+      }
       try {
         const r = await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser, {
           ignoreBundleAutoDisabled: true,
         });
-        if (r.created + r.updated > 0) {
+        if (!opts?.quiet && r.created + r.updated > 0) {
           toast({
             title: 'เติมรายวันอัตโนมัติแล้ว',
             description: `สร้าง ${r.created} · อัปเดต ${r.updated} · ข้าม ${r.skipped}`,
@@ -937,40 +1058,50 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       } catch (e) {
         console.warn('[mob] auto daily after step3', e);
       }
+      return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast({ variant: 'destructive', title: 'เริ่มวันทำงานไม่สำเร็จ', description: msg });
+      return false;
     } finally {
       setClearanceSavingStep(0);
     }
   };
 
-  const saveMobLocation = async () => {
-    if (!firestore || !assignment || !currentUser?.id || !canEditMobilization) return;
-    if (isFinalClearanceMobDone(assignment)) {
-      toast({
-        variant: 'destructive',
-        title: 'แก้สถานที่ไม่ได้',
-        description: 'บันทึก Mob แล้ว — ไม่สามารถเปลี่ยนสถานที่ปฏิบัติงานได้',
-      });
-      return;
+  const saveMobLocation = async (opts?: { quiet?: boolean }) => {
+    if (!firestore || !assignment || !currentUser?.id || !canEditMobilization) return false;
+    if (isMobUnassigned(assignment)) {
+      if (!opts?.quiet) {
+        toast({
+          variant: 'destructive',
+          title: 'แก้สถานที่ไม่ได้',
+          description: 'รายการนี้ Unassign แล้ว',
+        });
+      }
+      return false;
     }
     const custom = locationCustomDraft.trim();
     if (!custom) {
-      toast({ variant: 'destructive', title: 'ระบุสถานที่', description: 'กรอกข้อความสถานที่ปฏิบัติงานก่อนบันทึก' });
-      return;
+      if (!opts?.quiet) {
+        toast({ variant: 'destructive', title: 'ระบุสถานที่', description: 'กรอกข้อความสถานที่ปฏิบัติงานก่อนบันทึก' });
+      }
+      return false;
     }
     setLocationSaving(true);
     try {
       const now = Date.now();
+      const alreadyPastTravel = isFinalClearanceStep1Done(assignment);
       const patch: Record<string, unknown> = {
         mobLocationKey: `custom:${custom.slice(0, 200)}`,
         workLocation: custom.slice(0, 500),
         workLocationUpdatedAt: now,
         workLocationUpdatedByUserId: currentUser.id,
-        mobLocationPhase: 'location_selected',
       };
-      if (isTravelReadyDisplay(assignment, mobDrugOk) && !isFinalClearanceStep1Done(assignment)) {
+      // อย่าทับเฟส ACTIVE / MOBILIZING เมื่อแก้สถานที่หลังเดินทางแล้ว
+      if (!alreadyPastTravel || !isFinalClearanceMobDone(assignment)) {
+        patch.mobLocationPhase = 'location_selected';
+      }
+      if (isTravelReadyDisplay(assignment, mobDrugOk) && !alreadyPastTravel) {
         const today = thailandTodayYmd();
         patch.mobReadyToTravelDate = today;
         patch.mobReadyToTravelAt = now;
@@ -979,16 +1110,145 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         patch.deploymentStatus = 'READY_TO_MOB';
       }
       patchMobilization(patch);
-      setLocationEditing(false);
-      toast({
-        title: 'บันทึกสถานที่แล้ว',
-        description:
-          isTravelReadyDisplay(assignment, mobDrugOk) && !isFinalClearanceStep1Done(assignment)
-            ? `${custom} · พร้อมเดินทาง (READY_TO_MOB)`
-            : custom,
-      });
+      if (!opts?.quiet) {
+        toast({
+          title: 'บันทึกสถานที่แล้ว',
+          description:
+            isTravelReadyDisplay(assignment, mobDrugOk) && !alreadyPastTravel
+              ? `${custom} · พร้อมเดินทาง (READY_TO_MOB)`
+              : custom,
+        });
+      }
+      return true;
     } finally {
       setLocationSaving(false);
+    }
+  };
+
+  const saveClearanceFormAll = async () => {
+    if (!firestore || !assignment || !currentUser?.id || !canEditMobilization) return;
+    if (isMobUnassigned(assignment)) {
+      toast({ variant: 'destructive', title: 'แก้ไขไม่ได้', description: 'รายการนี้ Unassign แล้ว' });
+      return;
+    }
+    const isYmd = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+    const locDraft = locationCustomDraft.trim();
+    const prevLoc = (assignment.workLocation || '').trim();
+    const preDraft = (preMobDateDraft || '').trim();
+    const prevPre = (assignment.mobPreMobDate || '').trim();
+    const mobDraft = (standbyDateDraft || '').trim();
+    const prevMob = (assignment.mobStandbyDate || '').trim();
+    const workDraft = (workingStartDateDraft || '').trim();
+    const prevWork = (assignment.mobWorkingStartDate || '').trim();
+
+    const locDirty = locDraft !== prevLoc;
+    // Pre-Mob: dirty when draft ymd differs from saved date (already saved, not skipped).
+    // Un-skip: skipped + user picked a date in bulk edit → save date (clears skipped in runSavePreMob).
+    // Do not require location/Mob/work-start to also be dirty.
+    const editingPre = clearanceFormEditing || clearanceEditMode === 1;
+    const editingMob = clearanceFormEditing || clearanceEditMode === 2;
+    const editingWork = clearanceFormEditing || clearanceEditMode === 3;
+    const preDirty =
+      isYmd(preDraft) &&
+      preDraft !== prevPre &&
+      (assignment.mobPreMobSkipped === true
+        ? editingPre
+        : isYmd(prevPre) || (isFinalClearancePreMobDone(assignment) && editingPre));
+    const mobDirty =
+      !assignment.mobMobSkipped &&
+      isYmd(mobDraft) &&
+      mobDraft !== prevMob &&
+      (isYmd(prevMob) || (isFinalClearanceMobDone(assignment) && editingMob));
+    const workDirty =
+      isYmd(workDraft) &&
+      workDraft !== prevWork &&
+      (isYmd(prevWork) || (isFinalClearanceStep3Done(assignment) && editingWork));
+
+    // ขั้นแรกยังไม่มีสถานที่ — อนุญาตบันทึกสถานที่ใหม่จากโหมดแก้ไข
+    const locCreate = locDirty && !prevLoc && locDraft.length > 0;
+    const anyDirty = locDirty || preDirty || mobDirty || workDirty || locCreate;
+    if (!anyDirty) {
+      toast({ title: 'ไม่มีการเปลี่ยนแปลง', description: 'แก้สถานที่หรือวันที่ก่อนกดบันทึก' });
+      return;
+    }
+    if (locDirty && !locDraft) {
+      toast({ variant: 'destructive', title: 'ระบุสถานที่', description: 'สถานที่ว่างไม่ได้' });
+      return;
+    }
+
+    setClearanceFormSaving(true);
+    try {
+      if (locDirty || locCreate) {
+        const ok = await saveMobLocation({ quiet: true });
+        if (!ok) return;
+      }
+
+      if (preDirty) {
+        const gate = canSaveFinalClearancePreMob(assignment, {
+          editingExisting: true,
+          drugOk: mobDrugOk,
+          drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+          travelReady,
+        });
+        if (!gate.ok) {
+          toast({ variant: 'destructive', title: 'บันทึก Pre-Mob ไม่ได้', description: gate.message });
+          return;
+        }
+        const ok = await runSavePreMob({ quiet: true });
+        if (!ok) return;
+      }
+
+      if (mobDirty) {
+        const gate = canSaveFinalClearanceMob(assignment, {
+          editingExisting: true,
+          drugOk: mobDrugOk,
+          drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+          travelReady,
+        });
+        if (!gate.ok) {
+          toast({ variant: 'destructive', title: 'บันทึก Mob ไม่ได้', description: gate.message });
+          return;
+        }
+        const pkg = defaultPackageHoursForWorkMode(assignment.workMode);
+        const defaults = defaultMobDayCharges('MOB', assignment.workMode);
+        const billing =
+          assignment.mobStep2Choice === 'MOB' && assignment.mobStep2BillingCharge
+            ? normalizeMobDayChargeSpec(assignment.mobStep2BillingCharge, pkg)
+            : defaults.billing;
+        const payroll =
+          assignment.mobStep2Choice === 'MOB' && assignment.mobStep2PayrollCharge
+            ? normalizeMobDayChargeSpec(assignment.mobStep2PayrollCharge, pkg)
+            : defaults.payroll;
+        const ok = await runFinalClearanceStep2('MOB', billing, payroll, { quiet: true });
+        if (!ok) return;
+      }
+
+      if (workDirty) {
+        const gate = canSaveFinalClearanceWorkStart(assignment, {
+          editingExisting: true,
+          drugOk: mobDrugOk,
+          drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+        });
+        if (!gate.ok) {
+          toast({ variant: 'destructive', title: 'บันทึกวันเริ่มงานไม่ได้', description: gate.message });
+          return;
+        }
+        const ok = await runFinalClearanceStep3({ quiet: true });
+        if (!ok) return;
+      }
+
+      setClearanceFormEditing(false);
+      setClearanceEditMode(0);
+      toast({
+        title: 'บันทึก Final Clearance แล้ว',
+        description: 'อัปเดตสถานที่/วันที่ที่มีการเปลี่ยนแปลง และซิงค์ตารางเวลาที่เกี่ยวข้อง',
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: msg });
+    } finally {
+      setClearanceFormSaving(false);
+      setClearanceEditMode(0);
     }
   };
 
@@ -1271,24 +1531,69 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
                 <TooltipProvider delayDuration={300}>
                   <Card className="border-primary/20 bg-primary/5">
-                    <CardHeader>
-                      <CardTitle className="text-lg flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                        <span>Final Clearance</span>
-                        <span className="text-sm font-normal text-muted-foreground">
-                          รอบที่ {assignment.mobCycleNumber ?? 1} · {finalClearanceDeploymentLabel}
-                        </span>
-                      </CardTitle>
-                      <CardDescription>
-                        วันที่ใช้เขตเวลาไทย (Bangkok) · Unassign คืนคนให้ไป PO ชุดอื่นได้ — ไม่ลบ timesheet เดิม
-                      </CardDescription>
+                    <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between space-y-0">
+                      <div className="space-y-1.5 min-w-0">
+                        <CardTitle className="text-lg flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                          <span>Final Clearance</span>
+                          <span className="text-sm font-normal text-muted-foreground">
+                            รอบที่ {assignment.mobCycleNumber ?? 1} · {finalClearanceDeploymentLabel}
+                          </span>
+                        </CardTitle>
+                        <CardDescription>
+                          วันที่ใช้เขตเวลาไทย (Bangkok) · Unassign คืนคนให้ไป PO ชุดอื่นได้ — ไม่ลบ timesheet เดิม
+                        </CardDescription>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        {!clearanceFormEditing ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-11 w-36"
+                            disabled={
+                              !canEditMobilization ||
+                              isMobUnassigned(assignment) ||
+                              clearanceSavingStep !== 0 ||
+                              clearanceFormSaving
+                            }
+                            onClick={beginClearanceFormEdit}
+                          >
+                            <Pencil className="h-4 w-4 mr-1" />
+                            แก้ไข
+                          </Button>
+                        ) : (
+                          <Button type="button" variant="ghost" className="h-11" onClick={cancelClearanceFormEdit} disabled={clearanceFormSaving}>
+                            ยกเลิก
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          className="h-11 w-36"
+                          disabled={
+                            (!(
+                              clearanceFormEditing ||
+                              !(assignment.workLocation || '').trim()
+                            ) ||
+                            !canEditMobilization ||
+                            isMobUnassigned(assignment) ||
+                            clearanceFormSaving ||
+                            clearanceSavingStep !== 0)
+                          }
+                          onClick={() => void saveClearanceFormAll()}
+                        >
+                          {clearanceFormSaving || locationSaving ? (
+                            <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                          ) : null}
+                          บันทึก
+                        </Button>
+                      </div>
                     </CardHeader>
                     <CardContent className="space-y-6">
-                      {clearanceEditMode !== 0 ? (
+                      {clearanceFormEditing ? (
                         <Alert className="border-amber-300 bg-amber-50/90 dark:bg-amber-950/30">
                           <AlertTriangle className="h-4 w-4 text-amber-800" />
-                          <AlertTitle className="text-amber-950 dark:text-amber-100">โหมดแก้ไขวันที่</AlertTitle>
+                          <AlertTitle className="text-amber-950 dark:text-amber-100">โหมดแก้ไข Final Clearance</AlertTitle>
                           <AlertDescription className="text-xs text-amber-950/90 dark:text-amber-50/90">
-                            แก้ขั้นที่ {clearanceEditMode === 2 ? 4 : 5} — บันทึกใหม่เมื่อแก้เสร็จ หรือกด «ยกเลิกการแก้ไข»
+                            แก้สถานที่ · Pre-Mob · Mob · วันเริ่มงาน ได้ทั้งหมด แล้วกด «บันทึก» ด้านบน — ระบบจะอัปเดตตารางรายวัน/รายเดือนตามวันที่ใหม่
                           </AlertDescription>
                         </Alert>
                       ) : null}
@@ -1296,8 +1601,10 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                       <div className="space-y-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 1 · สถานะความพร้อมเดินทาง</p>
-                          {travelReady ? (
-                            <Badge className="bg-green-600 hover:bg-green-600 text-white">พร้อมเดินทาง</Badge>
+                          {travelBadge.ready ? (
+                            <Badge className="bg-green-600 hover:bg-green-600 text-white">
+                              {travelBadge.label === 'passed' ? 'ผ่านขั้นเดินทางแล้ว' : 'พร้อมเดินทาง'}
+                            </Badge>
                           ) : (
                             <Badge
                               variant="outline"
@@ -1309,7 +1616,14 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                         </div>
                         <p className="text-xs text-muted-foreground leading-relaxed">
                           ต้องผ่าน checklist 1–4: พาส/บัตร · แพทย์ · ใบเซอร์ · สารเสพติด
-                          {!travelReady ? (
+                          {travelBadge.label === 'passed' ? (
+                            <span className="block mt-1 text-emerald-800 dark:text-emerald-200">
+                              พนักงานอยู่ในสถานะเดินทาง/กำลังทำงานแล้ว — ไม่บล็อกด้วย checklist ที่หมดอายุหลังเดินทาง
+                              {assignment.mobReadyToTravelAt
+                                ? ` · stamp ${formatDateTimeThaiBE(assignment.mobReadyToTravelAt)}`
+                                : ''}
+                            </span>
+                          ) : !travelReady ? (
                             <span className="block mt-1 text-amber-800 dark:text-amber-200">
                               {[
                                 assignment.readinessSummary?.passportValid !== 'pass' ? 'พาส/บัตร' : null,
@@ -1341,60 +1655,23 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                             className="h-11 flex-1 min-w-0"
                             value={locationCustomDraft}
                             onChange={(e) => setLocationCustomDraft(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                void saveMobLocation();
-                              }
-                            }}
                             placeholder="เช่น Rig A / ฐานส่งตัว"
                             disabled={
-                              !locationEditing ||
                               !canEditMobilization ||
                               isMobUnassigned(assignment) ||
-                              isFinalClearanceMobDone(assignment) ||
-                              locationSaving
+                              clearanceFormSaving ||
+                              (!clearanceFormEditing && Boolean((assignment.workLocation || '').trim()))
                             }
                           />
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="h-11 w-36 shrink-0"
-                            disabled={
-                              locationEditing ||
-                              !canEditMobilization ||
-                              isMobUnassigned(assignment) ||
-                              isFinalClearanceMobDone(assignment) ||
-                              locationSaving
-                            }
-                            onClick={() => setLocationEditing(true)}
-                          >
-                            <Pencil className="h-4 w-4 mr-1" />
-                            แก้ไข
-                          </Button>
-                          <Button
-                            type="button"
-                            className="h-11 w-36 shrink-0"
-                            disabled={
-                              !locationEditing ||
-                              !canEditMobilization ||
-                              isMobUnassigned(assignment) ||
-                              isFinalClearanceMobDone(assignment) ||
-                              locationSaving ||
-                              !locationCustomDraft.trim()
-                            }
-                            onClick={() => void saveMobLocation()}
-                          >
-                            {locationSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'บันทึก'}
-                          </Button>
                         </div>
                         {(assignment.workLocation || '').trim() ? (
                           <p className="text-xs text-muted-foreground">
                             ปัจจุบัน: <strong>{assignment.workLocation}</strong>
+                            {!clearanceFormEditing ? ' · กด «แก้ไข» ด้านบนเพื่อเปลี่ยน' : null}
                           </p>
                         ) : (
                           <p className="text-xs text-amber-800 dark:text-amber-200">
-                            ยังไม่บันทึกสถานที่ — ต้องบันทึกก่อน Pre-Mob / Mob
+                            ยังไม่บันทึกสถานที่ — กรอกแล้วกด «บันทึก» ด้านบน
                           </p>
                         )}
                       </div>
@@ -1427,8 +1704,10 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                               !canEditMobilization ||
                               isMobUnassigned(assignment) ||
                               clearanceSavingStep !== 0 ||
-                              isFinalClearancePreMobDone(assignment) ||
-                              isFinalClearanceMobDone(assignment)
+                              clearanceFormSaving ||
+                              (!clearanceFormEditing &&
+                                isFinalClearancePreMobDone(assignment) &&
+                                clearanceEditMode !== 1)
                             }
                           />
                           <Tooltip>
@@ -1441,6 +1720,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     !canEditMobilization ||
                                     isMobUnassigned(assignment) ||
                                     clearanceSavingStep !== 0 ||
+                                    clearanceFormSaving ||
                                     !primaryPoLine ||
                                     isFinalClearancePreMobDone(assignment) ||
                                     !preMobSaveGate.ok
@@ -1457,8 +1737,10 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
-                              {isFinalClearancePreMobDone(assignment)
-                                ? 'บันทึก / ข้าม Pre-Mob แล้ว'
+                              {clearanceFormEditing && isFinalClearancePreMobDone(assignment)
+                                ? 'โหมดแก้ไขทั้งฟอร์ม — เปลี่ยนวันที่แล้วกด «บันทึก» ด้านบน'
+                                : isFinalClearancePreMobDone(assignment)
+                                ? 'บันทึก / ข้าม Pre-Mob แล้ว — กด «แก้ไข» ด้านบนเพื่อเปลี่ยนวันที่'
                                 : !preMobSaveGate.ok
                                   ? preMobSaveGate.message
                                   : 'บันทึก SB 8 ชม. ในตารางรายวันทันที'}
@@ -1475,6 +1757,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     !canEditMobilization ||
                                     isMobUnassigned(assignment) ||
                                     clearanceSavingStep !== 0 ||
+                                    clearanceFormSaving ||
                                     isFinalClearancePreMobDone(assignment) ||
                                     !preMobSaveGate.ok
                                   }
@@ -1526,16 +1809,28 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                             onChange={(ms) => {
                               const v = timestampToHtmlDateValue(ms);
                               setStandbyDateDraft(v);
-                              if (/^\d{4}-\d{2}-\d{2}$/.test(v) && !isFinalClearanceStep3Done(assignment)) {
+                              if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return;
+                              if (!isFinalClearanceStep3Done(assignment)) {
                                 // Start work day = Mob + 1 (ปรับเองภายหลังได้)
                                 setWorkingStartDateDraft(addDaysToYmd(v, 1));
+                                return;
+                              }
+                              if (clearanceFormEditing) {
+                                setWorkingStartDateDraft((cur) => {
+                                  const c = (cur || '').trim();
+                                  if (!/^\d{4}-\d{2}-\d{2}$/.test(c) || c <= v) return addDaysToYmd(v, 1);
+                                  return cur;
+                                });
                               }
                             }}
                             disabled={
                               !canEditMobilization ||
                               isMobUnassigned(assignment) ||
                               clearanceSavingStep !== 0 ||
-                              (isFinalClearanceMobDone(assignment) && clearanceEditMode !== 2)
+                              clearanceFormSaving ||
+                              (!clearanceFormEditing &&
+                                isFinalClearanceMobDone(assignment) &&
+                                clearanceEditMode !== 2)
                             }
                           />
                           <Tooltip>
@@ -1548,8 +1843,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     !canEditMobilization ||
                                     isMobUnassigned(assignment) ||
                                     clearanceSavingStep !== 0 ||
+                                    clearanceFormSaving ||
                                     !primaryPoLine ||
-                                    (isFinalClearanceMobDone(assignment) && clearanceEditMode !== 2) ||
+                                    isFinalClearanceMobDone(assignment) ||
                                     !mobSaveGate.ok
                                   }
                                   onClick={() => openPreMobChargeConfig('MOB')}
@@ -1559,15 +1855,15 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                   ) : (
                                     <Truck className="h-4 w-4 mr-2" />
                                   )}
-                                  {clearanceEditMode === 2 ? 'Mob (แก้ไข)' : 'Mob'}
+                                  Mob
                                 </Button>
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
-                              {clearanceEditMode === 2
-                                ? 'แก้ค่าวางบิล/จ่ายลูกจ้างแล้วบันทึกวัน Mob ใหม่'
+                              {clearanceFormEditing && isFinalClearanceMobDone(assignment)
+                                ? 'โหมดแก้ไขทั้งฟอร์ม — เปลี่ยนวันที่แล้วกด «บันทึก» ด้านบน'
                                 : isFinalClearanceMobDone(assignment)
-                                  ? 'บันทึกแล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่'
+                                  ? 'บันทึกแล้ว — กด «แก้ไข» ด้านบนเพื่อเปลี่ยนวันที่'
                                   : !mobSaveGate.ok
                                     ? mobSaveGate.message
                                     : 'เปิดหน้าต่างกำหนดค่า M1 แล้วบันทึก · ต้องทำ Pre-Mob หรือข้ามก่อน'}
@@ -1584,6 +1880,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     !canEditMobilization ||
                                     isMobUnassigned(assignment) ||
                                     clearanceSavingStep !== 0 ||
+                                    clearanceFormSaving ||
                                     isFinalClearanceMobDone(assignment) ||
                                     !mobSaveGate.ok
                                   }
@@ -1632,30 +1929,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                             Mob = วัน M1 (MO) · หรือกด «ไม่มี Mob» หากไม่ต้องการวันเดินทาง — ตารางเวลาจะเริ่มที่วันทำงานเลย
                           </p>
                         )}
-                        {(isFinalClearanceMobDone(assignment) && !assignment.mobMobSkipped && clearanceEditMode !== 2) ||
-                        clearanceEditMode === 2 ? (
-                          <div className="flex flex-wrap items-center gap-2">
-                            {isFinalClearanceMobDone(assignment) && !assignment.mobMobSkipped && clearanceEditMode !== 2 ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={
-                                  !canEditMobilization || isMobUnassigned(assignment) || clearanceSavingStep !== 0
-                                }
-                                onClick={beginEditStandby}
-                              >
-                                <Pencil className="h-4 w-4 mr-1" />
-                                แก้ไขวันที่
-                              </Button>
-                            ) : null}
-                            {clearanceEditMode === 2 ? (
-                              <Button type="button" variant="ghost" size="sm" onClick={cancelClearanceEdit}>
-                                ยกเลิกการแก้ไข
-                              </Button>
-                            ) : null}
-                          </div>
-                        ) : null}
                       </div>
 
                       <Separator />
@@ -1674,8 +1947,11 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                               !canEditMobilization ||
                               isMobUnassigned(assignment) ||
                               clearanceSavingStep !== 0 ||
+                              clearanceFormSaving ||
                               !isFinalClearanceStep2Done(assignment) ||
-                              (isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3)
+                              (!clearanceFormEditing &&
+                                isFinalClearanceStep3Done(assignment) &&
+                                clearanceEditMode !== 3)
                             }
                           />
                           <Tooltip>
@@ -1687,9 +1963,10 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     !canEditMobilization ||
                                     isMobUnassigned(assignment) ||
                                     clearanceSavingStep !== 0 ||
+                                    clearanceFormSaving ||
                                     !primaryPoLine ||
                                     !isFinalClearanceStep2Done(assignment) ||
-                                    (isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3) ||
+                                    isFinalClearanceStep3Done(assignment) ||
                                     !step3SaveGate.ok
                                   }
                                   onClick={() => void runFinalClearanceStep3()}
@@ -1699,15 +1976,15 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                   ) : (
                                     <CheckCircle className="h-4 w-4 mr-2" />
                                   )}
-                                  {clearanceEditMode === 3 ? 'บันทึกวันเริ่มงาน (แก้ไข)' : 'Start working day'}
+                                  Start working day
                                 </Button>
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
-                              {clearanceEditMode === 3
-                                ? 'บันทึกใหม่ — ช่วงระหว่างวัน Mob กับวันเริ่มงานจะเป็น Standby อัตโนมัติ · ต่อเนื่องต้นเดือน (ถ้ามี)'
+                              {clearanceFormEditing && isFinalClearanceStep3Done(assignment)
+                                ? 'โหมดแก้ไขทั้งฟอร์ม — เปลี่ยนวันที่แล้วกด «บันทึก» ด้านบน'
                                 : isFinalClearanceStep3Done(assignment)
-                                  ? 'เริ่มวันทำงานแล้ว — ใช้ปุ่มแก้ไขหากต้องการเปลี่ยนวันที่'
+                                  ? 'เริ่มวันทำงานแล้ว — กด «แก้ไข» ด้านบนเพื่อเปลี่ยนวันที่'
                                   : !step3SaveGate.ok
                                     ? step3SaveGate.message
                                     : 'วันเริ่มงานต้องหลังวัน Mob — ระบบจะเติมวัน Standby ในช่วงว่างอัตโนมัติ · ถ้าต่อจากเดือนก่อนจะเติมวันทำงานต้นเดือนจนถึงก่อนวัน Mob'}
@@ -1719,29 +1996,6 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                             เริ่มแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobWorkingStartDate)} ·{' '}
                             {formatDateTimeThaiBE(assignment.mobWorkingStartedAt)}
                           </p>
-                        ) : null}
-                        {(isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3) || clearanceEditMode === 3 ? (
-                          <div className="flex flex-wrap items-center gap-2">
-                            {isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3 ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={
-                                  !canEditMobilization || isMobUnassigned(assignment) || clearanceSavingStep !== 0
-                                }
-                                onClick={beginEditWorkStart}
-                              >
-                                <Pencil className="h-4 w-4 mr-1" />
-                                แก้ไขวันที่
-                              </Button>
-                            ) : null}
-                            {clearanceEditMode === 3 ? (
-                              <Button type="button" variant="ghost" size="sm" onClick={cancelClearanceEdit}>
-                                ยกเลิกการแก้ไข
-                              </Button>
-                            ) : null}
-                          </div>
                         ) : null}
                       </div>
 

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,6 +10,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { CreditCard, HeartPulse, User, Phone, History, AlertTriangle, Wallet, Mail, CheckCircle2 } from 'lucide-react';
 import type { Worker, Position, Assignment } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
@@ -18,6 +27,12 @@ import { resolveWorkerLaborBaseRate } from '@/lib/payroll/labor-cost-model';
 import { deriveOtHourlyRatesFromDailyPackage } from '@/lib/commercial/package-hourly-rate';
 import { useActiveBankNameCatalog, useActiveSsoHospitalCatalog } from '@/hooks/use-hrm-name-catalogs';
 import { displayWorkerRegistryJobStatus, workerRegistryJobStatusBadgeProps } from '@/lib/ops/worker-effective-job-status';
+import {
+  WORKER_NOT_READY_REASON_OPTIONS,
+  formatWorkerNotReadyReasonDisplay,
+  isWorkerNotReadyReasonCode,
+  type WorkerNotReadyReasonCode,
+} from '@/lib/hr/worker-not-ready-reason';
 
 interface WorkerInfoTabProps {
   worker: Worker;
@@ -32,7 +47,10 @@ interface WorkerInfoTabProps {
   canViewBankPayrollProfile?: boolean;
   /** แก้สวิตช์พร้อม/ไม่พร้อมที่หัวข้อมูลส่วนตัว */
   canEditWorkerReadiness?: boolean;
-  onReadinessManualHoldChange?: (hold: boolean) => void;
+  onReadinessManualHoldChange?: (
+    hold: boolean,
+    reason?: { code: WorkerNotReadyReasonCode; note?: string },
+  ) => void;
   /** HR/ผู้มีสิทธิ์แก้ทะเบียน — แสดงปุ่มเปิดใช้บัญชี Firebase */
   canActivateWorkerLogin?: boolean;
   onActivateWorkerLogin?: () => void | Promise<void>;
@@ -134,7 +152,49 @@ export function WorkerInfoTab({
   const assignedNow = displayJobStatus === 'ASSIGNED' || displayJobStatus === 'ON_SITE';
   const readinessToggleBlockedByAssignment = assignedNow && !readinessOnHold;
 
+  const [notReadyDialogOpen, setNotReadyDialogOpen] = useState(false);
+  const [reasonCodeDraft, setReasonCodeDraft] = useState<WorkerNotReadyReasonCode | ''>('');
+  const [reasonNoteDraft, setReasonNoteDraft] = useState('');
+
+  const holdReasonDisplay = formatWorkerNotReadyReasonDisplay(
+    worker.readinessManualHoldReason,
+    worker.readinessManualHoldReasonNote,
+  );
+  const holdMissingReason = readinessOnHold && !holdReasonDisplay;
+
+  const openNotReadyReasonDialog = (prefill = true) => {
+    if (prefill && isWorkerNotReadyReasonCode(worker.readinessManualHoldReason)) {
+      setReasonCodeDraft(worker.readinessManualHoldReason);
+      setReasonNoteDraft((worker.readinessManualHoldReasonNote || '').trim());
+    } else {
+      setReasonCodeDraft('');
+      setReasonNoteDraft('');
+    }
+    setNotReadyDialogOpen(true);
+  };
+
+  const confirmNotReadyReason = () => {
+    if (!reasonCodeDraft) return;
+    if (reasonCodeDraft === 'OTHER' && !reasonNoteDraft.trim()) return;
+    onReadinessManualHoldChange?.(true, {
+      code: reasonCodeDraft,
+      note: reasonCodeDraft === 'OTHER' ? reasonNoteDraft.trim() : undefined,
+    });
+    setNotReadyDialogOpen(false);
+  };
+
+  const handleReadinessSwitch = (on: boolean) => {
+    if (on) {
+      // พร้อม
+      onReadinessManualHoldChange?.(false);
+      return;
+    }
+    // ไม่พร้อม — ต้องเลือกเหตุผลก่อน
+    openNotReadyReasonDialog(false);
+  };
+
   return (
+    <>
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="lg:col-span-2 space-y-6">
         <Card className="shadow-sm">
@@ -148,32 +208,76 @@ export function WorkerInfoTab({
                   <span
                     className={`text-xs font-semibold whitespace-nowrap ${readinessOnHold ? 'text-amber-900' : 'text-muted-foreground'}`}
                   >
-                    ไม่พร้อม (Not Ready)
+                    ไม่พร้อมทำงาน
                   </span>
                   <Switch
                     checked={!readinessOnHold}
                     disabled={!canEditWorkerReadiness || readinessToggleBlockedByAssignment}
                     title={
                       !canEditWorkerReadiness
-                        ? 'ไม่มีสิทธิ์แก้ไขสถานะพร้อม'
+                        ? 'ไม่มีสิทธิ์แก้ไขสถานะพร้อมทำงาน'
                         : readinessToggleBlockedByAssignment
-                          ? 'ยังถูกมอบหมายงานอยู่ (ASSIGNED/ON_SITE) — ต้อง Unassign ก่อนจึงตั้งเป็นไม่พร้อมได้'
+                          ? 'ยังถูกมอบหมายงานอยู่ (ASSIGNED/ON_SITE) — ต้อง Unassign ก่อนจึงตั้งเป็นไม่พร้อมทำงานได้'
                           : undefined
                     }
-                    aria-label="สลับสถานะพร้อมปฏิบัติงาน"
-                    onCheckedChange={(on) => onReadinessManualHoldChange?.(!on)}
+                    aria-label="สลับสถานะพร้อมทำงาน (Not Ready to Work)"
+                    onCheckedChange={handleReadinessSwitch}
                   />
                   <span
                     className={`text-xs font-semibold whitespace-nowrap ${!readinessOnHold ? 'text-green-700' : 'text-muted-foreground'}`}
                   >
-                    พร้อม (Ready)
+                    พร้อมทำงาน
                   </span>
                 </div>
-                <p className="text-[10px] text-muted-foreground max-w-[280px] sm:text-right leading-snug">
-                  {readinessToggleBlockedByAssignment
-                    ? 'คนงานยังถูกมอบหมายงานอยู่ — ต้อง Unassign ออกจากงานก่อนจึงตั้งเป็นไม่พร้อมได้'
-                    : 'ปิดสวิตช์เมื่อพักงานหรือมีเหตุชั่วคราว — ระบบจะไม่ให้เลือกในการมอบหมายจนกว่าจะเปิดใหม่ (ไม่เปลี่ยนผลตรวจเอกสาร)'}
-                </p>
+                {readinessOnHold ? (
+                  <div className="w-full min-w-[220px] max-w-[320px] rounded-md border border-amber-300 bg-amber-50/90 px-3 py-2 text-left sm:text-right dark:bg-amber-950/40 dark:border-amber-700">
+                    {holdReasonDisplay ? (
+                      <>
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-800/80 dark:text-amber-200/80">
+                          เหตุผลที่ไม่พร้อมทำงาน
+                        </p>
+                        <p className="text-sm font-bold text-amber-950 dark:text-amber-50 leading-snug mt-0.5">
+                          {holdReasonDisplay}
+                        </p>
+                        {canEditWorkerReadiness ? (
+                          <button
+                            type="button"
+                            className="mt-1 text-[11px] font-medium text-amber-900 underline underline-offset-2 hover:text-amber-700 dark:text-amber-100"
+                            onClick={() => openNotReadyReasonDialog(true)}
+                          >
+                            เปลี่ยนเหตุผล
+                          </button>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-xs font-semibold text-amber-950 dark:text-amber-50">
+                          ยังไม่ได้ระบุเหตุผล
+                        </p>
+                        <p className="text-[10px] text-amber-900/80 dark:text-amber-100/80 mt-0.5 leading-snug">
+                          เลื่อนเป็นพร้อมทำงานแล้วกลับเป็นไม่พร้อมอีกครั้ง หรือกดปุ่มด้านล่างเพื่อระบุ
+                        </p>
+                        {canEditWorkerReadiness ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="mt-2 h-8 border-amber-600 text-amber-950"
+                            onClick={() => openNotReadyReasonDialog(false)}
+                          >
+                            ระบุเหตุผล
+                          </Button>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground max-w-[280px] sm:text-right leading-snug">
+                    {readinessToggleBlockedByAssignment
+                      ? 'คนงานยังถูกมอบหมายงานอยู่ — ต้อง Unassign ออกจากงานก่อนจึงตั้งเป็นไม่พร้อมทำงานได้'
+                      : 'สวิตช์นี้ = ไม่พร้อมทำงาน (Not Ready to Work) เมื่อลาออก พักงาน เจ็บป่วย หรือเหตุอื่น — ไม่ใช่สถานะเอกสาร'}
+                  </p>
+                )}
               </div>
             </div>
             {readinessComplianceOk && worker.complianceAlertLevel === 'warning' && (
@@ -185,19 +289,29 @@ export function WorkerInfoTab({
             {!readinessComplianceOk && (
               <p className="text-xs flex items-center gap-1.5 text-destructive bg-destructive/5 border border-destructive/20 rounded-md px-2 py-1.5 w-fit">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                ความพร้อมจากเอกสาร: <strong className="font-mono">{worker.readinessStatus}</strong> — แก้ที่แท็บ เอกสาร/ใบเซอร์ / Medical / Drug ตามเกณฑ์
+                ไม่พร้อมมอบหมายจากเอกสาร (Not Ready to Assign):{' '}
+                <strong className="font-mono">{worker.readinessStatus}</strong> — แก้ที่แท็บ เอกสาร/ใบเซอร์ / Medical / Drug ตามเกณฑ์
               </p>
             )}
             {readinessComplianceOk && !readinessOnHold && (
               <p className="text-xs flex items-center gap-1.5 text-green-800 bg-green-50 border border-green-200 rounded-md px-2 py-1.5 w-fit">
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                ผ่านเกณฑ์ความพร้อม — เปิดสวิตช์พร้อมแล้วจะเข้าคิวมอบหมายได้
+                ผ่านเกณฑ์เอกสาร และพร้อมทำงาน — เข้าคิวมอบหมายได้
               </p>
             )}
             {readinessComplianceOk && readinessOnHold && (
               <p className="text-xs flex items-center gap-1.5 text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 w-fit">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                ปิดการพร้อมโดย HR — เอกสารยังครบแต่ไม่แสดงในรายการมอบหมาย
+                ไม่พร้อมทำงาน (Not Ready to Work)
+                {holdReasonDisplay ? (
+                  <>
+                    {' '}
+                    — <strong>{holdReasonDisplay}</strong>
+                  </>
+                ) : holdMissingReason ? (
+                  ' — ยังไม่ได้ระบุเหตุผล'
+                ) : null}{' '}
+                · เอกสารยังครบแต่ไม่แสดงในรายการมอบหมาย
               </p>
             )}
           </CardHeader>
@@ -563,15 +677,77 @@ export function WorkerInfoTab({
               <span className="text-muted-foreground">อัปเดตล่าสุด:</span>
               <span className="font-medium">{formatDateTimeThaiBE(worker.updatedAt)}</span>
             </div>
-            <div className="flex justify-between border-t pt-2 mt-2">
-              <span className="text-muted-foreground">สถานะงาน (Job Status):</span>
-              <Badge variant={jobBadge.variant} className={`text-[9px] uppercase font-bold ${jobBadge.className}`}>
-                {jobBadge.label}
-              </Badge>
+            <div className="flex justify-between border-t pt-2 mt-2 items-start gap-2">
+              <span className="text-muted-foreground shrink-0">สถานะงาน (Job Status):</span>
+              <div className="flex flex-col items-end gap-0.5 min-w-0">
+                <Badge variant={jobBadge.variant} className={`text-[9px] uppercase font-bold ${jobBadge.className}`}>
+                  {jobBadge.label}
+                </Badge>
+                {displayJobStatus === 'NOT_READY_TO_WORK' ? (
+                  <span className="text-[10px] text-orange-800 font-medium text-right">
+                    {holdReasonDisplay || 'ยังไม่ระบุเหตุผล'}
+                  </span>
+                ) : displayJobStatus === 'NOT_READY_TO_ASSIGN' ? (
+                  <span className="text-[10px] text-amber-800 text-right">เอกสาร/เซอร์ไม่ครบ</span>
+                ) : null}
+              </div>
             </div>
           </CardContent>
         </Card>
       </div>
     </div>
+
+      <Dialog open={notReadyDialogOpen} onOpenChange={setNotReadyDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>เหตุผลที่ไม่พร้อมทำงาน</DialogTitle>
+            <DialogDescription>
+              เลือกเหตุผลเมื่อตั้งเป็นไม่พร้อมทำงาน (Not Ready to Work) — ลาออก / พักงาน / เจ็บป่วย / อื่นๆ — จะแสดงในโปรไฟล์และทะเบียน
+            </DialogDescription>
+          </DialogHeader>
+          <RadioGroup
+            value={reasonCodeDraft || undefined}
+            onValueChange={(v) => setReasonCodeDraft(v as WorkerNotReadyReasonCode)}
+            className="gap-3 py-2"
+          >
+            {WORKER_NOT_READY_REASON_OPTIONS.map((opt, idx) => (
+              <div key={opt.code} className="flex items-start gap-3">
+                <RadioGroupItem value={opt.code} id={`nr-reason-${opt.code}`} className="mt-0.5" />
+                <Label htmlFor={`nr-reason-${opt.code}`} className="font-medium cursor-pointer leading-snug">
+                  {idx + 1}. {opt.labelTh}
+                  {opt.code === 'OTHER' ? ' ระบุ…' : ''}
+                </Label>
+              </div>
+            ))}
+          </RadioGroup>
+          {reasonCodeDraft === 'OTHER' ? (
+            <div className="space-y-2">
+              <Label htmlFor="nr-reason-note" className="font-bold">
+                ระบุรายละเอียด *
+              </Label>
+              <Input
+                id="nr-reason-note"
+                value={reasonNoteDraft}
+                maxLength={200}
+                placeholder="เช่น ติดคดี / ย้ายต่างประเทศ"
+                onChange={(e) => setReasonNoteDraft(e.target.value)}
+              />
+            </div>
+          ) : null}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setNotReadyDialogOpen(false)}>
+              ยกเลิก
+            </Button>
+            <Button
+              type="button"
+              disabled={!reasonCodeDraft || (reasonCodeDraft === 'OTHER' && !reasonNoteDraft.trim())}
+              onClick={confirmNotReadyReason}
+            >
+              บันทึกไม่พร้อมทำงาน
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

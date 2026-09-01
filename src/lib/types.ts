@@ -461,6 +461,12 @@ export interface Worker {
   readinessStatus: ReadinessStatus;
   /** HR ปิด «พร้อม» ชั่วคราว — เอกสารยังเขียวแต่ไม่ให้มอบหมายจนกว่าจะเปิดสวิตช์ */
   readinessManualHold?: boolean;
+  /** เหตุผลเมื่อตั้งไม่พร้อมทำงาน: ลาออก / พักงาน / เจ็บป่วย / อื่นๆ */
+  readinessManualHoldReason?: 'RESIGNED' | 'SUSPENDED' | 'SICK' | 'OTHER';
+  /** ระบุเพิ่มเมื่อเหตุผลเป็น อื่นๆ */
+  readinessManualHoldReasonNote?: string;
+  readinessManualHoldReasonAt?: number;
+  readinessManualHoldReasonByUserId?: string;
   /** สรุปจากงานมอบหมายที่เปิด: คลังยังต้องเบิก PPE/อุปกรณ์หรือไม่ */
   storeEquipmentReadiness?: WorkerStoreEquipmentReadiness;
   complianceAlertLevel?: 'ok' | 'warning' | 'blocked';
