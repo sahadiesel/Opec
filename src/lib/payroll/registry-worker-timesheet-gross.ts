@@ -235,6 +235,7 @@ export function computeRegistryWorkerTimesheetGross(
       statedHours,
       otAfterShiftMultiplier: otMult,
       standbyCostMultiplier,
+      eventType: payTs.eventType,
     });
     /** M1/D1: คูณจำนวนเที่ยว — SB ใช้ standbyUnits ในสูตรชม.อยู่แล้ว */
     let tripUnits = 1;

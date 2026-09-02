@@ -1193,6 +1193,21 @@ export interface MobDayChargeSpec {
   m1AmountOverride?: number;
 }
 
+/**
+ * ช่วงค่าแรงบน assignment หนึ่งรอบไซต์ — ปิดด้วย untilYmd ตอนจบงาน
+ * (เก็บ 1800 ก่อน remob แม้ทะเบียนลูกจ้างจะถูกแก้เป็น 2600 ภายหลัง)
+ */
+export interface AssignmentLaborCostEpoch {
+  /** รวมวันนี้ — วันหลัง untilYmd ใช้ epoch ถัดไปหรือทะเบียนปัจจุบัน */
+  untilYmd: string;
+  laborCostOffshore?: number;
+  laborCostOnshore?: number;
+  /** false = ใช้ custom ด้านบน; true/undefined ตามค่าที่จับตอนจบงาน */
+  laborCostUsePositionDefault?: boolean;
+  positionId?: string;
+  capturedAt?: number;
+}
+
 /** ค่า mobilization ก่อนกดจบงานบน Wave Board — ใช้ยกเลิกจบงาน */
 export interface MobFinishUndoSnapshot {
   deploymentStatus?: DeploymentStatus;
@@ -1301,6 +1316,12 @@ export interface Assignment {
   mobLocationEndedByUserId?: string;
   /** snapshot ก่อนจบงานจาก Wave Board — ใช้ยกเลิกจบงานคืนสถานะ mobilization */
   mobFinishUndoSnapshot?: MobFinishUndoSnapshot;
+  /**
+   * Epoch ค่าแรงต่อรอบไซต์ — ปิดช่วงด้วย untilYmd ตอนกดจบงาน
+   * วัน ≤ untilYmd ใช้แพ็ก/ตำแหน่งใน epoch (เช่น 1800 ก่อน remob)
+   * วันหลัง untilYmd ล่าสุดใช้ทะเบียนปัจจุบัน (เช่น 2600 หลังเปลี่ยน Fitter Foreman)
+   */
+  laborCostEpochs?: AssignmentLaborCostEpoch[];
   /**
    * หยุดแบบ standby จาก Wave Board — หลังช่วง SB อัตโนมัติแล้วไม่สร้าง work_day จนกว่าจะเริ่มงานใหม่ที่ Mobilization
    */
@@ -1499,6 +1520,8 @@ export interface DailyTimesheet {
   updatedAt: number;
   lockedAt?: number;
   lockedBy?: string;
+  /** ยอดที่ล็อกตอนเข้า payroll — คำนวณใหม่ต้องคงยอดนี้ถ้าวันนั้นจ่ายไปแล้ว */
+  payrollLockedGrossBaht?: number;
 }
 
 export type TimesheetRetroAdjustmentStatus = 'approved' | 'applied' | 'void';
@@ -2750,6 +2773,22 @@ export interface HrPayrollLineAdjustments {
   updatedBy?: string;
 }
 
+/** แถวรายวันบนบรรทัดงวด — snapshot ตอน generate/recalc */
+export interface PayrollBatchLineDailyRowSnapshot {
+  timesheetId: string;
+  date: string;
+  eventType: RateConditionEventType | string;
+  workMode?: JobMode | string;
+  normalHours: number;
+  ot15Hours?: number;
+  ot20Hours?: number;
+  ot30Hours?: number;
+  holidayHours?: number;
+  amount: number;
+  purchaseOrderId?: string;
+  remark?: string;
+}
+
 export interface PayrollBatchLine {
   id: string;
   payrollBatchId: string;
@@ -2764,6 +2803,15 @@ export interface PayrollBatchLine {
   periodEndDate: string;
   eventBreakdown: Record<string, number>; // Maps eventType to count/units
   earningsBreakdown: Record<string, number>; // Maps specific earning category to amount
+  /**
+   * ยอดค่าแรงต่อ daily_timesheet id ณ ตอน generate/recalc
+   * — หน้าดูรายวันใช้ค่านี้โดยไม่คำนวณสูตรสด
+   */
+  timesheetGrossById?: Record<string, number>;
+  /**
+   * แถวรายวัน snapshot ตอน generate/recalc — เปิดหน้ารายคนโชว์ทันทีโดยไม่โหลด daily_timesheets
+   */
+  dailyRowSnapshots?: PayrollBatchLineDailyRowSnapshot[];
   deductionsBreakdown: Record<string, number>; // Maps specific deduction category to amount
   grossAmount: number;
   netAmount: number;

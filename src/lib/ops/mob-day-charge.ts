@@ -86,7 +86,9 @@ export function normalizeMobDayChargeSpec(
   const hours =
     Number.isFinite(hoursRaw) && hoursRaw > 0
       ? Math.min(24, hoursRaw)
-      : packageHoursDefault;
+      : kind === 'STANDBY'
+        ? 8
+        : packageHoursDefault;
 
   if (kind === 'M1' || kind === 'D1') {
     const override = Number(raw?.m1AmountOverride);
@@ -123,7 +125,9 @@ export function defaultChargesForEventType(
     return { billing: spec, payroll: spec };
   }
   if (et === 'standby_day') {
-    const spec = { kind: 'STANDBY' as const, hours: hoursOrPkg > 0 ? hoursOrPkg : 8 };
+    /** SB มาตรฐาน 8 ชม. — ไม่ใช้ชม.แพ็กออฟชอร์ 12 เป็นค่าเริ่ม */
+    const sbHours = Number.isFinite(h) && h > 0 ? Math.min(24, h) : 8;
+    const spec = { kind: 'STANDBY' as const, hours: sbHours };
     return { billing: spec, payroll: spec };
   }
   if (et === 'mobilization_day') {
@@ -251,9 +255,9 @@ export function resolveTimesheetBillingCharge(
   }
   if (ts.eventType === 'standby_day') {
     const h = Number(ts.normalHours);
-    return { kind: 'STANDBY', hours: Number.isFinite(h) && h > 0 ? h : pkg };
+    return { kind: 'STANDBY', hours: Number.isFinite(h) && h > 0 ? h : 8 };
   }
-  return { kind: 'STANDBY', hours: pkg };
+  return { kind: 'STANDBY', hours: 8 };
 }
 
 /** อ่านค่าคิดเงินฝั่ง payroll จาก timesheet */
@@ -329,10 +333,15 @@ export function resolveTimesheetPayrollCharge(
     const isStandbyEvent = et === 'standby_day';
     const chargeMatchesEvent = !et || mobDayChargeKindToEventType(ts.mobPayrollChargeKind) === et;
     if (isStandbyEvent || chargeMatchesEvent) {
+      /** SB: ชม.บนใบ (normalHours) มาก่อน — กัน charge ค้างเป็นชม.แพ็ก 12 ขณะลง 8 */
+      const hours =
+        isStandbyEvent && Number(ts.normalHours) > 0
+          ? Number(ts.normalHours)
+          : ts.mobPayrollChargeHours ?? ts.normalHours;
       return normalizeMobDayChargeSpec(
         {
           kind: ts.mobPayrollChargeKind,
-          hours: ts.mobPayrollChargeHours ?? ts.normalHours,
+          hours,
           m1AmountOverride: ts.mobPayrollM1AmountOverride,
         },
         pkg,
@@ -345,9 +354,13 @@ export function resolveTimesheetPayrollCharge(
   }
   if (ts.eventType === 'standby_day') {
     const h = Number(ts.normalHours);
-    return { kind: 'STANDBY', hours: Number.isFinite(h) && h > 0 ? h : pkg };
+    /** SB มาตรฐาน 8 ชม. — ไม่ fallback เป็นชม.แพ็ก 12 */
+    return {
+      kind: 'STANDBY',
+      hours: Number.isFinite(h) && h > 0 ? h : 8,
+    };
   }
-  return { kind: 'STANDBY', hours: pkg };
+  return { kind: 'STANDBY', hours: 8 };
 }
 
 /**

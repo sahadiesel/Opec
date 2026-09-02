@@ -829,34 +829,48 @@ export function buildPayslipFromWorkerLine(
     netPay = round2(grossTotal - deductionsTotal);
     roundingNote = false;
   } else if (!isSupplemental && priorPaidRefs && priorPaidRefs.length > 0) {
-    /** งวด NORMAL รอบหลัง — แสดงรายได้รวมทั้งเดือน แล้วหักยอดที่บัญชีจ่ายไปแล้วในงวดก่อน */
-    const alreadyPersisted =
-      Number(line.deductionsBreakdown?.[PRIOR_PAID_RECOVERY_DEDUCTION_KEY]) > 0.005;
-    if (!alreadyPersisted) {
-      let priorNetSum = 0;
-      const dateLabels: string[] = [];
-      for (const ref of priorPaidRefs) {
-        const n = resolveLineNetForPayslip(ref.line);
-        if (n <= 0.005) continue;
+    /** งวด NORMAL รอบหลัง — แสดงรายละเอียดงวดที่จ่ายแล้ว (รวม OT ตกเบิก) แล้วหักยอดสุทธิที่จ่ายไปแล้ว */
+    const priorInc: PayslipLineItem[] = [];
+    let priorGrossSum = 0;
+    let priorNetSum = 0;
+    const dateLabels: string[] = [];
+    for (const ref of priorPaidRefs) {
+      const detail = buildWorkerPayslipIncomeLines(ref.line, poPartyLabelById);
+      for (const it of detail) {
+        priorInc.push({
+          label: `จ่ายแล้ว · ${it.label}`,
+          amount: it.amount,
+        });
+      }
+      priorGrossSum = round2(priorGrossSum + Math.max(0, Number(ref.line.grossAmount) || 0));
+      const n = resolveLineNetForPayslip(ref.line);
+      if (n > 0.005) {
         priorNetSum = round2(priorNetSum + n);
         const dl = formatPaymentDate(workerPaymentTimestamp(ref.batch));
         if (dl && dl !== '-') dateLabels.push(dl);
       }
-      if (priorNetSum > 0.005) {
-        const kind =
-          dateLabels.length === 1
-            ? `งวดก่อนหน้า`
-            : `งวดก่อนหน้า ${priorPaidRefs.length} รายการ`;
-        pushAlreadyPaidDeduction(
-          deductionLines,
-          priorNetSum,
-          kind,
-          dateLabels.length === 1 ? dateLabels[0] : dateLabels.join(', '),
-        );
-        deductionsTotal = sumLines(deductionLines);
-        netPay = round2(grossTotal - deductionsTotal);
-        roundingNote = false;
-      }
+    }
+    normalIncomeLines = priorInc;
+    normalGrossTotal = priorGrossSum > 0.005 ? priorGrossSum : undefined;
+    normalNetPay = priorNetSum > 0.005 ? priorNetSum : undefined;
+    normalPaymentDateLabel = dateLabels.length === 1 ? dateLabels[0] : dateLabels.join(', ') || undefined;
+
+    const alreadyPersisted =
+      Number(line.deductionsBreakdown?.[PRIOR_PAID_RECOVERY_DEDUCTION_KEY]) > 0.005;
+    if (!alreadyPersisted && priorNetSum > 0.005) {
+      const kind =
+        dateLabels.length === 1
+          ? `งวดก่อนหน้า`
+          : `งวดก่อนหน้า ${priorPaidRefs.length} รายการ`;
+      pushAlreadyPaidDeduction(
+        deductionLines,
+        priorNetSum,
+        kind,
+        dateLabels.length === 1 ? dateLabels[0] : dateLabels.join(', '),
+      );
+      deductionsTotal = sumLines(deductionLines);
+      netPay = round2(grossTotal - deductionsTotal);
+      roundingNote = false;
     }
   }
 

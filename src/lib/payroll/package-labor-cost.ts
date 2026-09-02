@@ -68,18 +68,30 @@ export function payrollStandbyPackageEventUnits(
   return 1;
 }
 
-/** ชม.ที่จ่าย standby / M1 / D1 — ใช้ normalHours ที่ลงไว้; ถ้าไม่มี ใช้ชม.ในแพ็ก PO (12 หรือ 8) × standbyUnits */
+/** ชม.มาตรฐานที่ลงสแตนบาย (จ่ายลูกจ้าง) — ไม่ใช่ชม.แพ็กออฟชอร์ 12 */
+export const STANDARD_STANDBY_PAYROLL_HOURS = LEGAL_NORMAL_HOURS_PER_DAY;
+
+/**
+ * ชม.ที่จ่าย standby / M1 / D1 — ใช้ normalHours ที่ลงไว้
+ * @param defaultWhenMissing ถ้าไม่มีชม. — SB ใช้ 8 · M1/D1 ใช้ชม.แพ็ก
+ */
 export function resolveStandbyPaidHours(
   ts: Pick<DailyTimesheet, 'normalHours' | 'standbyUnits'>,
   statedPackageHours: StatedPackageHours = 8,
+  defaultWhenMissing: number = STANDARD_STANDBY_PAYROLL_HOURS,
 ): number {
   const nh = Number(ts.normalHours);
   if (Number.isFinite(nh) && nh > 0) {
     return Math.min(24, nh) * Math.max(1, Number(ts.standbyUnits ?? 1));
   }
   const units = Math.max(1, Number(ts.standbyUnits ?? 1));
-  const defaultDayHours = statedPackageHours === 12 ? 12 : LEGAL_NORMAL_HOURS_PER_DAY;
-  return units * defaultDayHours;
+  const fallback =
+    Number.isFinite(defaultWhenMissing) && defaultWhenMissing > 0
+      ? defaultWhenMissing
+      : statedPackageHours === 12
+        ? 12
+        : LEGAL_NORMAL_HOURS_PER_DAY;
+  return units * fallback;
 }
 
 export interface StandbyDayPackageCostInput {
@@ -89,20 +101,43 @@ export interface StandbyDayPackageCostInput {
   otAfterShiftMultiplier: number;
   /** ตัวคูณ standby ฝั่งต้นทุน (สัญญา/HR Settings — ปกติ 0.5) */
   standbyCostMultiplier: number;
+  /**
+   * ประเภทวัน — SB ใช้ฐานชม.ปกติ×ชม.×ตัวคูณ · M1/D1 ใช้สัดส่วนแพ็ก (ทริป)
+   * ถ้าไม่ส่ง ถือเป็น standby_day
+   */
+  eventType?: DailyTimesheet['eventType'];
 }
 
 /**
- * Standby / mobilization / demobilization (ฝั่งจ่าย) = แพ็กต้นทุนรายวัน × สัดส่วนชม.ที่ลง / ชม.ในแพ็ก × ตัวคูณ standby
- * ตัวอย่าง แพ็ก 12 ชม. ฿1,700 × standby 0.5 × 12/12 = ฿850 · 8 ชม. → × 8/12
+ * ฝั่งจ่ายลูกจ้าง (payroll cost) — แยกจากบิลลูกค้า (สัญญา/matrix)
+ *
+ * **standby_day:** ฐานชม.ปกติจากแพ็ก × ชม.ที่ลง × standbyMult
+ * - ออฟชอร์แพ็ก 12 ชม. = 8 ปกติ + 4 OT×otMult → baseH = D / (8 + 4×ot)
+ * - ตัวอย่าง D=1,400 · ot=1.5 → baseH=100 · SB 8 ชม. = 100×8×0.5 = **400**
+ * - ห้ามใช้ D×0.5 (ครึ่งแพ็กเต็มรวม OT) และห้ามใช้ D×(ชม./12)×0.5
+ *
+ * **mobilization_day / demobilization_day:** แพ็ก × (ชม.อ้างอิง/ชม.แพ็ก) × standbyMult (ทริป)
  */
 export function computeStandbyDayCostFromPackage(input: StandbyDayPackageCostInput): number {
   const pkg = Math.max(0, input.costPackagePerDay);
   if (pkg <= 0) return 0;
-  const stated = input.statedHours === 12 ? 12 : 8;
-  const hours = resolveStandbyPaidHours(input.timesheet, input.statedHours);
+  const stated: StatedPackageHours = input.statedHours === 12 ? 12 : 8;
   const mult = Math.max(0, input.standbyCostMultiplier);
-  const fraction = Math.min(1, hours / stated);
-  return roundMoney(pkg * fraction * mult);
+  const et = input.eventType;
+  const isTrip = et === 'mobilization_day' || et === 'demobilization_day';
+  const hours = resolveStandbyPaidHours(
+    input.timesheet,
+    input.statedHours,
+    isTrip ? stated : STANDARD_STANDBY_PAYROLL_HOURS,
+  );
+
+  if (isTrip) {
+    const fraction = Math.min(1, hours / stated);
+    return roundMoney(pkg * fraction * mult);
+  }
+
+  const hourly = derivePackageNormalHourlyRate(pkg, stated, input.otAfterShiftMultiplier);
+  return roundMoney(hourly * hours * mult);
 }
 
 /** ปฏิทิน + ตัวคูณวันหยุดสำหรับ payroll ลูกจ้าง — จาก HR Settings */

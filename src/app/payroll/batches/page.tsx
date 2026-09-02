@@ -455,7 +455,7 @@ function PayrollBatchesPageContent() {
                 <Calculator className="h-5 w-5" /> สร้างรายการจ่ายใหม่ (Generate Batch)
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-lg max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
+            <DialogContent className="max-w-2xl sm:max-w-2xl max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
               <div className="flex-1 min-h-0 overflow-y-auto px-6 pt-6 pb-4">
               <DialogHeader>
                 <DialogTitle>ประมวลผล Payroll Batch ใหม่</DialogTitle>
@@ -502,45 +502,47 @@ function PayrollBatchesPageContent() {
                     </p>
                   )}
                 </div>
-                <div className="space-y-2">
-                  <Label className="font-bold">ขอบเขตงาน (Scope)</Label>
-                  <Select
-                    onValueChange={(v: 'onshore' | 'offshore' | 'mixed') => {
-                      setWorkModeScope(v);
-                      setPreflight(null);
-                      setSelectedWorkerIds(new Set());
-                    }}
-                    value={workModeFilter}
-                  >
-                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="mixed">รวมทุกรูปแบบ (Mixed)</SelectItem>
-                      <SelectItem value="onshore">เฉพาะฝั่ง (Onshore)</SelectItem>
-                      <SelectItem value="offshore">เฉพาะแท่น (Offshore)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label className="font-bold">ประเภทของรอบจ่าย (Batch Type)</Label>
-                  <Select
-                    onValueChange={(v: 'NORMAL' | 'SUPPLEMENTAL') => {
-                      setBatchType(v);
-                      setPreflight(null);
-                      setSelectedWorkerIds(new Set());
-                    }}
-                    value={batchType}
-                  >
-                    <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="NORMAL">จ่ายรอบปกติ (จากใบงาน Timesheet)</SelectItem>
-                      <SelectItem value="SUPPLEMENTAL">ตกเบิก/จ่ายเพิ่ม (เฉพาะรายการแก้ไขย้อนหลัง)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  {batchType === 'SUPPLEMENTAL' ? (
-                    <p className="text-xs text-muted-foreground leading-snug">
-                      ไม่ดึงใบงานเดือนนี้ — ใช้รายการแก้ไขย้อนหลังที่เลือก «จ่ายในงวด» = เดือนของรอบบัญชีด้านบน
-                    </p>
-                  ) : null}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2 min-w-0">
+                    <Label className="font-bold">ขอบเขตงาน (Scope)</Label>
+                    <Select
+                      onValueChange={(v: 'onshore' | 'offshore' | 'mixed') => {
+                        setWorkModeScope(v);
+                        setPreflight(null);
+                        setSelectedWorkerIds(new Set());
+                      }}
+                      value={workModeFilter}
+                    >
+                      <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="mixed">รวมทุกรูปแบบ (Mixed)</SelectItem>
+                        <SelectItem value="onshore">เฉพาะฝั่ง (Onshore)</SelectItem>
+                        <SelectItem value="offshore">เฉพาะแท่น (Offshore)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 min-w-0">
+                    <Label className="font-bold">ประเภทของรอบจ่าย (Batch Type)</Label>
+                    <Select
+                      onValueChange={(v: 'NORMAL' | 'SUPPLEMENTAL') => {
+                        setBatchType(v);
+                        setPreflight(null);
+                        setSelectedWorkerIds(new Set());
+                      }}
+                      value={batchType}
+                    >
+                      <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="NORMAL">จ่ายรอบปกติ (จากใบงาน Timesheet)</SelectItem>
+                        <SelectItem value="SUPPLEMENTAL">ตกเบิก/จ่ายเพิ่ม (เฉพาะรายการแก้ไขย้อนหลัง)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {batchType === 'SUPPLEMENTAL' ? (
+                      <p className="text-xs text-muted-foreground leading-snug">
+                        ไม่ดึงใบงานเดือนนี้ — ใช้รายการแก้ไขย้อนหลังที่เลือก «จ่ายในงวด» = เดือนของรอบบัญชีด้านบน
+                      </p>
+                    ) : null}
+                  </div>
                 </div>
               </div>
               {preflight && !preflight.missingApprovedMonthlyTimesheet && preflight.eligibleWorkers.length > 0 && (
@@ -580,7 +582,7 @@ function PayrollBatchesPageContent() {
                       {preflight.eligibleWorkers.map((w) => (
                         <label
                           key={w.workerId}
-                          className={`flex items-start gap-3 rounded-md border px-2 py-1.5 cursor-pointer hover:bg-muted/50 ${
+                          className={`flex items-center gap-3 rounded-md border px-2 py-1.5 cursor-pointer hover:bg-muted/50 ${
                             w.hasZeroGross ? 'border-amber-300 bg-amber-50/40' : 'border-transparent'
                           }`}
                         >
@@ -594,13 +596,13 @@ function PayrollBatchesPageContent() {
                                 return next;
                               });
                             }}
-                            className="mt-0.5"
                           />
                           <span className="text-sm leading-tight min-w-0 flex-1">
                             <span className="font-semibold">{w.workerName}</span>
-                            <span className="text-muted-foreground text-xs block">
-                              {w.timesheetCount} ใบงาน
-                              {w.hasZeroGross ? ' · ⚠ อาจได้ค่าจ้าง 0' : ''}
+                            <span className="text-muted-foreground text-xs">
+                              {' '}
+                              ({w.timesheetCount} ใบงาน
+                              {w.hasZeroGross ? ' · ⚠ อาจได้ค่าจ้าง 0' : ''})
                             </span>
                           </span>
                         </label>
@@ -692,7 +694,7 @@ function PayrollBatchesPageContent() {
 
               </div>
 
-              <DialogFooter className="shrink-0 flex-col gap-2 sm:flex-col border-t bg-background px-6 py-4">
+              <DialogFooter className="shrink-0 flex-row items-center gap-2 sm:justify-stretch border-t bg-background px-6 py-4">
                 {!preflight ? (
                   <Button onClick={handlePreflight} variant="outline" className="w-full font-bold h-12" disabled={isChecking || !targetPeriodId}>
                     {isChecking ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Search className="h-4 w-4 mr-2" />}
@@ -702,7 +704,7 @@ function PayrollBatchesPageContent() {
                   <>
                     <Button
                       onClick={handleGenerate}
-                      className="w-full bg-primary font-bold h-12"
+                      className="flex-1 min-w-0 bg-primary font-bold h-12"
                       disabled={
                         isGenerating ||
                         !targetPeriodId ||
@@ -724,8 +726,8 @@ function PayrollBatchesPageContent() {
                     </Button>
                     <Button
                       type="button"
-                      variant="ghost"
-                      className="w-full h-9 text-muted-foreground"
+                      variant="outline"
+                      className="shrink-0 h-12 px-4"
                       disabled={isGenerating || isChecking}
                       onClick={() => {
                         setPreflight(null);

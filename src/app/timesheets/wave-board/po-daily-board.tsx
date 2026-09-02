@@ -91,6 +91,7 @@ import {
   buildMobRemobClearanceDeleteFields,
   inferMobDatesFromTimesheets,
 } from '@/lib/timesheet/mob-finish-undo';
+import { captureLaborCostEpochOnMobFinish, syncAssignmentPositionFromWorkerOnRemob } from '@/lib/payroll/remob-position-for-payroll';
 import {
   upsertPoActiveStopTodayEvent,
   togglePoActiveSbWStopMode,
@@ -1293,6 +1294,26 @@ export function PoDailyBoardCard({
         }
 
         await batch.commit();
+
+        /** เก็บค่าแรงรอบนี้ก่อน remob / แก้ทะเบียน (เช่น 1800) — วัน ≤ จบงานจะใช้ epoch นี้ตอน payroll */
+        await captureLaborCostEpochOnMobFinish(
+          firestore,
+          {
+            id: asgn.id,
+            workerId: asgn.workerId,
+            positionId: asgn.positionId,
+            laborCostEpochs: asgn.laborCostEpochs,
+          },
+          finishYmd,
+        );
+
+        /** ถ้าทะเบียนลูกจ้างเปลี่ยนตำแหน่งแล้ว — อัปเดต assignment ให้รอบใหม่ใช้ตำแหน่งใหม่ */
+        await syncAssignmentPositionFromWorkerOnRemob(firestore, {
+          id: asgn.id,
+          workerId: asgn.workerId,
+          positionId: asgn.positionId,
+          mobLocationEndDate: finishYmd,
+        }, { rewriteTimesheetsAfterFinish: false });
       }
 
       const purge = await deleteTimesheetsAfterMobFinishDate(firestore, asgn, finishYmd);

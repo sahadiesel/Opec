@@ -3,6 +3,7 @@ import type { DailyTimesheet, JobMode, PositionRate, PositionRateMatrixCategory,
 import { resolveMatrixCostRate } from '@/lib/commercial/position-rate-matrix';
 import {
   deriveOtHourlyRatesFromDailyPackage,
+  LEGAL_NORMAL_HOURS_PER_DAY,
   PACKAGE_OT_TIER_MULT,
   type StatedPackageHours,
 } from '@/lib/commercial/package-hourly-rate';
@@ -144,7 +145,8 @@ export function computeRetroAdjustmentPayFromWorkerDailyPackage(
   if (d1Trips > 0) amount += d1Trips * pkg * sbDayMult;
 
   if (isPayrollCostStandbyPackageEvent(ts.eventType) && sb > 0) {
-    amount += pkg * (sb / stated) * sbDayMult;
+    const hourly = rates.normalHourly;
+    amount += hourly * sb * sbDayMult;
   }
 
   const amountBaht = roundMoney(amount);
@@ -279,8 +281,8 @@ export function computeRetroAdjustmentPayFromRateMatrix(
     const label = isOffshore ? 'OFF SB (ต้นทุน/วัน)' : 'ON SB (ต้นทุน/วัน)';
     const dayRate = requireCostRate(positionRate, cat, label, contractId, positionId, missing);
     if (dayRate != null) {
-      const hrs = statedHoursForMode(positionRate, workMode);
-      amount += dayRate * (sb / hrs);
+      /** เรท SB ในตาราง = ต่อวันมาตรฐาน 8 ชม. — หาร 8 ไม่ใช่ชม.แพ็ก 12 */
+      amount += dayRate * (sb / LEGAL_NORMAL_HOURS_PER_DAY);
     }
   }
 

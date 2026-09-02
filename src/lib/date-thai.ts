@@ -81,6 +81,26 @@ export function formatYmdLocalThaiBE(ymd: string | null | undefined, empty: stri
   return formatDateThaiBE(ms);
 }
 
+/** ชื่อวันในสัปดาห์ภาษาไทย (อาทิตย์…เสาร์) จาก yyyy-MM-dd local */
+const THAI_WEEKDAY_NAMES = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์'] as const;
+
+export function thaiWeekdayNameFromYmd(ymd: string | null | undefined): string {
+  const ms = htmlDateValueToTimestampMs(ymd?.trim() || '');
+  if (ms == null) return '';
+  return THAI_WEEKDAY_NAMES[new Date(ms).getDay()] ?? '';
+}
+
+/** เช่น จันทร์ 15/06/2569 */
+export function formatYmdLocalThaiBEWithWeekday(
+  ymd: string | null | undefined,
+  empty: string = '—',
+): string {
+  const datePart = formatYmdLocalThaiBE(ymd, '');
+  if (!datePart) return empty;
+  const dayName = thaiWeekdayNameFromYmd(ymd);
+  return dayName ? `${dayName} ${datePart}` : datePart;
+}
+
 /** ช่วงวันที่เก็บเป็น yyyy-mm-dd (local) → dd/mm พ.ศ. - dd/mm พ.ศ. */
 export function formatYmdRangeThaiBE(
   start: string | null | undefined,

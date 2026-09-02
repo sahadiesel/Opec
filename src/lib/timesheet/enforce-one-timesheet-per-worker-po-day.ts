@@ -199,8 +199,9 @@ export async function healOneTimesheetPerWorkerPoDayInMonth(
 }
 
 /**
- * เติมชม.แพ็กให้ใบ SB/M1/D1 ที่เคยบันทึก 0 — ให้รายวัน/รายเดือน/สัดส่วนเงินใช้ฐานเดียวกัน
- * (Offshore 12 / Onshore 8 ตาม workMode บนใบงาน)
+ * เติมชม.ให้ใบ SB/M1/D1 ที่เคยบันทึก 0 — ให้รายวัน/รายเดือน/สัดส่วนเงินใช้ฐานเดียวกัน
+ * - standby_day → 8 ชม. (มาตรฐานจ่าย SB)
+ * - M1/D1 → ชม.แพ็ก (Offshore 12 / Onshore 8)
  */
 export async function healZeroStandbyLikeHoursInMonth(
   db: Firestore,
@@ -244,10 +245,11 @@ export async function healZeroStandbyLikeHoursInMonth(
     }
     const nh = Number(ts.normalHours);
     if (Number.isFinite(nh) && nh > 0) continue;
+    const hours = et === 'standby_day' ? 8 : pkg;
     await updateDoc(d.ref, {
-      normalHours: pkg,
-      mobBillingChargeHours: pkg,
-      mobPayrollChargeHours: pkg,
+      normalHours: hours,
+      mobBillingChargeHours: hours,
+      mobPayrollChargeHours: hours,
       updatedAt: Date.now(),
     });
     updated++;

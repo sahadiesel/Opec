@@ -725,51 +725,108 @@ export default function HrSettingsPage() {
         </Card>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.65fr)_minmax(18rem,1fr)] lg:items-start">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <ClipboardList className="h-5 w-5 text-primary" /> ตั้งค่าเวลางานออฟฟิศ
-              </CardTitle>
-              <CardDescription>
-                จำนวนวันทำงานต่อเดือนและเวลาทำงานปกติ (เก็บใน{' '}
-                <code className="text-xs bg-muted px-1 rounded">payroll_policies</code>)
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6 text-sm">
-              <MonthlyWorkNormPolicyFields
-                disabled={!canEdit || loading}
-                workDaysPerMonth={workDaysPerMonth}
-                onWorkDaysPerMonth={setWorkDaysPerMonth}
-                normalWorkHoursPerDay={normalWorkHoursPerDay}
-                onNormalWorkHoursPerDay={setNormalWorkHoursPerDay}
-                breakHoursPerDay={breakHoursPerDay}
-                onBreakHoursPerDay={setBreakHoursPerDay}
-                workStartTime={workStartTime}
-                onWorkStartTime={setWorkStartTime}
-                breakStartTime={breakStartTime}
-                onBreakStartTime={setBreakStartTime}
-                lateGraceMinutes={lateGraceMinutes}
-                onLateGraceMinutes={setLateGraceMinutes}
-                officeHolidayNormalWorkMultiplier={officeHolidayNormalWorkMultiplier}
-                onOfficeHolidayNormalWorkMultiplier={setOfficeHolidayNormalWorkMultiplier}
-                officeWeekdayOvertimeMultiplier={officeWeekdayOvertimeMultiplier}
-                onOfficeWeekdayOvertimeMultiplier={setOfficeWeekdayOvertimeMultiplier}
-                officeHolidayOvertimeMultiplier={officeHolidayOvertimeMultiplier}
-                onOfficeHolidayOvertimeMultiplier={setOfficeHolidayOvertimeMultiplier}
-                absenceDemoSalary={absenceDemoSalary}
-                onAbsenceDemoSalary={setAbsenceDemoSalary}
-                hideAbsenceDemo
-                showThreePeriodRules
-                footerNote={
-                  <>
-                    บันทึกใน <code className="text-[11px] bg-muted px-1 rounded">payroll_policies</code> (kind=
-                    <code>monthly_work_norm</code>) — เมื่อรัน payroll หักจากเวลาสแกน/ลาจะถูกหัก
-                    <strong className="text-foreground">ก่อน</strong>คำนวณ ภงด.1 ส่วนประกันสังคมยังใช้ฐานเงินได้เต็มงวด
-                  </>
-                }
-              />
-            </CardContent>
-          </Card>
+          <div className="space-y-6 min-w-0">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <ClipboardList className="h-5 w-5 text-primary" /> ตั้งค่าเวลางานออฟฟิศ
+                </CardTitle>
+                <CardDescription>
+                  จำนวนวันทำงานต่อเดือนและเวลาทำงานปกติ (เก็บใน{' '}
+                  <code className="text-xs bg-muted px-1 rounded">payroll_policies</code>)
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6 text-sm">
+                <MonthlyWorkNormPolicyFields
+                  disabled={!canEdit || loading}
+                  workDaysPerMonth={workDaysPerMonth}
+                  onWorkDaysPerMonth={setWorkDaysPerMonth}
+                  normalWorkHoursPerDay={normalWorkHoursPerDay}
+                  onNormalWorkHoursPerDay={setNormalWorkHoursPerDay}
+                  breakHoursPerDay={breakHoursPerDay}
+                  onBreakHoursPerDay={setBreakHoursPerDay}
+                  workStartTime={workStartTime}
+                  onWorkStartTime={setWorkStartTime}
+                  breakStartTime={breakStartTime}
+                  onBreakStartTime={setBreakStartTime}
+                  lateGraceMinutes={lateGraceMinutes}
+                  onLateGraceMinutes={setLateGraceMinutes}
+                  officeHolidayNormalWorkMultiplier={officeHolidayNormalWorkMultiplier}
+                  onOfficeHolidayNormalWorkMultiplier={setOfficeHolidayNormalWorkMultiplier}
+                  officeWeekdayOvertimeMultiplier={officeWeekdayOvertimeMultiplier}
+                  onOfficeWeekdayOvertimeMultiplier={setOfficeWeekdayOvertimeMultiplier}
+                  officeHolidayOvertimeMultiplier={officeHolidayOvertimeMultiplier}
+                  onOfficeHolidayOvertimeMultiplier={setOfficeHolidayOvertimeMultiplier}
+                  absenceDemoSalary={absenceDemoSalary}
+                  onAbsenceDemoSalary={setAbsenceDemoSalary}
+                  hideAbsenceDemo
+                  showThreePeriodRules
+                  footerNote={
+                    <>
+                      บันทึกใน <code className="text-[11px] bg-muted px-1 rounded">payroll_policies</code> (kind=
+                      <code>monthly_work_norm</code>) — เมื่อรัน payroll หักจากเวลาสแกน/ลาจะถูกหัก
+                      <strong className="text-foreground">ก่อน</strong>คำนวณ ภงด.1 ส่วนประกันสังคมยังใช้ฐานเงินได้เต็มงวด
+                    </>
+                  }
+                />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="border-b bg-muted/20">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <ClipboardList className="h-5 w-5 text-primary" />
+                  การตั้งค่าสิทธิ์วันลา (พนักงานออฟฟิศ)
+                </CardTitle>
+                <CardDescription>
+                  จำนวนวันต่อปีสำหรับลากิจ ลาป่วย และลาพักร้อน — ใช้เป็นฐานเมื่อเปิดเมนูจัดการวันลา
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-4">
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-2 min-w-0">
+                    <Label>วันลากิจ / ปี</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      disabled={loading || !canEdit}
+                      value={officeLeavePersonal}
+                      onChange={(e) => setOfficeLeavePersonal(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                    />
+                  </div>
+                  <div className="space-y-2 min-w-0">
+                    <Label>วันลาป่วย / ปี</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      disabled={loading || !canEdit}
+                      value={officeLeaveSick}
+                      onChange={(e) => setOfficeLeaveSick(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                    />
+                  </div>
+                  <div className="space-y-2 min-w-0">
+                    <Label>วันลาพักร้อน / ปี</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      disabled={loading || !canEdit}
+                      value={officeLeaveAnnual}
+                      onChange={(e) => setOfficeLeaveAnnual(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  เก็บใน Firestore ที่{' '}
+                  <span className="font-mono">
+                    {HR_CONFIGURATION_COLLECTION}/{HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID}
+                  </span>
+                </p>
+              </CardContent>
+            </Card>
+          </div>
 
           <div className="space-y-6">
             <Card>
@@ -879,61 +936,6 @@ export default function HrSettingsPage() {
                 officeHolidayOvertimeMultiplier,
               })}
             />
-
-            <Card>
-              <CardHeader className="border-b bg-muted/20">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <ClipboardList className="h-5 w-5 text-primary" />
-                  การตั้งค่าสิทธิ์วันลา (พนักงานออฟฟิศ)
-                </CardTitle>
-                <CardDescription>
-                  จำนวนวันต่อปีสำหรับลากิจ ลาป่วย และลาพักร้อน — ใช้เป็นฐานเมื่อเปิดเมนูจัดการวันลา
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-4">
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-2 min-w-0">
-                    <Label>วันลากิจ / ปี</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={1}
-                      disabled={loading || !canEdit}
-                      value={officeLeavePersonal}
-                      onChange={(e) => setOfficeLeavePersonal(Math.max(0, Math.round(Number(e.target.value) || 0)))}
-                    />
-                  </div>
-                  <div className="space-y-2 min-w-0">
-                    <Label>วันลาป่วย / ปี</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={1}
-                      disabled={loading || !canEdit}
-                      value={officeLeaveSick}
-                      onChange={(e) => setOfficeLeaveSick(Math.max(0, Math.round(Number(e.target.value) || 0)))}
-                    />
-                  </div>
-                  <div className="space-y-2 min-w-0">
-                    <Label>วันลาพักร้อน / ปี</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={1}
-                      disabled={loading || !canEdit}
-                      value={officeLeaveAnnual}
-                      onChange={(e) => setOfficeLeaveAnnual(Math.max(0, Math.round(Number(e.target.value) || 0)))}
-                    />
-                  </div>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  เก็บใน Firestore ที่{' '}
-                  <span className="font-mono">
-                    {HR_CONFIGURATION_COLLECTION}/{HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID}
-                  </span>
-                </p>
-              </CardContent>
-            </Card>
           </div>
         </div>
 

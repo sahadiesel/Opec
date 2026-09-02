@@ -212,6 +212,29 @@ export function PayslipDocument({ model, className }: { model: PayslipViewModel;
         'normal'
       )}
 
+      {!model.isSupplemental &&
+      model.normalIncomeLines &&
+      model.normalIncomeLines.length > 0 ? (
+        <div style={{ marginTop: 28 }}>
+          {renderDataSection(
+            `รายละเอียดงวดที่จ่ายแล้ว${model.normalPaymentDateLabel ? ` (${model.normalPaymentDateLabel})` : ''}`,
+            model.normalIncomeLines,
+            model.normalGrossTotal ??
+              model.normalIncomeLines.reduce((s, x) => s + (Number(x.amount) || 0), 0),
+            [],
+            0,
+            model.normalNetPay ??
+              model.normalGrossTotal ??
+              model.normalIncomeLines.reduce((s, x) => s + (Number(x.amount) || 0), 0),
+            undefined,
+            'retro',
+          )}
+          <p className="payslip-disclaimer" style={{ marginTop: 8 }}>
+            รายการด้านบนรวม OT ตกเบิก/รายได้ย้อนหลังที่จ่ายไปกับงวดต้นเดือนแล้ว — ยอดหัก「ที่ชำระไปแล้ว」ด้านบนหักสุทธิงวดนั้นออกจากสลิปรอบนี้
+          </p>
+        </div>
+      ) : null}
+
       {model.roundingNote ? (
         <p className="payslip-disclaimer" style={{ color: '#b45309', marginTop: 24 }}>
           หมายเหตุ: ยอดรับสุทธิอ้างอิงจาก snapshot บน Payroll Line อาจต่างจากผลลบแบบง่ายเล็กน้อยจากการปัดเศษหรือการปรับยอด

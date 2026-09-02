@@ -1,0 +1,63 @@
+---
+description: Canonical offshore payroll cost rules — 12h package split and standby pay (do not re-debate)
+globs: src/lib/payroll/**/*,src/lib/commercial/package-hourly-rate.ts,src/lib/ops/mob-day-charge*.ts,src/lib/timesheet/**/*
+alwaysApply: true
+---
+
+# Offshore payroll cost (LOCKED)
+
+This rule was confirmed with the product owner across multiple sessions. **Do not propose alternate standby formulas** without an explicit written change request.
+
+## Work day (จ่ายลูกจ้าง)
+
+Offshore **12h package** cost `D` = **8 normal + 4 OT**:
+
+`D = baseH×8 + (baseH×otMult)×4` → with `otMult=1.5`, `baseH = D/14`
+
+Example: `D=1400` → `baseH=100`, OT 1.5 = `150`/h.
+
+Source of truth: `src/lib/commercial/package-hourly-rate.ts`
+
+## Standby (จ่ายลูกจ้าง) — NOT billing
+
+- Standard SB hours = **8** (not package 12).
+- Pay = `baseH × hours × standbyMult` (default `standbyMult=0.5`).
+- Example: `1400` → SB 8h = `100×8×0.5` = **400** (= half of the **8h normal portion**, not half of `D`).
+
+**Forbidden for payroll cost:**
+
+- `D × 0.5` (half full package including OT)
+- `D × (hours/12) × 0.5` (linear fraction of package)
+
+Implementation: `computeStandbyDayCostFromPackage` in `src/lib/payroll/package-labor-cost.ts`
+
+## Billing (เก็บเงินลูกค้า)
+
+Sell/bill rates come **only** from the contract / position rate matrix. Never force billing to equal the payroll standby formula above.
+
+## Writers
+
+When creating `standby_day` rows (Pre-Mob, PO Active auto, Mob work-start gap fill, heal-zero-hours), write **STANDBY 8h** charges — never heal SB zeros up to package 12.
+
+## Payroll batch UI — snapshot only
+
+Worker batch list / batch detail / worker line / print slips show **stored batch line amounts**. Do **not** re-run live timesheet gross on page open. Recalculation happens only via **Generate Batch**, **Regenerate**, or **คำนวณใหม่จากใบงาน (คนนี้เท่านั้น)**.
+
+On **generate** (`generatePayrollBatch`), always persist `timesheetGrossById` + `dailyRowSnapshots` on each line. `PayrollBatchLineSchema` must include those fields — Zod `.parse()` strips unknown keys and previously dropped the snapshots.
+
+Worker daily table uses `dailyRowSnapshots` when present — **do not** query `daily_timesheets` on page open in that case.
+
+## Payroll remob / multi-cycle month (LOCKED)
+
+Ops only records attendance (which days worked / remob). Payroll must pay **all unpaid recorded work days in the calendar month**, not only the latest mob cycle.
+
+Example: offshore 1–5, remob 10–15, remob 25–30 → **17 days** in one month.
+
+- **Never drop** unpaid W/SB/M1 (etc.) because of remob or a new mob segment.
+- Blank monthly cells = no work → OK not to pay.
+- If early days were already paid: later batch line = **full-month gross + tax**, then deduct prior paid net (`PRIOR_PAID_RECOVERY`), pay the difference; lock only newly unpaid days.
+- **Already-paid day amounts stay frozen** from a prior **NORMAL** PAID/LOCKED batch snapshot (`timesheetGrossById`) — recalculate / rate edits must not rewrite those daily totals. Only unpaid days use live registry/contract rates. **SUPPLEMENTAL** (ตกเบิก) does not freeze calendar-month work days — it only carries prior-period allowance items.
+- Auto rows left after site end while waiting remob are still excluded (not real attendance).
+- **Pre-remob package rate:** on Wave Board「จบงาน」, snapshot worker labor cost into `mobilizations.laborCostEpochs` (`untilYmd` = finish date). Days on/before that date use the epoch (e.g. 1800); days after remob use current registry (e.g. 2600). Legacy assignments without epoch can be healed from OT amounts on a paid SUPPLEMENTAL line (`inferOffshorePackageFromOt15PriorItems`).
+
+Implementation: `filter-timesheets-for-worker-payroll.ts`, `remob-position-for-payroll.ts`, `generatePayrollBatch` / per-worker recalc in `payroll-service.ts`.

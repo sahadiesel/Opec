@@ -1,9 +1,9 @@
 /**
  * ประมาณการบาทตอนแก้ชม. M1/D1/SB — ใช้โชว์ใน UI (Mob / จบงาน D1 / แก้รายเดือน)
  *
- * STANDBY ตามชม.:
- * - ชม.ครบแพ็ก → ใช้เรท SB ทั้งวัน (เช่น 700)
- * - ชม.น้อยกว่าแพ็ก → ใช้ hourly จากวันทำงาน × standby 0.5 × ชม. (เช่น 8 → 400 จากฐาน 1400/14)
+ * **ฝั่งจ่าย (payroll) STANDBY:** เสมอ baseH × ชม. × standbyMult
+ *   baseH จากแพ็กวันทำงาน (ออฟชอร์ 12 = 8 ปกติ + 4 OT) · ตัวอย่าง 1400 → SB 8ชม. = 400
+ * **ฝั่งบิล (billing) STANDBY:** ตามเรท SB ในสัญญาเมื่อมี · ไม่ผูกสูตรจ่าย
  *
  * M1/D1 trip: เรทต่อทริปจากสัญญา (หรือจำนวนเงินที่พิมพ์ทับ) — ชม.ไม่กระทบยอดทริป
  */
@@ -45,8 +45,23 @@ function previewStandbyBaht(
   packageHours: 8 | 12,
   otMult: number,
   standbyMult: number,
+  side: 'billing' | 'payroll',
 ): number {
   const h = Math.max(0, Math.min(24, hours));
+
+  /** ฝั่งจ่าย: ห้ามใช้ครึ่งแพ็กเต็มวัน — ใช้ฐานชม.ปกติ × ชม. × ตัวคูณเสมอ */
+  if (side === 'payroll') {
+    const baseWorking =
+      workingDayRate > 0
+        ? workingDayRate
+        : fullDaySbRate > 0
+          ? fullDaySbRate / Math.max(1e-9, standbyMult)
+          : 0;
+    if (baseWorking <= 0) return 0;
+    const hourly = derivePackageNormalHourlyRate(baseWorking, packageHours, otMult);
+    return roundMoney(hourly * standbyMult * h);
+  }
+
   const full =
     fullDaySbRate > 0
       ? fullDaySbRate
@@ -116,7 +131,7 @@ export function previewMobDayChargeBaht(
   // STANDBY
   const fullSb = side === 'billing' ? rates.sellStandbyDayRate : rates.costStandbyDayRate;
   const working = side === 'billing' ? rates.sellWorkingDayRate : rates.costWorkingDayRate;
-  const amount = previewStandbyBaht(fullSb, working, hours, pkg, otMult, sbMult);
+  const amount = previewStandbyBaht(fullSb, working, hours, pkg, otMult, sbMult, side);
   if (amount <= 0) {
     return {
       amount: 0,

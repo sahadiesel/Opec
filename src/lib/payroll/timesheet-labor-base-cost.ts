@@ -252,6 +252,29 @@ function resolveLaborCostFromContractPositionBaseline(
   return Number.isFinite(f) && f > 0 ? f : 0;
 }
 
+/** OFF/ON Work จาก rateMatrix.cost บน position_rates ของสัญญา */
+function resolveLaborCostFromContractPositionRateMatrix(
+  mainContract: MainContract | null | undefined,
+  positionId: string | undefined,
+  mode: LaborCostWorkMode,
+): number {
+  const pid = (positionId || '').trim();
+  if (!mainContract?.positionRates?.length || !pid) return 0;
+  const rate = mainContract.positionRates.find((r) => r.positionId === pid && r.active !== false);
+  if (!rate) return 0;
+  const bundle = rate.rateMatrix?.cost;
+  const primary =
+    mode === 'onshore'
+      ? Number(bundle?.onshore?.workingDay)
+      : Number(bundle?.offshore?.workingDay);
+  if (Number.isFinite(primary) && primary > 0) return primary;
+  const fallback =
+    mode === 'onshore'
+      ? Number(bundle?.offshore?.workingDay)
+      : Number(bundle?.onshore?.workingDay);
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : 0;
+}
+
 /**
  * ฐานก่อน snapshot PO — ใช้ `linePosition` = ตำแหน่งตามบรรทัด timesheet/งาน ไม่ใช่ `worker.currentPositionId`
  */
@@ -273,11 +296,9 @@ function resolvePayrollLaborBaseCore(input: {
   const positionId = (input.timesheet.positionId || linePos?.id || '').trim();
   const payrollContractId = resolveEffectivePayrollContractId(input.timesheet, input.poContractById);
   const registryB = resolveLaborCostFromPositionRegistry(linePos, payrollContractId, mode);
-  const contractBaseline = resolveLaborCostFromContractPositionBaseline(
-    input.mainContract,
-    positionId,
-    mode,
-  );
+  const contractBaseline =
+    resolveLaborCostFromContractPositionBaseline(input.mainContract, positionId, mode) ||
+    resolveLaborCostFromContractPositionRateMatrix(input.mainContract, positionId, mode);
 
   const contractBaselineResolution = contractBaseline > 0
     ? {
@@ -290,6 +311,20 @@ function resolvePayrollLaborBaseCore(input: {
         },
       }
     : null;
+
+  const positionDefault = positionLaborRateForMode(linePos, mode);
+  const positionDefaultResolution =
+    positionDefault > 0
+      ? {
+          baseCost: positionDefault,
+          fromPositionModel: true,
+          resolution: {
+            rate: positionDefault,
+            source: 'position_default' as const,
+            workMode: mode,
+          },
+        }
+      : null;
 
   if (w) {
     const usePos = w.laborCostUsePositionDefault !== false;
@@ -310,6 +345,7 @@ function resolvePayrollLaborBaseCore(input: {
         };
       }
       if (contractBaselineResolution) return contractBaselineResolution;
+      if (positionDefaultResolution) return positionDefaultResolution;
       return { baseCost: 0, fromPositionModel: true, resolution: null };
     }
 
@@ -321,6 +357,7 @@ function resolvePayrollLaborBaseCore(input: {
       };
     }
     if (contractBaselineResolution) return contractBaselineResolution;
+    if (positionDefaultResolution) return positionDefaultResolution;
     return { baseCost: 0, fromPositionModel: true, resolution: null };
   }
 
@@ -332,6 +369,7 @@ function resolvePayrollLaborBaseCore(input: {
     };
   }
   if (contractBaselineResolution) return contractBaselineResolution;
+  if (positionDefaultResolution) return positionDefaultResolution;
   return { baseCost: 0, fromPositionModel: true, resolution: null };
 }
 
@@ -413,6 +451,30 @@ export async function loadWorkersAndPositionsForPayroll(
   return { workerById, posById };
 }
 
+/** โหลดตำแหน่งที่ยังไม่มีใน map หลังทับ positionId จาก remob */
+export async function ensurePositionsLoadedForTimesheets(
+  db: Firestore,
+  timesheets: readonly DailyTimesheet[],
+  posById: Map<string, Position>,
+): Promise<void> {
+  const missing = [
+    ...new Set(
+      timesheets
+        .map((t) => String(t.positionId || '').trim())
+        .filter((id) => id.length > 0 && !posById.has(id)),
+    ),
+  ];
+  if (missing.length === 0) return;
+  await Promise.all(
+    missing.map(async (pid) => {
+      const s = await getDoc(doc(db, 'positions', pid));
+      if (s.exists()) {
+        posById.set(pid, { id: s.id, ...(s.data() as object) } as Position);
+      }
+    }),
+  );
+}
+
 export type PayrollPoLineMaps = {
   byLineId: Map<string, Record<string, unknown>>;
   byPoPosition: Map<string, Record<string, unknown>>;
@@ -444,16 +506,21 @@ export function resolvePoLineForPayrollTimesheet(
   ts: Pick<DailyTimesheet, 'poLineId' | 'positionId' | 'purchaseOrderId'>,
   maps: PayrollPoLineMaps,
 ): Record<string, unknown> {
-  const direct = maps.byLineId.get(ts.poLineId);
-  const directCost = Number((direct as { costBaselineSnapshot?: number } | undefined)?.costBaselineSnapshot ?? 0);
-  if (direct && directCost > 0) return direct;
-
   const poId = (ts.purchaseOrderId || '').trim();
   const posId = (ts.positionId || '').trim();
-  if (poId && posId) {
-    const byPos = maps.byPoPosition.get(`${poId}::${posId}`);
-    if (byPos) return byPos;
-  }
+  const byPos = poId && posId ? maps.byPoPosition.get(`${poId}::${posId}`) : undefined;
 
+  const direct = maps.byLineId.get(ts.poLineId);
+  const directPos = String((direct as { positionId?: string } | undefined)?.positionId || '').trim();
+  const directCost = Number((direct as { costBaselineSnapshot?: number } | undefined)?.costBaselineSnapshot ?? 0);
+
+  /** ถ้า poLineId ชี้บรรทัดตำแหน่งเก่า แต่ timesheet เป็นตำแหน่งใหม่ — ใช้บรรทัดตามตำแหน่ง */
+  if (posId && direct && directPos && directPos !== posId && byPos) {
+    return byPos;
+  }
+  if (direct && directCost > 0 && (!posId || !directPos || directPos === posId)) {
+    return direct;
+  }
+  if (byPos) return byPos;
   return direct || {};
 }

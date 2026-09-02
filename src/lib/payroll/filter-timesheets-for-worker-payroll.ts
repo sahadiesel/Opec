@@ -4,11 +4,9 @@ import {
   assignmentHasSplitPriorAndNewCycleOnDoc,
   isYmdWithinAssignmentMobTimesheetWindow,
   resolveMobSegmentStartYmd,
-  waveMonthCellTimesheetPayable,
 } from '@/lib/constants/timesheet-ui';
 import { shouldDeleteStalePoActiveAutoDailyRow } from '@/lib/timesheet/po-active-auto-daily-build';
 import { pickRosterLinePerWorker, rosterDeploymentTier } from '@/lib/ops/assignment-roster';
-import { addDaysToYmd } from '@/lib/ops/mobilization-final-clearance';
 
 /** โหลด mobilization ที่ timesheet อ้างอิง */
 export async function loadAssignmentsForTimesheets(
@@ -49,16 +47,9 @@ export function isDailyTimesheetInPayrollMobWindow(
 }
 
 /**
- * ใบงานที่ควรเข้า worker payroll — สอดคล้องกริดสรุปรายเดือน (wave-month):
- * - ไม่รวม unpaid_leave
- * - ไม่รวม SB/W หลังวันจบไซต์รอ remob แม้มี readyForPayroll ค้างจาก sync เก่า
- *
- * หมายเหตุ: ไม่ใช้ `readyForPayroll` เป็นเงื่อนไขที่นี่ — ใช้ตอนซิงก์เพื่อตัดสินว่าควรตั้ง flag หรือไม่
- * (ถ้าบังคับ ready อยู่แล้ว จะซิงก์หลังลบ batch ไม่สำเร็จ เพราะ unlock เคลียร์ flag ไปแล้ว)
- */
-/**
  * ใบงานที่ถูกแทนด้วยรอบ mob ใหม่ของคน+PO เดียวกันในเดือนเดียวกัน
  * (เอกสาร mobilization เก่าคนละใบ / หรือรอบเก่าบนเอกสารเดียวกันหลัง remob)
+ * — ไม่ใช้ตัดจ่ายแล้ว; คงไว้ให้ callers อื่น / อ้างอิง
  */
 export function isDailyTimesheetSupersededByCurrentMobCycle(
   ts: Pick<DailyTimesheet, 'date' | 'assignmentId' | 'workerId' | 'purchaseOrderId'>,
@@ -98,8 +89,30 @@ export function isDailyTimesheetSupersededByCurrentMobCycle(
   return true;
 }
 
+/**
+ * ใบงานที่ควรเข้า worker payroll
+ *
+ * กฎผลิตภัณฑ์ (remob / หลายรอบในเดือน):
+ * - วันทำงานที่บันทึกแล้วและยังไม่จ่าย ห้ามตัดทิ้งเพราะ remob / รอบ Mob ใหม่
+ * - ตัวอย่าง: ลง 1 ขึ้น 5 · remob 10–15 · remob 25–30 → จ่ายรวม 17 วัน
+ * - ถ้ารอบก่อนจ่าย 1–5 ไปแล้ว → งวดหลังรวมทั้งเดือนแล้วหักยอดที่จ่ายแล้ว
+ *
+ * กรองเฉพาะ: unpaid_leave · แถว auto ค้างหลังจบไซต์รอ remob (ไม่ใช่ใบงานจริง)
+ *
+ * หมายเหตุ: ไม่ใช้ `readyForPayroll` เป็นเงื่อนไขที่นี่ — generate หลังปิดงวดใช้กฎนี้
+ * (ถ้าบังคับ ready อย่างเดียว วันรอบเก่าที่ flag ถูกเคลียร์จะหายจากงวด)
+ */
 export function isDailyTimesheetPayableForWorkerPayroll(
-  ts: Pick<DailyTimesheet, 'date' | 'assignmentId' | 'eventType' | 'readyForPayroll' | 'workerId' | 'purchaseOrderId'>,
+  ts: Pick<
+    DailyTimesheet,
+    | 'date'
+    | 'assignmentId'
+    | 'eventType'
+    | 'readyForPayroll'
+    | 'workerId'
+    | 'purchaseOrderId'
+    | 'poActiveAutoDaily'
+  >,
   assignmentById: Map<string, Assignment>,
 ): boolean {
   if (ts.eventType === 'unpaid_leave') return false;
@@ -108,13 +121,10 @@ export function isDailyTimesheetPayableForWorkerPayroll(
   const asgn = assignmentById.get(aid);
   if (!asgn) return true;
   const ymd = String(ts.date || '').slice(0, 10);
-  if (!waveMonthCellTimesheetPayable(asgn, ymd, ts as DailyTimesheet)) return false;
-  /**
-   * ใบ LOCKED/ค้างก่อนวัน remob ที่ purge ลบไม่ได้ (เช่น W 1–4 ก่อน M1 รอบใหม่)
-   * — สอดคล้อง shouldDeleteStalePoActiveAutoDailyRow / กริดสรุปรายเดือนหลัง remob
-   */
-  if (shouldDeleteStalePoActiveAutoDailyRow(asgn, ymd)) return false;
-  if (isDailyTimesheetSupersededByCurrentMobCycle(ts, assignmentById)) return false;
+  /** แถว auto ที่ระบบสร้างเกินหน้าต่างไซต์ขณะรอ remob — ไม่ใช่วันที่ HR ลงเวลาจริง */
+  if (ts.poActiveAutoDaily === true && shouldDeleteStalePoActiveAutoDailyRow(asgn, ymd)) {
+    return false;
+  }
   return true;
 }
 
@@ -206,60 +216,18 @@ export async function loadWorkerPayableTimesheetsForPeriod(
 }
 
 /**
- * ตัดใบค้างก่อนรอบ M1/Final clearance ล่าสุด เมื่อมีช่องว่างปฏิทินคั่น
- * — ทำแยกต่อ PO (คนละลูกค้า/PO เช่น AVP 1–4 กับ Thai Nippon M1 14 ไม่ตัดทิ้งข้าม PO)
+ * @deprecated ไม่ใช้ตัด prefix ตอน payroll อีกแล้ว — วันทำงานที่บันทึกแล้วต้องจ่ายครบทั้งเดือน
+ * คงฟังก์ชันไว้เพื่อไม่พัง import เก่า (คืนรายการเดิม)
  */
 export function excludeDisconnectedPrefixBeforeLatestMobCycle(
   tsList: readonly DailyTimesheet[],
 ): DailyTimesheet[] {
-  if (tsList.length === 0) return [];
-
-  const byPo = new Map<string, DailyTimesheet[]>();
-  for (const ts of tsList) {
-    const po = String(ts.purchaseOrderId || '').trim() || '_unknown_po';
-    const list = byPo.get(po) ?? [];
-    list.push(ts);
-    byPo.set(po, list);
-  }
-
-  const out: DailyTimesheet[] = [];
-  for (const group of byPo.values()) {
-    const sorted = [...group].sort((a, b) =>
-      String(a.date || '').localeCompare(String(b.date || '')),
-    );
-
-    const cycleStarts = sorted
-      .filter((t) => {
-        const et = String(t.eventType || '');
-        if (et === 'mobilization_day') return true;
-        const rmk = String(t.remark ?? '');
-        return rmk.includes('Final clearance') && (et === 'standby_day' || et === 'mobilization_day');
-      })
-      .map((t) => String(t.date || '').slice(0, 10))
-      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
-
-    if (cycleStarts.length === 0) {
-      out.push(...sorted);
-      continue;
-    }
-
-    const cycleStart = cycleStarts.reduce((a, b) => (a >= b ? a : b));
-    const dayBefore = addDaysToYmd(cycleStart, -1);
-    const contiguous = sorted.some((t) => String(t.date || '').slice(0, 10) === dayBefore);
-    if (contiguous) {
-      out.push(...sorted);
-      continue;
-    }
-
-    out.push(...sorted.filter((t) => String(t.date || '').slice(0, 10) >= cycleStart));
-  }
-
-  return out.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+  return [...tsList].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
 }
 
 /**
- * ใบงานสำหรับแสดง/คำนวณใหม่รายคนใน batch — ให้ตรง timesheet ปัจจุบัน
- * (ไม่ยึด sourceTimesheetIds อย่างเดียว เพราะอาจค้างรอบ mob เก่าที่ purge ลบไม่ได้หลัง LOCKED)
+ * ใบงานสำหรับแสดง/คำนวณใหม่รายคนใน batch — รวมวัน LOCKED + วันใหม่ทั้งเดือน
+ * (ห้ามตัดรอบ mob เก่าที่ยังเป็นวันทำงานจริง)
  */
 export async function loadWorkerTimesheetsForPayrollLine(
   db: Firestore,
@@ -292,6 +260,5 @@ export async function loadWorkerTimesheetsForPayrollLine(
     if (!byId.has(ts.id)) byId.set(ts.id, ts);
   }
 
-  const merged = excludeDisconnectedPrefixBeforeLatestMobCycle([...byId.values()]);
-  return merged.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+  return [...byId.values()].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
 }

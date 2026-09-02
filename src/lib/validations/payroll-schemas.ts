@@ -107,6 +107,27 @@ export const PayrollBatchLineSchema = z.object({
   periodEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   eventBreakdown: z.record(z.number()).default({}),
   earningsBreakdown: z.record(z.number()).default({}),
+  /** ยอดต่อใบ timesheet ตอน generate/recalc */
+  timesheetGrossById: z.record(z.number()).optional(),
+  /** แถวรายวัน snapshot — เปิดหน้ารายคนโดยไม่โหลด daily_timesheets */
+  dailyRowSnapshots: z
+    .array(
+      z.object({
+        timesheetId: z.string(),
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        eventType: z.string(),
+        workMode: z.string().optional(),
+        normalHours: z.number(),
+        ot15Hours: z.number().optional(),
+        ot20Hours: z.number().optional(),
+        ot30Hours: z.number().optional(),
+        holidayHours: z.number().optional(),
+        amount: z.number(),
+        purchaseOrderId: z.string().optional(),
+        remark: z.string().optional(),
+      }),
+    )
+    .optional(),
   deductionsBreakdown: z.record(z.number()).default({}),
   grossAmount: z.number(),
   netAmount: z.number(),

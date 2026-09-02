@@ -24,11 +24,12 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
 import type {
   DailyTimesheet,
   PayrollBatch,
   PayrollBatchLine,
+  PayrollBatchLineDailyRowSnapshot,
   PayrollPeriod,
   User,
   WorkerPitCalculationMode,
@@ -44,19 +45,13 @@ import {
 } from '@/lib/services/timesheet-retro-adjustment-service';
 import { PayrollService } from '@/lib/services/payroll-service';
 import { useToast } from '@/hooks/use-toast';
-import { formatDateThaiBE } from '@/lib/date-thai';
+import { formatDateThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
-import { buildPayslipFromWorkerLine, normalizeIncomeSegments, applyLiveTimesheetIncomeToPayslip, isWorkerPayrollBatchSnapshotFrozen } from '@/lib/payroll/payslip-model';
-import type { PriorPaidPayrollSlipRef } from '@/lib/payroll/payslip-model';
+import { buildPayslipFromWorkerLine, normalizeIncomeSegments, isWorkerPayrollBatchSnapshotFrozen, type PriorPaidPayrollSlipRef } from '@/lib/payroll/payslip-model';
+import { formatPriorPeriodAllowancePayslipLabel } from '@/lib/payroll/prior-period-allowance';
 import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
-import {
-  buildSingleTimesheetGrossContext,
-  computeSingleTimesheetGrossLikeBatch,
-  type SingleTimesheetGrossContext,
-} from '@/lib/payroll/single-timesheet-gross';
-import { resolveEffectivePayrollJobMode } from '@/lib/payroll/timesheet-labor-base-cost';
 import {
   loadPayrollPoliciesFromFirestore,
   resolvePayrollPoliciesForDate,
@@ -68,6 +63,7 @@ import { THAI_PIT_STANDARD_MARGINAL_RATE_PERCENTS } from '@/lib/hr/pit-thailand'
 import { CASH_ADVANCE_PAYROLL_DEDUCTION_KEY } from '@/lib/payroll/cash-advance-recovery';
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 import { loadWorkerTimesheetsForPayrollLine } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
+import { buildPayrollLineDailyRowSnapshots } from '@/lib/payroll/payroll-line-daily-snapshots';
 import {
   Select,
   SelectContent,
@@ -149,24 +145,30 @@ function earningsTotalForEventType(line: PayrollBatchLine, eventType: string): n
   let n = Number(eb[eventType]) || 0;
   n += Number(eb[`${eventType}_policy`]) || 0;
   n += Number(eb[`${eventType}_package`]) || 0;
-  if (eventType === 'work_day') {
-    n += Number((eb as { work_day_package?: number }).work_day_package) || 0;
-  }
-  if (eventType === 'standby_day') {
-    n += Number((eb as { standby_day_package?: number }).standby_day_package) || 0;
-  }
   return n;
 }
 
 /**
- * ยอดต่อวันสำหรับแถว timesheet — แบ่งยอดรวมของประเภทนั้น ÷ จำนวนวันในประเภทเดียวกันในงวด
- * (ถ้าแต่ละวันคิดคนละยอดจริง ค่านี้เป็นเฉลี่ยเพื่อตรวจสอบเทียบสัญญา)
+ * ยอดต่อวัน — ใช้ timesheetGrossById จาก snapshot ก่อน
+ * fallback: หารยอดประเภทวันด้วยจำนวนแถวประเภทเดียวกันที่แสดง (ไม่ใช้ eventBreakdown ที่อาจไม่ตรง)
  */
-function allocatedAmountPerDayForEvent(line: PayrollBatchLine, eventType: string): number | null {
-  const total = earningsTotalForEventType(line, eventType);
-  const count = line.eventBreakdown?.[eventType] ?? 0;
-  if (count <= 0 || total <= 0) return null;
-  return Math.round((total / count) * 100) / 100;
+function amountForTimesheetRow(
+  line: PayrollBatchLine,
+  ts: DailyTimesheet,
+  dayCountByEvent: Record<string, number>,
+): { amount: number; fromStoredDay: boolean; fromAverage: boolean } {
+  const stored = Number(line.timesheetGrossById?.[ts.id]);
+  if (Number.isFinite(stored) && stored > 0) {
+    return { amount: Math.round(stored * 100) / 100, fromStoredDay: true, fromAverage: false };
+  }
+  const total = earningsTotalForEventType(line, ts.eventType);
+  const count = Math.max(1, dayCountByEvent[ts.eventType] || 0);
+  if (total <= 0) return { amount: 0, fromStoredDay: false, fromAverage: false };
+  return {
+    amount: Math.round((total / count) * 100) / 100,
+    fromStoredDay: false,
+    fromAverage: true,
+  };
 }
 
 export default function PayrollBatchWorkerLinePage({
@@ -223,9 +225,6 @@ export default function PayrollBatchWorkerLinePage({
 
   const [timesheets, setTimesheets] = useState<DailyTimesheet[]>([]);
   const [tsLoading, setTsLoading] = useState(true);
-  const [grossByTsId, setGrossByTsId] = useState<Record<string, number>>({});
-  const [grossCtx, setGrossCtx] = useState<SingleTimesheetGrossContext | null>(null);
-  const [grossByTsLoading, setGrossByTsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [recalcOpen, setRecalcOpen] = useState(false);
   const [recalcBusy, setRecalcBusy] = useState(false);
@@ -426,6 +425,18 @@ export default function PayrollBatchWorkerLinePage({
       setTsLoading(false);
       return;
     }
+    /** งวดตกเบิก — ไม่โหลด/เฉลี่ยใบงานเดือนปัจจุบัน (รายได้จริงอยู่ที่ priorPeriodAllowanceItems) */
+    if (batch?.batchType === 'SUPPLEMENTAL') {
+      setTimesheets([]);
+      setTsLoading(false);
+      return;
+    }
+    /** มี snapshot รายวันในงวดแล้ว — ไม่โหลด daily_timesheets ตอนเปิดหน้า */
+    if ((line.dailyRowSnapshots?.length ?? 0) > 0) {
+      setTimesheets([]);
+      setTsLoading(false);
+      return;
+    }
     const periodStart = line.periodStartDate;
     const periodEnd = line.periodEndDate;
     if (!periodStart || !periodEnd) {
@@ -437,11 +448,6 @@ export default function PayrollBatchWorkerLinePage({
     setTsLoading(true);
     void (async () => {
       try {
-        /**
-         * โหลดตาม timesheet ปัจจุบัน + กฎ payable (เดียวกับปุ่มคำนวณใหม่)
-         * — ไม่ยึด sourceTimesheetIds อย่างเดียว เพราะอาจค้างรอบ mob เก่า (เช่น 1–4/07)
-         *   ทั้งที่สรุปรายเดือนเริ่ม M1 รอบใหม่แล้ว
-         */
         const rows = await loadWorkerTimesheetsForPayrollLine(
           firestore,
           workerId,
@@ -459,68 +465,108 @@ export default function PayrollBatchWorkerLinePage({
     return () => {
       cancelled = true;
     };
-  }, [firestore, line, workerId]);
+  }, [firestore, line, workerId, batch?.batchType]);
 
+  /**
+   * งวดที่มี timesheetGrossById แต่ยังไม่มี dailyRowSnapshots (หลัง recalc รอบก่อน)
+   * — โหลดใบงานครั้งเดียวแล้วเขียน snapshot กลับงวด เพื่อเปิดครั้งถัดไปไม่รอ
+   */
   useEffect(() => {
-    if (!firestore || timesheets.length === 0) {
-      setGrossByTsId({});
-      setGrossCtx(null);
-      setGrossByTsLoading(false);
-      return;
-    }
+    if (!firestore || !line || !lineRef) return;
+    if (batch?.batchType === 'SUPPLEMENTAL') return;
+    if ((line.dailyRowSnapshots?.length ?? 0) > 0) return;
+    if (!line.timesheetGrossById || Object.keys(line.timesheetGrossById).length === 0) return;
+    if (timesheets.length === 0 || tsLoading) return;
     let cancelled = false;
-    setGrossByTsLoading(true);
     void (async () => {
       try {
-        const ctx = await buildSingleTimesheetGrossContext(firestore, timesheets);
-        if (!ctx || cancelled) return;
-        const map: Record<string, number> = {};
-        for (const ts of timesheets) {
-          const g = computeSingleTimesheetGrossLikeBatch(ts, ctx);
-          if (g != null) map[ts.id] = g;
-        }
-        if (!cancelled) {
-          setGrossByTsId(map);
-          setGrossCtx(ctx);
-        }
+        const snaps = buildPayrollLineDailyRowSnapshots(timesheets, line.timesheetGrossById);
+        if (cancelled || snaps.length === 0) return;
+        await updateDoc(lineRef as any, {
+          dailyRowSnapshots: snaps,
+          updatedAt: Date.now(),
+        });
       } catch {
-        if (!cancelled) {
-          setGrossByTsId({});
-          setGrossCtx(null);
-        }
-      } finally {
-        if (!cancelled) setGrossByTsLoading(false);
+        /* ignore heal errors — ยังโชว์จาก timesheets ได้ */
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [firestore, timesheets]);
+  }, [firestore, line, lineRef, timesheets, tsLoading, batch?.batchType]);
 
-  /** ยอดรายวันจากสูตร (ไม่บังคับให้เท่า snapshot ในงวด) */
-  const dailyDisplay = useMemo(() => {
-    if (!line || timesheets.length === 0) {
-      return {
-        byId: {} as Record<string, number>,
-        total: 0,
-        snapshotMismatch: false,
-        allRowsFromFormula: false,
-      };
+  type DailyRowView = {
+    id: string;
+    date: string;
+    eventType: string;
+    workMode?: string;
+    normalHours: number;
+    ot15Hours: number;
+    ot20Hours: number;
+    ot30Hours: number;
+    holidayHours: number;
+    amount: number;
+    purchaseOrderId?: string;
+    remark?: string;
+    fromAverage: boolean;
+  };
+
+  /** แถวรายวัน — prefer snapshot ในงวด (เปิดหน้าทันที) */
+  const dailyRows: DailyRowView[] = useMemo(() => {
+    /** งวดตกเบิก — ไม่แสดงตารางรายวันเดือนปัจจุบัน (กันเฉลี่ยยอด OT ไปทับวัน Aug) */
+    if (batch?.batchType === 'SUPPLEMENTAL') return [];
+    const snaps = line?.dailyRowSnapshots;
+    if (snaps && snaps.length > 0) {
+      return [...snaps]
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+        .map((s: PayrollBatchLineDailyRowSnapshot) => ({
+          id: s.timesheetId || `${s.date}_${s.eventType}`,
+          date: s.date,
+          eventType: String(s.eventType || ''),
+          workMode: s.workMode ? String(s.workMode) : undefined,
+          normalHours: Number(s.normalHours) || 0,
+          ot15Hours: Number(s.ot15Hours) || 0,
+          ot20Hours: Number(s.ot20Hours) || 0,
+          ot30Hours: Number(s.ot30Hours) || 0,
+          holidayHours: Number(s.holidayHours) || 0,
+          amount: Number(s.amount) || 0,
+          purchaseOrderId: s.purchaseOrderId,
+          remark: s.remark,
+          fromAverage: false,
+        }));
     }
-    const byId: Record<string, number> = {};
-    let allFromFormula = true;
+    if (!line || timesheets.length === 0) return [];
+    const dayCountByEvent: Record<string, number> = {};
     for (const ts of timesheets) {
-      const c = grossByTsId[ts.id];
-      if (c == null || !Number.isFinite(c)) allFromFormula = false;
-      const v =
-        c != null && Number.isFinite(c) ? c : (allocatedAmountPerDayForEvent(line, ts.eventType) ?? 0);
-      byId[ts.id] = v;
+      dayCountByEvent[ts.eventType] = (dayCountByEvent[ts.eventType] || 0) + 1;
     }
-    const total = Math.round(timesheets.reduce((s, ts) => s + (byId[ts.id] ?? 0), 0) * 100) / 100;
-    const snapshotMismatch =
-      allFromFormula && Math.abs(total - line.grossAmount) >= 0.02;
-    return { byId, total, snapshotMismatch, allRowsFromFormula: allFromFormula };
-  }, [line, timesheets, grossByTsId]);
+    return timesheets.map((ts) => {
+      const row = amountForTimesheetRow(line, ts, dayCountByEvent);
+      return {
+        id: ts.id,
+        date: ts.date,
+        eventType: String(ts.eventType || ''),
+        workMode: ts.workMode ? String(ts.workMode) : undefined,
+        normalHours: Number(ts.normalHours) || 0,
+        ot15Hours: Number(ts.ot15Hours) || 0,
+        ot20Hours: Number(ts.ot20Hours) || 0,
+        ot30Hours: Number(ts.ot30Hours) || 0,
+        holidayHours: Number(ts.holidayHours) || 0,
+        amount: row.amount,
+        purchaseOrderId: (ts.purchaseOrderId || '').trim() || undefined,
+        remark: (ts.remark || '').trim() || undefined,
+        fromAverage: row.fromAverage,
+      };
+    });
+  }, [line, timesheets, batch?.batchType]);
+
+  const dailyDisplay = useMemo(
+    () => ({
+      total: Math.round(Number(line?.grossAmount || 0) * 100) / 100,
+      rowCount: dailyRows.length,
+    }),
+    [line?.grossAmount, dailyRows.length],
+  );
 
   const allowancePreviewTotal = useMemo(
     () =>
@@ -555,17 +601,17 @@ export default function PayrollBatchWorkerLinePage({
 
   const isSupplementalBatch = batch?.batchType === 'SUPPLEMENTAL';
 
-  /** Gross จากตาราง + เบี้ยเลี้ยง (สอดคล้องช่องแรก — ไม่อิง snapshot งวด) */
+  /** Gross จากงวด + เบี้ยเลี้ยงในฟอร์ม (preview ตอนแก้) */
   const grossAfterAllowancesPreview = useMemo(() => {
     if (isSupplementalBatch) {
       return Math.max(0, priorPeriodPreviewTotal + regularAllowancePreviewTotal);
     }
-    return Math.max(0, dailyDisplay.total + allowancePreviewTotal);
+    return Math.max(0, (Number(line?.grossAmount) || 0) + allowancePreviewTotal);
   }, [
     isSupplementalBatch,
     priorPeriodPreviewTotal,
     regularAllowancePreviewTotal,
-    dailyDisplay.total,
+    line?.grossAmount,
     allowancePreviewTotal,
   ]);
 
@@ -597,7 +643,7 @@ export default function PayrollBatchWorkerLinePage({
         const isSupplemental = batch?.batchType === 'SUPPLEMENTAL';
         const eg = isSupplemental
           ? Math.max(0, priorPeriodPreviewTotal + regularAllowancePreviewTotal)
-          : Math.max(0, dailyDisplay.total + allowancePreviewTotal);
+          : Math.max(0, Number(line.grossAmount) || 0) + allowancePreviewTotal;
         const hrAllow = isSupplemental ? regularAllowancePreviewTotal : allowancePreviewTotal;
         const priorPaidTaxableGross = isSupplemental
           ? Math.max(0, Number(normalLine?.grossAmount) || 0)
@@ -678,7 +724,6 @@ export default function PayrollBatchWorkerLinePage({
     period?.endDate,
     batch?.batchType,
     normalLine?.grossAmount,
-    dailyDisplay.total,
     allowancePreviewTotal,
     regularAllowancePreviewTotal,
     priorPeriodPreviewTotal,
@@ -809,10 +854,11 @@ export default function PayrollBatchWorkerLinePage({
       return;
     }
     const fromTs = timesheets.map((t) => String(t.purchaseOrderId || '').trim());
+    const fromSnap = (line?.dailyRowSnapshots || []).map((s) => String(s.purchaseOrderId || '').trim());
     const fromSeg = normalizeIncomeSegments(line?.incomeSegments).map((s) =>
       String(s.purchaseOrderId || '').trim(),
     );
-    const ids = [...new Set([...fromTs, ...fromSeg].filter(Boolean))];
+    const ids = [...new Set([...fromTs, ...fromSnap, ...fromSeg].filter(Boolean))];
     if (ids.length === 0) {
       setPoMetaById(new Map());
       return;
@@ -849,7 +895,7 @@ export default function PayrollBatchWorkerLinePage({
     return () => {
       cancelled = true;
     };
-  }, [firestore, timesheets, line?.incomeSegments]);
+  }, [firestore, timesheets, line?.incomeSegments, line?.dailyRowSnapshots]);
 
   /** ชื่อลูกค้า/สัญญาสำหรับสลิป — ไม่ใช้ Firestore id */
   const poPartyLabelById = useMemo(() => {
@@ -869,7 +915,7 @@ export default function PayrollBatchWorkerLinePage({
     return m;
   }, [line?.incomeSegments, poMetaById]);
 
-  /** ต้องอยู่ก่อน early return — ห้ามเรียก hooks หลัง return แบบมีเงื่อนไข */
+  /** สลิปจาก snapshot ในงวดเท่านั้น — ไม่ทับด้วยสูตรสดตอนเปิดหน้า */
   const slipModel = useMemo(() => {
     if (!line || !batch) return null;
     const pl = period?.label || batch.payrollPeriodId;
@@ -877,7 +923,7 @@ export default function PayrollBatchWorkerLinePage({
     const frozen = isWorkerPayrollBatchSnapshotFrozen(batch, {
       hasEarlierPaidInPeriod: hasEarlier,
     });
-    const model = buildPayslipFromWorkerLine(
+    return buildPayslipFromWorkerLine(
       line,
       batch,
       pl,
@@ -887,21 +933,6 @@ export default function PayrollBatchWorkerLinePage({
       priorPaidRefs as PriorPaidPayrollSlipRef[],
       frozen ? undefined : poPartyLabelById,
     );
-    if (
-      !frozen &&
-      batch.batchType !== 'SUPPLEMENTAL' &&
-      timesheets.length > 0 &&
-      grossCtx
-    ) {
-      return applyLiveTimesheetIncomeToPayslip(
-        model,
-        line,
-        timesheets,
-        grossCtx,
-        poPartyLabelById,
-      );
-    }
-    return model;
   }, [
     line,
     batch,
@@ -909,53 +940,14 @@ export default function PayrollBatchWorkerLinePage({
     batch?.payrollPeriodId,
     companyProfile?.companyNameTh,
     companyProfile?.companyNameEn,
-    timesheets,
-    grossCtx,
     normalLine,
     normalBatch,
     priorPaidRefs,
     poPartyLabelById,
   ]);
 
-  /**
-   * ยอดที่แสดงทั้งหน้า — ต้องชุดเดียวกับสลิป/หน้า batch
-   * งวดชุดแรกที่จ่ายแล้ว คง snapshot — ชุดหลังใช้รายได้ครบทุก PO + หักยอดจ่ายแล้ว
-   */
-  const displaySlip = useMemo(() => {
-    if (!slipModel || !line || !batch) return slipModel;
-    const hasEarlier = (priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0;
-    if (isWorkerPayrollBatchSnapshotFrozen(batch, { hasEarlierPaidInPeriod: hasEarlier })) {
-      return slipModel;
-    }
-    const allowanceExtra = allowancePreviewTotal;
-    const formulaGross = Math.round((dailyDisplay.total + allowanceExtra) * 100) / 100;
-    const snapGross = Math.round(Number(line.grossAmount) * 100) / 100;
-    const slipGross = slipModel.grossTotal;
-    const slipLooksLikeStaleSnapshot =
-      dailyDisplay.allRowsFromFormula &&
-      formulaGross > 0.005 &&
-      Math.abs(slipGross - snapGross) < 0.05 &&
-      Math.abs(formulaGross - snapGross) >= 0.02;
-
-    const grossTotal = slipLooksLikeStaleSnapshot ? formulaGross : slipGross;
-    const dedTotal =
-      Math.round(slipModel.deductionLines.reduce((s, x) => s + x.amount, 0) * 100) / 100;
-    return {
-      ...slipModel,
-      grossTotal,
-      deductionsTotal: dedTotal,
-      netPay: Math.round((grossTotal - dedTotal) * 100) / 100,
-      roundingNote: false,
-    };
-  }, [
-    slipModel,
-    line,
-    batch,
-    priorPaidRefs,
-    dailyDisplay.allRowsFromFormula,
-    dailyDisplay.total,
-    allowancePreviewTotal,
-  ]);
+  /** ยอดที่แสดงทั้งหน้า = snapshot ในงวด (ตรงหน้า batch / ปุ่มสร้างงวด) */
+  const displaySlip = useMemo(() => slipModel, [slipModel]);
 
   const pitFromLine = Number(line?.deductionsBreakdown?.pit_withholding ?? 0);
 
@@ -1041,45 +1033,21 @@ export default function PayrollBatchWorkerLinePage({
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-xs uppercase text-muted-foreground">
-                {isWorkerPayrollBatchSnapshotFrozen(batch, {
-                  hasEarlierPaidInPeriod: (priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0,
-                })
-                  ? 'Gross (ยอดบันทึกในงวด — จ่ายแล้ว)'
-                  : 'Gross (รวมจากตาราง — สูตรปัจจุบัน)'}
+                Gross (ยอดบันทึกในงวด)
               </CardTitle>
-              {isWorkerPayrollBatchSnapshotFrozen(batch, {
-                hasEarlierPaidInPeriod: (priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0,
-              }) ? (
-                <CardDescription className="text-[11px] leading-snug text-muted-foreground">
-                  งวดชุดแรกที่ชำระ/ล็อกแล้ว — แสดงยอด snapshot ตามเอกสารที่จ่ายไปแล้ว ไม่ทับด้วยสูตรปัจจุบัน
-                </CardDescription>
-              ) : dailyDisplay.snapshotMismatch ? (
-                <CardDescription className="text-[11px] leading-snug text-amber-900">
-                  ในงวด (snapshot ตอนสร้าง batch): ฿{line.grossAmount.toLocaleString()} — ต่างจากสูตร/PO ปัจจุบัน — ใช้ปุ่ม{' '}
-                  <strong>คำนวณใหม่จากใบงาน (คนนี้เท่านั้น)</strong> เพื่ออัปเดตเฉพาะคนนี้โดยไม่ล้างการปรับยอดคนอื่น
-                  หรือ Regenerate ทั้งงวดเมื่อต้องการให้ทุกคนตรงสูตรพร้อมกัน
-                </CardDescription>
-              ) : (
-                <CardDescription className="text-[11px] text-muted-foreground">
-                  ผลรวมจากยอดแต่ละวันในตาราง — สอดคล้อง snapshot งวดเมื่อยังไม่แก้ PO/สัญญาหลังสร้าง batch
-                </CardDescription>
-              )}
+              <CardDescription className="text-[11px] leading-snug text-muted-foreground">
+                จากตอนสร้างงวด (เริ่มการประมวลผล) — เปิดหน้านี้ไม่คำนวณซ้ำ
+              </CardDescription>
             </CardHeader>
             <CardContent className="text-2xl font-black text-primary">
-              ฿
-              {(isWorkerPayrollBatchSnapshotFrozen(batch, {
-                hasEarlierPaidInPeriod: (priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0,
-              })
-                ? line.grossAmount
-                : dailyDisplay.total
-              ).toLocaleString()}
+              ฿{line.grossAmount.toLocaleString()}
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-xs uppercase text-muted-foreground">รวมหลังเบี้ยเลี้ยง/ปรับ</CardTitle>
               <CardDescription className="text-[11px] text-muted-foreground">
-                Gross จากตาราง + รายการเบี้ยเลี้ยงในฟอร์ม (สอดคล้องช่องแรก)
+                Gross งวด + รายการเบี้ยเลี้ยงในฟอร์ม (preview ตอนแก้)
               </CardDescription>
             </CardHeader>
             <CardContent className="text-2xl font-black text-primary">
@@ -1088,23 +1056,13 @@ export default function PayrollBatchWorkerLinePage({
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-xs uppercase text-muted-foreground">Net (ประมาณจากสูตรปัจจุบัน)</CardTitle>
+              <CardTitle className="text-xs uppercase text-muted-foreground">Net (ยอดบันทึกในงวด)</CardTitle>
               <CardDescription className="text-[11px] leading-snug">
-                ตรงกับสลิป — รวมหักยอดที่ชำระไปแล้ว (ถ้ามี) · ยอดบันทึกในงวด: ฿
-                {line.netAmount.toLocaleString()}
-                {dailyDisplay.snapshotMismatch ? (
-                  <span className="block mt-1 text-amber-800">
-                    กด «คำนวณใหม่จากใบงาน» เพื่ออัปเดตยอดบันทึกในงวดให้ตรงสลิป
-                  </span>
-                ) : null}
+                ตรงกับหน้า batch / สลิป · ฿{line.netAmount.toLocaleString()}
               </CardDescription>
             </CardHeader>
             <CardContent className="text-2xl font-black text-emerald-700 flex items-center gap-2 min-h-[2.5rem]">
-              {previewNetLoading && !displaySlip ? (
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              ) : (
-                <>฿{(displaySlip?.netPay ?? previewNet ?? line.netAmount).toLocaleString()}</>
-              )}
+              <>฿{(displaySlip?.netPay ?? line.netAmount).toLocaleString()}</>
             </CardContent>
           </Card>
         </div>
@@ -1120,6 +1078,90 @@ export default function PayrollBatchWorkerLinePage({
           </Card>
         )}
 
+        {(priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0 && (
+          <Card className="border-sky-200 bg-sky-50/40">
+            <CardHeader>
+              <CardTitle className="text-base text-sky-950">
+                งวดที่จ่ายแล้วต้นเดือน (รวม OT ตกเบิก)
+              </CardTitle>
+              <CardDescription className="text-sky-900/80">
+                รายละเอียดจากงวดที่บัญชีจ่ายไปแล้วในเดือนเดียวกัน — คำนวณใหม่จะไม่ทับยอดวันนี้ · สลิปรอบนี้หักสุทธิงวดนั้นออก
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {(priorPaidRefs as PriorPaidPayrollSlipRef[]).map((ref) => {
+                const retro = (ref.line.hrLineAdjustments?.priorPeriodAllowanceItems ?? []).filter(
+                  (it) => Number(it.amount) > 0,
+                );
+                const days = ref.line.dailyRowSnapshots ?? [];
+                const byId = ref.line.timesheetGrossById ?? {};
+                const dayEntries =
+                  days.length > 0
+                    ? days.map((d) => ({
+                        date: d.date,
+                        eventType: d.eventType,
+                        amount: Number(d.amount) || 0,
+                      }))
+                    : Object.entries(byId).map(([id, amount]) => ({
+                        date: id,
+                        eventType: 'timesheet',
+                        amount: Number(amount) || 0,
+                      }));
+                return (
+                  <div key={ref.batch.id} className="rounded-md border border-sky-200 bg-white p-3 space-y-3">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                      <span className="font-mono text-muted-foreground">{ref.batch.id}</span>
+                      <span>
+                        Gross ฿{Number(ref.line.grossAmount || 0).toLocaleString()} · Net ฿
+                        {Number(ref.line.netAmount || 0).toLocaleString()}
+                      </span>
+                    </div>
+                    {retro.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-sky-900 mb-1">OT / รายได้ย้อนหลังในงวดนั้น</p>
+                        <ul className="text-sm space-y-1">
+                          {retro.map((it, i) => (
+                            <li key={i} className="flex justify-between gap-3">
+                              <span>{formatPriorPeriodAllowancePayslipLabel(it)}</span>
+                              <span className="tabular-nums font-medium">
+                                ฿{Number(it.amount).toLocaleString()}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {dayEntries.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-sky-900 mb-1">รายวันที่จ่ายในงวดนั้น</p>
+                        <ul className="text-sm space-y-1 max-h-40 overflow-y-auto">
+                          {dayEntries.map((d, i) => (
+                            <li key={i} className="flex justify-between gap-3">
+                              <span>
+                                {/^\d{4}-\d{2}-\d{2}$/.test(d.date)
+                                  ? formatYmdLocalThaiBE(d.date)
+                                  : d.date}{' '}
+                                · {d.eventType}
+                              </span>
+                              <span className="tabular-nums">฿{d.amount.toLocaleString()}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {retro.length === 0 && dayEntries.length === 0 && (
+                      <p className="text-sm text-muted-foreground">
+                        ไม่มีรายละเอียดรายวัน/ตกเบิกใน snapshot งวดนี้ — ยังหักสุทธิ ฿
+                        {Number(ref.line.netAmount || 0).toLocaleString()} จากสลิปรอบหลัง
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -1128,31 +1170,27 @@ export default function PayrollBatchWorkerLinePage({
             </CardTitle>
             <CardDescription className="space-y-2">
               <p>
-                คอลัมน์ <strong>ยอด (คำนวณ)</strong> ใช้สูตรเดียวกับการสร้าง Payroll Batch (แพ็กต้นทุน PO + ตัวคูณจากสัญญา)
-                — ถ้าโหลดบริบทไม่ครบจะใช้ค่าเฉลี่ยจาก snapshot ในงวด
+                คอลัมน์ <strong>ยอด (จากงวด)</strong> = snapshot ที่เก็บตอน「เริ่มการประมวลผล」—
+                เปิดหน้าโชว์ทันที ไม่คำนวณ/ไม่โหลดใบงานซ้ำ
               </p>
               <p className="text-xs text-muted-foreground">
-                แหล่งข้อมูลแต่ละแถว = เอกสาร <span className="font-mono">daily_timesheets</span> ของลูกจ้างในงวด
-                (รวมใบที่ผูกใน batch) — ไม่ได้ดึงจากช่องว่างบนกระดาน/สรุปรายเดือนโดยตรง
+                ปุ่ม「คำนวณใหม่จากใบงาน」ใช้เฉพาะเมื่อต้องการอัปเดตยอดหลังแก้ใบงาน/สูตร — ไม่จำเป็นตอนเปิดดู
               </p>
-              {dailyDisplay.snapshotMismatch && (
-                <p className="text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 text-xs">
-                  ผลรวมรายวันตามสูตรปัจจุบัน (฿{dailyDisplay.total.toLocaleString()}) ไม่เท่ากับที่บันทึกในงวด (฿
-                  {line.grossAmount.toLocaleString()}) — ยอดรายวันด้านล่างสะท้อนสูตร/PO <strong>ปัจจุบัน</strong>
-                  การหักภาษีในใบนี้ยังอิง Gross ใน snapshot จนกว่าจะ Regenerate หรือแก้ batch
-                </p>
-              )}
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
-            {tsLoading || grossByTsLoading ? (
+            {tsLoading && dailyRows.length === 0 ? (
               <div className="p-8 flex justify-center">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
-            ) : timesheets.length === 0 ? (
-              <p className="p-6 text-sm text-muted-foreground italic">ไม่พบรายการ timesheet อ้างอิง (อาจถูกลบหลังล็อก)</p>
+            ) : dailyRows.length === 0 ? (
+              <p className="p-6 text-sm text-muted-foreground italic">
+                {isSupplementalBatch
+                  ? 'งวดตกเบิก — ไม่มีค่าแรงรายวันเดือนปัจจุบันในงวดนี้ · ดูรายการที่ส่วน「รายได้ย้อนหลัง」ด้านล่าง'
+                  : 'ไม่พบรายการ timesheet อ้างอิง (อาจถูกลบหลังล็อก)'}
+              </p>
             ) : (
-              <Table>
+              <Table className="[&_th]:h-10 [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-2.5 [&_td]:align-middle">
                 <TableHeader>
                   <TableRow className="bg-muted/30">
                     <TableHead>วันที่</TableHead>
@@ -1160,51 +1198,52 @@ export default function PayrollBatchWorkerLinePage({
                     <TableHead>ประเภท</TableHead>
                     <TableHead className="text-right">ชม.ปกติ</TableHead>
                     <TableHead className="text-right">OT / อื่นๆ</TableHead>
-                    <TableHead className="text-right tabular-nums">ยอด (คำนวณ)</TableHead>
+                    <TableHead className="text-right tabular-nums">ยอด (จากงวด)</TableHead>
                     <TableHead>แหล่ง / หมายเหตุ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {timesheets.map((ts) => {
-                    const dow = localWeekdayIndex(ts.date);
+                  {dailyRows.map((row) => {
+                    const dow = localWeekdayIndex(row.date);
                     const isSun = dow === 0;
-                    const computedRaw = grossByTsId[ts.id];
-                    const dayAmt = dailyDisplay.byId[ts.id] ?? null;
-                    const usedAverageFallback =
-                      computedRaw == null && line && allocatedAmountPerDayForEvent(line, ts.eventType) != null;
+                    const dayAmt = row.amount;
+                    const usedAverageFallback = row.fromAverage;
                     const otBits = [
-                      ts.ot15Hours ? `OT1.5 ${ts.ot15Hours}` : '',
-                      ts.ot20Hours ? `OT2.0 ${ts.ot20Hours}` : '',
-                      ts.ot30Hours ? `OT3.0 ${ts.ot30Hours}` : '',
-                      ts.holidayHours ? `Holiday ${ts.holidayHours}` : '',
+                      row.ot15Hours ? `OT1.5 ${row.ot15Hours}` : '',
+                      row.ot20Hours ? `OT2.0 ${row.ot20Hours}` : '',
+                      row.ot30Hours ? `OT3.0 ${row.ot30Hours}` : '',
+                      row.holidayHours ? `Holiday ${row.holidayHours}` : '',
                     ]
                       .filter(Boolean)
                       .join(' · ');
+                    const modeLabel = String(row.workMode || '').toUpperCase().includes('ON')
+                      ? 'ONSHORE'
+                      : 'OFFSHORE';
                     return (
-                      <TableRow key={ts.id} className={isSun ? 'bg-amber-50/80' : ''}>
-                        <TableCell className="font-mono text-sm">{formatDateThaiBE(ts.date)}</TableCell>
-                        <TableCell>
+                      <TableRow key={row.id} className={isSun ? 'bg-amber-50/80' : ''}>
+                        <TableCell className="font-mono text-sm">{formatDateThaiBE(row.date)}</TableCell>
+                        <TableCell className="leading-snug">
                           {TH_WEEKDAYS[dow]}
                           {isSun && (
-                            <Badge variant="secondary" className="ml-2 text-[10px]">
+                            <Badge variant="secondary" className="ml-1.5 text-[10px] px-1.5 py-0">
                               อาทิตย์
                             </Badge>
                           )}
                         </TableCell>
-                        <TableCell className="text-sm">
-                          <div>{ts.eventType}</div>
-                          <div className="text-[10px] uppercase text-muted-foreground mt-0.5">
-                            {resolveEffectivePayrollJobMode(ts, grossCtx?.poWorkModeByPoId)}
+                        <TableCell className="text-sm leading-snug">
+                          <div>{row.eventType}</div>
+                          <div className="text-[10px] uppercase text-muted-foreground leading-tight">
+                            {modeLabel}
                           </div>
                         </TableCell>
-                        <TableCell className="text-right">{ts.normalHours ?? 0}</TableCell>
+                        <TableCell className="text-right">{row.normalHours ?? 0}</TableCell>
                         <TableCell className="text-right text-xs text-muted-foreground">{otBits || '—'}</TableCell>
-                        <TableCell className="text-right font-medium tabular-nums text-primary">
-                          {dayAmt != null ? (
+                        <TableCell className="text-right font-medium tabular-nums text-primary leading-snug">
+                          {dayAmt > 0 ? (
                             <>
                               ฿{dayAmt.toLocaleString()}
                               {usedAverageFallback && (
-                                <span className="block text-[10px] font-normal text-muted-foreground">
+                                <span className="block text-[10px] font-normal text-muted-foreground leading-tight">
                                   เฉลี่ยจาก snapshot
                                 </span>
                               )}
@@ -1213,10 +1252,10 @@ export default function PayrollBatchWorkerLinePage({
                             '—'
                           )}
                         </TableCell>
-                        <TableCell className="text-xs max-w-[280px]">
-                          <div className="text-[10px] font-medium text-foreground/80 break-words">
+                        <TableCell className="text-xs max-w-[280px] leading-snug">
+                          <div className="text-[10px] font-medium text-foreground/80 break-words leading-tight">
                             {(() => {
-                              const pid = String(ts.purchaseOrderId || '').trim();
+                              const pid = String(row.purchaseOrderId || '').trim();
                               return (
                                 poSourceLabelById.get(pid) ||
                                 poPartyLabelById.get(pid) ||
@@ -1224,21 +1263,21 @@ export default function PayrollBatchWorkerLinePage({
                               );
                             })()}
                           </div>
-                          <div className="truncate mt-0.5 text-muted-foreground" title={ts.remark || undefined}>
-                            {ts.remark || '—'}
+                          <div className="truncate text-muted-foreground leading-tight" title={row.remark || undefined}>
+                            {row.remark || '—'}
                           </div>
                         </TableCell>
                       </TableRow>
                     );
                   })}
                   <TableRow className="bg-muted/50 font-semibold border-t-2">
-                    <TableCell colSpan={5} className="text-right py-3">
+                    <TableCell colSpan={5} className="text-right py-2.5">
                       รวม (รายวันในตาราง)
                     </TableCell>
-                    <TableCell className="text-right py-3 tabular-nums text-primary">
+                    <TableCell className="text-right py-2.5 tabular-nums text-primary">
                       ฿{dailyDisplay.total.toLocaleString()}
                     </TableCell>
-                    <TableCell />
+                    <TableCell className="py-2.5" />
                   </TableRow>
                 </TableBody>
               </Table>
@@ -1493,6 +1532,8 @@ export default function PayrollBatchWorkerLinePage({
 
             <Separator />
 
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+              <div className="space-y-4 min-w-0">
             <div className="space-y-3">
               <div>
                 <Label className="text-base font-bold">การหัก ภงด.1 (ภาษี ณ ที่จ่าย)</Label>
@@ -1601,7 +1642,7 @@ export default function PayrollBatchWorkerLinePage({
                 </div>
               </RadioGroup>
               {workerPitMode === 'auto_timesheet' && (
-                <div className="rounded-md border border-dashed bg-muted/20 px-3 py-2 space-y-2 max-w-xl">
+                <div className="rounded-md border border-dashed bg-muted/20 px-3 py-2 space-y-2">
                   <div className="flex items-center gap-2">
                     <Checkbox
                       id="pit-legacy-marginal"
@@ -1667,11 +1708,13 @@ export default function PayrollBatchWorkerLinePage({
                 value={adjNotes}
                 onChange={(e) => setAdjNotes(e.target.value)}
                 disabled={!canSaveAdjustments}
-                rows={2}
+                rows={3}
               />
             </div>
+              </div>
 
-            <div className="rounded-md border bg-muted/20 p-4 text-sm space-y-3">
+              <div className="space-y-4 min-w-0 lg:sticky lg:top-4">
+            <div className="rounded-md border border-amber-300 bg-amber-50/50 p-4 text-sm space-y-3">
               <div className="flex justify-between gap-4 font-medium">
                 <span>รวมรายได้ (ตรงสลิป)</span>
                 <span className="font-mono tabular-nums text-primary">
@@ -1684,7 +1727,7 @@ export default function PayrollBatchWorkerLinePage({
                   +฿{allowanceItemsTotal(line).toLocaleString()}
                 </span>
               </div>
-              <div className="space-y-1.5 border-t border-border/60 pt-3">
+              <div className="space-y-1.5 border-t border-amber-200/80 pt-3">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   รายการหัก (ตรงสลิป)
                 </p>
@@ -1698,7 +1741,7 @@ export default function PayrollBatchWorkerLinePage({
                   </div>
                 ))}
               </div>
-              <div className="flex justify-between gap-4 border-t border-border pt-3 font-medium">
+              <div className="flex justify-between gap-4 border-t border-amber-200/80 pt-3 font-medium">
                 <span>หักรวม (รวมหักยอดที่ชำระไปแล้ว)</span>
                 <span className="font-mono tabular-nums">
                   ฿
@@ -1708,7 +1751,7 @@ export default function PayrollBatchWorkerLinePage({
                   ).toLocaleString()}
                 </span>
               </div>
-              <div className="flex justify-between gap-4 border-t border-border pt-3 font-black text-emerald-800">
+              <div className="flex justify-between gap-4 border-t border-amber-200/80 pt-3 font-black text-emerald-800">
                 <span>รับสุทธิ (ตรงสลิป)</span>
                 <span className="font-mono tabular-nums">
                   ฿{(displaySlip?.netPay ?? previewNet ?? line.netAmount).toLocaleString()}
@@ -1724,12 +1767,18 @@ export default function PayrollBatchWorkerLinePage({
                     : ''}
                 </p>
               ) : null}
+              <Button
+                type="button"
+                className="w-full"
+                disabled={!canSaveAdjustments || saving}
+                onClick={() => void handleSave()}
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                บันทึกการปรับยอด
+              </Button>
             </div>
-
-            <Button type="button" disabled={!canSaveAdjustments || saving} onClick={() => void handleSave()}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              บันทึกการปรับยอด
-            </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>

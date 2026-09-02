@@ -193,6 +193,18 @@ export async function upsertMobClearanceDailyTimesheet(
     normalHours = built.normalHours;
     const { eventType: _e, normalHours: _n, ...rest } = built;
     chargeFields = rest;
+  } else if (kind === 'standby_day' && (!billingCharge || !payrollCharge)) {
+    /** ช่องว่างก่อนเริ่มงาน / SB ไร้ charge — มาตรฐาน 8 ชม. เหมือน Pre-Mob / PO Active auto */
+    const packageHours = normalHoursFromPoLine(line) === 12 ? 12 : 8;
+    const built = buildTimesheetFieldsFromMobCharges(
+      { kind: 'STANDBY', hours: 8 },
+      { kind: 'STANDBY', hours: 8 },
+      packageHours,
+    );
+    eventType = built.eventType;
+    normalHours = built.normalHours;
+    const { eventType: _e, normalHours: _n, ...rest } = built;
+    chargeFields = rest;
   } else if (kind === 'mobilization_day' && (!billingCharge || !payrollCharge)) {
     /** ไม่มี charge แยก — ใช้ชม.แพ็กจาก PO line (OFF 12 / ON 8) ไม่เขียน 0 */
     normalHours = normalHoursFromPoLine(line);

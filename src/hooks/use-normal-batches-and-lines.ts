@@ -13,6 +13,8 @@ import {
 const PRIOR_PAID_BATCH_STATUSES: ReadonlySet<PayrollBatchStatus | string> = new Set([
   'PAID',
   'LOCKED',
+  'FINANCE_PREPARED',
+  'PAYMENT_EXPORTED',
 ]);
 
 /**

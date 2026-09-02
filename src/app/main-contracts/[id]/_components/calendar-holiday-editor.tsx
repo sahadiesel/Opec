@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Plus, Trash2 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { formatYmdLocalThaiBE } from '@/lib/date-thai';
+import { formatYmdLocalThaiBE, thaiWeekdayNameFromYmd } from '@/lib/date-thai';
 import type { CalendarHolidayEntry } from '@/lib/contract-position-rate-extras';
 
 export function CalendarHolidayEditor({
@@ -80,14 +80,19 @@ export function CalendarHolidayEditor({
       </div>
       {sortedHolidays.length > 0 && (
         <ul className="space-y-1 text-xs border-t pt-2">
-          {sortedHolidays.map((h, i) => (
+          {sortedHolidays.map((h, i) => {
+            const weekday = thaiWeekdayNameFromYmd(h.date);
+            return (
             <li
               key={`${h.date}|${h.label}|${i}`}
               className="flex items-center justify-between gap-2 rounded bg-background px-2 py-1"
             >
               <span>
-                <span className="font-mono text-primary">{formatYmdLocalThaiBE(h.date, h.date)}</span>
-                <span className="text-muted-foreground"> — {h.label}</span>
+                <span className="text-primary">
+                  {weekday ? `${weekday} ` : ''}
+                  <span className="font-mono">{formatYmdLocalThaiBE(h.date, h.date)}</span>
+                </span>
+                <span className="text-muted-foreground"> - {h.label}</span>
               </span>
               <Button
                 type="button"
@@ -100,7 +105,8 @@ export function CalendarHolidayEditor({
                 <Trash2 className="h-3 w-3" />
               </Button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </div>
