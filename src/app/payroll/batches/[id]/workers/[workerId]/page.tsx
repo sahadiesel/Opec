@@ -63,7 +63,12 @@ import { THAI_PIT_STANDARD_MARGINAL_RATE_PERCENTS } from '@/lib/hr/pit-thailand'
 import { CASH_ADVANCE_PAYROLL_DEDUCTION_KEY } from '@/lib/payroll/cash-advance-recovery';
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 import { loadWorkerTimesheetsForPayrollLine } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
-import { buildPayrollLineDailyRowSnapshots } from '@/lib/payroll/payroll-line-daily-snapshots';
+import {
+  buildPayrollLineDailyRowSnapshots,
+  hasPositiveTimesheetGrossById,
+  isUsableDailyRowSnapshots,
+  loadDailyTimesheetsByIds,
+} from '@/lib/payroll/payroll-line-daily-snapshots';
 import {
   Select,
   SelectContent,
@@ -224,7 +229,8 @@ export default function PayrollBatchWorkerLinePage({
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
 
   const [timesheets, setTimesheets] = useState<DailyTimesheet[]>([]);
-  const [tsLoading, setTsLoading] = useState(true);
+  /** false จนกว่าจะจำเป็นต้องโหลดใบงาน — งวดที่มี snapshot / จ่ายแล้วไม่ควรหมุนคำนวณตอนเปิด */
+  const [tsLoading, setTsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [recalcOpen, setRecalcOpen] = useState(false);
   const [recalcBusy, setRecalcBusy] = useState(false);
@@ -431,12 +437,53 @@ export default function PayrollBatchWorkerLinePage({
       setTsLoading(false);
       return;
     }
-    /** มี snapshot รายวันในงวดแล้ว — ไม่โหลด daily_timesheets ตอนเปิดหน้า */
-    if ((line.dailyRowSnapshots?.length ?? 0) > 0) {
+    /** มี snapshot รายวันที่ยอดใช้ได้แล้ว — ไม่โหลด daily_timesheets ตอนเปิดหน้า */
+    if (isUsableDailyRowSnapshots(line.dailyRowSnapshots, line.grossAmount)) {
       setTimesheets([]);
       setTsLoading(false);
       return;
     }
+
+    const immutable =
+      batch?.status === 'PAID' ||
+      batch?.status === 'LOCKED' ||
+      batch?.status === 'FINANCE_PREPARED' ||
+      batch?.status === 'PAYMENT_EXPORTED';
+
+    const fromSource = (line.sourceTimesheetIds ?? []).map((id) => String(id || '').trim()).filter(Boolean);
+    const fromGross = Object.keys(line.timesheetGrossById || {})
+      .map((id) => String(id || '').trim())
+      .filter(Boolean);
+    const snapshotIds = [...new Set([...fromSource, ...fromGross])];
+
+    /**
+     * งวดจ่ายแล้ว/ล็อกแล้วที่ยังไม่มี dailyRowSnapshots ที่มียอด
+     * — เติมได้เฉพาะเมื่อมี timesheetGrossById · ไม่โชว์แถวยอด 0 ทั้งตาราง
+     */
+    if (immutable) {
+      if (!hasPositiveTimesheetGrossById(line.timesheetGrossById) || snapshotIds.length === 0) {
+        setTimesheets([]);
+        setTsLoading(false);
+        return;
+      }
+      let cancelled = false;
+      setTsLoading(true);
+      void (async () => {
+        try {
+          const rows = await loadDailyTimesheetsByIds(firestore, snapshotIds);
+          if (cancelled) return;
+          setTimesheets(normalizeTimesheetsForPayrollLine(rows));
+        } catch {
+          if (!cancelled) setTimesheets([]);
+        } finally {
+          if (!cancelled) setTsLoading(false);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+
     const periodStart = line.periodStartDate;
     const periodEnd = line.periodEndDate;
     if (!periodStart || !periodEnd) {
@@ -465,23 +512,29 @@ export default function PayrollBatchWorkerLinePage({
     return () => {
       cancelled = true;
     };
-  }, [firestore, line, workerId, batch?.batchType]);
+  }, [firestore, line, workerId, batch?.batchType, batch?.status]);
 
   /**
-   * งวดที่มี timesheetGrossById แต่ยังไม่มี dailyRowSnapshots (หลัง recalc รอบก่อน)
-   * — โหลดใบงานครั้งเดียวแล้วเขียน snapshot กลับงวด เพื่อเปิดครั้งถัดไปไม่รอ
+   * งวดที่มี timesheetGrossById แต่ยังไม่มี dailyRowSnapshots ที่ใช้ได้
+   * — โหลดใบงานครั้งเดียวแล้วเขียน snapshot กลับงวด เพื่อเปิดครั้งถัดไปโชว์ทันทีโดยไม่รอ
    */
   useEffect(() => {
     if (!firestore || !line || !lineRef) return;
     if (batch?.batchType === 'SUPPLEMENTAL') return;
-    if ((line.dailyRowSnapshots?.length ?? 0) > 0) return;
-    if (!line.timesheetGrossById || Object.keys(line.timesheetGrossById).length === 0) return;
+    if (isUsableDailyRowSnapshots(line.dailyRowSnapshots, line.grossAmount)) return;
+    if (!hasPositiveTimesheetGrossById(line.timesheetGrossById)) {
+      /** ล้าง snapshot ยอด 0 ที่เคยเขียนผิด */
+      if ((line.dailyRowSnapshots?.length ?? 0) > 0) {
+        void updateDoc(lineRef as any, { dailyRowSnapshots: [], updatedAt: Date.now() }).catch(() => {});
+      }
+      return;
+    }
     if (timesheets.length === 0 || tsLoading) return;
     let cancelled = false;
     void (async () => {
       try {
         const snaps = buildPayrollLineDailyRowSnapshots(timesheets, line.timesheetGrossById);
-        if (cancelled || snaps.length === 0) return;
+        if (cancelled || !isUsableDailyRowSnapshots(snaps, line.grossAmount)) return;
         await updateDoc(lineRef as any, {
           dailyRowSnapshots: snaps,
           updatedAt: Date.now(),
@@ -516,8 +569,8 @@ export default function PayrollBatchWorkerLinePage({
     /** งวดตกเบิก — ไม่แสดงตารางรายวันเดือนปัจจุบัน (กันเฉลี่ยยอด OT ไปทับวัน Aug) */
     if (batch?.batchType === 'SUPPLEMENTAL') return [];
     const snaps = line?.dailyRowSnapshots;
-    if (snaps && snaps.length > 0) {
-      return [...snaps]
+    if (isUsableDailyRowSnapshots(snaps, line?.grossAmount)) {
+      return [...(snaps || [])]
         .sort((a, b) => String(a.date).localeCompare(String(b.date)))
         .map((s: PayrollBatchLineDailyRowSnapshot) => ({
           id: s.timesheetId || `${s.date}_${s.eventType}`,
@@ -534,6 +587,15 @@ export default function PayrollBatchWorkerLinePage({
           remark: s.remark,
           fromAverage: false,
         }));
+    }
+    /** งวดจ่ายแล้วที่ไม่มี timesheetGrossById — อย่าโชว์แถวใบงานที่ยอดว่าง */
+    const immutable =
+      batch?.status === 'PAID' ||
+      batch?.status === 'LOCKED' ||
+      batch?.status === 'FINANCE_PREPARED' ||
+      batch?.status === 'PAYMENT_EXPORTED';
+    if (immutable && !hasPositiveTimesheetGrossById(line?.timesheetGrossById)) {
+      return [];
     }
     if (!line || timesheets.length === 0) return [];
     const dayCountByEvent: Record<string, number> = {};
@@ -558,7 +620,7 @@ export default function PayrollBatchWorkerLinePage({
         fromAverage: row.fromAverage,
       };
     });
-  }, [line, timesheets, batch?.batchType]);
+  }, [line, timesheets, batch?.batchType, batch?.status]);
 
   const dailyDisplay = useMemo(
     () => ({
@@ -1180,14 +1242,17 @@ export default function PayrollBatchWorkerLinePage({
           </CardHeader>
           <CardContent className="p-0">
             {tsLoading && dailyRows.length === 0 ? (
-              <div className="p-8 flex justify-center">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              <div className="p-8 flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                <Loader2 className="h-8 w-8 animate-spin" />
+                <p className="text-sm">กำลังโหลดรายวันจากใบงานที่บันทึกในงวด…</p>
               </div>
             ) : dailyRows.length === 0 ? (
               <p className="p-6 text-sm text-muted-foreground italic">
                 {isSupplementalBatch
                   ? 'งวดตกเบิก — ไม่มีค่าแรงรายวันเดือนปัจจุบันในงวดนี้ · ดูรายการที่ส่วน「รายได้ย้อนหลัง」ด้านล่าง'
-                  : 'ไม่พบรายการ timesheet อ้างอิง (อาจถูกลบหลังล็อก)'}
+                  : batch?.status === 'PAID' || batch?.status === 'LOCKED'
+                    ? 'งวดนี้จ่าย/ล็อกแล้ว — ไม่มียอดรายวันเก็บในงวด (ข้อมูลเก่าก่อนมี snapshot) · ยอด Gross/Net ด้านบนคือยอดที่จ่ายจริง ไม่ต้องคำนวณใหม่'
+                    : 'ไม่พบรายการ timesheet อ้างอิง (อาจถูกลบหลังล็อก)'}
               </p>
             ) : (
               <Table className="[&_th]:h-10 [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-2.5 [&_td]:align-middle">

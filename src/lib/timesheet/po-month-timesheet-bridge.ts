@@ -15,6 +15,7 @@ import {
 import type {
   Assignment,
   DailyTimesheet,
+  PayrollBatch,
   PayrollBatchLine,
   PayrollPeriod,
   PayrollPeriodStatus,
@@ -212,6 +213,7 @@ export async function gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(
 
 /**
  * ใบงานที่ยังถูกอ้างใน payroll_batches ของงวดนี้ — ห้ามปลดล็อก (กันจ่ายซ้ำ)
+ * ไม่นับงวด CANCELLED (ปลดล็อกแล้วหรือควรปลดเป็น orphan)
  */
 async function collectClaimedTimesheetIdsForPayrollYearMonth(
   db: Firestore,
@@ -223,6 +225,11 @@ async function collectClaimedTimesheetIdsForPayrollYearMonth(
     query(collection(db, 'payroll_batches'), where('payrollPeriodId', '==', periodId)),
   );
   for (const b of batchSnap.docs) {
+    const batch = b.data() as PayrollBatch;
+    const status = String(batch.status || '');
+    if (status === 'CANCELLED') continue;
+    /** ตกเบิกไม่ผูกใบงานเดือนปัจจุบัน — อย่าถือว่า claim */
+    if (batch.batchType === 'SUPPLEMENTAL') continue;
     const linesSnap = await getDocs(collection(db, 'payroll_batches', b.id, 'lines'));
     for (const ld of linesSnap.docs) {
       const line = ld.data() as PayrollBatchLine;
@@ -498,6 +505,32 @@ export async function markTimesheetsReadyForPoMonthWorkerIds(
 }
 
 /**
+ * ปลดใบงาน LOCKED ที่ไม่มี NORMAL batch อ้าง (ล็อกค้างหลังลบชุด / งวดตกเบิกที่ไม่ผูกใบงาน)
+ * — ใช้ตอนยกเลิกปิดงวดเมื่อมีแค่ SUPPLEMENTAL จ่ายแล้ว แต่ใบงานเดือนปัจจุบันถูกล็อกค้าง
+ */
+export async function unlockOrphanLockedTimesheetsForPoMonthWorkerIds(
+  db: Firestore,
+  poId: string,
+  yearMonth: string,
+  workerIds: string[],
+): Promise<{ unlocked: number }> {
+  const ym = yearMonth.trim();
+  const pid = poId.trim();
+  const allow = new Set(workerIds.map((id) => id.trim()).filter(Boolean));
+  if (!pid || !/^\d{4}-\d{2}$/.test(ym) || allow.size === 0) return { unlocked: 0 };
+
+  let billingMode: 'MONTHLY' | 'TRIP' = 'MONTHLY';
+  const poSnap = await getDoc(doc(db, 'purchase_orders', pid));
+  if (poSnap.exists()) {
+    billingMode = await resolveBillingMode(db, { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder);
+  }
+
+  const orphanLocked = await gatherLockedOrphanDailyTimesheetRefsForPoCalendarMonth(db, pid, ym, allow);
+  const unlocked = await unlockOrphanLockedTimesheetsForPayroll(db, orphanLocked, billingMode);
+  return { unlocked };
+}
+
+/**
  * Admin ปลดล็อก PO+เดือน — ล้าง ready บนใบงานในเดือนปฏิทินนี้ของ PO (ไม่แตะ daily ที่สถานะ LOCKED)
  */
 export async function clearReadyPayrollFlagsForPoCalendarMonth(
@@ -638,6 +671,17 @@ export async function syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReview
   }
 
   return { updated, gatedPoCount, syncedPoCount };
+}
+
+/**
+ * ก่อน Pre-flight / สร้าง Batch — ซิงก์ readyForPayroll ให้คนปิดงวด/รอผู้จัดการ
+ * และปลดล็อกใบงาน LOCKED ที่ไม่มีงวดไหนอ้าง (เช่น คนจบไซต์ 1–5 ที่ถูกล็อกค้างโดยไม่มีบรรทัดงวด)
+ */
+export async function healUnpaidTimesheetsBeforePayrollGenerate(
+  db: Firestore,
+  yearMonth: string,
+): Promise<{ updated: number; gatedPoCount: number; syncedPoCount: number }> {
+  return syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews(db, yearMonth);
 }
 
 /** id มาตรฐานรอบจ่ายลูกจ้ายรายเดือนปฏิทิน — ตรงกับ payroll_periods */

@@ -7,6 +7,7 @@ import {
   setDoc,
   deleteField,
   where,
+  writeBatch,
   type Firestore,
 } from 'firebase/firestore';
 import type {
@@ -19,12 +20,14 @@ import {
   clearReadyPayrollFlagsForPoMonthWorkerIds,
   markTimesheetsReadyForPoMonthWorkerIds,
   poMonthTimesheetReviewDocId,
+  workerPayrollPeriodIdForYearMonth,
 } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { aggregatePoMonthReviewStatusFromWorkerClosures } from '@/lib/timesheet/po-month-review-status';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 
 const FIRESTORE_IN_MAX = 30;
+const REOPEN_UNLOCK_CHUNK = 400;
 
 function isFirestorePermissionDenied(error: unknown): boolean {
   return (
@@ -381,27 +384,115 @@ async function workerHasLockedTimesheetsInPoMonth(
   const wid = workerId.trim();
   const pid = poId.trim();
   if (!wid || !pid || !/^\d{4}-\d{2}$/.test(ym)) return false;
-  /** ใช้ index ที่มีอยู่แล้ว (purchaseOrderId + date) — กรอง worker/LOCKED ฝั่ง client */
+  /** query แค่ workerId — กรองเดือน/PO ฝั่ง client (ไม่ต้อง composite index) */
   const snap = await getDocs(
-    query(
-      collection(db, 'daily_timesheets'),
-      where('purchaseOrderId', '==', pid),
-      where('date', '>=', `${ym}-01`),
-      where('date', '<=', `${ym}-31`),
-    ),
+    query(collection(db, 'daily_timesheets'), where('workerId', '==', wid)),
   );
   for (const d of snap.docs) {
-    const ts = d.data() as { workerId?: string; status?: string; date?: string };
-    if ((ts.workerId || '').trim() !== wid) continue;
-    if (!(ts.date || '').startsWith(`${ym}-`)) continue;
+    const ts = d.data() as { purchaseOrderId?: string; status?: string; date?: string };
+    const dYmd = String(ts.date || '').slice(0, 10);
+    if (!dYmd.startsWith(`${ym}-`)) continue;
+    const tsPo = String(ts.purchaseOrderId || '').trim();
+    if (tsPo && tsPo !== pid) continue;
     if (ts.status === 'LOCKED') return true;
   }
   return false;
 }
 
+/** NORMAL batch ที่ผูกใบงานของคนนี้ + ชุด timesheetId ที่ห้ามปลด */
+async function loadNormalPayrollLocksForWorkerInMonth(
+  db: Firestore,
+  yearMonth: string,
+  workerId: string,
+): Promise<{ batchIds: string[]; protectedTimesheetIds: Set<string> }> {
+  const ym = yearMonth.trim();
+  const wid = workerId.trim();
+  const protectedTimesheetIds = new Set<string>();
+  const batchIds: string[] = [];
+  if (!wid || !/^\d{4}-\d{2}$/.test(ym)) return { batchIds, protectedTimesheetIds };
+
+  const periodId = workerPayrollPeriodIdForYearMonth(ym);
+  const batchSnap = await getDocs(
+    query(collection(db, 'payroll_batches'), where('payrollPeriodId', '==', periodId)),
+  );
+  for (const b of batchSnap.docs) {
+    const data = b.data() as { status?: string; batchType?: string };
+    const st = String(data.status || '');
+    if (st === 'CANCELLED') continue;
+    if (data.batchType === 'SUPPLEMENTAL') continue;
+    const lineId = `${b.id}_${wid}`;
+    const lineSnap = await getDoc(doc(db, 'payroll_batches', b.id, 'lines', lineId));
+    if (!lineSnap.exists()) continue;
+    const ids = (lineSnap.data() as { sourceTimesheetIds?: string[] }).sourceTimesheetIds ?? [];
+    let any = false;
+    for (const raw of ids) {
+      const tid = String(raw || '').trim();
+      if (!tid) continue;
+      protectedTimesheetIds.add(tid);
+      any = true;
+    }
+    if (any) batchIds.push(b.id);
+  }
+  return { batchIds, protectedTimesheetIds };
+}
+
+/**
+ * ปลด LOCKED ของคน+PO+เดือน ที่ไม่มีใน sourceTimesheetIds ของชุด NORMAL คนนั้น
+ * (ล็อกค้าง / ถูก claim ผิดจากคนอื่น / งวดตกเบิก) — ใช้ตอนยกเลิกปิดงวด
+ */
+async function forceUnlockUnclaimedLockedTimesheetsForWorkerReopen(
+  db: Firestore,
+  poId: string,
+  yearMonth: string,
+  workerId: string,
+  protectedTimesheetIds: ReadonlySet<string>,
+): Promise<number> {
+  const ym = yearMonth.trim();
+  const wid = workerId.trim();
+  const pid = poId.trim();
+  if (!wid || !pid || !/^\d{4}-\d{2}$/.test(ym)) return 0;
+  const snap = await getDocs(
+    query(collection(db, 'daily_timesheets'), where('workerId', '==', wid)),
+  );
+
+  const toUnlock: string[] = [];
+  for (const d of snap.docs) {
+    const ts = d.data() as { purchaseOrderId?: string; status?: string; date?: string };
+    const dYmd = String(ts.date || '').slice(0, 10);
+    if (!dYmd.startsWith(`${ym}-`)) continue;
+    const tsPo = String(ts.purchaseOrderId || '').trim();
+    if (tsPo && tsPo !== pid) continue;
+    if (ts.status !== 'LOCKED') continue;
+    if (protectedTimesheetIds.has(d.id)) continue;
+    toUnlock.push(d.id);
+  }
+
+  if (toUnlock.length === 0) return 0;
+  const now = Date.now();
+  let unlocked = 0;
+  for (let i = 0; i < toUnlock.length; i += REOPEN_UNLOCK_CHUNK) {
+    const slice = toUnlock.slice(i, i + REOPEN_UNLOCK_CHUNK);
+    const wb = writeBatch(db);
+    for (const tid of slice) {
+      wb.update(doc(db, 'daily_timesheets', tid), {
+        status: 'VERIFIED_PAPER',
+        readyForPayroll: true,
+        lockedAt: deleteField(),
+        lockedBy: deleteField(),
+        updatedAt: now,
+      });
+      unlocked++;
+    }
+    await wb.commit();
+  }
+  return unlocked;
+}
+
 /**
  * ยกเลิกปิดงวดรายคน — กลับเป็น «เปิด» เพื่อแก้ชม./OT/ประเภทวัน
- * ใช้ได้เมื่อยังไม่ล็อก payroll (ใบงานไม่เป็น LOCKED)
+ *
+ * งวด SUPPLEMENTAL (ตกเบิก OT) ไม่นับ — ปลดล็อกค้างอัตโนมัติ
+ * บล็อกเฉพาะเมื่อมีชุด NORMAL ที่ยังผูก sourceTimesheetIds ของคนนี้
  */
 export async function reopenWorkerMonthClosureForEdit(
   db: Firestore,
@@ -428,9 +519,35 @@ export async function reopenWorkerMonthClosureForEdit(
         : 'สถานะนี้ยกเลิกปิดงวดไม่ได้',
     );
   }
+
+  const { batchIds, protectedTimesheetIds } = await loadNormalPayrollLocksForWorkerInMonth(
+    db,
+    yearMonth,
+    workerId,
+  );
+
+  await forceUnlockUnclaimedLockedTimesheetsForWorkerReopen(
+    db,
+    poId,
+    yearMonth,
+    workerId,
+    protectedTimesheetIds,
+  );
+
+  if (protectedTimesheetIds.size > 0 && batchIds.length > 0) {
+    const stillLocked = await workerHasLockedTimesheetsInPoMonth(db, poId, yearMonth, workerId);
+    if (stillLocked) {
+      throw new Error(
+        `ใบงานยังถูกผูกในชุดจ่ายเงินเดือน ${batchIds.slice(0, 3).join(', ')}${
+          batchIds.length > 3 ? ' …' : ''
+        } — ลบชุด NORMAL ที่ยังไม่จ่าย/ยังไม่ส่งบัญชีก่อน (งวดตกเบิก OT ไม่นับ) จึงจะเปิดงวดกลับมาแก้ได้`,
+      );
+    }
+  }
+
   if (await workerHasLockedTimesheetsInPoMonth(db, poId, yearMonth, workerId)) {
     throw new Error(
-      'มีใบงานถูกล็อกในชุดจ่าย payroll แล้ว — ยกเลิก/ลบชุดจ่ายก่อนจึงจะเปิดงวดกลับมาแก้ได้',
+      'ใบงานยังถูกล็อกอยู่หลังปลดล็อกค้าง — รีเฟรชหน้าแล้วลองใหม่ หรือตรวจใบงานรายวันที่สถานะ LOCKED',
     );
   }
 

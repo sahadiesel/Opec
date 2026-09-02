@@ -2,6 +2,7 @@
  * Snapshot แถวรายวันบน PayrollBatchLine — เปิดหน้ารายคนโชว์ทันทีโดยไม่โหลด daily_timesheets
  * ห้ามใส่ค่า undefined (Firestore WriteBatch.set ไม่รับ)
  */
+import { doc, getDoc, type Firestore } from 'firebase/firestore';
 import type { DailyTimesheet, PayrollBatchLineDailyRowSnapshot } from '@/lib/types';
 
 export function buildPayrollLineDailyRowSnapshots(
@@ -35,4 +36,60 @@ export function buildPayrollLineDailyRowSnapshots(
     if (remark) row.remark = remark;
     return row;
   });
+}
+
+/** รวมยอดใน snapshot รายวัน */
+export function sumDailyRowSnapshotAmounts(
+  snaps: readonly PayrollBatchLineDailyRowSnapshot[] | null | undefined,
+): number {
+  if (!snaps?.length) return 0;
+  let s = 0;
+  for (const r of snaps) {
+    const n = Number(r?.amount);
+    if (Number.isFinite(n) && n > 0) s += n;
+  }
+  return Math.round(s * 100) / 100;
+}
+
+/**
+ * snapshot ใช้โชว์ได้เมื่อมียอดรายวันจริง
+ * (กันงวดเก่าที่ถูก backfill เป็นแถวยอด 0 ทั้งตาราง ทั้งที่ gross รวม > 0)
+ */
+export function isUsableDailyRowSnapshots(
+  snaps: readonly PayrollBatchLineDailyRowSnapshot[] | null | undefined,
+  lineGrossAmount?: number | null,
+): boolean {
+  if (!snaps?.length) return false;
+  const daySum = sumDailyRowSnapshotAmounts(snaps);
+  if (daySum > 0.005) return true;
+  const g = Number(lineGrossAmount);
+  return !(Number.isFinite(g) && g > 0.005);
+}
+
+export function hasPositiveTimesheetGrossById(
+  timesheetGrossById: Record<string, number> | null | undefined,
+): boolean {
+  if (!timesheetGrossById) return false;
+  return Object.values(timesheetGrossById).some((n) => Number(n) > 0.005);
+}
+
+/** โหลดใบงานตาม id อย่างเดียว — ใช้ซ่อม dailyRowSnapshots ของงวดเก่าโดยไม่สแกนทั้งเดือน */
+export async function loadDailyTimesheetsByIds(
+  db: Firestore,
+  timesheetIds: readonly string[],
+): Promise<DailyTimesheet[]> {
+  const unique = [
+    ...new Set(timesheetIds.map((id) => String(id || '').trim()).filter(Boolean)),
+  ];
+  if (unique.length === 0) return [];
+  const rows = await Promise.all(
+    unique.map(async (tid) => {
+      const snap = await getDoc(doc(db, 'daily_timesheets', tid));
+      if (!snap.exists()) return null;
+      return { id: snap.id, ...(snap.data() as object) } as DailyTimesheet;
+    }),
+  );
+  return rows
+    .filter((ts): ts is DailyTimesheet => !!ts)
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
 }

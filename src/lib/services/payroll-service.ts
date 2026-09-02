@@ -111,7 +111,12 @@ import {
   mergePayrollTimesheetAggChunks,
 } from '@/lib/payroll/aggregate-payroll-timesheet-chunks';
 import { computeWorkDayPackagePayslipSplit } from '@/lib/payroll/work-day-payslip-split';
-import { buildPayrollLineDailyRowSnapshots } from '@/lib/payroll/payroll-line-daily-snapshots';
+import {
+  buildPayrollLineDailyRowSnapshots,
+  hasPositiveTimesheetGrossById,
+  isUsableDailyRowSnapshots,
+  loadDailyTimesheetsByIds,
+} from '@/lib/payroll/payroll-line-daily-snapshots';
 import {
   applyCashAdvanceRecoveryToOfficeD8Line,
   CASH_ADVANCE_PAYROLL_DEDUCTION_KEY,
@@ -1798,8 +1803,8 @@ export class PayrollService {
   }
 
   /**
-   * ซ่อมยอด settlement ของงวด PAID/LOCKED ให้ครบหลาย PO + หักยอดงวดก่อนหน้า
-   * — เปิดหน้ารายละเอียด batch ครั้งเดียวต่อ session เพื่อไม่ให้ตัวเลขกระพริบจาก live overlay
+   * งวด PAID/LOCKED — เติม dailyRowSnapshots จากยอดที่เก็บไว้แล้วเท่านั้น
+   * ห้าม recalculate gross/tax ตอนเปิดหน้า (ตัวเลขที่จ่ายแล้วต้องนิ่ง)
    */
   async ensurePaidBatchLineSnapshotsPersisted(batchId: string, user: User): Promise<number> {
     const allowed =
@@ -1819,24 +1824,37 @@ export class PayrollService {
     const linesSnap = await getDocs(collection(this.db, 'payroll_batches', batchId, 'lines'));
     let updated = 0;
     for (const d of linesSnap.docs) {
-      const line = d.data() as PayrollBatchLine;
-      const workerId = String(line.workerId || '').trim();
-      if (!workerId) continue;
+      const line = { ...(d.data() as PayrollBatchLine), id: d.id };
+      if (isUsableDailyRowSnapshots(line.dailyRowSnapshots, line.grossAmount)) continue;
+      if (!hasPositiveTimesheetGrossById(line.timesheetGrossById)) {
+        /** ล้าง snapshot ยอด 0 ที่เคย backfill ผิด — ไม่สร้างใหม่ถ้าไม่มี timesheetGrossById */
+        if ((line.dailyRowSnapshots?.length ?? 0) > 0) {
+          await updateDoc(d.ref, {
+            dailyRowSnapshots: [],
+            updatedAt: Date.now(),
+          });
+          updated++;
+        }
+        continue;
+      }
 
-      const priorNet = await this.sumPriorPaidNetForWorker(batch, workerId);
-      const hasPriorKey = Number(line.deductionsBreakdown?.[PRIOR_PAID_RECOVERY_DEDUCTION_KEY]) > 0.005;
-      /** ชุดแรกที่สะอาด / ชุดหลังที่ซ่อมแล้ว → ข้าม; ที่เหลือ (ขาดหรือค้าง prior key) → persist */
-      if (priorNet <= 0.005 && !hasPriorKey) continue;
-      if (priorNet > 0.005 && hasPriorKey) continue;
+      const fromSource = (line.sourceTimesheetIds ?? []).map((id) => String(id || '').trim()).filter(Boolean);
+      const fromGross = Object.keys(line.timesheetGrossById || {}).map((id) => String(id || '').trim()).filter(Boolean);
+      const ids = [...new Set([...fromSource, ...fromGross])];
+      if (ids.length === 0) continue;
 
       try {
-        await this.recalculateWorkerPayrollLinePreserveHrAdjustments(batchId, workerId, user, {
-          bypassFinanceStatusGate: true,
-          includePriorPaidRecovery: true,
+        const tsList = await loadDailyTimesheetsByIds(this.db, ids);
+        if (tsList.length === 0) continue;
+        const snaps = buildPayrollLineDailyRowSnapshots(tsList, line.timesheetGrossById);
+        if (!isUsableDailyRowSnapshots(snaps, line.grossAmount)) continue;
+        await updateDoc(d.ref, {
+          dailyRowSnapshots: snaps,
+          updatedAt: Date.now(),
         });
         updated++;
       } catch (err) {
-        console.warn('[ensurePaidBatchLineSnapshotsPersisted] line failed', workerId, err);
+        console.warn('[ensurePaidBatchLineSnapshotsPersisted] line failed', line.workerId, err);
       }
     }
     if (updated > 0) {
@@ -1846,7 +1864,7 @@ export class PayrollService {
         entityId: batchId,
         sourceModule: 'hr',
         payrollBatchId: batchId,
-        afterSummary: `Ensure paid line snapshots persisted (${updated} lines)`,
+        afterSummary: `Backfill dailyRowSnapshots only (${updated} lines) — no gross recalc`,
       });
     }
     return updated;

@@ -171,7 +171,7 @@ export function PayrollBatchDetailView({
   const batchRef = useMemoFirebase(() => (firestore && canViewBatch ? doc(firestore, 'payroll_batches', id) : null), [firestore, id, canViewBatch]);
   const { data: batch, isLoading: isBatchLoading } = useDoc<PayrollBatch>(batchRef as any);
 
-  /** งวด PAID/LOCKED — ซ่อมล็อกใบงาน + บันทึกยอด snapshot ให้ครบ (ไม่คำนวณสดทุกครั้งที่เปิด) */
+  /** งวด PAID/LOCKED — เติม dailyRowSnapshots จากยอดที่เก็บไว้แล้ว (ไม่คำนวณ gross ใหม่) + ซ่อมล็อกใบงาน */
   useEffect(() => {
     if (!firestore || !currentUser || !batch) return;
     if (batch.status !== 'PAID' && batch.status !== 'LOCKED') return;
@@ -470,10 +470,10 @@ export function PayrollBatchDetailView({
         periodLabel: period?.label || batch.payrollPeriodId,
         batchStatusLabel: workerPayrollBatchStatusLabelTh(batch.status),
         rows,
-        workerCountLabel: String(safeNum(batch.totalWorkers)),
-        grossTotalLabel: fmtBaht(safeNum(batch.grossAmount)),
-        deductionsTotalLabel: fmtBaht(safeNum(batch.totalDeductions)),
-        netTotalLabel: fmtBaht(safeNum(batch.netAmount)),
+        workerCountLabel: String(linesSorted.length || safeNum(batch.totalWorkers)),
+        grossTotalLabel: fmtBaht(displayBatchTotals.gross),
+        deductionsTotalLabel: fmtBaht(displayBatchTotals.deductions),
+        netTotalLabel: fmtBaht(displayBatchTotals.net),
         generatedAt,
         printedBy: currentUser?.displayName,
         truncated,
@@ -496,7 +496,16 @@ export function PayrollBatchDetailView({
     } finally {
       setListPrintBusy(false);
     }
-  }, [batch, linesSorted, period?.label, currentUser?.displayName, toast, workerPositionLabelByWorkerId, slipByLineId]);
+  }, [
+    batch,
+    linesSorted,
+    period?.label,
+    currentUser?.displayName,
+    toast,
+    workerPositionLabelByWorkerId,
+    slipByLineId,
+    displayBatchTotals,
+  ]);
 
   const handleOfficerSubmitForPayout = useCallback(async () => {
     if (!firestore || !batch || !currentUser) return;
@@ -696,23 +705,21 @@ export function PayrollBatchDetailView({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {firestore ? (
-              <WorkerPayrollWhtBatchDialog
-                firestore={firestore}
-                batch={batch}
-                linesSorted={linesSorted}
-                periodLabel={period?.label || batch.payrollPeriodId}
-                companyProfile={companyProfileForWht ?? null}
-                currentUser={currentUser as User}
-                disabled={!canWhtPreview}
-                disabledTitle={whtDisabledReason}
-              />
-            ) : null}
-            <Button variant="outline" size="sm" asChild className="gap-1">
-              <Link href={`/payroll/batches/${id}/print`}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1"
+              disabled={listPrintBusy || linesSorted.length === 0}
+              title={linesSorted.length === 0 ? 'ยังไม่มีรายการ settlement' : 'พิมพ์รายการ Settlement Lines'}
+              onClick={() => void handlePrintSettlementLines()}
+            >
+              {listPrintBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
                 <Printer className="h-4 w-4" />
-                สลิปทั้ง batch
-              </Link>
+              )}
+              พิมพ์
             </Button>
             <Badge
               variant={isLocked ? 'default' : 'outline'}
@@ -776,22 +783,44 @@ export function PayrollBatchDetailView({
                 ผู้จัดการปฏิบัติการ/HR (ฝ่ายเงินเดือนไม่ต้องเข้าศูนย์อนุมัติ)
               </CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                className="gap-2"
-                disabled={payoutActionBusy}
-                onClick={() => void handleOfficerSubmitForPayout()}
-              >
-                {payoutActionBusy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
-                ส่งขออนุมัติทำจ่าย
-              </Button>
-              {canOpenPayrollApprovalCenter && (
-                <Button variant="outline" size="sm" asChild>
-                  <Link href={`/hr/payroll-approval?batch=${id}`}>ไปศูนย์อนุมัติ (D6)</Link>
+            <CardContent className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-2"
+                  disabled={payoutActionBusy}
+                  onClick={() => void handleOfficerSubmitForPayout()}
+                >
+                  {payoutActionBusy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
+                  ส่งขออนุมัติทำจ่าย
                 </Button>
-              )}
+                {canOpenPayrollApprovalCenter && (
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={`/hr/payroll-approval?batch=${id}`}>ไปศูนย์อนุมัติ (D6)</Link>
+                  </Button>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {firestore ? (
+                  <WorkerPayrollWhtBatchDialog
+                    firestore={firestore}
+                    batch={batch}
+                    linesSorted={linesSorted}
+                    periodLabel={period?.label || batch.payrollPeriodId}
+                    companyProfile={companyProfileForWht ?? null}
+                    currentUser={currentUser as User}
+                    disabled={!canWhtPreview}
+                    disabledTitle={whtDisabledReason}
+                  />
+                ) : null}
+                <Button variant="outline" size="sm" asChild className="gap-1">
+                  <Link href={`/payroll/batches/${id}/print`}>
+                    <Printer className="h-4 w-4" />
+                    สลิปทั้ง batch
+                  </Link>
+                </Button>
+              </div>
             </CardContent>
           </Card>
         )}
