@@ -7,14 +7,51 @@ import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
 export type CompanyDocumentProfileNames = {
   companyNameTh?: string;
   companyNameEn?: string;
+  taxId?: string;
+  phone?: string;
+  email?: string;
+  /** ที่อยู่ภาษาอังกฤษ (ใช้ในเอกสาร EN) */
+  addressLine1?: string;
+  /** ที่อยู่ภาษาไทย (ใช้ในเอกสาร TH) */
+  addressLine2?: string;
   /** URL รูปโลโก้สำหรับหัวเอกสาร (System > Document Header) */
   documentHeaderLogoUrl?: string;
   /** URL รูปตรายาง (ถ้ามี) */
   documentHeaderStampUrl?: string;
+  whtCertificateDisplay?: {
+    authorizedSignerName?: string;
+    signerPosition?: string;
+  };
 };
 
+/** ที่อยู่บริษัทภาษาไทยสำหรับเอกสาร TH — ตรงกับ `companyProfileAddressForPrintLocale(..., 'th')` */
+export function companyProfileThaiAddress(
+  profile: Pick<CompanyDocumentProfileNames, 'addressLine1' | 'addressLine2'> | null | undefined,
+): string {
+  const th = (profile?.addressLine2 || '').trim();
+  const en = (profile?.addressLine1 || '').trim();
+  return th || en || '';
+}
+
+export function resolveOpecLessorFromCompanyProfile(
+  profile: CompanyDocumentProfileNames | null | undefined,
+  fallbackName = 'บริษัท โอเปค เอ็นจิเนียริ่ง แอนด์ แมนเนจเม้นท์ จำกัด',
+): {
+  lessorName: string;
+  lessorAddress: string;
+  lessorTaxId: string;
+  lessorAuthorizedSignatory: string;
+} {
+  return {
+    lessorName: profile?.companyNameTh?.trim() || fallbackName,
+    lessorAddress: companyProfileThaiAddress(profile),
+    lessorTaxId: profile?.taxId?.trim() || '',
+    lessorAuthorizedSignatory: profile?.whtCertificateDisplay?.authorizedSignerName?.trim() || '',
+  };
+}
+
 /**
- * โหลดชื่อบริษัทสำหรับหัวเอกสาร (สลิป, ใบเสนอราคา ฯลฯ)
+ * โหลดโปรไฟล์บริษัทสำหรับหัวเอกสาร / คู่สัญญา OPEC (สลิป, ใบเสนอราคา, สัญญาเช่า ฯลฯ)
  */
 export function useCompanyDocumentProfile() {
   const firestore = useFirestore();

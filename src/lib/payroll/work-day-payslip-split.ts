@@ -126,6 +126,34 @@ function ymdLocalDow(ymd: string): number {
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getDay();
 }
 
+/**
+ * วันหยุดที่ต้องขึ้นบรรทัด «ค่าแรงวันหยุด» — ต้องสอดคล้องกับยอดรายวันที่คำนวณจาก resolvePayrollRestDay
+ * (อาทิตย์ + นักขัตฤกษ์) ไม่ใช่แค่วันอาทิตย์จากปฏิทิน
+ */
+function isHolidayWorkDayFromSnapshotRow(
+  row: Pick<
+    PayrollBatchLineDailyRowSnapshot,
+    'date' | 'amount' | 'ot15Hours' | 'ot20Hours' | 'ot30Hours' | 'restDayKind' | 'normalHours'
+  >,
+  packageRatePerDay: number | null | undefined,
+): boolean {
+  const kind = row.restDayKind;
+  if (kind === 'public_holiday' || kind === 'weekly_rest') return true;
+  if (ymdLocalDow(row.date) === 0) return true;
+
+  /** งวดเก่าไม่มี restDayKind: ยอดเต็มวันสูงกว่าแพ็ก และไม่มีชม.OT แยก → นักขัตฤกษ์ */
+  const pkg = Number(packageRatePerDay) || 0;
+  if (pkg <= 0.005) return false;
+  const amount = Number(row.amount) || 0;
+  const otHrs =
+    Math.max(0, Number(row.ot15Hours) || 0) +
+    Math.max(0, Number(row.ot20Hours) || 0) +
+    Math.max(0, Number(row.ot30Hours) || 0);
+  const beyond12 = Math.max(0, (Number(row.normalHours) || 0) - 12);
+  if (otHrs + beyond12 > 0.005) return false;
+  return amount > pkg * 1.05;
+}
+
 function modePackageRate(candidates: number[]): number | null {
   if (!candidates.length) return null;
   const counts = new Map<number, number>();
@@ -503,7 +531,7 @@ export function computeWorkDayPackagePayslipPositionSplits(
 /**
  * สร้างแยกตำแหน่งจาก dailyRowSnapshots
  * — วันธรรมดา: ค่าแรง = วัน × แพ็กจริง (1800/2600) + OT ชม.×อัตราจากแพ็ก
- * — วันอาทิตย์: ค่าแรงวันหยุด แยกอัตรารายวัน (ไม่เฉลี่ยข้ามอัตรา)
+ * — วันหยุด (อาทิตย์ + นักขัตฤกษ์): ค่าแรงวันหยุด แยกอัตรารายวัน (ไม่เฉลี่ยข้ามอัตรา)
  */
 export function buildPositionSplitsFromDailyRowSnapshots(
   snaps: readonly PayrollBatchLineDailyRowSnapshot[] | null | undefined,
@@ -517,9 +545,10 @@ export function buildPositionSplitsFromDailyRowSnapshots(
   const daySum = round2(work.reduce((s, r) => s + (Number(r.amount) || 0), 0));
   if (daySum <= 0.005) return null;
 
-  /** อัตราแพ็กจากวันธรรมดาที่ไม่มี OT (เช่น 2600 ตรงๆ) */
+  /** อัตราแพ็กจากวันธรรมดาที่ไม่มี OT (เช่น 2600 ตรงๆ) — ข้ามอาทิตย์/นักขัตฤกษ์ */
   const peerByPos = new Map<string, number[]>();
   for (const row of work) {
+    if (row.restDayKind === 'public_holiday' || row.restDayKind === 'weekly_rest') continue;
     if (ymdLocalDow(row.date) === 0) continue;
     const o15 = Math.max(0, Number(row.ot15Hours) || 0);
     const o20 = Math.max(0, Number(row.ot20Hours) || 0);
@@ -537,7 +566,13 @@ export function buildPositionSplitsFromDailyRowSnapshots(
   }
   const packageByPos = new Map<string, number>();
   for (const [k, list] of peerByPos) {
-    const mode = modePackageRate(list);
+    /** mode ก่อน แล้วตัด outlier ที่สูงกว่าแพ็ก (นักขัตฤกษ์ที่ยังไม่มี restDayKind) */
+    let mode = modePackageRate(list);
+    if (mode != null && mode > 0.005) {
+      const filtered = list.filter((a) => a <= mode! * 1.05);
+      const refined = modePackageRate(filtered.length ? filtered : list);
+      if (refined != null) mode = refined;
+    }
     if (mode != null) packageByPos.set(k, mode);
   }
 
@@ -583,13 +618,13 @@ export function buildPositionSplitsFromDailyRowSnapshots(
     const o20 = Math.max(0, Number(row.ot20Hours) || 0);
     const o30 = Math.max(0, Number(row.ot30Hours) || 0);
     const beyond12 = Math.max(0, nh - 12);
-    const isSunday = ymdLocalDow(row.date) === 0;
 
     let packageRate =
       packageByPos.get(posKey) ??
       packageByPos.get(positionNameSnapshot) ??
       null;
-    if (packageRate == null && !isSunday) {
+    const provisionalHoliday = isHolidayWorkDayFromSnapshotRow(row, packageRate);
+    if (packageRate == null && !provisionalHoliday) {
       packageRate = inferOffshorePackageRateFromDayAmount(amount, o15, o20, o30, nh);
       if (packageRate > 0.005) packageByPos.set(posKey, packageRate);
     }
@@ -597,8 +632,10 @@ export function buildPositionSplitsFromDailyRowSnapshots(
       packageRate = round2(amount);
     }
 
-    if (isSunday) {
-      /** วันอาทิตย์: ทั้งวันคิดอัตราหยุด — แยกกลุ่มตามอัตรารายวัน ไม่ปน OT แพ็กวันธรรมดา */
+    const isHolidayDay = isHolidayWorkDayFromSnapshotRow(row, packageRate);
+
+    if (isHolidayDay) {
+      /** วันหยุด: ทั้งวันคิดอัตราหยุด — แยกกลุ่มตามอัตรารายวัน ไม่ปน OT แพ็กวันธรรมดา */
       const dayRate = round2(amount);
       const key = `${positionId}\t${workMode || ''}\t${dayRate}\tholiday`;
       bump(

@@ -611,10 +611,15 @@ export default function PayrollBatchWorkerLinePage({
         const { loadWorkersAndPositionsForPayroll } = await import(
           '@/lib/payroll/timesheet-labor-base-cost'
         );
+        const { fetchWorkerGlobalLaborContextFromFirestore, workerGlobalLaborToPayrollRestSchedule } =
+          await import('@/lib/payroll/worker-global-labor-policy');
         const { posById } = await loadWorkersAndPositionsForPayroll(firestore, timesheets);
+        if (cancelled) return;
+        const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(firestore);
         if (cancelled) return;
         const snaps = buildPayrollLineDailyRowSnapshots(timesheets, line.timesheetGrossById, {
           posById,
+          payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
         });
         if (cancelled || !isUsableDailyRowSnapshots(snaps, line.grossAmount)) return;
         await updateDoc(lineRef as any, {
@@ -660,10 +665,15 @@ export default function PayrollBatchWorkerLinePage({
         const { loadWorkersAndPositionsForPayroll } = await import(
           '@/lib/payroll/timesheet-labor-base-cost'
         );
+        const { fetchWorkerGlobalLaborContextFromFirestore, workerGlobalLaborToPayrollRestSchedule } =
+          await import('@/lib/payroll/worker-global-labor-policy');
         const { posById } = await loadWorkersAndPositionsForPayroll(firestore, tsList);
+        if (cancelled) return;
+        const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(firestore);
         if (cancelled) return;
         const nextSnaps = buildPayrollLineDailyRowSnapshots(tsList, line.timesheetGrossById, {
           posById,
+          payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
         });
         if (!isUsableDailyRowSnapshots(nextSnaps, line.grossAmount)) return;
         await updateDoc(lineRef as any, {

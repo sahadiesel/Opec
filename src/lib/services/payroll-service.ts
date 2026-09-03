@@ -100,7 +100,7 @@ import {
   timesheetToLaborWorkMode,
 } from '@/lib/payroll/timesheet-labor-base-cost';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
-import { fetchWorkerGlobalLaborContextFromFirestore } from '@/lib/payroll/worker-global-labor-policy';
+import { fetchWorkerGlobalLaborContextFromFirestore, workerGlobalLaborToPayrollRestSchedule } from '@/lib/payroll/worker-global-labor-policy';
 import {
   calendarYearMonthFromPeriodStart,
   hasApprovedMonthlyTimesheetForYearMonth,
@@ -1057,7 +1057,10 @@ export class PayrollService {
         eventBreakdown,
         earningsBreakdown,
         timesheetGrossById,
-        dailyRowSnapshots: buildPayrollLineDailyRowSnapshots(workerTs, timesheetGrossById, { posById }),
+        dailyRowSnapshots: buildPayrollLineDailyRowSnapshots(workerTs, timesheetGrossById, {
+          posById,
+          payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
+        }),
         deductionsBreakdown,
         grossAmount: workerGross,
         netAmount: lineNetAmount,
@@ -1876,7 +1879,11 @@ export class PayrollService {
         const tsList = await loadDailyTimesheetsByIds(this.db, ids);
         if (tsList.length === 0) continue;
         const { posById } = await loadWorkersAndPositionsForPayroll(this.db, tsList);
-        const snaps = buildPayrollLineDailyRowSnapshots(tsList, line.timesheetGrossById, { posById });
+        const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(this.db);
+        const snaps = buildPayrollLineDailyRowSnapshots(tsList, line.timesheetGrossById, {
+          posById,
+          payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
+        });
         if (!isUsableDailyRowSnapshots(snaps, line.grossAmount)) continue;
         await updateDoc(d.ref, {
           dailyRowSnapshots: snaps,
@@ -2053,6 +2060,7 @@ export class PayrollService {
       const timesheetGrossById = mergedChunk.timesheetGrossById;
       const dailySnaps = buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById, {
         posById,
+        payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
       });
       const daySum = round2Payroll(
         Object.values(timesheetGrossById || {}).reduce((s, n) => s + (Number(n) || 0), 0),
@@ -2778,6 +2786,7 @@ export class PayrollService {
       const computedNet = round2Payroll(netAmount);
       const dailySnaps = buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById, {
         posById,
+        payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
       });
       const daySum = round2Payroll(
         Object.values(timesheetGrossById || {}).reduce((s, n) => s + (Number(n) || 0), 0),
@@ -2844,6 +2853,7 @@ export class PayrollService {
       timesheetGrossById,
       dailyRowSnapshots: buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById, {
         posById,
+        payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
       }),
       grossAmount: isSupplemental ? effectiveGross : workerGross,
       deductionsBreakdown: deductions,

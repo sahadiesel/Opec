@@ -33,7 +33,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { PageGuidance } from '@/components/layout/page-guidance';
+import {
+  EquipmentRentalContractDetailsFields,
+  EquipmentRentalLineItemsEditor,
+  detailsDraftToInput,
+  emptyEquipmentRentalDetailsDraft,
+  emptyEquipmentRentalLineDraft,
+} from '@/components/rent-contracts/equipment-rental-contract-form-fields';
 import { useAppUser } from '@/hooks/use-app-user';
+import {
+  resolveOpecLessorFromCompanyProfile,
+  useCompanyDocumentProfile,
+} from '@/hooks/use-company-document-profile';
 import { useToast } from '@/hooks/use-toast';
 import { useCollection, useFirestore, useMemoFirebase } from '@/firebase';
 import { canManageEquipmentRentalContracts } from '@/lib/permissions';
@@ -56,13 +67,12 @@ function statusBadge(status: EquipmentRentalContractStatus) {
   return <Badge variant="outline" className="text-[10px]">{label[status]}</Badge>;
 }
 
-type LineDraft = { description: string; quantity: string; unitPrice: string; unit: string };
-
 export default function RentContractsPage() {
   const router = useRouter();
   const { currentUser, isLoading } = useAppUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const { profile: companyProfile } = useCompanyDocumentProfile();
   const authorized = !!currentUser && canManageEquipmentRentalContracts(currentUser);
   const canCreateContract = authorized;
 
@@ -91,9 +101,8 @@ export default function RentContractsPage() {
   const [billingDay, setBillingDay] = useState('1');
   const [vatPercent, setVatPercent] = useState('7');
   const [notes, setNotes] = useState('');
-  const [lines, setLines] = useState<LineDraft[]>([
-    { description: '', quantity: '1', unitPrice: '', unit: 'ชุด' },
-  ]);
+  const [lines, setLines] = useState([emptyEquipmentRentalLineDraft()]);
+  const [details, setDetails] = useState(emptyEquipmentRentalDetailsDraft());
 
   useEffect(() => {
     if (!firestore || !currentUser || !authorized) return;
@@ -119,6 +128,27 @@ export default function RentContractsPage() {
     };
   }, [firestore, currentUser, authorized, toast]);
 
+  useEffect(() => {
+    const lessor = resolveOpecLessorFromCompanyProfile(companyProfile);
+    setDetails((prev) => ({
+      ...prev,
+      lessorName: lessor.lessorName,
+      lessorAddress: lessor.lessorAddress,
+      lessorTaxId: lessor.lessorTaxId,
+      lessorAuthorizedSignatory: lessor.lessorAuthorizedSignatory || prev.lessorAuthorizedSignatory,
+    }));
+  }, [companyProfile]);
+
+  useEffect(() => {
+    const customer = (customers ?? []).find((c) => c.id === customerId);
+    if (!customer) return;
+    setDetails((prev) => ({
+      ...prev,
+      customerAddressSnapshot: customer.registeredAddress || customer.billingAddress || prev.customerAddressSnapshot,
+      customerTaxIdSnapshot: customer.taxId || prev.customerTaxIdSnapshot,
+    }));
+  }, [customerId, customers]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const list = contracts ?? [];
@@ -140,8 +170,15 @@ export default function RentContractsPage() {
     }
     setSaving(true);
     try {
+      const lessor = resolveOpecLessorFromCompanyProfile(companyProfile);
       const id = await createEquipmentRentalContract(firestore, currentUser as User, {
-        customer: { id: customer.id, name: customer.name },
+        customer: {
+          id: customer.id,
+          name: customer.name,
+          registeredAddress: customer.registeredAddress,
+          billingAddress: customer.billingAddress,
+          taxId: customer.taxId,
+        },
         title,
         startDate,
         endDate,
@@ -150,10 +187,23 @@ export default function RentContractsPage() {
         notes,
         lineItems: lines.map((l) => ({
           description: l.description,
+          brand: l.brand,
+          serialNumber: l.serialNumber,
+          size: l.size,
+          horsepower: l.horsepower,
           quantity: Number(l.quantity) || 0,
           unitPrice: Number(l.unitPrice) || 0,
           unit: l.unit,
+          ratePeriod: l.ratePeriod,
         })),
+        details: {
+          ...detailsDraftToInput(details),
+          lessorName: lessor.lessorName,
+          lessorAddress: lessor.lessorAddress || null,
+          lessorTaxId: lessor.lessorTaxId || null,
+          lessorAuthorizedSignatory: lessor.lessorAuthorizedSignatory || null,
+          lessorIsIndividual: false,
+        },
       });
       setCreateOpen(false);
       toast({ title: 'สร้างสัญญาเช่าแล้ว' });
@@ -193,9 +243,9 @@ export default function RentContractsPage() {
                 compact
                 title="แนวทางใช้งาน"
                 tips={[
-                  'OPEC เป็นผู้ให้เช่าเครื่องมือ/อุปกรณ์แก่ลูกค้า',
-                  'ระบุรายการสินค้า ราคาเช่ารายเดือน ระยะเวลา และวันที่วางบิลของแต่ละเดือน',
-                  'เมื่อถึงวันวางบิล ระบบสร้างใบแจ้งหนี้อัตโนมัติ — จากนั้นออกใบกำกับภาษีและใบเสร็จตามระบบเดิม',
+                  'OPEC เป็นผู้ให้เช่าเครื่องมือ/อุปกรณ์แก่ลูกค้า ตามแบบสัญญาเช่าเครื่องจักรกล',
+                  'กรอกรายละเอียดเครื่อง (ชนิด ยี่ห้อ หมายเลข ขนาด แรงม้า) และช่องว่างตามข้อสัญญา',
+                  'พิมพ์เอกสารสัญญาจากหน้ารายละเอียด · เมื่อถึงวันวางบิลระบบสร้างใบแจ้งหนี้อัตโนมัติ',
                 ]}
               />
               {syncing && (
@@ -205,7 +255,7 @@ export default function RentContractsPage() {
               )}
             </div>
             <p className="text-xs text-muted-foreground max-w-3xl leading-snug">
-              OPEC เป็นผู้ให้เช่า · ลงรายละเอียดเครื่องมือ ราคาเช่า ระยะเวลา และวันวางบิลรายเดือน
+              OPEC เป็นผู้ให้เช่า · แบบสัญญาเช่าเครื่องจักรกล · วางบิลรายเดือนอัตโนมัติ
             </p>
           </div>
 
@@ -216,75 +266,67 @@ export default function RentContractsPage() {
                   <Plus className="h-4 w-4" /> สร้างสัญญาเช่าใหม่
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>สร้างสัญญาเช่า (OPEC ผู้ให้เช่า)</DialogTitle>
+              <DialogContent className="max-w-5xl max-h-[92vh] overflow-y-auto">
+                <DialogHeader className="space-y-1 pb-0">
+                  <DialogTitle className="text-base">สร้างสัญญาเช่าเครื่องจักรกล (OPEC ผู้ให้เช่า)</DialogTitle>
                   <DialogDescription className="text-xs">
-                    กรอกลูกค้าผู้เช่า รายการอุปกรณ์ ค่าเช่ารายเดือน และวันที่วางบิลประจำเดือน
+                    กรอกลูกค้าผู้เช่า รายการเครื่องจักรตามแบบสัญญา ค่าเช่า และเงื่อนไขช่องว่างข้อ ๓–๒๕
                   </DialogDescription>
                 </DialogHeader>
-                <div className="space-y-3 py-2">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">ลูกค้าผู้เช่า</Label>
-                    <Select value={customerId} onValueChange={setCustomerId}>
-                      <SelectTrigger className="h-9">
-                        <SelectValue placeholder="เลือกลูกค้า…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(customers ?? []).map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                <div className="space-y-3 py-1">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs font-semibold">ลูกค้าผู้เช่า</Label>
+                      <Select value={customerId} onValueChange={setCustomerId}>
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="เลือกลูกค้า…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(customers ?? []).map((c) => (
+                            <SelectItem key={c.id} value={c.id}>
+                              {c.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs font-semibold">ชื่อสัญญา</Label>
+                      <Input
+                        className="h-8 text-xs"
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        placeholder="เช่น เช่าเครื่องจักร — โครงการ ABC"
+                      />
+                    </div>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">ชื่อสัญญา</Label>
-                    <Input
-                      className="h-9"
-                      value={title}
-                      onChange={(e) => setTitle(e.target.value)}
-                      placeholder="เช่น เช่าเครื่องมือเจาะ — โครงการ ABC"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="space-y-1">
                       <Label className="text-xs font-semibold">วันเริ่ม</Label>
-                      <Input
-                        type="date"
-                        className="h-9"
-                        value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
-                      />
+                      <Input type="date" className="h-8 text-xs" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
                     </div>
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <Label className="text-xs font-semibold">วันสิ้นสุด</Label>
-                      <Input
-                        type="date"
-                        className="h-9"
-                        value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
-                      />
+                      <Input type="date" className="h-8 text-xs" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
                     </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">วันวางบิลของเดือน (1–31)</Label>
+                    <div className="space-y-1">
+                      <Label className="text-xs font-semibold">วันวางบิล (1–31)</Label>
                       <Input
                         type="number"
                         min={1}
                         max={31}
-                        className="h-9"
+                        className="h-8 text-xs"
                         value={billingDay}
                         onChange={(e) => setBillingDay(e.target.value)}
                       />
                     </div>
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <Label className="text-xs font-semibold">VAT %</Label>
                       <Input
                         type="number"
                         min={0}
                         max={100}
-                        className="h-9"
+                        className="h-8 text-xs"
                         value={vatPercent}
                         onChange={(e) => setVatPercent(e.target.value)}
                       />
@@ -293,87 +335,29 @@ export default function RentContractsPage() {
 
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Label className="text-xs font-semibold">รายการเครื่องมือ / อุปกรณ์</Label>
+                      <Label className="text-xs font-semibold">รายการเครื่องจักรกล (ข้อ ๒)</Label>
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
                         className="h-7 text-xs"
-                        onClick={() =>
-                          setLines((prev) => [
-                            ...prev,
-                            { description: '', quantity: '1', unitPrice: '', unit: 'ชุด' },
-                          ])
-                        }
+                        onClick={() => setLines((prev) => [...prev, emptyEquipmentRentalLineDraft()])}
                       >
                         <Plus className="h-3 w-3 mr-1" /> เพิ่มรายการ
                       </Button>
                     </div>
-                    {lines.map((line, idx) => (
-                      <div key={idx} className="grid grid-cols-12 gap-1.5 items-end">
-                        <div className="col-span-5 space-y-1">
-                          <Label className="text-[10px] text-muted-foreground">รายการ</Label>
-                          <Input
-                            className="h-8 text-xs"
-                            value={line.description}
-                            onChange={(e) =>
-                              setLines((prev) =>
-                                prev.map((r, i) =>
-                                  i === idx ? { ...r, description: e.target.value } : r,
-                                ),
-                              )
-                            }
-                            placeholder="ชื่ออุปกรณ์"
-                          />
-                        </div>
-                        <div className="col-span-2 space-y-1">
-                          <Label className="text-[10px] text-muted-foreground">จำนวน</Label>
-                          <Input
-                            className="h-8 text-xs"
-                            value={line.quantity}
-                            onChange={(e) =>
-                              setLines((prev) =>
-                                prev.map((r, i) =>
-                                  i === idx ? { ...r, quantity: e.target.value } : r,
-                                ),
-                              )
-                            }
-                          />
-                        </div>
-                        <div className="col-span-2 space-y-1">
-                          <Label className="text-[10px] text-muted-foreground">หน่วย</Label>
-                          <Input
-                            className="h-8 text-xs"
-                            value={line.unit}
-                            onChange={(e) =>
-                              setLines((prev) =>
-                                prev.map((r, i) => (i === idx ? { ...r, unit: e.target.value } : r)),
-                              )
-                            }
-                          />
-                        </div>
-                        <div className="col-span-3 space-y-1">
-                          <Label className="text-[10px] text-muted-foreground">ราคา/เดือน</Label>
-                          <Input
-                            className="h-8 text-xs"
-                            value={line.unitPrice}
-                            onChange={(e) =>
-                              setLines((prev) =>
-                                prev.map((r, i) =>
-                                  i === idx ? { ...r, unitPrice: e.target.value } : r,
-                                ),
-                              )
-                            }
-                          />
-                        </div>
-                      </div>
-                    ))}
+                    <EquipmentRentalLineItemsEditor lines={lines} onChange={setLines} />
+                    <p className="text-[10px] text-muted-foreground">
+                      ราคาแบบรายวันจะคำนวณยอดวางบิลรายเดือนด้วยฐาน 30 วัน ตามข้อ ๗ ของสัญญา
+                    </p>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">หมายเหตุ</Label>
+                  <EquipmentRentalContractDetailsFields value={details} onChange={setDetails} />
+
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold">หมายเหตุเพิ่มเติม</Label>
                     <Textarea
-                      className="text-xs min-h-[60px]"
+                      className="text-xs min-h-[72px]"
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
                     />

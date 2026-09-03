@@ -77,14 +77,37 @@ export function equipmentRentalBillingDateForMonth(
   return due;
 }
 
+export const EQUIPMENT_RENTAL_LESSOR_NAME_FALLBACK =
+  'บริษัท โอเปค เอ็นจิเนียริ่ง แอนด์ แมนเนจเม้นท์ จำกัด';
+
+type EquipmentRentalLineInput = {
+  description?: string;
+  brand?: string;
+  serialNumber?: string;
+  size?: string;
+  horsepower?: string;
+  quantity?: number;
+  unitPrice?: number;
+  unit?: string;
+  ratePeriod?: 'DAY' | 'MONTH';
+  id?: string;
+};
+
+/** ยอดวางบิลรายเดือนของรายการ — DAY ใช้ฐาน 30 วันตามข้อ ๗ ของแบบสัญญา */
+export function equipmentRentalLineMonthlyAmount(row: {
+  quantity: number;
+  unitPrice: number;
+  ratePeriod?: 'DAY' | 'MONTH';
+}): number {
+  const quantity = Math.max(0, Number(row.quantity) || 0);
+  const unitPrice = roundMoney(Number(row.unitPrice) || 0);
+  const period = row.ratePeriod === 'DAY' ? 'DAY' : 'MONTH';
+  const factor = period === 'DAY' ? 30 : 1;
+  return roundMoney(quantity * unitPrice * factor);
+}
+
 export function normalizeEquipmentRentalLineItems(
-  raw: Array<{
-    description?: string;
-    quantity?: number;
-    unitPrice?: number;
-    unit?: string;
-    id?: string;
-  }>,
+  raw: Array<EquipmentRentalLineInput>,
 ): EquipmentRentalLineItem[] {
   const items: EquipmentRentalLineItem[] = [];
   for (const row of raw) {
@@ -94,16 +117,175 @@ export function normalizeEquipmentRentalLineItems(
     const unitPrice = roundMoney(Number(row.unitPrice) || 0);
     if (quantity <= 0 || unitPrice < 0) continue;
     const unit = String(row.unit || '').trim();
+    const ratePeriod = row.ratePeriod === 'DAY' ? 'DAY' : 'MONTH';
+    const brand = String(row.brand || '').trim();
+    const serialNumber = String(row.serialNumber || '').trim();
+    const size = String(row.size || '').trim();
+    const horsepower = String(row.horsepower || '').trim();
     items.push({
       id: String(row.id || '').trim() || newLineId(),
       description,
       quantity,
       unitPrice,
+      ratePeriod,
       ...(unit ? { unit } : {}),
-      amount: roundMoney(quantity * unitPrice),
+      ...(brand ? { brand } : {}),
+      ...(serialNumber ? { serialNumber } : {}),
+      ...(size ? { size } : {}),
+      ...(horsepower ? { horsepower } : {}),
+      amount: equipmentRentalLineMonthlyAmount({ quantity, unitPrice, ratePeriod }),
     });
   }
   return items;
+}
+
+function optTrim(v: unknown): string | undefined {
+  const s = String(v ?? '').trim();
+  return s || undefined;
+}
+
+function optNum(v: unknown): number | undefined {
+  if (v === null || v === undefined || v === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** ฟิลด์แบบสัญญาเช่าเครื่องจักรกล (ข้อกรอกช่องว่าง) */
+export type EquipmentRentalContractDetailInput = {
+  customerAddressSnapshot?: string | null;
+  customerTaxIdSnapshot?: string | null;
+  lesseeAuthorizedSignatory?: string | null;
+  lesseeCertificateDate?: string | null;
+  madeAtTambon?: string | null;
+  madeAtAmphoe?: string | null;
+  madeAtProvince?: string | null;
+  contractDate?: string | null;
+  lessorName?: string | null;
+  lessorAddress?: string | null;
+  lessorTaxId?: string | null;
+  lessorAuthorizedSignatory?: string | null;
+  lessorIsIndividual?: boolean | null;
+  lessorIdCardNo?: string | null;
+  insuranceClass?: string | null;
+  rentalDurationValue?: number | null;
+  rentalDurationUnit?: 'DAY' | 'MONTH' | null;
+  appendix1Pages?: number | null;
+  appendix2Pages?: number | null;
+  appendix3Pages?: number | null;
+  invoiceLeadWorkingDays?: number | null;
+  bankName?: string | null;
+  bankBranch?: string | null;
+  bankAccountName?: string | null;
+  bankAccountNumber?: string | null;
+  interruptionThresholdDays?: number | null;
+  storageReturnNoticeDays?: number | null;
+  maxEquipmentAgeYears?: number | null;
+  deliveryLocation?: string | null;
+  deliveryDate?: string | null;
+  deliveryNoticeWorkingDays?: number | null;
+  replacementDeliveryDays?: number | null;
+  repairCorrectionDays?: number | null;
+  replacementPenaltyPerDay?: number | null;
+  maxReplacementDelayDays?: number | null;
+  relocationNoticeDays?: number | null;
+  performanceBondType?: string | null;
+  performanceBondAmount?: number | null;
+  performanceBondPercent?: number | null;
+  performanceBondTopUpDays?: number | null;
+  lossReplacementDays?: number | null;
+  alternateRentalWindowValue?: number | null;
+  alternateRentalWindowUnit?: 'DAY' | 'MONTH' | null;
+  lateDeliveryPenaltyPerDay?: number | null;
+  penaltyDebtPayDays?: number | null;
+  equipmentReturnDays?: number | null;
+  addressChangeNoticeDays?: number | null;
+  witness1Name?: string | null;
+  witness2Name?: string | null;
+};
+
+const DETAIL_STRING_KEYS = [
+  'customerAddressSnapshot',
+  'customerTaxIdSnapshot',
+  'lesseeAuthorizedSignatory',
+  'lesseeCertificateDate',
+  'madeAtTambon',
+  'madeAtAmphoe',
+  'madeAtProvince',
+  'contractDate',
+  'lessorName',
+  'lessorAddress',
+  'lessorTaxId',
+  'lessorAuthorizedSignatory',
+  'lessorIdCardNo',
+  'insuranceClass',
+  'bankName',
+  'bankBranch',
+  'bankAccountName',
+  'bankAccountNumber',
+  'deliveryLocation',
+  'deliveryDate',
+  'performanceBondType',
+  'witness1Name',
+  'witness2Name',
+] as const;
+
+const DETAIL_NUMBER_KEYS = [
+  'rentalDurationValue',
+  'appendix1Pages',
+  'appendix2Pages',
+  'appendix3Pages',
+  'invoiceLeadWorkingDays',
+  'interruptionThresholdDays',
+  'storageReturnNoticeDays',
+  'maxEquipmentAgeYears',
+  'deliveryNoticeWorkingDays',
+  'replacementDeliveryDays',
+  'repairCorrectionDays',
+  'replacementPenaltyPerDay',
+  'maxReplacementDelayDays',
+  'relocationNoticeDays',
+  'performanceBondAmount',
+  'performanceBondPercent',
+  'performanceBondTopUpDays',
+  'lossReplacementDays',
+  'alternateRentalWindowValue',
+  'lateDeliveryPenaltyPerDay',
+  'penaltyDebtPayDays',
+  'equipmentReturnDays',
+  'addressChangeNoticeDays',
+] as const;
+
+function applyEquipmentRentalDetails(
+  target: Record<string, unknown>,
+  details?: EquipmentRentalContractDetailInput,
+) {
+  if (!details) return;
+  for (const key of DETAIL_STRING_KEYS) {
+    if (!(key in details)) continue;
+    const v = details[key];
+    target[key] = v == null ? null : optTrim(v) ?? null;
+  }
+  for (const key of DETAIL_NUMBER_KEYS) {
+    if (!(key in details)) continue;
+    const v = details[key];
+    if (v == null || v === ('' as unknown)) {
+      target[key] = null;
+      continue;
+    }
+    const n = optNum(v);
+    target[key] = n == null ? null : n;
+  }
+  if ('lessorIsIndividual' in details) {
+    target.lessorIsIndividual = details.lessorIsIndividual ? true : false;
+  }
+  if ('rentalDurationUnit' in details) {
+    const u = details.rentalDurationUnit;
+    target.rentalDurationUnit = u === 'DAY' || u === 'MONTH' ? u : null;
+  }
+  if ('alternateRentalWindowUnit' in details) {
+    const u = details.alternateRentalWindowUnit;
+    target.alternateRentalWindowUnit = u === 'DAY' || u === 'MONTH' ? u : null;
+  }
 }
 
 export function sumEquipmentRentalMonthly(items: readonly EquipmentRentalLineItem[]): number {
@@ -124,14 +306,15 @@ export async function createEquipmentRentalContract(
   db: Firestore,
   user: User,
   input: {
-    customer: Pick<Customer, 'id' | 'name'>;
+    customer: Pick<Customer, 'id' | 'name' | 'registeredAddress' | 'billingAddress' | 'taxId'>;
     title: string;
-    lineItems: Array<{ description?: string; quantity?: number; unitPrice?: number; unit?: string }>;
+    lineItems: Array<EquipmentRentalLineInput>;
     vatRatePercent?: number;
     startDate: string;
     endDate: string;
     billingDayOfMonth: number;
     notes?: string;
+    details?: EquipmentRentalContractDetailInput;
   },
 ): Promise<string> {
   assertCanManage(user);
@@ -154,11 +337,20 @@ export async function createEquipmentRentalContract(
   });
 
   const now = Date.now();
-  const payload: Omit<EquipmentRentalContract, 'id'> = {
+  const customerAddress =
+    optTrim(input.details?.customerAddressSnapshot) ||
+    optTrim(input.customer.registeredAddress) ||
+    optTrim(input.customer.billingAddress);
+  const customerTaxId =
+    optTrim(input.details?.customerTaxIdSnapshot) || optTrim(input.customer.taxId);
+
+  const payload: Record<string, unknown> = {
     contractNo,
-    status: 'DRAFT',
+    status: 'DRAFT' satisfies EquipmentRentalContractStatus,
     customerId: input.customer.id,
     customerNameSnapshot: String(input.customer.name || '').trim() || input.customer.id,
+    ...(customerAddress ? { customerAddressSnapshot: customerAddress } : {}),
+    ...(customerTaxId ? { customerTaxIdSnapshot: customerTaxId } : {}),
     title,
     lineItems,
     monthlyRentAmount,
@@ -166,16 +358,24 @@ export async function createEquipmentRentalContract(
     startDate: input.startDate,
     endDate: input.endDate,
     billingDayOfMonth,
+    lessorName: EQUIPMENT_RENTAL_LESSOR_NAME_FALLBACK,
     ...(input.notes?.trim() ? { notes: input.notes.trim() } : {}),
     createdAt: now,
     createdByUid: user.id,
     createdByName: user.displayName || user.email || user.id,
     updatedAt: now,
   };
+  applyEquipmentRentalDetails(payload, {
+    ...input.details,
+    // keep snapshots already resolved above unless explicitly overridden
+    customerAddressSnapshot: input.details?.customerAddressSnapshot ?? customerAddress ?? null,
+    customerTaxIdSnapshot: input.details?.customerTaxIdSnapshot ?? customerTaxId ?? null,
+    lessorName: input.details?.lessorName ?? EQUIPMENT_RENTAL_LESSOR_NAME_FALLBACK,
+  });
 
   const ref = await addDoc(
     collection(db, 'equipment_rental_contracts'),
-    sanitizeFirestorePayload(payload as Record<string, unknown>),
+    sanitizeFirestorePayload(payload),
   );
 
   await writeAuditLog(db, user, {
@@ -196,12 +396,13 @@ export async function updateEquipmentRentalContract(
   contractId: string,
   patch: {
     title?: string;
-    lineItems?: Array<{ description?: string; quantity?: number; unitPrice?: number; unit?: string; id?: string }>;
+    lineItems?: Array<EquipmentRentalLineInput>;
     vatRatePercent?: number;
     startDate?: string;
     endDate?: string;
     billingDayOfMonth?: number;
     notes?: string | null;
+    details?: EquipmentRentalContractDetailInput;
   },
 ): Promise<void> {
   assertCanManage(user);
@@ -236,6 +437,7 @@ export async function updateEquipmentRentalContract(
   if (patch.notes !== undefined) {
     next.notes = patch.notes?.trim() ? patch.notes.trim() : null;
   }
+  if (patch.details) applyEquipmentRentalDetails(next, patch.details);
 
   const startDate = String(next.startDate || cur.startDate);
   const endDate = String(next.endDate || cur.endDate);
@@ -363,7 +565,16 @@ async function createEquipmentRentalCommercialInvoiceForPeriod(
   const lines: CommercialInvoiceLine[] = (contract.lineItems || []).map((it, idx) => ({
     id: newLineId(),
     displayOrder: idx,
-    description: `${it.description}${it.unit ? ` (${it.unit})` : ''} · ค่าเช่า ${periodMonth}`,
+    description: [
+      it.description,
+      it.brand ? `ยี่ห้อ ${it.brand}` : '',
+      it.serialNumber ? `เลขที่ ${it.serialNumber}` : '',
+      it.unit ? `(${it.unit})` : '',
+      it.ratePeriod === 'DAY' ? 'ค่าเช่ารายวัน×30' : 'ค่าเช่ารายเดือน',
+      periodMonth,
+    ]
+      .filter(Boolean)
+      .join(' · '),
     quantity: Number(it.quantity) || 0,
     unitPrice: roundMoney(Number(it.unitPrice) || 0),
     amount: roundMoney(Number(it.amount) || 0),

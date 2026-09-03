@@ -5,6 +5,10 @@
 import { doc, getDoc, type Firestore } from 'firebase/firestore';
 import type { DailyTimesheet, PayrollBatchLineDailyRowSnapshot, Position } from '@/lib/types';
 import { resolvePositionDisplayName } from '@/lib/payroll/work-day-payslip-split';
+import {
+  resolvePayrollRestDay,
+  type PayrollRestDaySchedule,
+} from '@/lib/payroll/package-labor-cost';
 
 export type DailySnapshotPositionLookup = ReadonlyMap<
   string,
@@ -14,15 +18,20 @@ export type DailySnapshotPositionLookup = ReadonlyMap<
 export function buildPayrollLineDailyRowSnapshots(
   timesheets: readonly DailyTimesheet[],
   timesheetGrossById: Record<string, number> | undefined,
-  opts?: { posById?: DailySnapshotPositionLookup },
+  opts?: {
+    posById?: DailySnapshotPositionLookup;
+    /** HR rest schedule — ติด restDayKind ให้สลิปแยกวันหยุดนักขัตฤกษ์ได้ */
+    payrollRestSchedule?: PayrollRestDaySchedule;
+  },
 ): PayrollBatchLineDailyRowSnapshot[] {
   const sorted = [...timesheets].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   return sorted.map((ts) => {
     const id = String(ts.id || '').trim();
     const amount = Number(timesheetGrossById?.[id]);
+    const date = String(ts.date || '').slice(0, 10);
     const row: PayrollBatchLineDailyRowSnapshot = {
       timesheetId: id,
-      date: String(ts.date || '').slice(0, 10),
+      date,
       eventType: ts.eventType,
       normalHours: Math.max(0, Number(ts.normalHours) || 0),
       amount: Number.isFinite(amount) && amount > 0 ? Math.round(amount * 100) / 100 : 0,
@@ -43,6 +52,12 @@ export function buildPayrollLineDailyRowSnapshots(
     if (ot20 > 0) row.ot20Hours = ot20;
     if (ot30 > 0) row.ot30Hours = ot30;
     if (holiday > 0) row.holidayHours = holiday;
+    if (opts?.payrollRestSchedule && ts.eventType === 'work_day') {
+      const rest = resolvePayrollRestDay(date, opts.payrollRestSchedule);
+      if (rest.kind === 'public_holiday' || rest.kind === 'weekly_rest') {
+        row.restDayKind = rest.kind;
+      }
+    }
     const poId = (ts.purchaseOrderId || '').trim();
     if (poId) row.purchaseOrderId = poId;
     const remark = (ts.remark || '').trim();

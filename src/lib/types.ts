@@ -2027,18 +2027,42 @@ export type EquipmentRentalContractStatus =
   | 'CANCELLED'
   | 'EXPIRED';
 
+/** ค่าเช่าต่อหน่วย — ตามแบบสัญญาเช่าเครื่องจักรกล (วัน หรือ เดือน) */
+export type EquipmentRentalRatePeriod = 'DAY' | 'MONTH';
+
 export interface EquipmentRentalLineItem {
   id: string;
-  /** ชื่อเครื่องมือ / อุปกรณ์ */
+  /** ชนิด / ชื่อเครื่องจักรกล (ใช้ในใบแจ้งหนี้) */
   description: string;
+  /** ยี่ห้อ */
+  brand?: string;
+  /** หมายเลขเครื่อง / ทะเบียน */
+  serialNumber?: string;
+  /** ขนาด */
+  size?: string;
+  /** แรงม้า */
+  horsepower?: string;
   quantity: number;
-  /** ค่าเช่าต่อหน่วยต่อเดือน (บาท ก่อน VAT) */
-  unitPrice: number;
+  /** หน่วย เช่น คัน / เครื่อง / ชุด */
   unit?: string;
-  /** quantity × unitPrice */
+  /**
+   * ค่าเช่าต่อหน่วยต่อช่วง (บาท ก่อน VAT)
+   * — DAY = ต่อวัน · MONTH = ต่อเดือน
+   */
+  unitPrice: number;
+  /** ไม่ระบุ = MONTH (เข้ากับวางบิลรายเดือน) */
+  ratePeriod?: EquipmentRentalRatePeriod;
+  /**
+   * ยอดต่อรอบวางบิลรายเดือนของรายการนี้
+   * (= qty × unitPrice เมื่อ MONTH · หรือ qty × unitPrice × 30 เมื่อ DAY)
+   */
   amount: number;
 }
 
+/**
+ * สัญญาเช่าที่ OPEC เป็นผู้ให้เช่า (เครื่องมือ/อุปกรณ์) — collection `equipment_rental_contracts`
+ * แบบพิมพ์อ้างอิง สัญญาเช่าเครื่องจักรกล (ข้อ ๑–๒๕)
+ */
 export interface EquipmentRentalContract {
   id: string;
   contractNo: string;
@@ -2046,11 +2070,19 @@ export interface EquipmentRentalContract {
   /** ลูกค้าผู้เช่า */
   customerId: string;
   customerNameSnapshot: string;
+  /** ที่อยู่ผู้เช่า (snapshot จากลูกค้าตอนสร้าง/แก้ไข) */
+  customerAddressSnapshot?: string;
+  /** เลขประจำตัวผู้เสียภาษีผู้เช่า */
+  customerTaxIdSnapshot?: string;
+  /** ผู้มีอำนาจลงนามฝ่ายผู้เช่า */
+  lesseeAuthorizedSignatory?: string;
+  /** วันที่หนังสือรับรองนิติบุคคลผู้เช่า (YYYY-MM-DD) */
+  lesseeCertificateDate?: string;
   /** ชื่อสัญญา / หัวข้อ */
   title: string;
   /** รายการเครื่องมือ-อุปกรณ์ที่ให้เช่า */
   lineItems: EquipmentRentalLineItem[];
-  /** รวมค่าเช่าต่อเดือนก่อน VAT (= sum line amounts) */
+  /** รวมค่าเช่าต่อเดือนก่อน VAT (= sum line amounts สำหรับวางบิล) */
   monthlyRentAmount: number;
   vatRatePercent: number;
   startDate: string;
@@ -2061,6 +2093,92 @@ export interface EquipmentRentalContract {
    */
   billingDayOfMonth: number;
   notes?: string;
+
+  /** ทำสัญญาที่ — ตำบล/แขวง */
+  madeAtTambon?: string;
+  /** อำเภอ/เขต */
+  madeAtAmphoe?: string;
+  /** จังหวัด */
+  madeAtProvince?: string;
+  /** วันที่ทำสัญญา (YYYY-MM-DD) */
+  contractDate?: string;
+
+  /** ชื่อผู้ให้เช่า (OPEC) */
+  lessorName?: string;
+  lessorAddress?: string;
+  lessorTaxId?: string;
+  lessorAuthorizedSignatory?: string;
+  /** true = บุคคลธรรมดา (ใช้เลขบัตรประชาชน) */
+  lessorIsIndividual?: boolean;
+  lessorIdCardNo?: string;
+
+  /** ข้อ ๓ — ประเภทชั้นประกันภัย */
+  insuranceClass?: string;
+  /** ข้อ ๖ — ระยะเวลาเช่า (ตัวเลข) */
+  rentalDurationValue?: number;
+  /** ข้อ ๖ — วัน หรือ เดือน */
+  rentalDurationUnit?: EquipmentRentalRatePeriod;
+  /** ข้อ ๕ — จำนวนแผ่นผนวก */
+  appendix1Pages?: number;
+  appendix2Pages?: number;
+  appendix3Pages?: number;
+
+  /** ข้อ ๗ — ส่งใบแจ้งหนี้ล่วงหน้ากี่วันทำการ */
+  invoiceLeadWorkingDays?: number;
+  bankName?: string;
+  bankBranch?: string;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  /** ข้อ ๗ — หยุดชะงักไม่น้อยกว่ากี่วันจึงงดค่าเช่า */
+  interruptionThresholdDays?: number;
+  /** ข้อ ๗ — แจ้งส่งมอบกลับจากคลังล่วงหน้ากี่วัน */
+  storageReturnNoticeDays?: number;
+
+  /** ข้อ ๘ — อายุการใช้งานไม่เกินกี่ปี */
+  maxEquipmentAgeYears?: number;
+  /** ข้อ ๙ — สถานที่ส่งมอบ */
+  deliveryLocation?: string;
+  deliveryDate?: string;
+  deliveryNoticeWorkingDays?: number;
+
+  /** ข้อ ๑๐ — นำเครื่องใหม่มาส่ง / แก้ไขภายในกี่วัน */
+  replacementDeliveryDays?: number;
+  repairCorrectionDays?: number;
+
+  /** ข้อ ๑๒ — ค่าปรับรายวันเมื่อไม่จัดเครื่องทดแทน */
+  replacementPenaltyPerDay?: number;
+  /** ข้อ ๑๒ — เกินกี่วันติดต่อกันจึงบอกเลิกได้ */
+  maxReplacementDelayDays?: number;
+
+  /** ข้อ ๑๔ — แจ้งขนย้ายล่วงหน้ากี่วัน */
+  relocationNoticeDays?: number;
+
+  /** ข้อ ๑๕ — หลักประกัน */
+  performanceBondType?: string;
+  performanceBondAmount?: number;
+  performanceBondPercent?: number;
+  performanceBondTopUpDays?: number;
+
+  /** ข้อ ๑๗ — เปลี่ยนเครื่องเมื่อสูญหายภายในกี่วัน */
+  lossReplacementDays?: number;
+  /** ข้อ ๑๘ — เช่าจากบุคคลอื่นภายในกี่วัน/เดือนหลังบอกเลิก */
+  alternateRentalWindowValue?: number;
+  alternateRentalWindowUnit?: EquipmentRentalRatePeriod;
+
+  /** ข้อ ๑๙ — ค่าปรับส่งมอบล่าช้าต่อคัน/เครื่อง */
+  lateDeliveryPenaltyPerDay?: number;
+  /** ข้อ ๑๙ — ชำระค่าปรับ/ค่าเสียหายภายในกี่วัน */
+  penaltyDebtPayDays?: number;
+
+  /** ข้อ ๒๐ — นำเครื่องกลับคืนภายในกี่วันหลังสิ้นสุดสัญญา */
+  equipmentReturnDays?: number;
+
+  /** ข้อ ๒๕ — แจ้งเปลี่ยนที่อยู่ล่วงหน้ากี่วัน */
+  addressChangeNoticeDays?: number;
+
+  witness1Name?: string;
+  witness2Name?: string;
+
   createdAt: number;
   createdByUid: string;
   createdByName: string;
@@ -2863,6 +2981,11 @@ export interface PayrollBatchLineDailyRowSnapshot {
   ot30Hours?: number;
   holidayHours?: number;
   amount: number;
+  /**
+   * วันหยุดตาม HR Settings ตอน generate — ใช้แยกค่าแรงวันหยุดบนสลิป
+   * (นักขัตฤกษ์ / หยุดประจำสัปดาห์) ไม่ใช่แค่วันอาทิตย์จากปฏิทิน
+   */
+  restDayKind?: 'none' | 'public_holiday' | 'weekly_rest';
   purchaseOrderId?: string;
   remark?: string;
 }
