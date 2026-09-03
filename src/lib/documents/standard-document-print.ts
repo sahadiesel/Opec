@@ -329,6 +329,18 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     font-size: 10pt;
     vertical-align: top;
   }
+  .sd-line-desc {
+    white-space: pre-line;
+    line-height: 1.4;
+  }
+  .sd-line-remarks {
+    margin-top: 4px;
+    font-size: 9pt;
+    color: #64748b;
+    white-space: pre-line;
+    line-height: 1.35;
+    font-style: italic;
+  }
   .sd-totals-wrap { display: flex; justify-content: flex-end; margin-top: 8px; }
   .sd-totals-notes-row {
     display: grid;
@@ -1640,15 +1652,18 @@ export function buildQuotationPrintHtml(params: {
 
   const lineRows = sorted
     .map((line, idx) => {
-      const rem = line.remarks?.trim() ? ` — ${line.remarks.trim()}` : '';
-      const desc = escapeHtmlDoc((line.description || '—') + rem);
+      const descBody = escapeHtmlDoc((line.description || '—').replace(/\r\n/g, '\n'));
+      const rem = line.remarks?.trim();
+      const remHtml = rem
+        ? `<div class="sd-line-remarks">${escapeHtmlDoc(rem.replace(/\r\n/g, '\n'))}</div>`
+        : '';
       const qty = Number(line.quantity).toLocaleString(loc);
       const unit = escapeHtmlDoc((line.unit || '—').trim() || '—');
       const up = Number(line.unitPrice).toLocaleString(loc, { minimumFractionDigits: 2 });
       const lt = Number(line.lineTotal).toLocaleString(loc, { minimumFractionDigits: 2 });
       return `<tr>
         <td class="sd-num">${idx + 1}</td>
-        <td>${desc}</td>
+        <td class="sd-line-desc">${descBody}${remHtml}</td>
         <td class="sd-right">${qty}</td>
         <td class="sd-right">${unit}</td>
         <td class="sd-right">${up}</td>
@@ -1717,18 +1732,18 @@ export function buildQuotationPrintHtml(params: {
       ${lineRows || `<tr><td colspan="6" style="text-align:center;color:#737373">${escapeHtmlDoc(emptyLines)}</td></tr>`}
     </tbody>
   </table>`;
-  const totalsHtml = buildStandardTotalsBlockHtml({
-    rows: totalRows,
-    amountInWords: totalWords,
+  const totalsHtml = buildStandardTotalsWithNotesRowHtml({
+    totalsParams: {
+      rows: totalRows,
+      amountInWords: totalWords,
+    },
+    notes: q.notes,
+    notesTitle: printT(L, 'termsNotes'),
   });
-  const notesBlock = q.notes?.trim()
-    ? `<h2 class="sd-section-title">${escapeHtmlDoc(printT(L, 'termsNotes'))}</h2><p class="sd-notes">${escapeHtmlDoc(formatDocumentNotesForPrint(q.notes))}</p>`
-    : '';
   const mainHtml = `${partyHtml}
   ${projectBlock}
   ${tableHtml}
-  ${totalsHtml}
-  ${notesBlock}`;
+  ${totalsHtml}`;
   const footerHtml = buildStandardSignFooterHtml({
     left: { roleLine: printT(L, 'signPreparedSales'), name: q.createdBy || '—' },
     right: { roleLine: printT(L, 'quotationPartyFooter'), name: '—' },

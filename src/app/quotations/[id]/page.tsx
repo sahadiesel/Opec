@@ -30,8 +30,8 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection, useUser } from '@/firebase';
-import { doc, collection, updateDoc, addDoc, deleteDoc, deleteField } from 'firebase/firestore';
-import { Quotation, QuotationLine, QuotationStatus, User, Customer } from '@/lib/types';
+import { doc, collection, updateDoc, addDoc, deleteDoc, deleteField, query, where, getDocs, limit } from 'firebase/firestore';
+import { Quotation, QuotationLine, QuotationStatus, User, Customer, PurchaseOrder } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
@@ -109,6 +109,50 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   const [isLineDialogOpen, setIsLineDialogOpen] = useState(false);
   const [editingLine, setEditingLine] = useState<Partial<QuotationLine> | null>(null);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  /** มีใบแจ้งหนี้ (commercial invoice) ที่อ้าง PO ของใบเสนอราคานี้แล้ว — ถึงจะล็อกแก้ */
+  const [isLinkedToInvoice, setIsLinkedToInvoice] = useState(false);
+  const [invoiceLinkChecking, setInvoiceLinkChecking] = useState(false);
+
+  const linkedPosQuery = useMemoFirebase(() => {
+    if (!firestore || !canViewQuotations || !id) return null;
+    return query(collection(firestore, 'purchase_orders'), where('quotationId', '==', id));
+  }, [firestore, canViewQuotations, id]);
+  const { data: linkedPurchaseOrders } = useCollection<PurchaseOrder>(linkedPosQuery as any);
+
+  useEffect(() => {
+    if (!firestore || !id) {
+      setIsLinkedToInvoice(false);
+      setInvoiceLinkChecking(false);
+      return;
+    }
+    let cancelled = false;
+    setInvoiceLinkChecking(true);
+    void (async () => {
+      try {
+        const pos = linkedPurchaseOrders ?? [];
+        for (const po of pos) {
+          const invSnap = await getDocs(
+            query(collection(firestore, 'commercial_invoices'), where('poId', '==', po.id), limit(1)),
+          );
+          if (!invSnap.empty) {
+            if (!cancelled) setIsLinkedToInvoice(true);
+            return;
+          }
+        }
+        const bnSnap = await getDocs(
+          query(collection(firestore, 'billing_notes'), where('quotationId', '==', id), limit(1)),
+        );
+        if (!cancelled) setIsLinkedToInvoice(!bnSnap.empty);
+      } catch {
+        if (!cancelled) setIsLinkedToInvoice(false);
+      } finally {
+        if (!cancelled) setInvoiceLinkChecking(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, id, linkedPurchaseOrders]);
 
   useEffect(() => {
     if (quotation) setEditedHeader(quotation);
@@ -130,10 +174,20 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   // --- Workflow Logic ---
   const isDraft = quotation?.status === 'draft';
   const isSent = quotation?.status === 'sent';
-  const isFinalized = quotation ? ['accepted', 'rejected', 'cancelled', 'expired'].includes(quotation.status) : false;
+  const isAccepted = quotation?.status === 'accepted';
+  /** สถานะปิดถาวร — ไม่รวม accepted (ยังแก้ได้จนกว่าจะผูกใบแจ้งหนี้) */
+  const isTerminalClosed = quotation
+    ? ['rejected', 'cancelled', 'expired'].includes(quotation.status)
+    : false;
   const isRevised = quotation?.status === 'revised';
-  const canStartEdit = !isRevised && (isDraft || isSent);
+  const isEditLocked = isRevised || isTerminalClosed || isLinkedToInvoice;
+  const canStartEdit =
+    !!quotation &&
+    canEditQuotations &&
+    !isEditLocked &&
+    (isDraft || isSent || isAccepted);
   const isEditable = isEditMode && canStartEdit;
+  const canSaveInPlace = isDraft || isAccepted;
   const statusDisplay = quotation?.status === 'revised' ? 'มีการแก้ไข' : quotation?.status;
   const displayLines = isEditMode ? draftLines : [...(lines || [])].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 
@@ -231,14 +285,22 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     }
   };
 
-  /** Persist draft quotation on the same document (no R1 fork). */
+  /** Persist draft/accepted quotation on the same document (no R1 fork). */
   const handleSaveDraftInPlace = async () => {
     if (!canEditQuotations) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขใบเสนอราคา' });
       return;
     }
     if (!firestore || !quotation || !quotationRef || !currentUser) return;
-    if (quotation.status !== 'draft') return;
+    if (quotation.status !== 'draft' && quotation.status !== 'accepted') return;
+    if (isLinkedToInvoice) {
+      toast({
+        variant: 'destructive',
+        title: 'แก้ไขไม่ได้',
+        description: 'ใบเสนอราคานี้ถูกผูกกับใบแจ้งหนี้แล้ว',
+      });
+      return;
+    }
 
     setIsSavingDraft(true);
     try {
@@ -296,7 +358,12 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
       }
 
       setIsEditMode(false);
-      toast({ title: 'บันทึกร่างสำเร็จ', description: 'ข้อมูลใบเสนอราคาถูกบันทึกแล้ว' });
+      toast({
+        title: isAccepted ? 'บันทึกสำเร็จ' : 'บันทึกร่างสำเร็จ',
+        description: isAccepted
+          ? 'อัปเดตใบเสนอราคาที่ยอมรับแล้ว (ยังไม่ผูกใบแจ้งหนี้)'
+          : 'ข้อมูลใบเสนอราคาถูกบันทึกแล้ว',
+      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'กรุณาลองใหม่อีกครั้ง';
       toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: message });
@@ -311,7 +378,15 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
       return;
     }
     if (!firestore || !quotation || !quotationRef || !currentUser) return;
-    if (quotation.status === 'draft') return;
+    if (quotation.status === 'draft' || quotation.status === 'accepted') return;
+    if (isLinkedToInvoice) {
+      toast({
+        variant: 'destructive',
+        title: 'แก้ไขไม่ได้',
+        description: 'ใบเสนอราคานี้ถูกผูกกับใบแจ้งหนี้แล้ว',
+      });
+      return;
+    }
     if (quotation.status === 'revised') {
       toast({ variant: 'destructive', title: 'เอกสารถูกแก้ไขแล้ว', description: 'ฉบับนี้เปิดแก้ไขต่อไม่ได้ ให้เปิดที่ฉบับล่าสุดแทน' });
       return;
@@ -567,8 +642,8 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             >
               <Printer className="h-4 w-4" /> พิมพ์เอกสาร (Print)
             </Button>
-            <Badge variant={(isFinalized || isRevised) ? "default" : "outline"} className={`py-1.5 px-4 font-bold uppercase ${(isFinalized || isRevised) ? "bg-slate-900 text-white" : "border-primary/20 bg-primary/5 text-primary"}`}>
-              {(isFinalized || isRevised) && <Lock className="h-3 w-3 mr-2" />}
+            <Badge variant={isEditLocked ? "default" : "outline"} className={`py-1.5 px-4 font-bold uppercase ${isEditLocked ? "bg-slate-900 text-white" : "border-primary/20 bg-primary/5 text-primary"}`}>
+              {isEditLocked && <Lock className="h-3 w-3 mr-2" />}
               STATUS: {statusDisplay}
             </Badge>
           </div>
@@ -585,9 +660,19 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             <PageGuidance 
               title="สถานะปัจจุบัน (Document Stage)"
               tips={[
-                isDraft ? "ฉบับร่าง (Draft): สามารถกด 'แก้ไขเอกสาร' แล้วค่อยปรับข้อมูลได้" :
-                isSent ? "ส่งแล้ว (Sent): หากลูกค้าต่อรองราคา ให้กด 'แก้ไขเอกสาร' และบันทึกเป็น Revision ใหม่" :
-                "สิ้นสุด (Finalized): เอกสารนี้ถูกปิดสถานะแล้ว ไม่สามารถแก้ไขข้อมูลได้อีก"
+                isDraft
+                  ? "ฉบับร่าง (Draft): สามารถกด 'แก้ไขเอกสาร' แล้วค่อยปรับข้อมูลได้"
+                  : isSent
+                    ? "ส่งแล้ว (Sent): หากลูกค้าต่อรองราคา ให้กด 'แก้ไขเอกสาร' และบันทึกเป็น Revision ใหม่"
+                    : isAccepted && !isLinkedToInvoice
+                      ? "ยอมรับแล้ว (Accepted): ยังแก้ไขได้จนกว่าจะสร้างใบแจ้งหนี้ที่ผูกกับใบนี้"
+                      : isLinkedToInvoice
+                        ? "ล็อกแล้ว: ใบเสนอราคานี้ถูกผูกกับใบแจ้งหนี้แล้ว — แก้ไขข้อมูลไม่ได้"
+                        : isTerminalClosed || isRevised
+                          ? "สิ้นสุด (Finalized): เอกสารนี้ถูกปิดสถานะแล้ว ไม่สามารถแก้ไขข้อมูลได้อีก"
+                          : invoiceLinkChecking
+                            ? "กำลังตรวจสอบการผูกใบแจ้งหนี้..."
+                            : "ดูรายละเอียดเอกสารได้ตามสถานะปัจจุบัน",
               ]}
             />
 
@@ -689,9 +774,15 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                               {index + 1}
                             </TableCell>
                             <TableCell>
-                              <div className="flex flex-col">
-                                <span className="font-bold text-sm text-primary">{line.description}</span>
-                                {line.remarks && <span className="text-[10px] text-muted-foreground italic truncate max-w-[200px]">{line.remarks}</span>}
+                              <div className="flex flex-col gap-0.5 min-w-0">
+                                <span className="font-bold text-sm text-primary whitespace-pre-line leading-snug">
+                                  {line.description}
+                                </span>
+                                {line.remarks ? (
+                                  <span className="text-[10px] text-muted-foreground italic whitespace-pre-line leading-snug">
+                                    {line.remarks}
+                                  </span>
+                                ) : null}
                               </div>
                             </TableCell>
                             <TableCell className="text-center">
@@ -755,7 +846,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     {isEditMode && (
                       <>
                         <div className="grid grid-cols-2 gap-2">
-                          {isDraft ? (
+                          {canSaveInPlace ? (
                             <Button
                               className="bg-green-600 hover:bg-green-700 font-bold text-xs h-11"
                               disabled={isSavingDraft}
@@ -766,7 +857,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                               ) : (
                                 <Save className="h-3 w-3 mr-1" />
                               )}
-                              บันทึกร่าง
+                              {isAccepted ? 'บันทึก' : 'บันทึกร่าง'}
                             </Button>
                           ) : (
                             <Button className="bg-green-600 hover:bg-green-700 font-bold text-xs h-11" onClick={() => void handleCreateRevision()}>
@@ -783,8 +874,8 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                           </Button>
                         </div>
                         <p className="text-[11px] text-white/80">
-                          {isDraft
-                            ? 'บันทึกลงฉบับร่างเดิม — เลขที่เอกสารไม่เปลี่ยน'
+                          {canSaveInPlace
+                            ? 'บันทึกลงฉบับเดิม — เลขที่เอกสารไม่เปลี่ยน'
                             : 'เมื่อบันทึก ระบบจะสร้างฉบับใหม่ (R) และเปลี่ยนฉบับเดิมเป็นสถานะ "มีการแก้ไข"'}
                         </p>
                         <Separator className="bg-white/10" />
@@ -808,16 +899,23 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                       </div>
                     )}
 
-                    {!isEditMode && !isFinalized && !isRevised && (
+                    {!isEditMode && !isEditLocked && !isAccepted && (
                       <Button variant="ghost" className="w-full text-white/60 hover:text-white hover:bg-white/10 text-xs h-11" onClick={() => handleUpdateStatus('cancelled')}>
                         <Trash2 className="h-3 w-3 mr-2" /> ยกเลิกใบเสนอราคา
                       </Button>
                     )}
 
-                    {(isFinalized || isRevised) && (
+                    {isEditLocked && (
                       <div className="text-center py-4 bg-white/5 rounded-lg border border-dashed border-white/10">
                         <Lock className="h-5 w-5 mx-auto mb-2 opacity-40 text-white" />
-                        <p className="text-[10px] uppercase font-black tracking-widest opacity-60">Locked: {statusDisplay}</p>
+                        <p className="text-[10px] uppercase font-black tracking-widest opacity-60">
+                          Locked: {isLinkedToInvoice ? 'linked invoice' : statusDisplay}
+                        </p>
+                        {isLinkedToInvoice ? (
+                          <p className="mt-2 px-3 text-[11px] leading-snug text-white/70">
+                            ผูกกับใบแจ้งหนี้แล้ว — แก้ไขเนื้อหาใบเสนอราคาไม่ได้
+                          </p>
+                        ) : null}
                       </div>
                     )}
                   </CardContent>
@@ -906,6 +1004,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
               displayLines={displayLines}
               editedHeader={editedHeader}
               totals={computeTotals(displayLines, editedHeader)}
+              printLocale={printLocale}
             />
           </TabsContent>
 
