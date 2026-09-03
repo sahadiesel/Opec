@@ -2812,6 +2812,14 @@ export interface PayrollBatchLine {
    * แถวรายวัน snapshot ตอน generate/recalc — เปิดหน้ารายคนโชว์ทันทีโดยไม่โหลด daily_timesheets
    */
   dailyRowSnapshots?: PayrollBatchLineDailyRowSnapshot[];
+  /**
+   * ลองสร้าง snapshot รายวันให้งวดเก่า (ครั้งแรกที่เปิด) — matched = เก็บแล้ว, mismatch = ไม่เก็บเพราะยอดไม่ตรงของที่จ่าย
+   */
+  snapshotBackfillStatus?: 'matched' | 'mismatch';
+  snapshotBackfillMismatchNote?: string | null;
+  snapshotBackfillAttemptedAt?: number;
+  snapshotBackfillComputedGross?: number;
+  snapshotBackfillComputedNet?: number;
   deductionsBreakdown: Record<string, number>; // Maps specific deduction category to amount
   grossAmount: number;
   netAmount: number;

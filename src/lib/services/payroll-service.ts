@@ -3,20 +3,21 @@
 
 import { 
   Firestore, 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  where, 
-  writeBatch, 
-  updateDoc,
-  deleteField,
-  deleteDoc,
-  CollectionReference,
-  limit,
-  type DocumentData,
-  type QuerySnapshot,
+    collection,
+    doc, 
+    getDoc, 
+    getDocs, 
+    query, 
+    where, 
+    writeBatch, 
+    updateDoc,
+    deleteField,
+    deleteDoc,
+    CollectionReference,
+    DocumentReference,
+    limit,
+    type DocumentData,
+    type QuerySnapshot,
 } from 'firebase/firestore';
 import { 
   PayrollBatch,
@@ -115,7 +116,10 @@ import {
   buildPayrollLineDailyRowSnapshots,
   hasPositiveTimesheetGrossById,
   isUsableDailyRowSnapshots,
+  lineNeedsFirstOpenSnapshotBackfill,
   loadDailyTimesheetsByIds,
+  payrollBahtAmountsMatch,
+  SNAPSHOT_BACKFILL_MISMATCH_NOTE,
 } from '@/lib/payroll/payroll-line-daily-snapshots';
 import {
   applyCashAdvanceRecoveryToOfficeD8Line,
@@ -126,15 +130,20 @@ import {
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 import {
   filterTimesheetsForWorkerPayrollAsync,
+  loadAssignmentsForTimesheets,
   loadWorkerTimesheetsForPayrollLine,
 } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
 import {
+  applyRemobWorkerPositionToTimesheetsForPayroll,
   ensureLaborCostEpochAfterMobFinish,
   inferOffshorePackageFromOt15PriorItems,
   loadAssignmentsAndApplyRemobPositionForPayroll,
   syncAssignmentPositionFromWorkerOnRemob,
 } from '@/lib/payroll/remob-position-for-payroll';
-import { loadPriorPaidFrozenPayrollSlice } from '@/lib/payroll/prior-paid-timesheet-gross';
+import {
+  loadPriorPaidFrozenPayrollSlice,
+  type PriorPaidFrozenPayrollSlice,
+} from '@/lib/payroll/prior-paid-timesheet-gross';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
 import {
   payrollBatchChronologyMs,
@@ -1827,7 +1836,7 @@ export class PayrollService {
       const line = { ...(d.data() as PayrollBatchLine), id: d.id };
       if (isUsableDailyRowSnapshots(line.dailyRowSnapshots, line.grossAmount)) continue;
       if (!hasPositiveTimesheetGrossById(line.timesheetGrossById)) {
-        /** ล้าง snapshot ยอด 0 ที่เคย backfill ผิด — ไม่สร้างใหม่ถ้าไม่มี timesheetGrossById */
+        /** ล้าง snapshot ยอด 0 ที่เคย backfill ผิด — ไม่รัน full recalc ทั้ง batch (ช้ามาก) */
         if ((line.dailyRowSnapshots?.length ?? 0) > 0) {
           await updateDoc(d.ref, {
             dailyRowSnapshots: [],
@@ -1868,6 +1877,248 @@ export class PayrollService {
       });
     }
     return updated;
+  }
+
+  /**
+   * เปิดหน้ารายคนครั้งแรก — reconstruct แบบเบา (โหลดใบงานตาม sourceTimesheetIds เท่านั้น)
+   * เก็บ snapshot เฉพาะเมื่อ Gross/Net ตรงยอดที่จ่ายแล้ว · มี timeout กันค้าง
+   */
+  async tryBackfillMissingPaidLineSnapshotsIfTotalsMatch(
+    batchId: string,
+    workerId: string,
+    user: User,
+  ): Promise<{ status: 'matched' | 'mismatch' | 'skipped' }> {
+    const allowed =
+      canConfirmWorkerPayrollPaid(user) || isSystemAdmin(user) || isPayrollOfficer(user);
+    if (!allowed) {
+      assertPayrollPermission(user, 'payroll_worker', 'edit_batch');
+    }
+
+    const lineId = `${batchId}_${workerId}`;
+    const lineRef = doc(this.db, 'payroll_batches', batchId, 'lines', lineId);
+    const [batchSnap, lineSnap] = await Promise.all([
+      getDoc(doc(this.getBatchCollection(), batchId)),
+      getDoc(lineRef),
+    ]);
+    if (!batchSnap.exists() || !lineSnap.exists()) return { status: 'skipped' };
+    const batch = { ...(batchSnap.data() as PayrollBatch), id: batchId };
+    const line = lineSnap.data() as PayrollBatchLine;
+    const immutable =
+      batch.status === 'PAID' ||
+      batch.status === 'LOCKED' ||
+      batch.status === 'FINANCE_PREPARED' ||
+      batch.status === 'PAYMENT_EXPORTED';
+    if (!immutable || batch.batchType === 'SUPPLEMENTAL') return { status: 'skipped' };
+    if (!lineNeedsFirstOpenSnapshotBackfill(line)) {
+      if (line.snapshotBackfillStatus === 'mismatch') return { status: 'mismatch' };
+      if (isUsableDailyRowSnapshots(line.dailyRowSnapshots, line.grossAmount)) return { status: 'matched' };
+      return { status: 'skipped' };
+    }
+
+    const sourceIds = [...new Set((line.sourceTimesheetIds ?? []).map((id) => String(id || '').trim()).filter(Boolean))];
+    if (sourceIds.length === 0) {
+      await this.persistPaidSnapshotBackfillMismatch(lineRef, 0, 0);
+      return { status: 'mismatch' };
+    }
+
+    const TIMEOUT_MS = 40_000;
+    const emptyPrior: PriorPaidFrozenPayrollSlice = {
+      byTimesheetId: {},
+      byDate: {},
+      lockedSourceTimesheetIds: new Set(),
+      frozenPackageBaseRate: null,
+      frozenWorkMode: null,
+      priorPeriodAllowanceItems: [],
+      priorPaidSummaries: [],
+    };
+    const gate = { active: true };
+
+    const run = async (): Promise<'matched' | 'mismatch'> => {
+      const workerTs = normalizeTimesheetsForPayrollLine(
+        await loadDailyTimesheetsByIds(this.db, sourceIds),
+      );
+      if (!gate.active) return 'mismatch';
+      if (workerTs.length === 0) {
+        await this.persistPaidSnapshotBackfillMismatch(lineRef, 0, 0);
+        return 'mismatch';
+      }
+
+      const poIds = Array.from(new Set(workerTs.map((ts) => ts.purchaseOrderId).filter(Boolean)));
+      const poById = new Map<string, PurchaseOrder>();
+      await Promise.all(
+        poIds.map(async (poId) => {
+          const poSnap = await getDoc(doc(this.db, 'purchase_orders', poId));
+          if (poSnap.exists()) {
+            poById.set(poId, { ...(poSnap.data() as PurchaseOrder), id: poSnap.id });
+          }
+        }),
+      );
+      if (!gate.active) return 'mismatch';
+      const poContractById = buildPoContractIdMapFromPurchaseOrders(poById.values());
+      const poWorkModeByPoId = buildPoWorkModeMapFromPurchaseOrders(poById.values());
+      const poLineMaps = await loadPayrollPoLineMaps(this.db, poIds);
+      if (!gate.active) return 'mismatch';
+
+      const contractMap = new Map<string, MainContract>();
+      const contractIds = collectPayrollContractIds(workerTs, poContractById);
+      await Promise.all(
+        contractIds.map(async (contractId) => {
+          const contractSnap = await getDoc(doc(this.db, 'main_contracts', contractId));
+          if (!contractSnap.exists()) return;
+          const contractData = { ...(contractSnap.data() as MainContract), id: contractSnap.id };
+          const ratesSnap = await getDocs(collection(this.db, 'main_contracts', contractId, 'position_rates'));
+          contractData.positionRates = ratesSnap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as object),
+          })) as MainContract['positionRates'];
+          contractMap.set(contractId, contractData);
+        }),
+      );
+      if (!gate.active) return 'mismatch';
+
+      const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, workerTs);
+      const snapRate = Number(line.laborCostResolutionSnapshot?.effectiveBaseRate);
+      if (Number.isFinite(snapRate) && snapRate > 0) {
+        const wk = workerById.get(workerId);
+        if (wk) {
+          workerById.set(workerId, {
+            ...wk,
+            laborCostUsePositionDefault: false,
+            laborCostCustomOffshore: snapRate,
+            laborCostCustomOnshore: snapRate,
+          });
+        }
+      }
+
+      const assignmentById = await loadAssignmentsForTimesheets(this.db, workerTs);
+      if (!gate.active) return 'mismatch';
+      const workerTsForCalc = applyRemobWorkerPositionToTimesheetsForPayroll(
+        workerTs,
+        workerById,
+        assignmentById,
+      );
+      await ensurePositionsLoadedForTimesheets(this.db, workerTsForCalc, posById);
+      const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(this.db);
+      if (!gate.active) return 'mismatch';
+
+      const liveSourceTimesheetIds = new Set(
+        workerTsForCalc.map((t) => String(t.id || '').trim()).filter(Boolean),
+      );
+      const aggDeps = {
+        poLineMaps,
+        poContractById,
+        poWorkModeByPoId,
+        workerById,
+        posById,
+        contractMap,
+        workerGlobalLabor,
+        assignmentById,
+        frozenTimesheetGrossById: {},
+        priorPaidFrozen: emptyPrior,
+        liveSourceTimesheetIds,
+      };
+
+      const byPo = new Map<string, DailyTimesheet[]>();
+      for (const ts of workerTsForCalc) {
+        const pid = (ts.purchaseOrderId || '').trim() || '_unknown_po';
+        if (!byPo.has(pid)) byPo.set(pid, []);
+        byPo.get(pid)!.push(ts);
+      }
+      const chunks = [...byPo.values()].map((list) =>
+        aggregateDailyTimesheetsPayrollChunk(list, aggDeps),
+      );
+      const mergedChunk = mergePayrollTimesheetAggChunks(chunks);
+      const workerGross = round2Payroll(mergedChunk.gross);
+      const timesheetGrossById = mergedChunk.timesheetGrossById;
+      const dailySnaps = buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById);
+      const daySum = round2Payroll(
+        Object.values(timesheetGrossById || {}).reduce((s, n) => s + (Number(n) || 0), 0),
+      );
+
+      const allowSum = sumRegularAllowances(line.hrLineAdjustments?.allowanceItems ?? []);
+      const effectiveGross = round2Payroll(Math.max(0, workerGross + allowSum));
+      const dedTotal = Object.values(line.deductionsBreakdown || {}).reduce(
+        (a, b) => a + (Number(b) || 0),
+        0,
+      );
+      const computedNet = round2Payroll(effectiveGross - dedTotal);
+      const storedGross = round2Payroll(Number(line.grossAmount) || 0);
+      const storedNet = round2Payroll(Number(line.netAmount) || 0);
+
+      const storedGrossMatches =
+        payrollBahtAmountsMatch(storedGross, workerGross) ||
+        payrollBahtAmountsMatch(storedGross, effectiveGross);
+      const match =
+        storedGrossMatches &&
+        payrollBahtAmountsMatch(daySum, workerGross) &&
+        payrollBahtAmountsMatch(storedNet, computedNet) &&
+        isUsableDailyRowSnapshots(dailySnaps, workerGross);
+
+      if (!gate.active) return 'mismatch';
+      if (!match) {
+        await this.persistPaidSnapshotBackfillMismatch(lineRef, workerGross, computedNet);
+        return 'mismatch';
+      }
+
+      await updateDoc(lineRef, {
+        timesheetGrossById,
+        dailyRowSnapshots: dailySnaps,
+        snapshotBackfillStatus: 'matched',
+        snapshotBackfillAttemptedAt: Date.now(),
+        snapshotBackfillMismatchNote: deleteField(),
+        snapshotBackfillComputedGross: deleteField(),
+        snapshotBackfillComputedNet: deleteField(),
+        updatedAt: Date.now(),
+      });
+      await writeAuditLog(this.db, user, {
+        actionType: 'UPDATE',
+        entityType: 'PayrollBatchLine',
+        entityId: lineId,
+        payrollBatchId: batchId,
+        sourceModule: 'hr',
+        afterSummary: `Light backfill paid daily snapshots (matched); gross ${storedGross.toFixed(2)}`,
+      });
+      return 'matched';
+    };
+
+    try {
+      const raced = await Promise.race([
+        run(),
+        new Promise<'timeout'>((resolve) => {
+          setTimeout(() => resolve('timeout'), TIMEOUT_MS);
+        }),
+      ]);
+      if (raced === 'timeout') {
+        gate.active = false;
+        await this.persistPaidSnapshotBackfillMismatch(lineRef, 0, 0);
+        return { status: 'mismatch' };
+      }
+      return { status: raced };
+    } catch (err) {
+      gate.active = false;
+      console.warn('[tryBackfillMissingPaidLineSnapshotsIfTotalsMatch]', workerId, err);
+      try {
+        await this.persistPaidSnapshotBackfillMismatch(lineRef, 0, 0);
+      } catch {
+        /* ignore */
+      }
+      return { status: 'mismatch' };
+    }
+  }
+
+  private async persistPaidSnapshotBackfillMismatch(
+    lineRef: DocumentReference,
+    computedGross: number,
+    computedNet: number,
+  ): Promise<void> {
+    await updateDoc(lineRef, {
+      snapshotBackfillStatus: 'mismatch',
+      snapshotBackfillMismatchNote: SNAPSHOT_BACKFILL_MISMATCH_NOTE,
+      snapshotBackfillAttemptedAt: Date.now(),
+      snapshotBackfillComputedGross: round2Payroll(computedGross),
+      snapshotBackfillComputedNet: round2Payroll(computedNet),
+      updatedAt: Date.now(),
+    });
   }
 
   /** ยอดสุทธิงวด NORMAL อื่นใน period เดียวกันที่จ่ายก่อนงวดนี้ (ต่อคน) */
@@ -1974,9 +2225,16 @@ export class PayrollService {
     options?: {
       bypassFinanceStatusGate?: boolean;
       includePriorPaidRecovery?: boolean;
+      /**
+       * งวดจ่ายแล้วที่ยังไม่มี snapshot — คำนวณเทียบยอดเดิม
+       * ตรงจึงเก็บ timesheetGrossById + dailyRowSnapshots เท่านั้น (ไม่ทับ Gross/Net)
+       * ไม่ตรงจึงบันทึกหมายเหตุ แล้วไม่เก็บ snapshot
+       */
+      snapshotBackfillIfMatch?: boolean;
     },
   ): Promise<{ netAmount: number; grossAmount: number }> {
-    if (options?.bypassFinanceStatusGate) {
+    const snapshotBackfill = options?.snapshotBackfillIfMatch === true;
+    if (options?.bypassFinanceStatusGate || snapshotBackfill) {
       const allowed =
         canConfirmWorkerPayrollPaid(user) || isSystemAdmin(user) || isPayrollOfficer(user);
       if (!allowed) {
@@ -1996,7 +2254,22 @@ export class PayrollService {
     const batch = { ...(batchSnap.data() as PayrollBatch), id: batchId };
     const line = lineSnap.data() as PayrollBatchLine;
 
-    if (!options?.bypassFinanceStatusGate) {
+    if (snapshotBackfill) {
+      if (batch.batchType === 'SUPPLEMENTAL') {
+        return {
+          netAmount: Number(line.netAmount) || 0,
+          grossAmount: Number(line.grossAmount) || 0,
+        };
+      }
+      if (!lineNeedsFirstOpenSnapshotBackfill(line)) {
+        return {
+          netAmount: Number(line.netAmount) || 0,
+          grossAmount: Number(line.grossAmount) || 0,
+        };
+      }
+    }
+
+    if (!options?.bypassFinanceStatusGate && !snapshotBackfill) {
       const blocked = ['PAID', 'LOCKED', 'FINANCE_PREPARED', 'PAYMENT_EXPORTED'] as const;
       if ((blocked as readonly string[]).includes(batch.status)) {
         throw new Error(
@@ -2032,17 +2305,27 @@ export class PayrollService {
      * โหลดทั้งเดือน (LOCKED + วันใหม่) ตามกฎ remob — รวมวันทำงานที่บันทึกแล้วทั้งหมด
      * แล้วหักยอดงวดก่อนเมื่อ includePriorPaidRecovery
      */
-    const loaded = await loadWorkerTimesheetsForPayrollLine(
-      this.db,
-      workerId,
-      periodStart,
-      periodEnd,
-      rawIds,
-    );
+    const loaded =
+      snapshotBackfill && rawIds.length > 0
+        ? await loadDailyTimesheetsByIds(this.db, rawIds)
+        : await loadWorkerTimesheetsForPayrollLine(
+            this.db,
+            workerId,
+            periodStart,
+            periodEnd,
+            rawIds,
+          );
 
     if (loaded.length === 0) {
       const isSupplemental = batch.batchType === 'SUPPLEMENTAL';
       const hasPriorPeriodPay = (line.hrLineAdjustments?.priorPeriodAllowanceItems?.length ?? 0) > 0;
+      if (snapshotBackfill) {
+        await this.persistPaidSnapshotBackfillMismatch(lineRef, 0, 0);
+        return {
+          netAmount: Number(line.netAmount) || 0,
+          grossAmount: Number(line.grossAmount) || 0,
+        };
+      }
       if (options?.bypassFinanceStatusGate) {
         /** ยอดผ่านผู้จัดการ + บัญชีแล้ว — ไม่บล็อกตัดจ่ายเพราะไม่มีใบงานผูกแถว */
         return {
@@ -2132,14 +2415,16 @@ export class PayrollService {
     const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(this.db);
 
     const asgnIds = [...new Set(workerTs.map((t) => String(t.assignmentId || '').trim()).filter(Boolean))];
-    await Promise.all(
-      asgnIds.map(async (aid) => {
-        const snap = await getDoc(doc(this.db, 'mobilizations', aid));
-        if (!snap.exists()) return;
-        const asgn = { id: snap.id, ...(snap.data() as object) } as Assignment;
-        await syncAssignmentPositionFromWorkerOnRemob(this.db, asgn);
-      }),
-    );
+    if (!snapshotBackfill) {
+      await Promise.all(
+        asgnIds.map(async (aid) => {
+          const snap = await getDoc(doc(this.db, 'mobilizations', aid));
+          if (!snap.exists()) return;
+          const asgn = { id: snap.id, ...(snap.data() as object) } as Assignment;
+          await syncAssignmentPositionFromWorkerOnRemob(this.db, asgn);
+        }),
+      );
+    }
 
     const priorPaidFrozen = await loadPriorPaidFrozenPayrollSlice(this.db, {
       payrollPeriodId: String(batch.payrollPeriodId || '').trim(),
@@ -2158,14 +2443,16 @@ export class PayrollService {
     );
     const workerTsForCalc = remobApplied.timesheets;
     const assignmentById = remobApplied.assignmentById;
-    await Promise.all(
-      [...assignmentById.values()].map(async (asgn) => {
-        const healed = await ensureLaborCostEpochAfterMobFinish(this.db, asgn, {
-          inferredOffshorePackage: inferredPreRemobPkg,
-        });
-        assignmentById.set(asgn.id, healed);
-      }),
-    );
+    if (!snapshotBackfill) {
+      await Promise.all(
+        [...assignmentById.values()].map(async (asgn) => {
+          const healed = await ensureLaborCostEpochAfterMobFinish(this.db, asgn, {
+            inferredOffshorePackage: inferredPreRemobPkg,
+          });
+          assignmentById.set(asgn.id, healed);
+        }),
+      );
+    }
     await ensurePositionsLoadedForTimesheets(this.db, workerTsForCalc, posById);
 
     const ppQuery = query(
@@ -2437,6 +2724,57 @@ export class PayrollService {
         rate: snapRes.rate,
         source: snapRes.source,
       });
+    }
+
+    if (snapshotBackfill) {
+      const storedGross = round2Payroll(Number(line.grossAmount) || 0);
+      const storedNet = round2Payroll(Number(line.netAmount) || 0);
+      const computedTimesheetGross = round2Payroll(isSupplemental ? effectiveGross : workerGross);
+      const computedEffectiveGross = round2Payroll(effectiveGross);
+      const computedNet = round2Payroll(netAmount);
+      const dailySnaps = buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById);
+      const daySum = round2Payroll(
+        Object.values(timesheetGrossById || {}).reduce((s, n) => s + (Number(n) || 0), 0),
+      );
+      const storedGrossMatchesReconstruct =
+        payrollBahtAmountsMatch(storedGross, computedTimesheetGross) ||
+        payrollBahtAmountsMatch(storedGross, computedEffectiveGross);
+      const match =
+        storedGrossMatchesReconstruct &&
+        payrollBahtAmountsMatch(daySum, computedTimesheetGross) &&
+        payrollBahtAmountsMatch(storedNet, computedNet) &&
+        isUsableDailyRowSnapshots(dailySnaps, computedTimesheetGross);
+
+      if (!match) {
+        await this.persistPaidSnapshotBackfillMismatch(lineRef, computedTimesheetGross, computedNet);
+        return { netAmount: storedNet, grossAmount: storedGross };
+      }
+
+      const existingSource = (line.sourceTimesheetIds ?? [])
+        .map((id) => String(id || '').trim())
+        .filter(Boolean);
+      await updateDoc(lineRef, {
+        timesheetGrossById,
+        dailyRowSnapshots: dailySnaps,
+        ...(existingSource.length === 0
+          ? { sourceTimesheetIds: workerTsForCalc.map((ts) => ts.id) }
+          : {}),
+        snapshotBackfillStatus: 'matched',
+        snapshotBackfillAttemptedAt: Date.now(),
+        snapshotBackfillMismatchNote: deleteField(),
+        snapshotBackfillComputedGross: deleteField(),
+        snapshotBackfillComputedNet: deleteField(),
+        updatedAt: Date.now(),
+      });
+      await writeAuditLog(this.db, user, {
+        actionType: 'UPDATE',
+        entityType: 'PayrollBatchLine',
+        entityId: lineId,
+        payrollBatchId: batchId,
+        sourceModule: 'hr',
+        afterSummary: `Backfill paid daily snapshots (totals matched); gross ${storedGross.toFixed(2)} net ${storedNet.toFixed(2)}`,
+      });
+      return { netAmount: storedNet, grossAmount: storedGross };
     }
 
     const patch: Record<string, unknown> = {

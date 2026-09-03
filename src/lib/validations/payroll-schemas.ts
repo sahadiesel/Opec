@@ -128,6 +128,11 @@ export const PayrollBatchLineSchema = z.object({
       }),
     )
     .optional(),
+  snapshotBackfillStatus: z.enum(['matched', 'mismatch']).optional(),
+  snapshotBackfillMismatchNote: z.string().optional().nullable(),
+  snapshotBackfillAttemptedAt: z.number().optional(),
+  snapshotBackfillComputedGross: z.number().optional(),
+  snapshotBackfillComputedNet: z.number().optional(),
   deductionsBreakdown: z.record(z.number()).default({}),
   grossAmount: z.number(),
   netAmount: z.number(),

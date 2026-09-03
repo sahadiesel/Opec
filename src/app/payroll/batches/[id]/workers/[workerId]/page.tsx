@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -67,7 +67,9 @@ import {
   buildPayrollLineDailyRowSnapshots,
   hasPositiveTimesheetGrossById,
   isUsableDailyRowSnapshots,
+  lineNeedsFirstOpenSnapshotBackfill,
   loadDailyTimesheetsByIds,
+  SNAPSHOT_BACKFILL_MISMATCH_NOTE,
 } from '@/lib/payroll/payroll-line-daily-snapshots';
 import {
   Select,
@@ -231,6 +233,9 @@ export default function PayrollBatchWorkerLinePage({
   const [timesheets, setTimesheets] = useState<DailyTimesheet[]>([]);
   /** false จนกว่าจะจำเป็นต้องโหลดใบงาน — งวดที่มี snapshot / จ่ายแล้วไม่ควรหมุนคำนวณตอนเปิด */
   const [tsLoading, setTsLoading] = useState(false);
+  const [snapshotBackfillBusy, setSnapshotBackfillBusy] = useState(false);
+  const snapshotBackfillInFlightRef = useRef<string | null>(null);
+  const snapshotBackfillFailedRef = useRef<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [recalcOpen, setRecalcOpen] = useState(false);
   const [recalcBusy, setRecalcBusy] = useState(false);
@@ -425,6 +430,67 @@ export default function PayrollBatchWorkerLinePage({
     setAdjNotes(line.hrLineAdjustments?.notes || '');
   }, [line]);
 
+  /**
+   * งวดจ่ายแล้วที่ยังไม่มี snapshot — ครั้งแรกที่เปิด ลอง reconstruct จากใบงาน
+   * เก็บเฉพาะเมื่อ Gross/Net ตรงยอดที่จ่ายแล้ว · timeout กันค้างบน UI
+   */
+  useEffect(() => {
+    if (!firestore || !currentUser || !line || !batch) return;
+    if (batch.batchType === 'SUPPLEMENTAL') return;
+    const immutable =
+      batch.status === 'PAID' ||
+      batch.status === 'LOCKED' ||
+      batch.status === 'FINANCE_PREPARED' ||
+      batch.status === 'PAYMENT_EXPORTED';
+    if (!immutable) return;
+    if (!lineNeedsFirstOpenSnapshotBackfill(line)) return;
+    const key = `${batch.id}_${workerId}`;
+    if (snapshotBackfillInFlightRef.current === key) return;
+    if (snapshotBackfillFailedRef.current === key) return;
+    snapshotBackfillInFlightRef.current = key;
+    let cancelled = false;
+    setSnapshotBackfillBusy(true);
+    const UI_TIMEOUT_MS = 45_000;
+    const uiTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      snapshotBackfillFailedRef.current = key;
+      if (snapshotBackfillInFlightRef.current === key) {
+        snapshotBackfillInFlightRef.current = null;
+      }
+      setSnapshotBackfillBusy(false);
+      if (lineRef && lineNeedsFirstOpenSnapshotBackfill(line)) {
+        void updateDoc(lineRef as any, {
+          snapshotBackfillStatus: 'mismatch',
+          snapshotBackfillMismatchNote: SNAPSHOT_BACKFILL_MISMATCH_NOTE,
+          snapshotBackfillAttemptedAt: Date.now(),
+          updatedAt: Date.now(),
+        }).catch(() => {});
+      }
+    }, UI_TIMEOUT_MS);
+    void (async () => {
+      try {
+        const svc = new PayrollService(firestore);
+        await svc.tryBackfillMissingPaidLineSnapshotsIfTotalsMatch(
+          batch.id,
+          workerId,
+          currentUser as User,
+        );
+      } catch {
+        snapshotBackfillFailedRef.current = key;
+      } finally {
+        window.clearTimeout(uiTimer);
+        if (snapshotBackfillInFlightRef.current === key) {
+          snapshotBackfillInFlightRef.current = null;
+        }
+        if (!cancelled) setSnapshotBackfillBusy(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(uiTimer);
+    };
+  }, [firestore, currentUser, line, batch, workerId, lineRef]);
+
   useEffect(() => {
     if (!firestore || !line) {
       setTimesheets([]);
@@ -459,8 +525,13 @@ export default function PayrollBatchWorkerLinePage({
     /**
      * งวดจ่ายแล้ว/ล็อกแล้วที่ยังไม่มี dailyRowSnapshots ที่มียอด
      * — เติมได้เฉพาะเมื่อมี timesheetGrossById · ไม่โชว์แถวยอด 0 ทั้งตาราง
+     * ถ้ายังรอ reconstruct ครั้งแรก ให้ค้างโหลดไว้ (effect ด้านบน)
      */
     if (immutable) {
+      if (lineNeedsFirstOpenSnapshotBackfill(line) || snapshotBackfillBusy) {
+        setTimesheets([]);
+        return;
+      }
       if (!hasPositiveTimesheetGrossById(line.timesheetGrossById) || snapshotIds.length === 0) {
         setTimesheets([]);
         setTsLoading(false);
@@ -512,7 +583,7 @@ export default function PayrollBatchWorkerLinePage({
     return () => {
       cancelled = true;
     };
-  }, [firestore, line, workerId, batch?.batchType, batch?.status]);
+  }, [firestore, line, workerId, batch?.batchType, batch?.status, snapshotBackfillBusy]);
 
   /**
    * งวดที่มี timesheetGrossById แต่ยังไม่มี dailyRowSnapshots ที่ใช้ได้
@@ -523,6 +594,7 @@ export default function PayrollBatchWorkerLinePage({
     if (batch?.batchType === 'SUPPLEMENTAL') return;
     if (isUsableDailyRowSnapshots(line.dailyRowSnapshots, line.grossAmount)) return;
     if (!hasPositiveTimesheetGrossById(line.timesheetGrossById)) {
+      if (snapshotBackfillBusy || lineNeedsFirstOpenSnapshotBackfill(line)) return;
       /** ล้าง snapshot ยอด 0 ที่เคยเขียนผิด */
       if ((line.dailyRowSnapshots?.length ?? 0) > 0) {
         void updateDoc(lineRef as any, { dailyRowSnapshots: [], updatedAt: Date.now() }).catch(() => {});
@@ -546,7 +618,7 @@ export default function PayrollBatchWorkerLinePage({
     return () => {
       cancelled = true;
     };
-  }, [firestore, line, lineRef, timesheets, tsLoading, batch?.batchType]);
+  }, [firestore, line, lineRef, timesheets, tsLoading, batch?.batchType, snapshotBackfillBusy]);
 
   type DailyRowView = {
     id: string;
@@ -1241,19 +1313,48 @@ export default function PayrollBatchWorkerLinePage({
             </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
-            {tsLoading && dailyRows.length === 0 ? (
+            {snapshotBackfillBusy || (tsLoading && dailyRows.length === 0) ? (
               <div className="p-8 flex flex-col items-center justify-center gap-2 text-muted-foreground">
                 <Loader2 className="h-8 w-8 animate-spin" />
-                <p className="text-sm">กำลังโหลดรายวันจากใบงานที่บันทึกในงวด…</p>
+                <p className="text-sm">
+                  {snapshotBackfillBusy
+                    ? 'กำลังเทียบยอดจากใบงานกับตัวเลขที่จ่ายแล้ว เพื่อสร้าง snapshot…'
+                    : 'กำลังโหลดรายวันจากใบงานที่บันทึกในงวด…'}
+                </p>
               </div>
             ) : dailyRows.length === 0 ? (
-              <p className="p-6 text-sm text-muted-foreground italic">
-                {isSupplementalBatch
-                  ? 'งวดตกเบิก — ไม่มีค่าแรงรายวันเดือนปัจจุบันในงวดนี้ · ดูรายการที่ส่วน「รายได้ย้อนหลัง」ด้านล่าง'
-                  : batch?.status === 'PAID' || batch?.status === 'LOCKED'
-                    ? 'งวดนี้จ่าย/ล็อกแล้ว — ไม่มียอดรายวันเก็บในงวด (ข้อมูลเก่าก่อนมี snapshot) · ยอด Gross/Net ด้านบนคือยอดที่จ่ายจริง ไม่ต้องคำนวณใหม่'
-                    : 'ไม่พบรายการ timesheet อ้างอิง (อาจถูกลบหลังล็อก)'}
-              </p>
+              <div className="p-6 space-y-2 text-sm text-muted-foreground">
+                {isSupplementalBatch ? (
+                  <p className="italic">
+                    งวดตกเบิก — ไม่มีค่าแรงรายวันเดือนปัจจุบันในงวดนี้ · ดูรายการที่ส่วน「รายได้ย้อนหลัง」ด้านล่าง
+                  </p>
+                ) : line?.snapshotBackfillStatus === 'mismatch' ? (
+                  <>
+                    <p className="not-italic text-amber-900">
+                      {line.snapshotBackfillMismatchNote?.trim() || SNAPSHOT_BACKFILL_MISMATCH_NOTE}
+                    </p>
+                    <p className="italic">
+                      ไม่ได้บันทึก snapshot รายวัน · ยอด Gross/Net ด้านบนคือยอดที่จ่ายจริง ไม่ได้ถูกแก้
+                      {Number.isFinite(Number(line.snapshotBackfillComputedGross)) ||
+                      Number.isFinite(Number(line.snapshotBackfillComputedNet)) ? (
+                        <>
+                          {' '}
+                          (คำนวณใหม่ Gross ฿
+                          {Number(line.snapshotBackfillComputedGross || 0).toLocaleString()} · Net ฿
+                          {Number(line.snapshotBackfillComputedNet || 0).toLocaleString()})
+                        </>
+                      ) : null}
+                    </p>
+                  </>
+                ) : batch?.status === 'PAID' || batch?.status === 'LOCKED' ? (
+                  <p className="italic">
+                    งวดนี้จ่าย/ล็อกแล้ว — ไม่มียอดรายวันเก็บในงวด (ข้อมูลเก่าก่อนมี snapshot) · ยอด Gross/Net
+                    ด้านบนคือยอดที่จ่ายจริง ไม่ต้องคำนวณใหม่
+                  </p>
+                ) : (
+                  <p className="italic">ไม่พบรายการ timesheet อ้างอิง (อาจถูกลบหลังล็อก)</p>
+                )}
+              </div>
             ) : (
               <Table className="[&_th]:h-10 [&_th]:px-3 [&_th]:py-2 [&_td]:px-3 [&_td]:py-2.5 [&_td]:align-middle">
                 <TableHeader>

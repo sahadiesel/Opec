@@ -14,7 +14,7 @@ interface PageGuidanceProps {
 
 function GuidanceTipsList({ tips }: { tips: string[] }) {
   return (
-    <div className="text-sm space-y-1.5">
+    <div className="text-xs space-y-1.5 leading-snug">
       {tips.map((tip, i) => (
         <p key={i} className="flex items-start gap-2">
           <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-blue-400 shrink-0" />
@@ -34,13 +34,18 @@ export function PageGuidance({ title = 'คำแนะนำการใช้�
     return (
       <Popover>
         <PopoverTrigger asChild>
-          <Button type="button" variant="outline" size="sm" className="gap-1.5 shrink-0">
-            <Info className="h-4 w-4 text-blue-600" />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground shrink-0"
+          >
+            <Info className="h-3.5 w-3.5 text-blue-600" />
             {title}
           </Button>
         </PopoverTrigger>
-        <PopoverContent align="end" className="w-[min(28rem,92vw)] max-h-[min(70vh,32rem)] overflow-y-auto p-4">
-          <p className="font-bold text-base text-foreground mb-2">{title}</p>
+        <PopoverContent align="start" className="w-[min(28rem,92vw)] max-h-[min(70vh,32rem)] overflow-y-auto p-3 text-xs">
+          <p className="font-semibold text-sm text-foreground mb-1.5">{title}</p>
           <GuidanceTipsList tips={tips} />
         </PopoverContent>
       </Popover>

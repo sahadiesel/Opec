@@ -47,6 +47,8 @@ On **generate** (`generatePayrollBatch`), always persist `timesheetGrossById` + 
 
 Worker daily table uses `dailyRowSnapshots` when present — **do not** query `daily_timesheets` on page open in that case.
 
+Legacy PAID/LOCKED lines with no snapshot: on first open, reconstruct from timesheets. Persist `timesheetGrossById` + `dailyRowSnapshots` **only if** computed Gross/Net match the stored paid amounts. If they differ, do **not** persist — write mismatch note (`อาจมีการเปลี่ยนแปลงอย่างใดอย่างหนึ่งที่ทำให้การ generate ใหม่ไม่เท่ากับตัวเลขเดิม`). Never overwrite paid Gross/Net.
+
 ## Payroll remob / multi-cycle month (LOCKED)
 
 Ops only records attendance (which days worked / remob). Payroll must pay **all unpaid recorded work days in the calendar month**, not only the latest mob cycle.

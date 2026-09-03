@@ -73,6 +73,32 @@ export function hasPositiveTimesheetGrossById(
   return Object.values(timesheetGrossById).some((n) => Number(n) > 0.005);
 }
 
+/** ข้อความเมื่อ reconstruct จากใบงานปัจจุบันไม่เท่ากับยอดที่จ่าย/ล็อกแล้ว */
+export const SNAPSHOT_BACKFILL_MISMATCH_NOTE =
+  'อาจมีการเปลี่ยนแปลงอย่างใดอย่างหนึ่งที่ทำให้การ generate ใหม่ไม่เท่ากับตัวเลขเดิม';
+
+export function payrollBahtAmountsMatch(a: number, b: number): boolean {
+  const x = Math.round(Number(a) * 100) / 100;
+  const y = Math.round(Number(b) * 100) / 100;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  return Math.abs(x - y) <= 0.02;
+}
+
+/** งวดเก่าที่ยังไม่มียอดรายวัน — ลอง reconstruct ครั้งแรกที่เปิด (ถ้าตรงยอดที่จ่ายแล้วจึงเก็บ) */
+export function lineNeedsFirstOpenSnapshotBackfill(line: {
+  dailyRowSnapshots?: readonly PayrollBatchLineDailyRowSnapshot[] | null;
+  grossAmount?: number | null;
+  timesheetGrossById?: Record<string, number> | null;
+  snapshotBackfillStatus?: string | null;
+} | null | undefined): boolean {
+  if (!line) return false;
+  if (line.snapshotBackfillStatus === 'mismatch') return false;
+  if (isUsableDailyRowSnapshots(line.dailyRowSnapshots, line.grossAmount)) return false;
+  if (hasPositiveTimesheetGrossById(line.timesheetGrossById)) return false;
+  const g = Number(line.grossAmount);
+  return Number.isFinite(g) && g > 0.005;
+}
+
 /** โหลดใบงานตาม id อย่างเดียว — ใช้ซ่อม dailyRowSnapshots ของงวดเก่าโดยไม่สแกนทั้งเดือน */
 export async function loadDailyTimesheetsByIds(
   db: Firestore,

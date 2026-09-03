@@ -426,19 +426,30 @@ function PayrollBatchesPageContent() {
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="space-y-6 max-w-[1600px] mx-auto">
-        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-          <div className="flex flex-col gap-2 min-w-0">
+      <div className="space-y-4 max-w-[1600px] mx-auto text-sm">
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+          <div className="flex flex-col gap-1.5 min-w-0">
             <PayrollScopeTag scope="worker" showHint={false} />
-            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-              <Coins className="h-8 w-8 shrink-0" /> งวดจ่ายลูกจ้าง (Payroll Batches)
-            </h1>
-            <p className="text-muted-foreground text-lg italic">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-bold tracking-tight text-primary flex items-center gap-2">
+                <Coins className="h-5 w-5 shrink-0" /> งวดจ่ายลูกจ้าง (Payroll Batches)
+              </h1>
+              <PageGuidance
+                compact
+                title="นโยบายการเบิกจ่าย"
+                tips={[
+                  'รายการที่เข้า Payroll Batch ต้องเป็นใบงานรายวันที่ระบบตั้ง readyForPayroll แล้ว — เกิดหลังล็อกงวด/ปิดงวดที่เอกสารสรุปลงเวลารายเดือน (PO + เดือน) ซึ่งจะส่งต่อไปยังพอร์ทัลลูกค้า และเป็นฐานทำใบแจ้งหนี้จากสรุปรายเดือน (แทนการอ้าง Wave เดิม)',
+                  'ลำดับการอนุมัติภายใน: ฝ่ายเงินเดือนส่งขออนุมัติ → ผู้จัดการ HR / ผู้จัดการปฏิบัติการกดอนุมัติจ่ายเงินครั้งเดียว → สถานะ FINANCE_PREPARED (คิวบัญชีรอจ่าย) → บัญชีกด «ยืนยันจ่าย» ในหน้ารายละเอียด batch พร้อมเลือกบัญชีธนาคารตัดจ่าย — จึงจะมีสถานะ PAID + ลง cashbook',
+                  'ข้อมูลใน Batch จะถูก Snapshot ไว้เพื่อป้องกันการเปลี่ยนแปลงย้อนหลังในประวัติคนงาน',
+                ]}
+              />
+            </div>
+            <p className="text-muted-foreground text-xs leading-snug max-w-3xl">
               <strong>Worker Payroll</strong> — ดึงจากใบงานรายวันที่ระบบตั้ง <strong>readyForPayroll</strong> แล้ว ภายในรอบที่เลือก โดยปกติเกิดหลัง{' '}
               <strong>ล็อกงวดหรือปิดงวดที่เอกสารสรุปลงเวลารายเดือน (PO + เดือน)</strong> — ไม่ต้องรอผู้จัดการอนุมัติ timesheet รอบจ่ายรายเดือนจะเปิดเมื่อมีงวดสรุปที่ปิดแล้วอย่างน้อยหนึ่งฉบับในเดือนนั้น
             </p>
             {accountingPayoutQueueOnly && (
-              <p className="text-sm text-blue-800 bg-blue-50/80 border border-blue-200 rounded-md px-3 py-2 max-w-3xl">
+              <p className="text-xs text-blue-800 bg-blue-50/80 border border-blue-200 rounded-md px-2.5 py-1.5 max-w-3xl leading-snug">
                 <strong>มุมมองบัญชี (เฉพาะทำจ่าย):</strong> แสดงเฉพาะงวดที่ <strong>ส่งถึงฝ่ายบัญชีแล้ว (FINANCE_PREPARED ขึ้นไป)</strong> —
                 หลังผู้จัดการ HR / ผู้จัดการปฏิบัติการกดอนุมัติจ่ายเงินที่ศูนย์อนุมัติ (หรือหน้ารายละเอียด batch) ระบบจะตั้งสถานะเป็น FINANCE_PREPARED โดยตรง — ไม่มีขั้นส่งบัญชีแยก
               </p>
@@ -449,10 +460,11 @@ function PayrollBatchesPageContent() {
           <Dialog open={isGenerateOpen} onOpenChange={setIsGenerateOpen}>
             <DialogTrigger asChild>
               <Button
-                className="gap-2 h-11 px-6 bg-primary shadow-md font-bold"
+                size="sm"
+                className="gap-1.5 h-9 px-4 bg-primary shadow-sm font-semibold"
                 disabled={!canCreateWorkerPayroll || !canPrepareWorkerPayroll}
               >
-                <Calculator className="h-5 w-5" /> สร้างรายการจ่ายใหม่ (Generate Batch)
+                <Calculator className="h-4 w-4" /> สร้างรายการจ่ายใหม่ (Generate Batch)
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl sm:max-w-2xl max-h-[90vh] flex flex-col gap-0 p-0 overflow-hidden">
@@ -763,15 +775,6 @@ function PayrollBatchesPageContent() {
             </Alert>
           )}
 
-        <PageGuidance
-          title="นโยบายการเบิกจ่าย (Disbursement Policy)"
-          tips={[
-            'รายการที่เข้า Payroll Batch ต้องเป็นใบงานรายวันที่ระบบตั้ง readyForPayroll แล้ว — เกิดหลังล็อกงวด/ปิดงวดที่เอกสารสรุปลงเวลารายเดือน (PO + เดือน) ซึ่งจะส่งต่อไปยังพอร์ทัลลูกค้า และเป็นฐานทำใบแจ้งหนี้จากสรุปรายเดือน (แทนการอ้าง Wave เดิม)',
-            "ลำดับการอนุมัติภายใน: ฝ่ายเงินเดือนส่งขออนุมัติ → ผู้จัดการ HR / ผู้จัดการปฏิบัติการกดอนุมัติจ่ายเงินครั้งเดียว → สถานะ FINANCE_PREPARED (คิวบัญชีรอจ่าย) → บัญชีกด «ยืนยันจ่าย» ในหน้ารายละเอียด batch พร้อมเลือกบัญชีธนาคารตัดจ่าย — จึงจะมีสถานะ PAID + ลง cashbook",
-            "ข้อมูลใน Batch จะถูก Snapshot ไว้เพื่อป้องกันการเปลี่ยนแปลงย้อนหลังในประวัติคนงาน",
-          ]}
-        />
-
         <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && !adminBusy && setDeleteTarget(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
@@ -826,55 +829,55 @@ function PayrollBatchesPageContent() {
             {isBatchesLoading ? (
               <div className="py-20 text-center animate-pulse">กำลังประมวลผลข้อมูล...</div>
             ) : (
-              <Table>
+              <Table className="text-xs [&_th]:h-8 [&_th]:px-3 [&_th]:py-1.5 [&_td]:px-3 [&_td]:py-1.5 [&_td]:align-middle">
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="pl-6 py-4 font-bold">รหัสชุดจ่าย (Batch ID)</TableHead>
-                    <TableHead className="font-bold">ขอบเขต (Scope)</TableHead>
-                    <TableHead className="font-bold text-center">จำนวนคน</TableHead>
-                    <TableHead className="font-bold text-right">ยอดจ่ายสุทธิ (Net)</TableHead>
-                    <TableHead className="font-bold">สถานะ</TableHead>
-                    <TableHead className="font-bold">วันที่สร้าง</TableHead>
-                    <TableHead className="text-right pr-6">จัดการ</TableHead>
+                    <TableHead className="pl-4 font-semibold">รหัสชุดจ่าย (Batch ID)</TableHead>
+                    <TableHead className="font-semibold">ขอบเขต (Scope)</TableHead>
+                    <TableHead className="font-semibold text-center">จำนวนคน</TableHead>
+                    <TableHead className="font-semibold text-right">ยอดจ่ายสุทธิ (Net)</TableHead>
+                    <TableHead className="font-semibold">สถานะ</TableHead>
+                    <TableHead className="font-semibold">วันที่สร้าง</TableHead>
+                    <TableHead className="text-right pr-4 font-semibold">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {visibleBatches.map((b) => (
-                    <TableRow key={b.id} className="hover:bg-muted/30 group transition-all cursor-pointer" onClick={() => router.push(`/payroll/batches/${b.id}`)}>
-                      <TableCell className="pl-6 py-4 font-mono text-xs font-bold text-primary">{b.id}</TableCell>
-                      <TableCell className="capitalize text-xs font-medium">{b.workModeScope}</TableCell>
-                      <TableCell className="text-center font-bold">{b.totalWorkers} คน</TableCell>
-                      <TableCell className="text-right font-black text-primary text-lg">฿ {b.netAmount.toLocaleString()}</TableCell>
-                      <TableCell>{getStatusBadge(b.status)}</TableCell>
-                      <TableCell className="text-[10px] text-muted-foreground">{formatDateThaiBE(b.createdAt)}</TableCell>
+                    <TableRow key={b.id} className="hover:bg-muted/30 group transition-colors cursor-pointer" onClick={() => router.push(`/payroll/batches/${b.id}`)}>
+                      <TableCell className="pl-4 font-mono text-[11px] font-semibold text-primary">{b.id}</TableCell>
+                      <TableCell className="capitalize text-[11px] font-medium">{b.workModeScope}</TableCell>
+                      <TableCell className="text-center font-semibold tabular-nums">{b.totalWorkers} คน</TableCell>
+                      <TableCell className="text-right font-bold text-primary tabular-nums">฿ {b.netAmount.toLocaleString()}</TableCell>
+                      <TableCell className="[&_.badge]:text-[10px]">{getStatusBadge(b.status)}</TableCell>
+                      <TableCell className="text-[10px] text-muted-foreground whitespace-nowrap">{formatDateThaiBE(b.createdAt)}</TableCell>
                       <TableCell
-                        className="text-right pr-4"
+                        className="text-right pr-3"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="flex items-center justify-end gap-1 flex-wrap">
+                        <div className="flex items-center justify-end gap-0.5 flex-wrap">
                           {isAdmin && !adminBatchActionsBlocked(b.status) && (
                             <>
                               <Button
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                className="h-8 px-2 text-destructive border-destructive/30 hover:bg-destructive/10"
+                                className="h-7 px-1.5 text-destructive border-destructive/30 hover:bg-destructive/10"
                                 title="ลบชุดจ่าย (Admin)"
                                 onClick={() => setDeleteTarget(b)}
                               >
-                                <Trash2 className="h-3.5 w-3.5 shrink-0" />
-                                <span className="hidden sm:inline ml-1">ลบ</span>
+                                <Trash2 className="h-3 w-3 shrink-0" />
+                                <span className="hidden sm:inline ml-1 text-[11px]">ลบ</span>
                               </Button>
                               <Button
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                className="h-8 px-2"
+                                className="h-7 px-1.5"
                                 title="สร้างชุดจ่ายใหม่ (Regenerate)"
                                 onClick={() => setRegenTarget(b)}
                               >
-                                <RefreshCw className="h-3.5 w-3.5 shrink-0" />
-                                <span className="hidden sm:inline ml-1">สร้างใหม่</span>
+                                <RefreshCw className="h-3 w-3 shrink-0" />
+                                <span className="hidden sm:inline ml-1 text-[11px]">สร้างใหม่</span>
                               </Button>
                             </>
                           )}
@@ -882,11 +885,11 @@ function PayrollBatchesPageContent() {
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="group-hover:text-primary shrink-0"
+                            className="h-7 w-7 group-hover:text-primary shrink-0"
                             title="ดูรายละเอียด"
                             onClick={() => router.push(`/payroll/batches/${b.id}`)}
                           >
-                            <ChevronRight className="h-5 w-5" />
+                            <ChevronRight className="h-4 w-4" />
                           </Button>
                         </div>
                       </TableCell>
@@ -894,7 +897,7 @@ function PayrollBatchesPageContent() {
                   ))}
                   {visibleBatches.length === 0 && !isBatchesLoading && (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
+                      <TableCell colSpan={7} className="text-center py-12 text-muted-foreground italic text-xs">
                         {accountingPayoutQueueOnly
                           ? 'ยังไม่มีชุดจ่ายที่อนุมัติแล้ว (รอ HR/ผู้จัดการอนุมัติ batch) — หรือรายการยังไม่ถึงขั้น HR_APPROVED'
                           : 'ยังไม่มีประวัติการจ่ายเงิน'}
