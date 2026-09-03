@@ -1,8 +1,8 @@
 /**
  * ประมาณการบาทตอนแก้ชม. M1/D1/SB — ใช้โชว์ใน UI (Mob / จบงาน D1 / แก้รายเดือน)
  *
- * **ฝั่งจ่าย (payroll) STANDBY:** เสมอ baseH × ชม. × standbyMult
- *   baseH จากแพ็กวันทำงาน (ออฟชอร์ 12 = 8 ปกติ + 4 OT) · ตัวอย่าง 1400 → SB 8ชม. = 400
+ * **ฝั่งจ่าย (payroll) STANDBY:** `round2( D × standbyMult × (ชม./ชม.แพ็ก) )`
+ *   ออฟชอร์ 12 · SB 8 ชม. = (D/2/12)×8 · ตัวอย่าง 4300 → 1,433.33 · 1400 → 466.67
  * **ฝั่งบิล (billing) STANDBY:** ตามเรท SB ในสัญญาเมื่อมี · ไม่ผูกสูตรจ่าย
  *
  * M1/D1 trip: เรทต่อทริปจากสัญญา (หรือจำนวนเงินที่พิมพ์ทับ) — ชม.ไม่กระทบยอดทริป
@@ -49,7 +49,7 @@ function previewStandbyBaht(
 ): number {
   const h = Math.max(0, Math.min(24, hours));
 
-  /** ฝั่งจ่าย: ห้ามใช้ครึ่งแพ็กเต็มวัน — ใช้ฐานชม.ปกติ × ชม. × ตัวคูณเสมอ */
+  /** ฝั่งจ่าย: สัดส่วนแพ็ก × ตัวคูณ — (D/2/ชม.แพ็ก)×ชม. เมื่อ standbyMult=0.5 */
   if (side === 'payroll') {
     const baseWorking =
       workingDayRate > 0
@@ -58,8 +58,8 @@ function previewStandbyBaht(
           ? fullDaySbRate / Math.max(1e-9, standbyMult)
           : 0;
     if (baseWorking <= 0) return 0;
-    const hourly = derivePackageNormalHourlyRate(baseWorking, packageHours, otMult);
-    return roundMoney(hourly * standbyMult * h);
+    const fraction = Math.min(1, h / Math.max(1, packageHours));
+    return roundMoney(baseWorking * standbyMult * fraction);
   }
 
   const full =

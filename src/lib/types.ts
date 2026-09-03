@@ -2017,6 +2017,63 @@ export interface RentalContract {
   lastEditedByName?: string;
 }
 
+/**
+ * สัญญาเช่าที่ OPEC เป็นผู้ให้เช่า (เครื่องมือ/อุปกรณ์) — collection `equipment_rental_contracts`
+ * ต่างจาก {@link RentalContract} ที่ OPEC เป็นผู้เช่า
+ */
+export type EquipmentRentalContractStatus =
+  | 'DRAFT'
+  | 'ACTIVE'
+  | 'CANCELLED'
+  | 'EXPIRED';
+
+export interface EquipmentRentalLineItem {
+  id: string;
+  /** ชื่อเครื่องมือ / อุปกรณ์ */
+  description: string;
+  quantity: number;
+  /** ค่าเช่าต่อหน่วยต่อเดือน (บาท ก่อน VAT) */
+  unitPrice: number;
+  unit?: string;
+  /** quantity × unitPrice */
+  amount: number;
+}
+
+export interface EquipmentRentalContract {
+  id: string;
+  contractNo: string;
+  status: EquipmentRentalContractStatus;
+  /** ลูกค้าผู้เช่า */
+  customerId: string;
+  customerNameSnapshot: string;
+  /** ชื่อสัญญา / หัวข้อ */
+  title: string;
+  /** รายการเครื่องมือ-อุปกรณ์ที่ให้เช่า */
+  lineItems: EquipmentRentalLineItem[];
+  /** รวมค่าเช่าต่อเดือนก่อน VAT (= sum line amounts) */
+  monthlyRentAmount: number;
+  vatRatePercent: number;
+  startDate: string;
+  endDate: string;
+  /**
+   * วันที่กำหนดวางบิลของแต่ละเดือน (1–31)
+   * — เมื่อถึงวันนี้ระบบสร้างใบแจ้งหนี้ (commercial invoice) อัตโนมัติ
+   */
+  billingDayOfMonth: number;
+  notes?: string;
+  createdAt: number;
+  createdByUid: string;
+  createdByName: string;
+  updatedAt: number;
+  activatedAt?: number;
+  activatedByUid?: string;
+  activatedByName?: string;
+  cancelledAt?: number;
+  cancelledByUid?: string;
+  cancelledByName?: string;
+  cancellationReason?: string;
+}
+
 /** ค่าเช่ารายเดือนที่รอฝ่ายบัญชีทำจ่าย — collection `rental_payables` */
 export interface RentalPayable {
   id: string;
@@ -2219,6 +2276,10 @@ export interface CommercialInvoice {
   contractId?: string;
   poId: string;
   waveId: string;
+  /** อ้างสัญญาเช่าอุปกรณ์ที่ OPEC เป็นผู้ให้เช่า */
+  equipmentRentalContractId?: string;
+  /** เดือนที่วางบิลตามสัญญาเช่า (YYYY-MM) */
+  equipmentRentalPeriodMonth?: string;
   /** อ้าง wave_month_timesheet_reviews — กันสร้างซ้ำเมื่ออนุมัติรอบเดือน (ต่อ wave) */
   sourceWaveMonthReviewId?: string;
   /** อ้าง po_month_timesheet_reviews — งวดอนุมัติราย PO+เดือน (รวมทุก wave) */
@@ -2725,6 +2786,18 @@ export interface PayslipWorkDaySplit {
   overflowBeyond12Amount?: number;
 }
 
+/** แยกค่าแรง work_day ตามตำแหน่ง — ผลรวมทุกแถวเท่า work_day_package */
+export interface PayslipWorkDayPositionSplit extends PayslipWorkDaySplit {
+  positionId: string;
+  positionNameSnapshot: string;
+  workMode?: string;
+  /**
+   * อัตราแพ็กต่อวันจริง (เช่น 1800 / 2600) — ใช้โชว์บนสลิป
+   * แยกกลุ่มต่ออัตรา ห้ามเฉลี่ยข้ามอัตรา
+   */
+  packageRatePerDay?: number;
+}
+
 /** ปรับยอดรายคนใน batch (เงินพิเศษ / หักเพิ่ม / ภาษี ณ ที่จ่าย) — คำนวณ net ใหม่ตาม HR settings */
 /**
  * แยกยอดเงินได้ตาม PO (และลูกค้า) ในงวดเดียว — ใช้แสดงสลิปใบเดียวหลายอัตรา/โครงการ (เฟส 3 payroll)
@@ -2738,6 +2811,8 @@ export interface PayrollBatchIncomeSegment {
   eventBreakdown: Record<string, number>;
   earningsBreakdown: Record<string, number>;
   payslipWorkDaySplit?: PayslipWorkDaySplit | null;
+  /** แยกค่าแรงตามตำแหน่งใน PO นี้ — ผลรวมเท่า work_day_package ของ segment */
+  payslipWorkDayPositionSplits?: PayslipWorkDayPositionSplit[];
 }
 
 /** รายได้จากงวดที่ล็อคแล้ว — จ่ายเพิ่มในงวดถัดไป (เช่น OT ที่พลาดใน payroll เดือนก่อน) */
@@ -2779,6 +2854,9 @@ export interface PayrollBatchLineDailyRowSnapshot {
   date: string;
   eventType: RateConditionEventType | string;
   workMode?: JobMode | string;
+  /** ตำแหน่ง ณ วันนั้น — โชว์ Offshore - Fitter Foreman */
+  positionId?: string;
+  positionNameSnapshot?: string;
   normalHours: number;
   ot15Hours?: number;
   ot20Hours?: number;
@@ -2834,6 +2912,8 @@ export interface PayrollBatchLine {
   incomeSegments?: PayrollBatchIncomeSegment[];
   /** เมื่อมี PO เดียว — แยกค่าแรงวันปกติ/วันหยุดสำหรับสลิป */
   payslipWorkDaySplit?: PayslipWorkDaySplit | null;
+  /** แยกค่าแรงตามตำแหน่ง (หลายตำแหน่งในเดือนเดียวกัน) — ผลรวมเท่า work_day_package */
+  payslipWorkDayPositionSplits?: PayslipWorkDayPositionSplit[];
   /** บัญชีตัดจ่ายแล้ว — ref cashbook ของชุดแถวนี้ (แบ่งจ่ายหลายบัญชีได้) */
   financePayoutCashbookEntryId?: string;
   financePayoutBankAccountId?: string;

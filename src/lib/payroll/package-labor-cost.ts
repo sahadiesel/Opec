@@ -111,12 +111,16 @@ export interface StandbyDayPackageCostInput {
 /**
  * ฝั่งจ่ายลูกจ้าง (payroll cost) — แยกจากบิลลูกค้า (สัญญา/matrix)
  *
- * **standby_day:** ฐานชม.ปกติจากแพ็ก × ชม.ที่ลง × standbyMult
- * - ออฟชอร์แพ็ก 12 ชม. = 8 ปกติ + 4 OT×otMult → baseH = D / (8 + 4×ot)
- * - ตัวอย่าง D=1,400 · ot=1.5 → baseH=100 · SB 8 ชม. = 100×8×0.5 = **400**
- * - ห้ามใช้ D×0.5 (ครึ่งแพ็กเต็มรวม OT) และห้ามใช้ D×(ชม./12)×0.5
+ * **standby_day (LOCKED — ยืนยันกับเจ้าของผลิตภัณฑ์):**
+ *   `round2( D × standbyMult × (ชม.ที่ลง / ชม.แพ็ก) )`
+ *   - ออฟชอร์แพ็ก 12: SB 8 ชม. = D×0.5×(8/12) = **(D/2/12)×8**
+ *   - ตัวอย่าง D=4,300 → SB 8 ชม. = **1,433.33**
+ *   - ตัวอย่าง D=1,400 → SB 8 ชม. = **466.67**
+ *   - ปัดทศนิยม **2 ตำแหน่ง** เท่านั้นตอนคิดยอด
+ *   - ถ้าสัญญาให้เรท SB ชัดเจน → ใช้สัดส่วนเรทนั้นเป็น `standbyMult` (ผ่าน caller) ไม่เปลี่ยนสูตรสัดส่วนชม.
+ *   - ห้ามใช้ baseH=D/14 แล้วคูณชม.×0.5 (จะได้ 1,228.57 จาก 4,300 — ผิดกฎนี้)
  *
- * **mobilization_day / demobilization_day:** แพ็ก × (ชม.อ้างอิง/ชม.แพ็ก) × standbyMult (ทริป)
+ * **mobilization_day / demobilization_day:** แพ็ก × (ชม.อ้างอิง/ชม.แพ็ก) × standbyMult (ทริป) — สูตรสัดส่วนเดียวกับ SB
  */
 export function computeStandbyDayCostFromPackage(input: StandbyDayPackageCostInput): number {
   const pkg = Math.max(0, input.costPackagePerDay);
@@ -131,13 +135,9 @@ export function computeStandbyDayCostFromPackage(input: StandbyDayPackageCostInp
     isTrip ? stated : STANDARD_STANDBY_PAYROLL_HOURS,
   );
 
-  if (isTrip) {
-    const fraction = Math.min(1, hours / stated);
-    return roundMoney(pkg * fraction * mult);
-  }
-
-  const hourly = derivePackageNormalHourlyRate(pkg, stated, input.otAfterShiftMultiplier);
-  return roundMoney(hourly * hours * mult);
+  /** SB / M1 / D1 ฝั่งจ่าย: สัดส่วนแพ็ก × ตัวคูณ — ไม่ใช้ baseH จาก D/14 */
+  const fraction = Math.min(1, hours / stated);
+  return roundMoney(pkg * fraction * mult);
 }
 
 /** ปฏิทิน + ตัวคูณวันหยุดสำหรับ payroll ลูกจ้าง — จาก HR Settings */

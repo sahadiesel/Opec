@@ -62,6 +62,16 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
     collectionName: 'rental_contracts',
     fieldName: 'contractNo',
   },
+  /** OPEC เป็นผู้ให้เช่าเครื่องมือ/อุปกรณ์ */
+  equipment_rental_contract: {
+    label: 'Equipment rental contract (OPEC lessor)',
+    prefix: 'ERC-',
+    padding: 5,
+    dept: 'sales',
+    resetPolicy: 'yearly',
+    collectionName: 'equipment_rental_contracts',
+    fieldName: 'contractNo',
+  },
   cashbook_entry: { label: 'Cashbook Entry', prefix: 'CB-', padding: 6, dept: 'accounting', resetPolicy: 'monthly', collectionName: 'cashbook_entries', fieldName: 'entryNo' },
   /** รับ/จ่ายหน้างาน — ไม่ลงสมุด cashbook หลัก (ยอดกองเงินสดย่อยเท่านั้น) */
   petty_cash_entry: {

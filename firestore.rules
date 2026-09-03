@@ -64,6 +64,11 @@ service cloud.firestore {
     function isAccountingManagerOrAdmin() {
       return isInternalUser() && userRole() in ['system_admin', 'accounting_manager'];
     }
+    /** สัญญาเช่าอุปกรณ์ (OPEC ผู้ให้เช่า) — Admin / Sales Manager / Sales */
+    function canManageEquipmentRentalContracts() {
+      return isAdmin()
+        || (isInternalUser() && userRole() in ['system_admin', 'sales_manager', 'sales_officer', 'sales']);
+    }
     /** เห็นเลขบัญชีและยอดคงเหลือ — ops ใช้ Petty Cash */
     function canReadBankAccountSensitiveDetails() {
       return isExecutiveViewer() || (isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'operations_manager']);
@@ -321,6 +326,12 @@ service cloud.firestore {
       allow create: if blockExecutiveWrite() && rs0();
       allow update: if blockExecutiveWrite() && (rs0() || rs0());
       allow delete: if blockExecutiveWrite() && rs0();
+    }
+    match /equipment_rental_contracts/{id} {
+      allow read: if canManageEquipmentRentalContracts()
+        || rs1();
+      allow create, update: if blockExecutiveWrite() && canManageEquipmentRentalContracts();
+      allow delete: if isAdmin() || (isInternalUser() && userRole() == 'sales_manager');
     }
     match /main_contracts/{contractId}/position_rates/{rateId} {
       allow read:   if rs1();
@@ -976,6 +987,7 @@ service cloud.firestore {
     match /customers/{id} { allow read: if isInternalUser(); }
     match /po_active_bundles/{id} { allow read: if isInternalUser(); }
     match /main_contracts/{id} { allow read: if isInternalUser(); }
+    match /equipment_rental_contracts/{id} { allow read: if isInternalUser(); }
     match /main_contracts/{contractId}/position_rates/{rateId} { allow read: if isInternalUser(); }
     match /main_contracts/{contractId}/{document=**} { allow read: if isInternalUser(); }
     match /quotations/{id} { allow read: if isInternalUser(); }

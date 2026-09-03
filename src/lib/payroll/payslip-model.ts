@@ -6,6 +6,7 @@ import type {
   PayrollBatchLine,
   PayrollLineD8Snapshot,
   PayrollRunStatus,
+  PayslipWorkDayPositionSplit,
   PayslipWorkDaySplit,
   DailyTimesheet,
 } from '@/lib/types';
@@ -16,9 +17,11 @@ import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-work
 import { resolvePoLineForPayrollTimesheet } from '@/lib/payroll/timesheet-labor-base-cost';
 import { isPayrollCostStandbyPackageEvent, payrollStandbyPackageEventUnits } from '@/lib/payroll/package-labor-cost';
 import {
+  computeWorkDayPackagePayslipPositionSplits,
   computeWorkDayPackagePayslipSplit,
   payslipWorkDaySplitTotal,
   pushWorkDayPayslipIncomeLines,
+  resolvePositionDisplayName,
 } from '@/lib/payroll/work-day-payslip-split';
 import type { SingleTimesheetGrossContext } from '@/lib/payroll/single-timesheet-gross';
 
@@ -43,13 +46,14 @@ export function isWorkerPayrollBatchSnapshotFrozen(
   return s === 'PAID' || s === 'LOCKED';
 }
 
-/** ลำดับเวลางวด — ใช้กรอง «ยอดที่ชำระไปแล้ว» ให้เป็นงวดก่อนหน้าจริง ๆ */
+/** ลำดับเวลางวด — ใช้กรอง «ยอดที่ชำระไปแล้ว」ตามลำดับจ่ายจริง (ไม่ใช่แค่วันสร้างงวด) */
 export function payrollBatchChronologyMs(batch: PayrollBatch): number {
   const n =
-    batch.createdAt ??
+    batch.financeApprovedAt ??
     batch.financePreparedAt ??
     batch.hrApprovedAt ??
     batch.lockedAt ??
+    batch.createdAt ??
     0;
   return Number.isFinite(n) ? n : 0;
 }
@@ -118,7 +122,10 @@ export type PayslipViewModel = {
   leaveSummaryLines?: PayslipLeaveSummaryLine[];
   /** true ถ้ายอดรวมรายการกับ snapshot คลาดกันเล็กน้อย (ปัดเศษ) */
   roundingNote?: boolean;
-  /** ข้อมูลสำหรับงวดตกเบิก (Supplemental Run) */
+  /**
+   * ใช้เฉพาะเมื่อสลิปงวดตกเบิกแนบรายละเอียดหักของงวดปกติแยกส่วน
+   * (รายได้ตกเบิกที่จ่ายแล้วต้นเดือนถูกบวกเข้า incomeLines ด้านบนแล้ว ไม่ใช้ช่องนี้ซ้ำ)
+   */
   normalIncomeLines?: PayslipLineItem[];
   normalGrossTotal?: number;
   normalDeductionLines?: PayslipLineItem[];
@@ -255,14 +262,160 @@ function standbyPayslipLine(
   return { label, amount: round2(amount) };
 }
 
+type StandbyLikeDayRow = {
+  eventType: string;
+  amount: number;
+  purchaseOrderId?: string;
+  positionNameSnapshot?: string;
+  normalHours?: number;
+};
+
+function formatStandbyHoursLabel(hours: number): string {
+  const h = Math.round(Math.max(0, hours) * 100) / 100;
+  if (!Number.isFinite(h) || h <= 0) return '';
+  if (Number.isInteger(h)) return `${h} ชม.`;
+  return `${h.toLocaleString('th-TH', { maximumFractionDigits: 2 })} ชม.`;
+}
+
+function formatStandbyLikePayslipLabel(opts: {
+  labelPrefix: string;
+  earningsKey: string;
+  positionName?: string;
+  hours?: number;
+  days: number;
+  rate: number;
+}): string {
+  const title = humanizeWorkerEarningsKey(opts.earningsKey);
+  const parts: string[] = [];
+  if (opts.labelPrefix.trim()) parts.push(opts.labelPrefix.trim());
+  parts.push(title);
+  const pos = String(opts.positionName || '').trim();
+  if (pos) parts.push(pos);
+  const hoursLabel =
+    opts.hours != null && Number.isFinite(opts.hours) && opts.hours > 0
+      ? formatStandbyHoursLabel(opts.hours)
+      : '';
+  if (hoursLabel) parts.push(hoursLabel);
+  parts.push(`${opts.days} วัน × ${formatThaiMoneyAmount(opts.rate)}`);
+  return parts.join(' ');
+}
+
+/**
+ * แยกบรรทัด SB / M1 / D1 ตามเรท + ตำแหน่ง + ชม.
+ * — ไม่เฉลี่ยเมื่อราคาต่าง · ใส่ตำแหน่ง/ชม. กันสับสนเมื่อคำ Mob/Demob ซ้ำ
+ */
+function pushStandbyLikePayslipLinesByRate(
+  lines: PayslipLineItem[],
+  labelPrefix: string,
+  earningsKey: string,
+  totalAmount: number,
+  eventBreakdown: Record<string, number> | undefined,
+  dailyRows: readonly StandbyLikeDayRow[] | null | undefined,
+  purchaseOrderId?: string,
+): void {
+  const amtTotal = round2(totalAmount);
+  if (amtTotal <= 0.005) return;
+
+  const eventType = earningsKey.replace(/_policy$/i, '').replace(/_package$/i, '');
+  const poFilter = String(purchaseOrderId || '').trim();
+  const rows = (dailyRows ?? []).filter((r) => {
+    if (String(r.eventType || '') !== eventType) return false;
+    if (poFilter) {
+      const rowPo = String(r.purchaseOrderId || '').trim();
+      if (rowPo && rowPo !== poFilter) return false;
+    }
+    return Math.abs(Number(r.amount) || 0) > 0.005;
+  });
+
+  if (rows.length === 0) {
+    lines.push(standbyPayslipLine(labelPrefix, earningsKey, amtTotal, eventBreakdown));
+    return;
+  }
+
+  type Group = {
+    days: number;
+    amount: number;
+    rate: number;
+    positionName: string;
+    hours: number;
+  };
+  const byKey = new Map<string, Group>();
+  for (const r of rows) {
+    const dayAmt = round2(Number(r.amount) || 0);
+    if (dayAmt <= 0.005) continue;
+    const positionName = String(r.positionNameSnapshot || '').trim();
+    const hours = Math.round(Math.max(0, Number(r.normalHours) || 0) * 100) / 100;
+    const key = `${dayAmt}\t${positionName}\t${hours}`;
+    const g = byKey.get(key) ?? {
+      days: 0,
+      amount: 0,
+      rate: dayAmt,
+      positionName,
+      hours,
+    };
+    g.days += 1;
+    g.amount = round2(g.amount + dayAmt);
+    byKey.set(key, g);
+  }
+
+  if (byKey.size === 0) {
+    lines.push(standbyPayslipLine(labelPrefix, earningsKey, amtTotal, eventBreakdown));
+    return;
+  }
+
+  const groups = [...byKey.values()].sort((a, b) => {
+    const c = a.rate - b.rate;
+    if (c !== 0) return c;
+    const p = a.positionName.localeCompare(b.positionName, 'th');
+    if (p !== 0) return p;
+    return a.hours - b.hours;
+  });
+
+  const sumRows = round2(groups.reduce((s, g) => s + g.amount, 0));
+  const scale =
+    sumRows > 0.005 && Math.abs(sumRows - amtTotal) >= 0.02 ? amtTotal / sumRows : 1;
+
+  let pushed = 0;
+  groups.forEach((g, idx) => {
+    let lineAmt = round2(g.amount * scale);
+    if (idx === groups.length - 1) {
+      lineAmt = round2(amtTotal - pushed);
+    } else {
+      pushed = round2(pushed + lineAmt);
+    }
+    if (lineAmt <= 0.005) return;
+    const displayRate = scale === 1 ? g.rate : round2(lineAmt / g.days);
+    lines.push({
+      label: formatStandbyLikePayslipLabel({
+        labelPrefix,
+        earningsKey,
+        positionName: g.positionName || undefined,
+        hours: g.hours > 0 ? g.hours : undefined,
+        days: g.days,
+        rate: displayRate,
+      }),
+      amount: lineAmt,
+    });
+  });
+}
+
 /** true ถ้าใส่บรรทัดแทน work_day_package แล้ว */
 function tryPushWorkDayPackageSplitLines(
   lines: PayslipLineItem[],
   pkgAmount: number,
   split: PayslipWorkDaySplit | null | undefined,
   labelPrefix: string,
+  positionSplits?: PayslipWorkDayPositionSplit[] | null,
+  dailyRowSnapshots?: PayrollBatchLine['dailyRowSnapshots'],
 ): boolean {
-  return pushWorkDayPayslipIncomeLines(lines, pkgAmount, split, labelPrefix);
+  return pushWorkDayPayslipIncomeLines(
+    lines,
+    pkgAmount,
+    split,
+    labelPrefix,
+    positionSplits,
+    dailyRowSnapshots,
+  );
 }
 
 /**
@@ -347,11 +500,29 @@ export function buildWorkerPayslipIncomeLines(
       for (const k of keys) {
         const amt = round2(Number(eb[k]) || 0);
         if (Math.abs(amt) < 0.005) continue;
-        if (k === 'work_day_package' && tryPushWorkDayPackageSplitLines(lines, amt, seg.payslipWorkDaySplit, prefix)) {
+        if (
+          k === 'work_day_package' &&
+          tryPushWorkDayPackageSplitLines(
+            lines,
+            amt,
+            seg.payslipWorkDaySplit,
+            prefix,
+            seg.payslipWorkDayPositionSplits,
+            line.dailyRowSnapshots,
+          )
+        ) {
           continue;
         }
         if (isStandbyLikePackageOrPolicyKey(k)) {
-          lines.push(standbyPayslipLine(prefix, k, amt, seg.eventBreakdown));
+          pushStandbyLikePayslipLinesByRate(
+            lines,
+            prefix,
+            k,
+            amt,
+            seg.eventBreakdown,
+            line.dailyRowSnapshots,
+            seg.purchaseOrderId,
+          );
           continue;
         }
         lines.push({ label: `${prefix} ${humanizeWorkerEarningsKey(k)}`, amount: amt });
@@ -371,11 +542,28 @@ export function buildWorkerPayslipIncomeLines(
   for (const k of keys) {
     const amt = round2(Number(baseEb[k]) || 0);
     if (Math.abs(amt) < 0.005) continue;
-    if (k === 'work_day_package' && tryPushWorkDayPackageSplitLines(lines, amt, line.payslipWorkDaySplit, '')) {
+    if (
+      k === 'work_day_package' &&
+      tryPushWorkDayPackageSplitLines(
+        lines,
+        amt,
+        line.payslipWorkDaySplit,
+        '',
+        line.payslipWorkDayPositionSplits,
+        line.dailyRowSnapshots,
+      )
+    ) {
       continue;
     }
     if (isStandbyLikePackageOrPolicyKey(k)) {
-      lines.push(standbyPayslipLine('', k, amt, line.eventBreakdown));
+      pushStandbyLikePayslipLinesByRate(
+        lines,
+        '',
+        k,
+        amt,
+        line.eventBreakdown,
+        line.dailyRowSnapshots,
+      );
       continue;
     }
     lines.push({ label: humanizeWorkerEarningsKey(k), amount: amt });
@@ -445,12 +633,9 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
         })
       : '';
 
-    let standbyDays = 0;
-    let standbyAmount = 0;
-    let mobDays = 0;
-    let mobAmount = 0;
-    let demobDays = 0;
-    let demobAmount = 0;
+    const standbyDayRows: StandbyLikeDayRow[] = [];
+    const mobDayRows: StandbyLikeDayRow[] = [];
+    const demobDayRows: StandbyLikeDayRow[] = [];
     const policyAmounts: Record<string, number> = {};
 
     for (const ts of group) {
@@ -470,16 +655,23 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
 
       if (isPayrollCostStandbyPackageEvent(ts.eventType) && r.usedPackageLaborCost) {
         const units = payrollStandbyPackageEventUnits(ts);
-        if (ts.eventType === 'mobilization_day') {
-          mobDays += units;
-          mobAmount += r.gross;
-        } else if (ts.eventType === 'demobilization_day') {
-          demobDays += units;
-          demobAmount += r.gross;
-        } else {
-          standbyDays += units;
-          standbyAmount += r.gross;
-        }
+        const perUnit = units > 1 ? round2(r.gross / units) : round2(r.gross);
+        const positionName = resolvePositionDisplayName(linePos) || undefined;
+        const normalHours = Math.max(0, Number(ts.normalHours) || 0);
+        const rowBase: StandbyLikeDayRow = {
+          eventType: ts.eventType,
+          amount: perUnit,
+          purchaseOrderId: poId,
+          positionNameSnapshot: positionName,
+          normalHours,
+        };
+        const target =
+          ts.eventType === 'mobilization_day'
+            ? mobDayRows
+            : ts.eventType === 'demobilization_day'
+              ? demobDayRows
+              : standbyDayRows;
+        for (let i = 0; i < units; i++) target.push({ ...rowBase });
         continue;
       }
       if (ts.eventType === 'work_day' && r.usedPackageLaborCost) {
@@ -497,49 +689,73 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
             0
           : 0),
     );
-    const split =
-      seg?.payslipWorkDaySplit ??
-      computeWorkDayPackagePayslipSplit(group, {
-        poLineMaps: ctx.poLineMaps,
-        poContractById: ctx.poContractById,
-        poWorkModeByPoId: ctx.poWorkModeByPoId,
-        workerById: ctx.workerById,
-        posById: ctx.posById,
-        contractMap: ctx.contractMap,
-        workerGlobalLabor: ctx.workerGlobalLabor,
-      });
+    const aggDeps = {
+      poLineMaps: ctx.poLineMaps,
+      poContractById: ctx.poContractById,
+      poWorkModeByPoId: ctx.poWorkModeByPoId,
+      workerById: ctx.workerById,
+      posById: ctx.posById,
+      contractMap: ctx.contractMap,
+      workerGlobalLabor: ctx.workerGlobalLabor,
+    };
+    const split = seg?.payslipWorkDaySplit ?? computeWorkDayPackagePayslipSplit(group, aggDeps, undefined);
+    const positionSplits =
+      seg?.payslipWorkDayPositionSplits ??
+      line.payslipWorkDayPositionSplits ??
+      computeWorkDayPackagePayslipPositionSplits(group, aggDeps);
     const pkgForPush = workDayPkg > 0.005 ? workDayPkg : payslipWorkDaySplitTotal(split);
-    if (!pushWorkDayPayslipIncomeLines(lines, pkgForPush, split, prefix)) {
+    if (
+      !pushWorkDayPayslipIncomeLines(
+        lines,
+        pkgForPush,
+        split,
+        prefix,
+        positionSplits,
+        line.dailyRowSnapshots,
+      )
+    ) {
       const fallbackPkg = round2(split.normalAmount + split.holidayAmount + (split.otAmount ?? 0));
       if (fallbackPkg > 0.005) {
-        pushWorkDayPayslipIncomeLines(lines, fallbackPkg, split, prefix);
+        pushWorkDayPayslipIncomeLines(
+          lines,
+          fallbackPkg,
+          split,
+          prefix,
+          positionSplits,
+          line.dailyRowSnapshots,
+        );
       }
     }
-    if (standbyDays > 0 && standbyAmount > 0.005) {
-      lines.push(
-        standbyPayslipLine(prefix, 'standby_day', round2(standbyAmount), { standby_day: standbyDays }),
+    const pushFromDayRows = (eventKey: string, dayRows: StandbyLikeDayRow[]) => {
+      if (dayRows.length === 0) return;
+      const total = round2(dayRows.reduce((s, r) => s + r.amount, 0));
+      pushStandbyLikePayslipLinesByRate(
+        lines,
+        prefix,
+        eventKey,
+        total,
+        { [eventKey]: dayRows.length },
+        dayRows,
+        poId,
       );
-    }
-    if (mobDays > 0 && mobAmount > 0.005) {
-      lines.push(
-        standbyPayslipLine(prefix, 'mobilization_day', round2(mobAmount), {
-          mobilization_day: mobDays,
-        }),
-      );
-    }
-    if (demobDays > 0 && demobAmount > 0.005) {
-      lines.push(
-        standbyPayslipLine(prefix, 'demobilization_day', round2(demobAmount), {
-          demobilization_day: demobDays,
-        }),
-      );
-    }
+    };
+    pushFromDayRows('standby_day', standbyDayRows);
+    pushFromDayRows('mobilization_day', mobDayRows);
+    pushFromDayRows('demobilization_day', demobDayRows);
 
     for (const k of Object.keys(policyAmounts).sort((a, b) => a.localeCompare(b))) {
       const amt = round2(policyAmounts[k]);
       if (Math.abs(amt) < 0.005) continue;
       if (isStandbyLikePackageOrPolicyKey(k)) {
-        lines.push(standbyPayslipLine(prefix, k, amt, seg?.eventBreakdown ?? line.eventBreakdown));
+        pushStandbyLikePayslipLinesByRate(
+          lines,
+          prefix,
+          k,
+          amt,
+          seg?.eventBreakdown ?? line.eventBreakdown,
+          line.dailyRowSnapshots,
+          poId,
+        );
       } else {
         lines.push({
           label: prefix ? `${prefix} ${humanizeWorkerEarningsKey(k)}` : humanizeWorkerEarningsKey(k),
@@ -673,6 +889,161 @@ function pushAlreadyPaidDeduction(
   });
 }
 
+function priorPaidConsolidatedIncomeLabel(
+  ref: PriorPaidPayrollSlipRef,
+  paymentDateLabel?: string,
+): string {
+  const isSupp = ref.batch.batchType === 'SUPPLEMENTAL';
+  const items = ref.line.hrLineAdjustments?.priorPeriodAllowanceItems ?? [];
+  const months = [
+    ...new Set(
+      items
+        .map((it) => String(it.sourceYearMonth || '').trim())
+        .filter((ym) => /^\d{4}-\d{2}$/.test(ym)),
+    ),
+  ].sort();
+  let periodPart = '';
+  if (months.length === 1) {
+    const [ys, ms] = months[0].split('-').map(Number);
+    const monthLabel = new Date(ys, ms - 1, 1).toLocaleDateString('th-TH', {
+      month: 'long',
+      year: 'numeric',
+    });
+    periodPart = `งวด ${monthLabel}`;
+  } else if (months.length > 1) {
+    periodPart = `${months.length} งวดย้อนหลัง`;
+  }
+  const datePart =
+    paymentDateLabel && paymentDateLabel !== '-' && paymentDateLabel !== '— (ยังไม่ระบุวันจ่าย)'
+      ? ` · จ่ายแล้ว ${paymentDateLabel}`
+      : '';
+  if (isSupp) {
+    return periodPart ? `รายได้ตกเบิก ${periodPart}${datePart}` : `รายได้ตกเบิก${datePart || ' (งวดก่อนหน้า)'}`;
+  }
+  return periodPart
+    ? `รายได้ที่จ่ายแล้วต้นเดือน ${periodPart}${datePart}`
+    : `รายได้ที่จ่ายแล้วต้นเดือน${datePart || ''}`;
+}
+
+/**
+ * แนบงวดที่จ่ายแล้วต้นเดือน (รวม SUPPLEMENTAL ตกเบิก) เข้าสลิป NORMAL
+ * — บวกรายรับตกเบิกด้านบน (รวมเป็นบรรทัดเดียวต่องวด) + รวมใน Gross แล้วค่อยหักสุทธิที่จ่ายไปแล้ว
+ */
+function applyPriorPaidRefsToNormalPayslip(
+  line: PayrollBatchLine,
+  priorPaidRefs: readonly PriorPaidPayrollSlipRef[],
+  _poPartyLabelById: ReadonlyMap<string, string> | undefined,
+  state: {
+    incomeLines: PayslipLineItem[];
+    deductionLines: PayslipLineItem[];
+    deductionsTotal: number;
+    grossTotal: number;
+    netPay: number;
+    roundingNote: boolean;
+  },
+): {
+  incomeLines: PayslipLineItem[];
+  grossTotal: number;
+  deductionLines: PayslipLineItem[];
+  deductionsTotal: number;
+  netPay: number;
+  roundingNote: boolean;
+  normalPaymentDateLabel?: string;
+} {
+  const priorInc: PayslipLineItem[] = [];
+  let priorGrossSum = 0;
+  let priorNetSum = 0;
+  const dateLabels: string[] = [];
+  let hasSupplemental = false;
+
+  for (const ref of priorPaidRefs) {
+    if (ref.batch.batchType === 'SUPPLEMENTAL') hasSupplemental = true;
+    const g = Math.max(0, Number(ref.line.grossAmount) || 0);
+    const n = resolveLineNetForPayslip(ref.line);
+    const dl = formatPaymentDate(workerPaymentTimestamp(ref.batch));
+    if (n > 0.005) {
+      priorNetSum = round2(priorNetSum + n);
+      if (dl && dl !== '-') dateLabels.push(dl);
+    }
+    if (g > 0.005) {
+      priorGrossSum = round2(priorGrossSum + g);
+      priorInc.push({
+        label: priorPaidConsolidatedIncomeLabel(ref, dl),
+        amount: round2(g),
+      });
+    }
+  }
+
+  /** รายได้ตกเบิกขึ้นก่อน · แล้วตามด้วยรายได้งวดนี้ */
+  const incomeLines = [...priorInc, ...state.incomeLines];
+  const grossTotal = round2(state.grossTotal + priorGrossSum);
+
+  const deductionLines = [...state.deductionLines];
+  let deductionsTotal = state.deductionsTotal;
+  let roundingNote = state.roundingNote;
+
+  const alreadyPersisted =
+    Number(line.deductionsBreakdown?.[PRIOR_PAID_RECOVERY_DEDUCTION_KEY]) > 0.005;
+  if (!alreadyPersisted && priorNetSum > 0.005) {
+    const kind =
+      hasSupplemental && priorPaidRefs.length === 1
+        ? 'งวดตกเบิกที่จ่ายแล้ว'
+        : dateLabels.length === 1
+          ? 'งวดก่อนหน้า'
+          : `งวดก่อนหน้า ${priorPaidRefs.length} รายการ`;
+    pushAlreadyPaidDeduction(
+      deductionLines,
+      priorNetSum,
+      kind,
+      dateLabels.length === 1 ? dateLabels[0] : dateLabels.join(', '),
+    );
+    deductionsTotal = sumLines(deductionLines);
+  }
+
+  /** Gross รวมตกเบิก − หักทั้งหมด (รวมหักยอดที่จ่ายแล้ว) = สุทธิที่ถูกต้องของงวดนี้ */
+  const netPay = round2(grossTotal - deductionsTotal);
+  roundingNote = false;
+
+  return {
+    incomeLines,
+    grossTotal,
+    deductionLines,
+    deductionsTotal,
+    netPay,
+    roundingNote,
+    normalPaymentDateLabel: dateLabels.length === 1 ? dateLabels[0] : dateLabels.join(', ') || undefined,
+  };
+}
+
+function resolveSupplementalFrozenIncomeLines(
+  line: PayrollBatchLine,
+  grossTotal: number,
+  poPartyLabelById?: ReadonlyMap<string, string>,
+): PayslipLineItem[] {
+  const incomeLines = buildWorkerPayslipIncomeLines(line, poPartyLabelById);
+  const sumIncome = sumLines(incomeLines);
+  if (incomeLines.length > 0 && Math.abs(sumIncome - grossTotal) < 0.05) {
+    return incomeLines;
+  }
+  const prior = (line.hrLineAdjustments?.priorPeriodAllowanceItems ?? []).filter(
+    (x) => (Number(x.amount) || 0) > 0,
+  );
+  if (prior.length > 0) {
+    const lines = prior.map((it) => ({
+      label: formatPriorPeriodAllowancePayslipLabel(it),
+      amount: round2(Number(it.amount) || 0),
+    }));
+    const sum = sumLines(lines);
+    const drift = round2(grossTotal - sum);
+    if (Math.abs(drift) >= 0.05) {
+      lines.push({ label: 'รายได้อื่นในงวดตกเบิก', amount: drift });
+    }
+    return lines;
+  }
+  if (incomeLines.length > 0) return incomeLines;
+  return grossTotal > 0 ? [{ label: 'รายได้รวม (จากงวดจ่าย)', amount: grossTotal }] : [];
+}
+
 export function buildPayslipFromWorkerLine(
   line: PayrollBatchLine,
   batch: PayrollBatch,
@@ -680,7 +1051,7 @@ export function buildPayslipFromWorkerLine(
   companyProfile?: PayslipCompanyProfileSource,
   normalLine?: PayrollBatchLine | null,
   normalBatch?: PayrollBatch | null,
-  /** NORMAL อื่นในงวดเดียวกันที่จ่ายแล้ว (ไม่รวมบรรทัดปัจจุบัน) */
+  /** NORMAL / SUPPLEMENTAL อื่นในงวดเดียวกันที่จ่ายแล้ว (ไม่รวมบรรทัดปัจจุบัน) */
   priorPaidRefs?: readonly PriorPaidPayrollSlipRef[] | null,
   /** ชื่อลูกค้า/สัญญา ต่อ purchaseOrderId — ใช้แทน Firestore id บนสลิป */
   poPartyLabelById?: ReadonlyMap<string, string>,
@@ -690,16 +1061,70 @@ export function buildPayslipFromWorkerLine(
   const frozen = isWorkerPayrollBatchSnapshotFrozen(batch, {
     hasEarlierPaidInPeriod: hasEarlierPaid,
   });
+  const isSupplemental = batch.batchType === 'SUPPLEMENTAL';
 
-  /** งวดจ่ายแล้วชุดแรก — ใช้ยอดในงวดเท่านั้น ไม่ทับด้วยใบงานปัจจุบัน */
+  /** งวดจ่ายแล้ว — คงยอดในงวด + แนบงวดตกเบิก/จ่ายแล้วต้นเดือนถ้ามี */
   if (frozen) {
-    const deductionLines = buildWorkerPayslipDeductionLines(line);
-    const deductionsTotal = sumLines(deductionLines);
-    const grossTotal = round2(line.grossAmount);
-    const netPay = resolveLineNetForPayslip(line);
-    const incomeLines = buildWorkerPayslipIncomeLines(line, poPartyLabelById);
-    const sumIncome = sumLines(incomeLines);
-    const useDetailIncome = incomeLines.length > 0 && Math.abs(sumIncome - grossTotal) < 0.05;
+    let deductionLines = buildWorkerPayslipDeductionLines(line);
+    let deductionsTotal = sumLines(deductionLines);
+    const storedGross = round2(line.grossAmount);
+    let netPay = resolveLineNetForPayslip(line);
+    let roundingNote = Math.abs(round2(storedGross - deductionsTotal) - netPay) >= 0.02;
+
+    let incomeLines: PayslipLineItem[];
+    let grossTotal = storedGross;
+    if (isSupplemental) {
+      incomeLines = resolveSupplementalFrozenIncomeLines(line, storedGross, poPartyLabelById);
+      const sumInc = sumLines(incomeLines);
+      if (sumInc > 0.005 && Math.abs(sumInc - storedGross) >= 0.05) {
+        grossTotal = sumInc;
+        netPay = round2(grossTotal - deductionsTotal);
+        roundingNote = false;
+      }
+    } else {
+      const built = buildWorkerPayslipIncomeLines(line, poPartyLabelById);
+      const sumIncome = sumLines(built);
+      /**
+       * ใช้รายละเอียดรายได้เมื่อตรงยอดบันทึก หรือเมื่อมียอดเบี้ยเลี้ยงในฟอร์มที่ยังไม่พับเข้า grossAmount
+       * (มิฉะนั้นสลิป/การ์ดรวมจะต่ำกว่าความเป็นจริงก่อนแนบตกเบิก)
+       */
+      if (built.length > 0 && (Math.abs(sumIncome - storedGross) < 0.05 || sumIncome > storedGross + 0.05)) {
+        incomeLines = built;
+        if (Math.abs(sumIncome - storedGross) < 0.05) {
+          grossTotal = storedGross;
+        } else {
+          grossTotal = sumIncome;
+          netPay = round2(grossTotal - deductionsTotal);
+          roundingNote = false;
+        }
+      } else {
+        incomeLines =
+          storedGross > 0
+            ? [{ label: 'รายได้รวม (จากงวดจ่าย)', amount: storedGross }]
+            : [];
+      }
+    }
+
+    let normalPaymentDateLabel: string | undefined;
+
+    if (!isSupplemental && priorPaidRefs && priorPaidRefs.length > 0) {
+      const attached = applyPriorPaidRefsToNormalPayslip(line, priorPaidRefs, poPartyLabelById, {
+        incomeLines,
+        deductionLines,
+        deductionsTotal,
+        grossTotal,
+        netPay,
+        roundingNote,
+      });
+      incomeLines = attached.incomeLines;
+      grossTotal = attached.grossTotal;
+      deductionLines = attached.deductionLines;
+      deductionsTotal = attached.deductionsTotal;
+      netPay = attached.netPay;
+      roundingNote = attached.roundingNote;
+      normalPaymentDateLabel = attached.normalPaymentDateLabel;
+    }
+
     return {
       companyNameTh,
       companyNameEn,
@@ -709,23 +1134,20 @@ export function buildPayslipFromWorkerLine(
       payrollTypeLabel: 'Worker Payroll (Timesheet batch)',
       documentRef: batch.id,
       paymentDateLabel: formatPaymentDate(workerPaymentTimestamp(batch)),
-      isSupplemental: batch.batchType === 'SUPPLEMENTAL',
-      normalPaymentDateLabel: undefined,
+      isSupplemental,
+      normalPaymentDateLabel,
       policyVersionLabel: formatPolicyVersionFromSnapshot(line.d8Snapshot),
-      incomeLines: useDetailIncome
-        ? incomeLines
-        : grossTotal > 0
-          ? [{ label: 'รายได้รวม (จากงวดจ่าย)', amount: grossTotal }]
-          : [],
+      incomeLines,
       grossTotal,
       deductionLines,
       deductionsTotal,
       netPay,
-      roundingNote: Math.abs(round2(grossTotal - deductionsTotal) - netPay) >= 0.02,
+      roundingNote,
     };
   }
 
-  const incomeLines = buildWorkerPayslipIncomeLines(line, poPartyLabelById);
+  const incomeLinesBuilt = buildWorkerPayslipIncomeLines(line, poPartyLabelById);
+  let incomeLines = incomeLinesBuilt;
   const deductionLines = buildWorkerPayslipDeductionLines(line);
 
   const snapshotGross = line.d8Snapshot?.gross;
@@ -760,7 +1182,6 @@ export function buildPayslipFromWorkerLine(
     roundingNote = false;
   }
 
-  const isSupplemental = batch.batchType === 'SUPPLEMENTAL';
   /**
    * งวดตกเบิก: priorPeriodAllowanceItems คือรายได้หลักที่บันทึกใน grossAmount แล้ว
    * ถ้าเคยถูกบวกซ้ำตอน HR adjust จะได้ net ≈ 2×gross−หัก — บังคับใช้ gross−หัก
@@ -770,11 +1191,8 @@ export function buildPayslipFromWorkerLine(
     roundingNote = false;
   }
 
-  let normalIncomeLines: PayslipLineItem[] | undefined;
   let normalDeductionLines: PayslipLineItem[] | undefined;
-  let normalGrossTotal: number | undefined;
   let normalDeductionsTotal: number | undefined;
-  let normalNetPay: number | undefined;
   let normalPaymentDateLabel: string | undefined;
 
   if (isSupplemental && normalLine && normalBatch) {
@@ -796,7 +1214,7 @@ export function buildPayslipFromWorkerLine(
     for (const it of [...normInc, ...incomeLines]) {
       mergedIncMap.set(it.label, (mergedIncMap.get(it.label) || 0) + it.amount);
     }
-    incomeLines.length = 0;
+    incomeLines = [];
     for (const [label, amount] of mergedIncMap.entries()) {
       if (amount !== 0) incomeLines.push({ label, amount: round2(amount) });
     }
@@ -829,49 +1247,22 @@ export function buildPayslipFromWorkerLine(
     netPay = round2(grossTotal - deductionsTotal);
     roundingNote = false;
   } else if (!isSupplemental && priorPaidRefs && priorPaidRefs.length > 0) {
-    /** งวด NORMAL รอบหลัง — แสดงรายละเอียดงวดที่จ่ายแล้ว (รวม OT ตกเบิก) แล้วหักยอดสุทธิที่จ่ายไปแล้ว */
-    const priorInc: PayslipLineItem[] = [];
-    let priorGrossSum = 0;
-    let priorNetSum = 0;
-    const dateLabels: string[] = [];
-    for (const ref of priorPaidRefs) {
-      const detail = buildWorkerPayslipIncomeLines(ref.line, poPartyLabelById);
-      for (const it of detail) {
-        priorInc.push({
-          label: `จ่ายแล้ว · ${it.label}`,
-          amount: it.amount,
-        });
-      }
-      priorGrossSum = round2(priorGrossSum + Math.max(0, Number(ref.line.grossAmount) || 0));
-      const n = resolveLineNetForPayslip(ref.line);
-      if (n > 0.005) {
-        priorNetSum = round2(priorNetSum + n);
-        const dl = formatPaymentDate(workerPaymentTimestamp(ref.batch));
-        if (dl && dl !== '-') dateLabels.push(dl);
-      }
-    }
-    normalIncomeLines = priorInc;
-    normalGrossTotal = priorGrossSum > 0.005 ? priorGrossSum : undefined;
-    normalNetPay = priorNetSum > 0.005 ? priorNetSum : undefined;
-    normalPaymentDateLabel = dateLabels.length === 1 ? dateLabels[0] : dateLabels.join(', ') || undefined;
-
-    const alreadyPersisted =
-      Number(line.deductionsBreakdown?.[PRIOR_PAID_RECOVERY_DEDUCTION_KEY]) > 0.005;
-    if (!alreadyPersisted && priorNetSum > 0.005) {
-      const kind =
-        dateLabels.length === 1
-          ? `งวดก่อนหน้า`
-          : `งวดก่อนหน้า ${priorPaidRefs.length} รายการ`;
-      pushAlreadyPaidDeduction(
-        deductionLines,
-        priorNetSum,
-        kind,
-        dateLabels.length === 1 ? dateLabels[0] : dateLabels.join(', '),
-      );
-      deductionsTotal = sumLines(deductionLines);
-      netPay = round2(grossTotal - deductionsTotal);
-      roundingNote = false;
-    }
+    const attached = applyPriorPaidRefsToNormalPayslip(line, priorPaidRefs, poPartyLabelById, {
+      incomeLines,
+      deductionLines,
+      deductionsTotal,
+      grossTotal,
+      netPay,
+      roundingNote,
+    });
+    incomeLines = attached.incomeLines;
+    grossTotal = attached.grossTotal;
+    deductionLines.length = 0;
+    deductionLines.push(...attached.deductionLines);
+    deductionsTotal = attached.deductionsTotal;
+    netPay = attached.netPay;
+    roundingNote = attached.roundingNote;
+    normalPaymentDateLabel = attached.normalPaymentDateLabel;
   }
 
   return {
@@ -897,11 +1288,8 @@ export function buildPayslipFromWorkerLine(
     deductionsTotal,
     netPay,
     roundingNote,
-    normalIncomeLines,
-    normalGrossTotal,
     normalDeductionLines,
     normalDeductionsTotal,
-    normalNetPay,
   };
 }
 

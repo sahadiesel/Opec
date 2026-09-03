@@ -81,6 +81,13 @@ const PayslipWorkDaySplitSchema = z.object({
   overflowBeyond12Amount: z.number().optional(),
 });
 
+const PayslipWorkDayPositionSplitSchema = PayslipWorkDaySplitSchema.extend({
+  positionId: z.string(),
+  positionNameSnapshot: z.string(),
+  workMode: z.string().optional(),
+  packageRatePerDay: z.number().optional(),
+});
+
 const PayrollBatchIncomeSegmentSchema = z.object({
   purchaseOrderId: z.string().min(1),
   customerId: z.string().optional(),
@@ -90,6 +97,7 @@ const PayrollBatchIncomeSegmentSchema = z.object({
   eventBreakdown: z.record(z.number()).default({}),
   earningsBreakdown: z.record(z.number()).default({}),
   payslipWorkDaySplit: PayslipWorkDaySplitSchema.optional().nullable(),
+  payslipWorkDayPositionSplits: z.array(PayslipWorkDayPositionSplitSchema).optional(),
 });
 
 /**
@@ -117,6 +125,8 @@ export const PayrollBatchLineSchema = z.object({
         date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
         eventType: z.string(),
         workMode: z.string().optional(),
+        positionId: z.string().optional(),
+        positionNameSnapshot: z.string().optional(),
         normalHours: z.number(),
         ot15Hours: z.number().optional(),
         ot20Hours: z.number().optional(),
@@ -172,6 +182,7 @@ export const PayrollBatchLineSchema = z.object({
     .nullable(),
   incomeSegments: z.array(PayrollBatchIncomeSegmentSchema).optional(),
   payslipWorkDaySplit: PayslipWorkDaySplitSchema.optional().nullable(),
+  payslipWorkDayPositionSplits: z.array(PayslipWorkDayPositionSplitSchema).optional(),
   financePayoutCashbookEntryId: z.string().optional(),
   financePayoutBankAccountId: z.string().optional(),
   financePaidAt: z.number().optional(),

@@ -18,9 +18,10 @@ const PRIOR_PAID_BATCH_STATUSES: ReadonlySet<PayrollBatchStatus | string> = new 
 ]);
 
 /**
- * โหลดงวด NORMAL ใน payrollPeriodId เดียวกัน
- * - SUPPLEMENTAL: ใช้เป็นงวดปกติอ้างอิง
- * - NORMAL: โหลดงวดอื่นที่จ่ายแล้วของคนงาน (หักยอดที่ชำระไปแล้วบนสลิปชุดหลัง)
+ * โหลดงวดใน payrollPeriodId เดียวกัน
+ * - SUPPLEMENTAL: ใช้เป็นงวดปกติอ้างอิง (NORMAL ในงวดเดียวกัน)
+ * - NORMAL: โหลดงวดอื่นที่จ่ายแล้วของคนงาน รวม **งวดตกเบิก (SUPPLEMENTAL)**
+ *   เพื่อโชว์เป็นรายรับเดือนเดียวกัน + หักยอดที่ชำระไปแล้วบนสลิปชุดหลัง
  * - หักเฉพาะงวดที่เกิด/จ่ายก่อนงวดปัจจุบันเท่านั้น
  */
 export function useNormalBatchesAndLines(
@@ -68,15 +69,18 @@ export function useNormalBatchesAndLines(
           where('payrollPeriodId', '==', payrollPeriodId),
         );
         const batchSnaps = await getDocs(q);
-        const batches: PayrollBatch[] = [];
+        const normalOnly: PayrollBatch[] = [];
+        const allInPeriod: PayrollBatch[] = [];
         batchSnaps.forEach((d) => {
           const data = d.data() as PayrollBatch;
+          const batch = { ...data, id: d.id };
+          allInPeriod.push(batch);
           if (!data.batchType || data.batchType === 'NORMAL') {
-            batches.push({ ...data, id: d.id });
+            normalOnly.push(batch);
           }
         });
 
-        if (mounted) setNormalBatches(batches);
+        if (mounted) setNormalBatches(normalOnly);
 
         const allLines: PayrollBatchLine[] = [];
         const prior: PriorPaidPayrollSlipRef[] = [];
@@ -85,12 +89,17 @@ export function useNormalBatchesAndLines(
             ? Number(currentBatchChronologyMs)
             : null;
 
-        for (const nb of batches) {
+        /** อ้างอิงงวดปกติ — โหลดเฉพาะ NORMAL · prior paid รวม SUPPLEMENTAL ที่จ่ายก่อนหน้า */
+        const batchesForLines = isSupplemental ? normalOnly : includePriorPaid ? allInPeriod : normalOnly;
+
+        for (const nb of batchesForLines) {
           const lq = collection(firestore!, 'payroll_batches', nb.id, 'lines');
           const lineSnaps = await getDocs(lq);
           lineSnaps.forEach((d) => {
             const line = { id: d.id, ...d.data() } as PayrollBatchLine;
-            allLines.push(line);
+            if (!nb.batchType || nb.batchType === 'NORMAL') {
+              allLines.push(line);
+            }
             if (
               includePriorPaid &&
               nb.id !== currentBatchId &&
@@ -104,6 +113,16 @@ export function useNormalBatchesAndLines(
             }
           });
         }
+
+        /** ตกเบิกขึ้นก่อน · งวดปกติตามเวลา */
+        prior.sort((a, b) => {
+          const ta = payrollBatchChronologyMs(a.batch);
+          const tb = payrollBatchChronologyMs(b.batch);
+          if (ta !== tb) return ta - tb;
+          const sa = a.batch.batchType === 'SUPPLEMENTAL' ? 0 : 1;
+          const sb = b.batch.batchType === 'SUPPLEMENTAL' ? 0 : 1;
+          return sa - sb;
+        });
 
         if (mounted) {
           setNormalLines(allLines);

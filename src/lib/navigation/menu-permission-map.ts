@@ -45,6 +45,7 @@ export const MENU_PERMISSION_GROUPS: MenuPermissionGroup[] = [
       { moduleKey: 'customers', label: 'ทะเบียนลูกค้า (Customers)', path: '/customers', note: 'รวมสรุปฐานวางบิล' },
       { moduleKey: 'quotations', label: 'ใบเสนอราคา (Quotations)', path: '/quotations' },
       { moduleKey: 'main_contracts', label: 'สัญญาหลัก (Main Contracts)', path: '/main-contracts' },
+      { moduleKey: 'main_contracts', label: 'สัญญาเช่า (Rent contracts)', path: '/rent-contracts' },
       { moduleKey: 'customer_pos', label: 'ใบสั่งซื้อลูกค้า (Customer POs)', path: '/purchase-orders' },
     ],
   },

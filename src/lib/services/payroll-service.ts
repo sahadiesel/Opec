@@ -111,7 +111,7 @@ import {
   aggregateDailyTimesheetsPayrollChunk,
   mergePayrollTimesheetAggChunks,
 } from '@/lib/payroll/aggregate-payroll-timesheet-chunks';
-import { computeWorkDayPackagePayslipSplit } from '@/lib/payroll/work-day-payslip-split';
+import { computeWorkDayPackagePayslipPositionSplits, computeWorkDayPackagePayslipSplit } from '@/lib/payroll/work-day-payslip-split';
 import {
   buildPayrollLineDailyRowSnapshots,
   hasPositiveTimesheetGrossById,
@@ -951,7 +951,16 @@ export class PayrollService {
             grossAmount: round2Payroll(chunk.gross),
             eventBreakdown: { ...chunk.eventBreakdown },
             earningsBreakdown: { ...chunk.earningsBreakdown },
-            payslipWorkDaySplit: computeWorkDayPackagePayslipSplit(listForPo, aggDeps),
+            payslipWorkDaySplit: computeWorkDayPackagePayslipSplit(
+              listForPo,
+              aggDeps,
+              chunk.timesheetGrossById,
+            ),
+            payslipWorkDayPositionSplits: computeWorkDayPackagePayslipPositionSplits(
+              listForPo,
+              aggDeps,
+              chunk.timesheetGrossById,
+            ),
           };
         });
       }
@@ -1048,7 +1057,7 @@ export class PayrollService {
         eventBreakdown,
         earningsBreakdown,
         timesheetGrossById,
-        dailyRowSnapshots: buildPayrollLineDailyRowSnapshots(workerTs, timesheetGrossById),
+        dailyRowSnapshots: buildPayrollLineDailyRowSnapshots(workerTs, timesheetGrossById, { posById }),
         deductionsBreakdown,
         grossAmount: workerGross,
         netAmount: lineNetAmount,
@@ -1057,7 +1066,18 @@ export class PayrollService {
         exportStatus: 'pending',
         ...(incomeSegments
           ? { incomeSegments }
-          : { payslipWorkDaySplit: computeWorkDayPackagePayslipSplit(workerTs, aggDeps) }),
+          : {
+              payslipWorkDaySplit: computeWorkDayPackagePayslipSplit(
+                workerTs,
+                aggDeps,
+                timesheetGrossById,
+              ),
+              payslipWorkDayPositionSplits: computeWorkDayPackagePayslipPositionSplits(
+                workerTs,
+                aggDeps,
+                timesheetGrossById,
+              ),
+            }),
       };
 
       lines.push(line);
@@ -1855,7 +1875,8 @@ export class PayrollService {
       try {
         const tsList = await loadDailyTimesheetsByIds(this.db, ids);
         if (tsList.length === 0) continue;
-        const snaps = buildPayrollLineDailyRowSnapshots(tsList, line.timesheetGrossById);
+        const { posById } = await loadWorkersAndPositionsForPayroll(this.db, tsList);
+        const snaps = buildPayrollLineDailyRowSnapshots(tsList, line.timesheetGrossById, { posById });
         if (!isUsableDailyRowSnapshots(snaps, line.grossAmount)) continue;
         await updateDoc(d.ref, {
           dailyRowSnapshots: snaps,
@@ -2030,7 +2051,9 @@ export class PayrollService {
       const mergedChunk = mergePayrollTimesheetAggChunks(chunks);
       const workerGross = round2Payroll(mergedChunk.gross);
       const timesheetGrossById = mergedChunk.timesheetGrossById;
-      const dailySnaps = buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById);
+      const dailySnaps = buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById, {
+        posById,
+      });
       const daySum = round2Payroll(
         Object.values(timesheetGrossById || {}).reduce((s, n) => s + (Number(n) || 0), 0),
       );
@@ -2060,9 +2083,21 @@ export class PayrollService {
         return 'mismatch';
       }
 
+      const positionSplits = computeWorkDayPackagePayslipPositionSplits(
+        workerTsForCalc,
+        aggDeps,
+        timesheetGrossById,
+      );
+      const workDaySplit = computeWorkDayPackagePayslipSplit(
+        workerTsForCalc,
+        aggDeps,
+        timesheetGrossById,
+      );
       await updateDoc(lineRef, {
         timesheetGrossById,
         dailyRowSnapshots: dailySnaps,
+        payslipWorkDaySplit: workDaySplit,
+        payslipWorkDayPositionSplits: positionSplits,
         snapshotBackfillStatus: 'matched',
         snapshotBackfillAttemptedAt: Date.now(),
         snapshotBackfillMismatchNote: deleteField(),
@@ -2528,7 +2563,16 @@ export class PayrollService {
           grossAmount: round2Payroll(chunk.gross),
           eventBreakdown: { ...chunk.eventBreakdown },
           earningsBreakdown: { ...chunk.earningsBreakdown },
-          payslipWorkDaySplit: computeWorkDayPackagePayslipSplit(listForPo, aggDeps),
+          payslipWorkDaySplit: computeWorkDayPackagePayslipSplit(
+            listForPo,
+            aggDeps,
+            chunk.timesheetGrossById,
+          ),
+          payslipWorkDayPositionSplits: computeWorkDayPackagePayslipPositionSplits(
+            listForPo,
+            aggDeps,
+            chunk.timesheetGrossById,
+          ),
         };
       });
     }
@@ -2732,7 +2776,9 @@ export class PayrollService {
       const computedTimesheetGross = round2Payroll(isSupplemental ? effectiveGross : workerGross);
       const computedEffectiveGross = round2Payroll(effectiveGross);
       const computedNet = round2Payroll(netAmount);
-      const dailySnaps = buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById);
+      const dailySnaps = buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById, {
+        posById,
+      });
       const daySum = round2Payroll(
         Object.values(timesheetGrossById || {}).reduce((s, n) => s + (Number(n) || 0), 0),
       );
@@ -2756,6 +2802,16 @@ export class PayrollService {
       await updateDoc(lineRef, {
         timesheetGrossById,
         dailyRowSnapshots: dailySnaps,
+        payslipWorkDaySplit: computeWorkDayPackagePayslipSplit(
+          workerTsForCalc,
+          aggDeps,
+          timesheetGrossById,
+        ),
+        payslipWorkDayPositionSplits: computeWorkDayPackagePayslipPositionSplits(
+          workerTsForCalc,
+          aggDeps,
+          timesheetGrossById,
+        ),
         ...(existingSource.length === 0
           ? { sourceTimesheetIds: workerTsForCalc.map((ts) => ts.id) }
           : {}),
@@ -2786,7 +2842,9 @@ export class PayrollService {
       eventBreakdown,
       earningsBreakdown,
       timesheetGrossById,
-      dailyRowSnapshots: buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById),
+      dailyRowSnapshots: buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById, {
+        posById,
+      }),
       grossAmount: isSupplemental ? effectiveGross : workerGross,
       deductionsBreakdown: deductions,
       netAmount,
@@ -2798,9 +2856,19 @@ export class PayrollService {
     if (incomeSegments) {
       patch.incomeSegments = incomeSegments;
       patch.payslipWorkDaySplit = deleteField();
+      patch.payslipWorkDayPositionSplits = deleteField();
     } else {
       patch.incomeSegments = deleteField();
-      patch.payslipWorkDaySplit = computeWorkDayPackagePayslipSplit(workerTsForCalc, aggDeps);
+      patch.payslipWorkDaySplit = computeWorkDayPackagePayslipSplit(
+        workerTsForCalc,
+        aggDeps,
+        timesheetGrossById,
+      );
+      patch.payslipWorkDayPositionSplits = computeWorkDayPackagePayslipPositionSplits(
+        workerTsForCalc,
+        aggDeps,
+        timesheetGrossById,
+      );
     }
 
     await updateDoc(lineRef, stripUndefinedForFirestore(patch) as DocumentData);

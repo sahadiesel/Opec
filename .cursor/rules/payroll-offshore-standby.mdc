@@ -6,7 +6,7 @@ alwaysApply: true
 
 # Offshore payroll cost (LOCKED)
 
-This rule was confirmed with the product owner across multiple sessions. **Do not propose alternate standby formulas** without an explicit written change request.
+Confirmed with the product owner. **Do not change standby or package formulas** without an explicit written change request.
 
 ## Work day (จ่ายลูกจ้าง)
 
@@ -21,13 +21,17 @@ Source of truth: `src/lib/commercial/package-hourly-rate.ts`
 ## Standby (จ่ายลูกจ้าง) — NOT billing
 
 - Standard SB hours = **8** (not package 12).
-- Pay = `baseH × hours × standbyMult` (default `standbyMult=0.5`).
-- Example: `1400` → SB 8h = `100×8×0.5` = **400** (= half of the **8h normal portion**, not half of `D`).
+- Pay = `round2( D × standbyMult × (hours / packageHours) )` (default `standbyMult=0.5`).
+- Offshore 12h package: SB 8h = `(D / 2 / 12) × 8`.
+- Examples: `D=4300` → **1433.33** · `D=1400` → **466.67**.
+- Money math uses **2 decimal places** only (`round2` / `roundMoney`).
+- If the contract / matrix gives an explicit SB day rate, use that rate’s ratio as `standbyMult` (caller) — do not invent a different hour formula.
+- M1/D1 trip payroll cost uses the **same** package-fraction × multiplier pattern.
 
-**Forbidden for payroll cost:**
+**Forbidden for payroll standby cost:**
 
-- `D × 0.5` (half full package including OT)
-- `D × (hours/12) × 0.5` (linear fraction of package)
+- `baseH × hours × 0.5` with `baseH = D/14` (e.g. 4300 → 1228.57) — that split is for **work day / OT only**
+- `D × 0.5` for an 8h SB day without scaling by `8/12` (full half-package as if 12h SB)
 
 Implementation: `computeStandbyDayCostFromPackage` in `src/lib/payroll/package-labor-cost.ts`
 

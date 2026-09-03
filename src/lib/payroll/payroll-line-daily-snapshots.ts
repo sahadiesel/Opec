@@ -3,11 +3,18 @@
  * ห้ามใส่ค่า undefined (Firestore WriteBatch.set ไม่รับ)
  */
 import { doc, getDoc, type Firestore } from 'firebase/firestore';
-import type { DailyTimesheet, PayrollBatchLineDailyRowSnapshot } from '@/lib/types';
+import type { DailyTimesheet, PayrollBatchLineDailyRowSnapshot, Position } from '@/lib/types';
+import { resolvePositionDisplayName } from '@/lib/payroll/work-day-payslip-split';
+
+export type DailySnapshotPositionLookup = ReadonlyMap<
+  string,
+  Pick<Position, 'positionName' | 'positionNameTh' | 'positionNameEn'>
+>;
 
 export function buildPayrollLineDailyRowSnapshots(
   timesheets: readonly DailyTimesheet[],
   timesheetGrossById: Record<string, number> | undefined,
+  opts?: { posById?: DailySnapshotPositionLookup },
 ): PayrollBatchLineDailyRowSnapshot[] {
   const sorted = [...timesheets].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   return sorted.map((ts) => {
@@ -22,6 +29,12 @@ export function buildPayrollLineDailyRowSnapshots(
     };
     const workMode = String(ts.workMode || '').trim();
     if (workMode) row.workMode = workMode;
+    const positionId = String(ts.positionId || '').trim();
+    if (positionId) {
+      row.positionId = positionId;
+      const posName = resolvePositionDisplayName(opts?.posById?.get(positionId));
+      if (posName) row.positionNameSnapshot = posName;
+    }
     const ot15 = Math.max(0, Number(ts.ot15Hours) || 0);
     const ot20 = Math.max(0, Number(ts.ot20Hours) || 0);
     const ot30 = Math.max(0, Number(ts.ot30Hours) || 0);

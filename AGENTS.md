@@ -39,8 +39,8 @@ The app uses hardcoded default Firebase config for project `studio-9554558161-dc
 
 See also `.cursor/rules/payroll-offshore-standby.mdc` and `src/lib/commercial/package-hourly-rate.ts`.
 
-- **Work day 12h package `D`** = 8 normal + 4 OT×1.5 → `baseH = D/14` (e.g. 1400 → 100/h).
-- **Standby pay to worker** = `baseH × hours × 0.5` with standard **8h** (e.g. 1400 → **400**). Never `D×0.5` or `D×(h/12)×0.5`.
+- **Work day 12h package `D`** = 8 normal + 4 OT×1.5 → `baseH = D/14` (e.g. 1400 → 100/h). Used for **work / OT only**.
+- **Standby pay to worker** = `round2(D × 0.5 × (hours / packageHours))` with standard **8h** on a 12h package → `(D/2/12)×8` (e.g. 4300 → **1433.33**, 1400 → **466.67**). Never `baseH×hours×0.5` (D/14 path). Money uses **2 decimal places** only. Contract/matrix explicit SB rate may supply the multiplier; do not change the hour-fraction formula.
 - **Customer billing** is separate (contract / matrix only).
 - **Payroll batch UI** shows **snapshot amounts** from Generate/Regenerate/per-worker recalc only — never live-recompute timesheet gross on page open. Legacy PAID lines without a snapshot may reconstruct on first open **only if** Gross/Net still match the paid amounts; otherwise show the mismatch note and do not save.
 - **Remob / multi-cycle month:** pay all unpaid recorded work days in the month (e.g. 1–5 + 10–15 + 25–30 = 17 days). Never drop unpaid days for a new mob cycle. If earlier days already paid → full-month gross/tax then deduct prior paid net; **already-paid day line amounts stay frozen** from a prior NORMAL batch snapshot (rate edits + recalc must not rewrite them). SUPPLEMENTAL ตกเบิก does not freeze Aug work days. **Pre-remob rate** is snapshotted on finish into `mobilizations.laborCostEpochs` (days ≤ finish use e.g. 1800; remob days use current registry e.g. 2600).

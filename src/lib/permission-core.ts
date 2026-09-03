@@ -501,6 +501,25 @@ export function isSalesManager(user: User | null): boolean {
   return dept === 'sales' && getEffectiveAccessLevel(user) === 'manager';
 }
 
+/** เจ้าหน้าที่ฝ่ายขาย (sales / sales_officer) */
+export function isSalesOfficer(user: User | null): boolean {
+  if (!user) return false;
+  if (isSalesManager(user)) return false;
+  if (getPrimaryLegacyRole(user) === 'sales_officer') return true;
+  const rk = String(user.assignedRoleKey || '')
+    .trim()
+    .toLowerCase();
+  if (rk === 'sales_officer' || rk === 'sales') return true;
+  const rf = String((user as { role?: string }).role || '')
+    .trim()
+    .toLowerCase();
+  if (rf === 'sales_officer' || rf === 'sales') return true;
+  const dept = String(user.department || '')
+    .trim()
+    .toLowerCase();
+  return dept === 'sales' && getEffectiveAccessLevel(user) === 'officer';
+}
+
 /** @deprecated ปิดมุมมองบัญชีแบบอ่านอย่างเดียว — แผนกบัญชีเฉพาะ admin / accounting_manager / accounting_officer */
 export function isAccountingDepartmentReadOnlyObserver(_user: User | null): boolean {
   return false;

@@ -83,9 +83,15 @@ export function formatDocumentNotesForPrint(notes: string): string {
   const normalized = notes.replace(/\r\n/g, '\n').trim();
   if (!normalized) return '';
   if (normalized.includes('\n')) return normalized;
-  return normalized
+  const fromCommercial = normalized
     .replace(/\s+(?=(?:Job Assignment No\.|Project Name\s*:|Subcontact No\s*:))/gi, '\n')
     .trim();
+  if (fromCommercial.includes('\n')) return fromCommercial;
+  /** รายการเลขที่พิมพ์ติดกันในบรรทัดเดียว เช่น "1.aaa 2.bbb 3.ccc" */
+  if (/(?:^|\s)\d+[.)]\S/.test(normalized) || /(?:^|\s)\d+[.)]\s+\S/.test(normalized)) {
+    return normalized.replace(/\s+(?=\d+[.)])/g, '\n').trim();
+  }
+  return fromCommercial;
 }
 
 /**
@@ -412,7 +418,13 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
   }
   .sd-terms { margin: 0; padding-left: 18px; font-size: 9.5pt; color: #404040; }
   .sd-terms li { margin-bottom: 4px; }
-  .sd-notes { font-size: 9.5pt; color: #404040; margin-top: 10px; }
+  .sd-notes {
+    font-size: 9.5pt;
+    color: #404040;
+    margin-top: 10px;
+    white-space: pre-line;
+    line-height: 1.45;
+  }
   .sd-wht { font-size: 9.5pt; color: #404040; margin-top: 8px; }
   .sd-sign-footer {
     margin-top: 10mm;
@@ -1710,7 +1722,7 @@ export function buildQuotationPrintHtml(params: {
     amountInWords: totalWords,
   });
   const notesBlock = q.notes?.trim()
-    ? `<h2 class="sd-section-title">${escapeHtmlDoc(printT(L, 'termsNotes'))}</h2><p class="sd-notes">${escapeHtmlDoc(q.notes.trim())}</p>`
+    ? `<h2 class="sd-section-title">${escapeHtmlDoc(printT(L, 'termsNotes'))}</h2><p class="sd-notes">${escapeHtmlDoc(formatDocumentNotesForPrint(q.notes))}</p>`
     : '';
   const mainHtml = `${partyHtml}
   ${projectBlock}
@@ -1839,7 +1851,7 @@ export function buildPurchaseOrderPrintHtml(params: {
       : `<p class="sd-wht"><strong>${escapeHtmlDoc(printT(L, 'wht'))}:</strong> ${escapeHtmlDoc(printT(L, 'whtNoneThisDoc'))}</p>`;
 
   const notesBlock = purchase.notes?.trim()
-    ? `<p class="sd-notes"><strong>${escapeHtmlDoc(printT(L, 'notes'))}:</strong> ${escapeHtmlDoc(purchase.notes.trim())}</p>`
+    ? `<p class="sd-notes"><strong>${escapeHtmlDoc(printT(L, 'notes'))}:</strong> ${escapeHtmlDoc(formatDocumentNotesForPrint(purchase.notes))}</p>`
     : '';
 
   const totalWords =
@@ -1984,7 +1996,7 @@ export function buildPurchaseRequestPrintHtml(params: {
     .join('');
 
   const notesBlock = request.notes?.trim()
-    ? `<p class="sd-notes"><strong>${escapeHtmlDoc(printT(L, 'notes'))}:</strong> ${escapeHtmlDoc(request.notes.trim())}</p>`
+    ? `<p class="sd-notes"><strong>${escapeHtmlDoc(printT(L, 'notes'))}:</strong> ${escapeHtmlDoc(formatDocumentNotesForPrint(request.notes))}</p>`
     : '';
 
   const titleBlock = request.title?.trim()

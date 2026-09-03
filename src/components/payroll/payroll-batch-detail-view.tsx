@@ -24,7 +24,7 @@ import { WorkerPayrollWhtSingleDialog } from '@/components/payroll/worker-payrol
 import { WorkerPayrollWhtBatchDialog } from '@/components/payroll/worker-payroll-wht-batch-dialog';
 import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 import { usePoPartyLabels } from '@/hooks/use-po-party-labels';
-import { buildPayslipFromWorkerLine, normalizeIncomeSegments, isWorkerPayrollBatchSnapshotFrozen } from '@/lib/payroll/payslip-model';
+import { buildPayslipFromWorkerLine, normalizeIncomeSegments, isWorkerPayrollBatchSnapshotFrozen, payrollBatchChronologyMs } from '@/lib/payroll/payslip-model';
 import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
@@ -313,7 +313,7 @@ export function PayrollBatchDetailView({
       includePriorPaidForNormal: batch?.batchType !== 'SUPPLEMENTAL',
       currentBatchId: batch?.id,
       currentBatchStatus: batch?.status,
-      currentBatchChronologyMs: batch?.createdAt ?? batch?.financePreparedAt ?? null,
+      currentBatchChronologyMs: batch ? payrollBatchChronologyMs(batch) : null,
     },
   );
 

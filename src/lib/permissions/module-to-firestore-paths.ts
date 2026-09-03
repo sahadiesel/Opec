@@ -77,6 +77,7 @@ export const MODULE_FIRESTORE_SPECS: ModuleFirestoreSpec[] = [
       { path: 'main_contracts/{id}', shape: 'crud' },
       { path: 'main_contracts/{contractId}/position_rates/{rateId}', shape: 'crud' },
       { path: 'main_contracts/{contractId}/{document=**}', shape: 'crud' },
+      { path: 'equipment_rental_contracts/{id}', shape: 'crud', note: 'OPEC ให้เช่าอุปกรณ์' },
     ],
   },
   {

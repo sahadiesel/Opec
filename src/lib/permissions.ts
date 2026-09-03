@@ -21,6 +21,7 @@ import {
   canManageWaveRecords,
   isOperationManager,
   isSalesManager,
+  isSalesOfficer,
   isStoreOfficer,
   canEditMasterContractCostBaseline,
   isOperationsOfficer,
@@ -85,6 +86,7 @@ export {
   canManageWaveRecords,
   isOperationManager,
   isSalesManager,
+  isSalesOfficer,
   isStoreOfficer,
   canEditMasterContractCostBaseline,
   isOperationsOfficer,
@@ -853,6 +855,17 @@ export function canConfirmWorkerPayrollPaid(user: User | null): boolean {
   return canExecuteBankCashbookPayments(u);
 }
 
+/**
+ * สัญญาเช่าอุปกรณ์ (OPEC ผู้ให้เช่า) — Admin / Sales Manager / Sales (sales_officer)
+ */
+export function canManageEquipmentRentalContracts(user: User | null): boolean {
+  const u = normalizeCurrentUserPermissions(user);
+  if (!u || !isActiveForApp(u) || isExecutiveViewer(u)) return false;
+  if (isSystemAdmin(u) || isSimpleAdmin(u)) return true;
+  if (isSalesManager(u) || isSalesOfficer(u)) return true;
+  return canCreate(u, 'main_contracts') || canView(u, 'main_contracts');
+}
+
 export const INITIAL_PERMISSIONS_TEMPLATE: Record<string, ModulePermission> = SYSTEM_MODULES.reduce(
   (acc, mod) => {
     acc[mod.key] = clonePermission(NO_ACCESS);
@@ -900,6 +913,7 @@ const HR_PILLAR_UI_KEYS: ModuleKey[] = [
 const SALES_PILLAR_UI_KEYS: ModuleKey[] = [
   'customers',
   'quotations',
+  'main_contracts',
   'rate_conditions',
   'profit_estimates',
 ];

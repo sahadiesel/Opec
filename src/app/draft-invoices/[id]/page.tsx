@@ -241,7 +241,14 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   }>(companyProfileRef as any);
 
   const poRef = useMemoFirebase(
-    () => (firestore && invoice?.poId ? doc(firestore, 'purchase_orders', invoice.poId) : null),
+    () =>
+      firestore &&
+      invoice?.poId &&
+      invoice.poId !== '__quotation_po__' &&
+      invoice.poId !== '__equipment_rental__' &&
+      !invoice.poId.startsWith('__')
+        ? doc(firestore, 'purchase_orders', invoice.poId)
+        : null,
     [firestore, invoice?.poId]
   );
   const { data: purchaseOrder } = useDoc<PurchaseOrder>(poRef as any);
@@ -1011,9 +1018,20 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
             ) : null}
             <div>
               <div className="text-muted-foreground text-xs">PO</div>
-              <Link className="text-primary underline font-mono" href={`/purchase-orders/${invoice.poId}`}>
-                เปิด PO
-              </Link>
+              {invoice.equipmentRentalContractId ? (
+                <Link
+                  className="text-primary underline font-mono"
+                  href={`/rent-contracts/${invoice.equipmentRentalContractId}`}
+                >
+                  เปิดสัญญาเช่า
+                </Link>
+              ) : invoice.poId?.startsWith('__') ? (
+                <span className="text-muted-foreground text-sm">—</span>
+              ) : (
+                <Link className="text-primary underline font-mono" href={`/purchase-orders/${invoice.poId}`}>
+                  เปิด PO
+                </Link>
+              )}
             </div>
             <div>
               <div className="text-muted-foreground text-xs">{docEn ? 'Created by' : 'ผู้สร้าง'}</div>

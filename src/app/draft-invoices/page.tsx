@@ -75,6 +75,7 @@ import {
   QUOTATION_PO_WAVE_PLACEHOLDER,
   PO_MONTH_WAVE_PLACEHOLDER,
 } from '@/lib/services/commercial-invoice-service';
+import { EQUIPMENT_RENTAL_WAVE_PLACEHOLDER } from '@/lib/services/equipment-rental-contract-service';
 import {
   isPartialPoMonthCommercialInvoice,
   listPartialBillingCandidates,
@@ -128,6 +129,11 @@ function commercialStatusPrintLabel(inv: CommercialInvoice): string {
 }
 
 function commercialWavePeriodLabel(inv: CommercialInvoice): string {
+  if (inv.waveId === EQUIPMENT_RENTAL_WAVE_PLACEHOLDER || inv.equipmentRentalContractId) {
+    return inv.equipmentRentalPeriodMonth
+      ? `สัญญาเช่าอุปกรณ์ · ${inv.equipmentRentalPeriodMonth}`
+      : 'สัญญาเช่าอุปกรณ์';
+  }
   if (inv.waveId === QUOTATION_PO_WAVE_PLACEHOLDER) return 'ใบเสนอราคา (ไม่มี Wave)';
   if (inv.waveId === PO_MONTH_WAVE_PLACEHOLDER) return inv.waveCode || 'PO+งวด (รวม wave)';
   return inv.waveCode || `${inv.waveId.slice(0, 8)}…`;

@@ -45,6 +45,7 @@ import {
   Wallet,
   QrCode,
   ExternalLink,
+  Wrench,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -312,6 +313,7 @@ const navGroups: NavGroup[] = [
       { key: 'customers', title: 'สรุปฐานวางบิล (Client)', href: '/billing-client', icon: FileBarChart },
       { key: 'quotations', title: UI_LABELS.QUOTATIONS, href: '/quotations', icon: FileSignature },
       { key: 'main_contracts', title: UI_LABELS.MAIN_CONTRACTS, href: '/main-contracts', icon: ClipboardList },
+      { key: 'main_contracts', title: 'สัญญาเช่า (Rent contracts)', href: '/rent-contracts', icon: Wrench },
       { key: 'customer_pos', title: UI_LABELS.CUSTOMER_POS, href: '/purchase-orders', icon: ShoppingCart },
     ],
   },

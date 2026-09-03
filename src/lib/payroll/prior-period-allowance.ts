@@ -4,11 +4,14 @@ import type { HrPayrollLineAdjustments, PriorPeriodAllowanceItem } from '@/lib/t
 export function formatPriorPeriodAllowancePayslipLabel(item: PriorPeriodAllowanceItem): string {
   const base = String(item.label || '').trim() || 'รายได้ย้อนหลัง';
   const ym = String(item.sourceYearMonth || '').trim();
-  if (!/^\d{4}-\d{2}$/.test(ym)) return base;
+  if (!/^\d{4}-\d{2}$/.test(ym)) {
+    return base.toLowerCase().includes('ตกเบิก') ? base : `ตกเบิก — ${base}`;
+  }
   const [ys, ms] = ym.split('-').map(Number);
   const d = new Date(ys, ms - 1, 1);
   const monthLabel = d.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
-  return `ส่วนเพิ่มจากงวด ${monthLabel} — ${base}`;
+  const body = base.toLowerCase().includes('ตกเบิก') ? base : `ตกเบิก — ${base}`;
+  return `รายได้ตกเบิกงวด ${monthLabel} — ${body}`;
 }
 
 export function sumPriorPeriodAllowances(items: readonly PriorPeriodAllowanceItem[] | undefined): number {
