@@ -19,7 +19,7 @@ interface QuotationLineDialogProps {
 export function QuotationLineDialog({ open, onOpenChange, editingLine, setEditingLine, onSave }: QuotationLineDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md border-t-8 border-t-primary">
+      <DialogContent className="w-[min(96vw,56rem)] max-w-[56rem] border-t-8 border-t-primary sm:max-w-[56rem]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl font-black text-primary">
             {editingLine?.id ? <Edit2 className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
@@ -29,21 +29,22 @@ export function QuotationLineDialog({ open, onOpenChange, editingLine, setEditin
             ระบุรายละเอียดสินค้าหรือบริการและราคาเสนอขาย — กด Enter เพื่อขึ้นบรรทัดใหม่ในรายละเอียด
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 py-4">
-          <div className="space-y-2">
+        <div className="space-y-3 py-2">
+          <div className="space-y-1.5">
             <Label className="font-bold text-xs uppercase text-muted-foreground">
               รายละเอียดรายการ (Description) *
             </Label>
             <Textarea
               value={editingLine?.description || ''}
               onChange={(e) => setEditingLine({ ...editingLine, description: e.target.value })}
-              placeholder={'เช่น ค่าแรงช่างเชื่อม (Welder)\nเงื่อนไขเพิ่มเติม...\nกด Enter เพื่อขึ้นบรรทัดใหม่'}
-              rows={5}
-              className="min-h-[7.5rem] resize-y font-medium leading-relaxed whitespace-pre-wrap"
+              placeholder={'เช่น ค่าแรงช่างเชื่อม (Welder)\nกด Enter เพื่อขึ้นบรรทัดใหม่'}
+              rows={2}
+              className="min-h-[3.25rem] max-h-[6rem] resize-y font-medium leading-relaxed whitespace-pre-wrap"
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,5.5rem)_minmax(0,6.5rem)_minmax(0,1fr)]">
+            <div className="space-y-1.5">
               <Label className="font-bold text-xs uppercase text-muted-foreground">จำนวน (Qty)</Label>
               <Input
                 type="number"
@@ -54,7 +55,7 @@ export function QuotationLineDialog({ open, onOpenChange, editingLine, setEditin
                 className="h-11 text-center font-bold"
               />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <Label className="font-bold text-xs uppercase text-muted-foreground">หน่วย (Unit)</Label>
               <Input
                 value={editingLine?.unit || ''}
@@ -63,7 +64,7 @@ export function QuotationLineDialog({ open, onOpenChange, editingLine, setEditin
                 className="h-11 text-center uppercase font-bold"
               />
             </div>
-            <div className="space-y-2 col-span-2">
+            <div className="space-y-1.5">
               <Label className="font-bold text-xs uppercase text-blue-700 tracking-wider">
                 ราคาต่อหน่วย (Unit Price)
               </Label>
@@ -73,7 +74,7 @@ export function QuotationLineDialog({ open, onOpenChange, editingLine, setEditin
                 </span>
                 <Input
                   type="number"
-                  className="h-12 pl-8 font-black text-xl text-primary border-2 border-blue-100 focus:border-blue-500"
+                  className="h-11 pl-8 font-black text-lg text-primary border-2 border-blue-100 focus:border-blue-500"
                   value={editingLine?.unitPrice || 0}
                   onChange={(e) =>
                     setEditingLine({ ...editingLine, unitPrice: parseFloat(e.target.value) || 0 })
@@ -82,7 +83,8 @@ export function QuotationLineDialog({ open, onOpenChange, editingLine, setEditin
               </div>
             </div>
           </div>
-          <div className="space-y-2">
+
+          <div className="space-y-1.5">
             <Label className="font-bold text-xs uppercase text-muted-foreground">
               หมายเหตุรายการ (Item Remarks)
             </Label>
@@ -90,8 +92,8 @@ export function QuotationLineDialog({ open, onOpenChange, editingLine, setEditin
               value={editingLine?.remarks || ''}
               onChange={(e) => setEditingLine({ ...editingLine, remarks: e.target.value })}
               placeholder="ระบุข้อมูลเพิ่มเติมเฉพาะรายการนี้... (Enter = ขึ้นบรรทัดใหม่)"
-              rows={3}
-              className="min-h-[4.5rem] resize-y text-xs leading-relaxed whitespace-pre-wrap"
+              rows={8}
+              className="min-h-[12rem] resize-y text-xs leading-relaxed whitespace-pre-wrap"
             />
           </div>
         </div>

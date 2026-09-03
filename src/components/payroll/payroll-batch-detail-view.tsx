@@ -685,7 +685,7 @@ export function PayrollBatchDetailView({
                   <Badge variant="outline" className="border-primary/40 bg-primary/5 text-primary">
                     บัญชี · ทำจ่ายลูกจ้าง
                   </Badge>
-                  <h1 className="text-2xl font-bold tracking-tight">ยืนยันโอน · เลือกบัญชีตัดจ่าย · ลง cashbook</h1>
+                  <h1 className="text-lg font-bold tracking-tight">ยืนยันโอน · เลือกบัญชีตัดจ่าย · ลง cashbook</h1>
                   <p className="text-sm text-muted-foreground max-w-3xl leading-relaxed">
                     ขั้นตอนฝ่ายบัญชี: ดาวน์โหลด CSV เพื่อตรวจกับธนาคาร → ติ๊กเลือกคนที่โอนจากบัญชีเดียวกันในแต่ละรอบ → เลือกบัญชีตัดจ่าย → ยืนยัน
                     (แบ่งจ่ายหลายบัญชีได้ เช่น 10 คนจากบัญชี A และอีก 4 คนจากบัญชี B) · งวดเป็น PAID เมื่อทุกแถวตัดบัญชีครบ
@@ -694,7 +694,7 @@ export function PayrollBatchDetailView({
               ) : (
                 <>
                   <PayrollScopeTag scope="worker" showHint={false} />
-                  <h1 className="text-2xl font-bold tracking-tight">รายละเอียดงวดจ่ายลูกจ้าง (Batch)</h1>
+                  <h1 className="text-lg font-bold tracking-tight">รายละเอียดงวดจ่ายลูกจ้าง (Batch)</h1>
                 </>
               )}
               <div className="text-sm text-muted-foreground flex items-center gap-2 flex-wrap">
@@ -739,37 +739,37 @@ export function PayrollBatchDetailView({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="border-l-8 border-l-blue-600 shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">Total Workers</CardTitle>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <Card className="border-l-4 border-l-blue-600 shadow-sm">
+            <CardHeader className="py-2 px-4 pb-0">
+              <CardTitle className="text-[10px] font-black uppercase text-muted-foreground leading-none">Total Workers</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-black text-primary">{safeNum(batch.totalWorkers)} Persons</div>
+            <CardContent className="px-4 py-2">
+              <div className="text-lg font-black text-primary tabular-nums leading-tight">{safeNum(batch.totalWorkers)} Persons</div>
             </CardContent>
           </Card>
-          <Card className="border-l-8 border-l-amber-500 shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">Gross Amount</CardTitle>
+          <Card className="border-l-4 border-l-amber-500 shadow-sm">
+            <CardHeader className="py-2 px-4 pb-0">
+              <CardTitle className="text-[10px] font-black uppercase text-muted-foreground leading-none">Gross Amount</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-black text-primary">฿{displayBatchTotals.gross.toLocaleString()}</div>
+            <CardContent className="px-4 py-2">
+              <div className="text-lg font-black text-primary tabular-nums leading-tight">฿{displayBatchTotals.gross.toLocaleString()}</div>
             </CardContent>
           </Card>
-          <Card className="border-l-8 border-l-red-500 shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">Total Deductions</CardTitle>
+          <Card className="border-l-4 border-l-red-500 shadow-sm">
+            <CardHeader className="py-2 px-4 pb-0">
+              <CardTitle className="text-[10px] font-black uppercase text-muted-foreground leading-none">Total Deductions</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-black text-primary">฿{displayBatchTotals.deductions.toLocaleString()}</div>
+            <CardContent className="px-4 py-2">
+              <div className="text-lg font-black text-primary tabular-nums leading-tight">฿{displayBatchTotals.deductions.toLocaleString()}</div>
             </CardContent>
           </Card>
-          <Card className="border-l-8 border-l-green-600 shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-[10px] font-black uppercase text-muted-foreground">Net Payable</CardTitle>
+          <Card className="border-l-4 border-l-green-600 shadow-sm">
+            <CardHeader className="py-2 px-4 pb-0">
+              <CardTitle className="text-[10px] font-black uppercase text-muted-foreground leading-none">Net Payable</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-black text-primary">฿{displayBatchTotals.net.toLocaleString()}</div>
+            <CardContent className="px-4 py-2">
+              <div className="text-lg font-black text-primary tabular-nums leading-tight">฿{displayBatchTotals.net.toLocaleString()}</div>
             </CardContent>
           </Card>
         </div>
@@ -1128,7 +1128,7 @@ export function PayrollBatchDetailView({
                   <TableHeader className="bg-muted/30">
                     <TableRow>
                       {showAccountingConfirm ? (
-                        <TableHead className="w-11 pl-4 py-3 align-middle">
+                        <TableHead className="w-11 pl-4 py-[0.6rem] align-middle">
                           <Checkbox
                             checked={
                               unpaidAccountingLines.length > 0 &&
@@ -1145,7 +1145,7 @@ export function PayrollBatchDetailView({
                           />
                         </TableHead>
                       ) : null}
-                      <TableHead className="pl-6 py-3 w-[26%] min-w-[160px] max-w-[300px] align-middle">
+                      <TableHead className="pl-6 py-[0.6rem] w-[26%] min-w-[160px] max-w-[300px] align-middle">
                         Worker (Snapshot)
                       </TableHead>
                       <TableHead className="w-[118px] whitespace-nowrap align-middle">Payment Method</TableHead>
@@ -1168,7 +1168,7 @@ export function PayrollBatchDetailView({
                       return (
                       <TableRow key={line.id} className="hover:bg-muted/10">
                         {showAccountingConfirm ? (
-                          <TableCell className="w-11 pl-4 align-middle py-3">
+                          <TableCell className="w-11 pl-4 align-middle py-[0.6rem]">
                             {(line as PayrollBatchLine).financePayoutCashbookEntryId ? (
                               <span className="text-muted-foreground text-xs tabular-nums" title="ตัดบัญชีแล้ว">
                                 ✓
@@ -1190,7 +1190,7 @@ export function PayrollBatchDetailView({
                             )}
                           </TableCell>
                         ) : null}
-                        <TableCell className="pl-6 align-top py-3 min-w-0 max-w-[300px]">
+                        <TableCell className="pl-6 align-top py-[0.6rem] min-w-0 max-w-[300px]">
                           <div className="flex flex-col gap-0.5 min-w-0">
                             <span className="font-bold text-sm text-primary leading-snug break-words inline-flex flex-wrap items-center gap-1">
                               {line.workerNameSnapshot}
@@ -1205,18 +1205,18 @@ export function PayrollBatchDetailView({
                             </span>
                           </div>
                         </TableCell>
-                        <TableCell className="align-middle py-3 whitespace-nowrap">
+                        <TableCell className="align-middle py-[0.6rem] whitespace-nowrap">
                           <div className="inline-flex items-center gap-1.5 text-xs">
                             <CreditCard className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                             <span>{line.workerPaymentProfileSnapshot?.paymentMethod || 'CASH'}</span>
                           </div>
                         </TableCell>
-                        <TableCell className="align-middle py-3">
+                        <TableCell className="align-middle py-[0.6rem]">
                           <Badge variant="outline" className="text-[9px] font-semibold whitespace-nowrap">
                             {payrollLineExportStatusLabelTh(line.exportStatus)}
                           </Badge>
                         </TableCell>
-                        <TableCell className="align-middle py-3">
+                        <TableCell className="align-middle py-[0.6rem]">
                           {(showAccountingConfirm || !!(line as PayrollBatchLine).financePayoutCashbookEntryId) &&
                           (line as PayrollBatchLine).financePayoutCashbookEntryId ? (
                             <Badge
@@ -1236,16 +1236,16 @@ export function PayrollBatchDetailView({
                             <span className="text-xs text-muted-foreground">—</span>
                           )}
                         </TableCell>
-                        <TableCell className="text-right text-xs font-medium tabular-nums align-middle py-3">
+                        <TableCell className="text-right text-xs font-medium tabular-nums align-middle py-[0.6rem]">
                           ฿{safeNum(slipModel?.grossTotal ?? line.grossAmount).toLocaleString()}
                         </TableCell>
-                        <TableCell className="text-right text-xs text-red-600 tabular-nums align-middle py-3">
+                        <TableCell className="text-right text-xs text-red-600 tabular-nums align-middle py-[0.6rem]">
                           ฿{safeNum(slipModel?.deductionsTotal ?? lineDeductionsTotal(line)).toLocaleString()}
                         </TableCell>
-                        <TableCell className="text-right font-black text-primary tabular-nums align-middle py-3 text-sm">
+                        <TableCell className="text-right font-black text-primary tabular-nums align-middle py-[0.6rem] text-sm">
                           ฿{safeNum(slipModel?.netPay ?? line.netAmount).toLocaleString()}
                         </TableCell>
-                        <TableCell className="text-center align-middle py-3 px-1">
+                        <TableCell className="text-center align-middle py-[0.6rem] px-1">
                           <WorkerPayrollWhtSingleDialog
                             firestore={firestore}
                             batch={batch}
@@ -1257,7 +1257,7 @@ export function PayrollBatchDetailView({
                             disabledTitle={whtDisabledReason}
                           />
                         </TableCell>
-                        <TableCell className="text-right align-middle py-3 pr-2">
+                        <TableCell className="text-right align-middle py-[0.6rem] pr-2">
                           {canGenerateWorkerPayslips && slipModel ? (
                             <PayslipDialog model={slipModel} />
                           ) : canGenerateWorkerPayslips && !slipModel ? (
@@ -1270,7 +1270,7 @@ export function PayrollBatchDetailView({
                             </Badge>
                           )}
                         </TableCell>
-                        <TableCell className="text-right align-middle py-3 pr-3">
+                        <TableCell className="text-right align-middle py-[0.6rem] pr-3">
                           <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" asChild title="รายละเอียดรายคน · รายวัน · ปรับยอด">
                             <Link href={`/payroll/batches/${id}/workers/${line.workerId}`}>
                               <ChevronRight className="h-5 w-5" />

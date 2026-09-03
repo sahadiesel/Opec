@@ -208,9 +208,9 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     font-family: 'Sarabun', 'Prompt', system-ui, -apple-system, sans-serif;
     color: #171717;
     margin: 0;
-    padding: 6mm 14mm 26mm 14mm;
-    font-size: 11pt;
-    line-height: 1.45;
+    padding: 4mm 12mm 22mm 12mm;
+    font-size: 10pt;
+    line-height: 1.35;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
@@ -228,10 +228,10 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 12px;
-    padding-bottom: 8px;
-    border-bottom: 2px solid ${ACCENT};
-    margin-bottom: 12px;
+    gap: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1.5px solid ${ACCENT};
+    margin-bottom: 6px;
   }
   .sd-company-col {
     flex: 0 1 60%;
@@ -240,49 +240,51 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
   }
   .sd-company-name {
     font-weight: 800;
-    font-size: 13pt;
-    margin: 0 0 4px 0;
+    font-size: 10.5pt;
+    margin: 0 0 2px 0;
     white-space: nowrap;
+    line-height: 1.2;
   }
-  .sd-company-line { margin: 0; color: #404040; font-size: 9.5pt; }
+  .sd-company-line { margin: 0; color: #404040; font-size: 8pt; line-height: 1.25; }
   .sd-company-addr { white-space: normal; overflow-wrap: break-word; word-wrap: break-word; }
   .sd-doc-title {
     margin: 0;
-    font-size: 18pt;
+    font-size: 13pt;
     font-weight: 800;
     color: ${ACCENT};
     text-align: right;
-    line-height: 1.2;
+    line-height: 1.15;
   }
   .sd-doc-subtitle {
-    margin: 4px 0 0 0;
-    font-size: 11pt;
+    margin: 2px 0 0 0;
+    font-size: 9pt;
     font-weight: 700;
     color: #404040;
     text-align: right;
-    line-height: 1.3;
+    line-height: 1.2;
   }
   .sd-doc-title-en {
     display: block;
-    margin-top: 4px;
-    font-size: 12pt;
+    margin-top: 2px;
+    font-size: 9.5pt;
     font-weight: 600;
     color: #525252;
     text-align: right;
   }
   .sd-title-col { flex: 1; min-width: 0; max-width: 40%; text-align: right; }
-  .sd-meta-rows { margin-top: 8px; display: block; width: 100%; }
+  .sd-meta-rows { margin-top: 4px; display: block; width: 100%; }
   .sd-meta-row {
     display: flex;
     flex-direction: row;
     justify-content: flex-end;
     align-items: baseline;
     flex-wrap: wrap;
-    gap: 0.2em 0.65em;
+    gap: 0.15em 0.5em;
     width: 100%;
-    font-size: 10pt;
+    font-size: 8.5pt;
+    line-height: 1.25;
   }
-  .sd-meta-row + .sd-meta-row { margin-top: 3px; }
+  .sd-meta-row + .sd-meta-row { margin-top: 1px; }
   .sd-meta-lbl { flex: 0 0 auto; max-width: 52%; text-align: right; font-weight: 700; }
   .sd-meta-val {
     flex: 0 1 auto;
@@ -293,52 +295,52 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
   .sd-meta-line {
     width: 100%;
     text-align: right;
-    font-size: 10pt;
-    line-height: 1.45;
+    font-size: 8.5pt;
+    line-height: 1.25;
   }
-  .sd-meta-line + .sd-meta-line { margin-top: 4px; }
+  .sd-meta-line + .sd-meta-line { margin-top: 2px; }
   .sd-party {
     border: 1px solid #d4d4d8;
-    border-radius: 4px;
-    padding: 10px 12px;
-    margin-bottom: 16px;
+    border-radius: 3px;
+    padding: 5px 8px;
+    margin-bottom: 6px;
   }
   .sd-party-label {
-    margin: 0 0 6px 0;
-    font-size: 10pt;
+    margin: 0 0 2px 0;
+    font-size: 8pt;
     font-weight: 700;
     color: ${ACCENT};
   }
-  .sd-party-name { margin: 0; font-weight: 700; font-size: 11pt; }
-  .sd-party-line { margin: 4px 0 0 0; font-size: 9.5pt; color: #404040; white-space: pre-wrap; }
-  .sd-table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  .sd-party-name { margin: 0; font-weight: 700; font-size: 9.5pt; line-height: 1.25; }
+  .sd-party-line { margin: 1px 0 0 0; font-size: 8pt; color: #404040; white-space: pre-wrap; line-height: 1.25; }
+  .sd-table { width: 100%; border-collapse: collapse; margin: 6px 0; }
   .sd-table thead { display: table-header-group; }
   .sd-table th {
     background: #f4f4f5;
     border: 1px solid #d4d4d8;
-    padding: 8px 6px;
-    font-size: 9.5pt;
+    padding: 4px 5px;
+    font-size: 8.5pt;
     font-weight: 700;
     text-align: left;
   }
-  .sd-table th.sd-num, .sd-table td.sd-num { text-align: center; width: 36px; }
+  .sd-table th.sd-num, .sd-table td.sd-num { text-align: center; width: 28px; }
   .sd-table th.sd-right, .sd-table td.sd-right { text-align: right; }
   .sd-table td {
     border: 1px solid #e4e4e7;
-    padding: 8px 6px;
-    font-size: 10pt;
+    padding: 4px 5px;
+    font-size: 9pt;
     vertical-align: top;
   }
   .sd-line-desc {
     white-space: pre-line;
-    line-height: 1.4;
+    line-height: 1.25;
   }
   .sd-line-remarks {
-    margin-top: 4px;
-    font-size: 9pt;
+    margin-top: 2px;
+    font-size: 8pt;
     color: #64748b;
     white-space: pre-line;
-    line-height: 1.35;
+    line-height: 1.25;
     font-style: italic;
   }
   .sd-totals-wrap { display: flex; justify-content: flex-end; margin-top: 8px; }
@@ -384,7 +386,7 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
   .sd-totals-row.sd-grand .sd-total-label { font-weight: 800; }
   .sd-totals-row.sd-grand .sd-total-val {
     font-weight: 800;
-    font-size: 14pt;
+    font-size: 11pt;
     color: ${ACCENT};
   }
   .sd-amount-words {
@@ -473,9 +475,10 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     padding-bottom: 2mm;
   }
   .sd-purchase-type-line {
-    margin: 0 0 8px 0;
-    font-size: 9.5pt;
+    margin: 0 0 4px 0;
+    font-size: 8.5pt;
     color: #404040;
+    line-height: 1.25;
   }
   .sd-doc-ref {
     border: 1px solid #d4d4d8;
