@@ -25,6 +25,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { COMPACT_LIST_TABLE } from '@/components/ui/table-density';
 import {
   fmtBaht,
   mergeUniqueProofAttachments,
@@ -665,7 +666,7 @@ export default function AccountingWithholdingVendorDocumentsPage() {
               </p>
             ) : (
               <div className="rounded-md border">
-                <Table className="table-fixed w-full">
+                <Table className={cn('table-fixed w-full', COMPACT_LIST_TABLE)}>
                   {VENDOR_WHT_LIST_TABLE_COLGROUP(canPayWhtTax)}
                   <TableHeader>
                     <TableRow>

@@ -536,6 +536,11 @@ export function computeWorkDayPackagePayslipPositionSplits(
 export function buildPositionSplitsFromDailyRowSnapshots(
   snaps: readonly PayrollBatchLineDailyRowSnapshot[] | null | undefined,
   pkgAmount: number,
+  opts?: {
+    /** ชื่อตำแหน่งจาก master / splits ที่ generate ไว้ — เติมเมื่อ snapshot รายวันไม่มีชื่อ */
+    positionNameById?: ReadonlyMap<string, string>;
+    fallbackPositionName?: string;
+  },
 ): PayslipWorkDayPositionSplit[] | null {
   if (!snaps?.length || pkgAmount <= 0.005) return null;
   const work = snaps.filter(
@@ -544,6 +549,19 @@ export function buildPositionSplitsFromDailyRowSnapshots(
   if (!work.length) return null;
   const daySum = round2(work.reduce((s, r) => s + (Number(r.amount) || 0), 0));
   if (daySum <= 0.005) return null;
+
+  const resolvePosName = (row: PayrollBatchLineDailyRowSnapshot): string => {
+    const fromRow = String(row.positionNameSnapshot || '').trim();
+    if (fromRow && fromRow !== 'ไม่ระบุตำแหน่ง') return fromRow;
+    const pid = String(row.positionId || '').trim();
+    if (pid) {
+      const fromMap = String(opts?.positionNameById?.get(pid) || '').trim();
+      if (fromMap && fromMap !== 'ไม่ระบุตำแหน่ง') return fromMap;
+    }
+    const fb = String(opts?.fallbackPositionName || '').trim();
+    if (fb && fb !== '—' && fb !== 'ไม่ระบุตำแหน่ง') return fb;
+    return fromRow || 'ไม่ระบุตำแหน่ง';
+  };
 
   /** อัตราแพ็กจากวันธรรมดาที่ไม่มี OT (เช่น 2600 ตรงๆ) — ข้ามอาทิตย์/นักขัตฤกษ์ */
   const peerByPos = new Map<string, number[]>();
@@ -608,8 +626,7 @@ export function buildPositionSplitsFromDailyRowSnapshots(
 
   for (const row of work) {
     const positionId = String(row.positionId || '').trim() || '_unknown_position';
-    const positionNameSnapshot =
-      String(row.positionNameSnapshot || '').trim() || 'ไม่ระบุตำแหน่ง';
+    const positionNameSnapshot = resolvePosName(row);
     const workMode = String(row.workMode || '').trim() || undefined;
     const posKey = positionId !== '_unknown_position' ? positionId : positionNameSnapshot;
     const amount = Number(row.amount) || 0;
@@ -915,15 +932,52 @@ export function pushWorkDayPayslipIncomeLines(
   labelPrefix: string,
   positionSplits?: readonly PayslipWorkDayPositionSplit[] | null,
   dailyRowSnapshots?: readonly PayrollBatchLineDailyRowSnapshot[] | null,
+  positionNameOpts?: {
+    positionNameById?: ReadonlyMap<string, string>;
+    fallbackPositionName?: string;
+  },
 ): boolean {
+  const nameById = new Map<string, string>();
+  if (positionNameOpts?.positionNameById) {
+    for (const [k, v] of positionNameOpts.positionNameById) {
+      const id = String(k || '').trim();
+      const name = String(v || '').trim();
+      if (id && name && name !== 'ไม่ระบุตำแหน่ง' && name !== '—') nameById.set(id, name);
+    }
+  }
+  for (const pos of positionSplits ?? []) {
+    const id = String(pos.positionId || '').trim();
+    const name = String(pos.positionNameSnapshot || '').trim();
+    if (id && name && name !== 'ไม่ระบุตำแหน่ง' && !nameById.has(id)) nameById.set(id, name);
+  }
+  const nameOpts = {
+    positionNameById: nameById.size > 0 ? nameById : undefined,
+    fallbackPositionName: positionNameOpts?.fallbackPositionName,
+  };
+
   /** รายวันในงวดเป็นแหล่งอัตราจริง (1800/2600) — ใช้ก่อน split เก่าที่อาจเฉลี่ย */
-  const fromSnaps = buildPositionSplitsFromDailyRowSnapshots(dailyRowSnapshots, pkgAmount);
+  const fromSnaps = buildPositionSplitsFromDailyRowSnapshots(dailyRowSnapshots, pkgAmount, nameOpts);
   if (fromSnaps && pushPositionWorkDaySplitLines(lines, fromSnaps, labelPrefix)) {
     return true;
   }
 
   if (positionSplits && positionSplits.length > 0) {
-    const aligned = alignPositionSplitsToPkg(positionSplits, pkgAmount);
+    const withNames = positionSplits.map((p) => {
+      const name = String(p.positionNameSnapshot || '').trim();
+      if (name && name !== 'ไม่ระบุตำแหน่ง') return p;
+      const id = String(p.positionId || '').trim();
+      const fromMap = id ? nameById.get(id) : undefined;
+      const fb = String(positionNameOpts?.fallbackPositionName || '').trim();
+      const resolved =
+        fromMap && fromMap !== '—'
+          ? fromMap
+          : fb && fb !== '—' && fb !== 'ไม่ระบุตำแหน่ง'
+            ? fb
+            : '';
+      if (!resolved) return p;
+      return { ...p, positionNameSnapshot: resolved };
+    });
+    const aligned = alignPositionSplitsToPkg(withNames, pkgAmount);
     if (aligned && pushPositionWorkDaySplitLines(lines, aligned, labelPrefix)) {
       return true;
     }

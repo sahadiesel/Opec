@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { COMPACT_LIST_TABLE } from '@/components/ui/table-density';
 import { ExternalLink } from 'lucide-react';
 import Link from 'next/link';
 import { fmtBaht, renderWageStatusBadge } from '@/components/accounting/withholding-wht-pay-tax-ui';
@@ -85,8 +86,8 @@ const SSO_DATE_COL_WIDTH = '8%';
 const SSO_EQUAL_SIX_COL_WIDTH = '11%';
 
 const SSO_EQUAL_COL_HEAD =
-  'px-2 py-2 text-xs font-medium leading-snug align-middle whitespace-normal break-words';
-const SSO_EQUAL_COL_CELL = 'px-2 py-3 align-middle max-w-0';
+  'px-2 py-0 text-xs font-medium leading-snug align-middle whitespace-normal break-words';
+const SSO_EQUAL_COL_CELL = 'px-2 py-0 align-middle max-w-0 leading-tight';
 
 export const SSO_LIST_TABLE_COLGROUP = (showSelect: boolean) => (
   <colgroup>
@@ -120,7 +121,7 @@ export function PayrollSsoListTable({
 
   return (
     <div className="rounded-md border">
-      <Table className="table-fixed w-full">
+      <Table className={cn('table-fixed w-full', COMPACT_LIST_TABLE)}>
         {SSO_LIST_TABLE_COLGROUP(canPay)}
         <TableHeader>
           <TableRow>

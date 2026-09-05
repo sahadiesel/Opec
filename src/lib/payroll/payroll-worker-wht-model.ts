@@ -27,14 +27,21 @@ export function timestampMsToBangkokYmd(ms: number): string {
   return `${y}-${m}-${d}`;
 }
 
-/** วันที่จ่ายสำหรับแสดงในใบหัก — อิงเวลาอนุมัติ/จัดเตรียมจ่ายของ batch */
-export function resolvePayrollWorkerWhtPaymentDateYmd(batch: PayrollBatch): string | undefined {
+/** วันที่จ่ายสำหรับแสดงในใบหัก — อิงวันโอน/ตัด cashbook จริง (ไม่ใช้วันเตรียม/อนุมัติ HR) */
+export function resolvePayrollWorkerWhtPaymentDateYmd(
+  batch: PayrollBatch,
+  line?: Pick<PayrollBatchLine, 'financePayoutEntryDate' | 'financePaidAt'> | null,
+): string | undefined {
+  const lineEntry = line?.financePayoutEntryDate?.trim();
+  if (lineEntry && /^\d{4}-\d{2}-\d{2}$/.test(lineEntry)) return lineEntry;
+  const batchEntry = batch.financePayoutEntryDate?.trim();
+  if (batchEntry && /^\d{4}-\d{2}-\d{2}$/.test(batchEntry)) return batchEntry;
   const pick =
-    batch.financePreparedAt ??
-    batch.hrApprovedAt ??
-    batch.lockedAt ??
-    batch.updatedAt ??
-    batch.createdAt;
+    (line?.financePaidAt != null && Number.isFinite(line.financePaidAt) ? line.financePaidAt : undefined) ??
+    batch.financeApprovedAt ??
+    (batch.status === 'PAID' || batch.status === 'LOCKED'
+      ? batch.lockedAt ?? batch.updatedAt
+      : undefined);
   if (pick == null || !Number.isFinite(pick)) return undefined;
   return timestampMsToBangkokYmd(pick);
 }

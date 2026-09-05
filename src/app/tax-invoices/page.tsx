@@ -217,7 +217,7 @@ export default function TaxInvoicesPage() {
           receiptNo = receiptNoByTaxInvoiceId.get(inv.id)?.trim() || '-';
         }
         return {
-          taxInvoiceNo: inv.taxInvoiceNo || '—',
+          taxInvoiceNo: inv.taxInvoiceNo || (inv.status === 'DRAFT' ? 'รอออกเลข…' : '—'),
           customerName: customer?.name || 'N/A',
           issueDateLabel: formatStoredDateThaiBE(inv.issueDate),
           receiptNo,
@@ -316,7 +316,7 @@ export default function TaxInvoicesPage() {
 
     setIsCreating(true);
     try {
-      const { taxInvoiceId, taxInvoiceNo } = await createTaxInvoiceDraftFromIssuedCommercial(
+      const { taxInvoiceId } = await createTaxInvoiceDraftFromIssuedCommercial(
         firestore,
         selectedCommercialId,
         currentUser as User,
@@ -331,7 +331,8 @@ export default function TaxInvoicesPage() {
       setShowWithholdingOnDocument(false);
       toast({
         title: 'สร้างใบกำกับภาษีร่างสำเร็จ',
-        description: `เลขที่ ${taxInvoiceNo} — แนบสลิปได้ที่หน้ารายละเอียด ก่อนกดออกเอกสารจริง (ISSUED)`,
+        description:
+          'ยังไม่ออกเลข INV — แนบสลิปได้ที่หน้ารายละเอียด ก่อนกดออกเอกสารจริง (ISSUED) จึงจะได้เลขที่และวันที่ออก',
       });
       router.push(`/tax-invoices/${taxInvoiceId}`);
     } catch (e: unknown) {
@@ -350,7 +351,9 @@ export default function TaxInvoicesPage() {
       await deleteTaxInvoiceBundleAsAdmin(firestore, firebaseApp, deleteTarget, currentUser as User);
       toast({
         title: 'ลบชุดเอกสารแล้ว',
-        description: `เลขที่ ${deleteTarget.taxInvoiceNo} — ถ้าเป็นเลขล่าสุดของเดือน การสร้างครั้งถัดไปจะใช้เลขเดิมแทนการข้าม`,
+        description: deleteTarget.taxInvoiceNo
+          ? `เลขที่ ${deleteTarget.taxInvoiceNo} คืนเข้า pool — ออกเอกสารครั้งถัดไปสามารถใช้เลขเดิมได้`
+          : 'ลบร่างที่ยังไม่มีเลข INV แล้ว',
       });
       setDeleteDialogOpen(false);
       setDeleteTarget(null);
@@ -567,7 +570,14 @@ export default function TaxInvoicesPage() {
               <AlertDialogTitle>ลบใบกำกับภาษีและใบวางบิลที่คู่กัน?</AlertDialogTitle>
               <AlertDialogDescription className="space-y-2">
                 <span>
-                  จะลบถาวรเอกสาร <strong className="font-mono">{deleteTarget?.taxInvoiceNo}</strong> พร้อมใบวางบิลและรายการบรรทัด
+                  จะลบถาวรเอกสาร{' '}
+                  <strong className="font-mono">
+                    {deleteTarget?.taxInvoiceNo || 'ร่าง (ยังไม่มีเลข)'}
+                  </strong>{' '}
+                  พร้อมใบวางบิลและรายการบรรทัด
+                  {deleteTarget?.taxInvoiceNo
+                    ? ' — เลข INV จะคืนเข้า pool เพื่อออกใหม่ได้โดยไม่หายจากระบบ'
+                    : ''}
                   และคืนสิทธิ์สร้างใบกำกับจากใบเรียกเก็บเดิมได้ (ถ้ามี)
                 </span>
                 <span className="block text-xs">
@@ -622,7 +632,11 @@ export default function TaxInvoicesPage() {
                         className="cursor-pointer hover:bg-muted/30 group transition-all" 
                         onClick={() => router.push(`/tax-invoices/${inv.id}`)}
                       >
-                        <TableCell className="py-4 pl-6 font-bold text-primary font-mono">{inv.taxInvoiceNo}</TableCell>
+                        <TableCell className="py-4 pl-6 font-bold text-primary font-mono">
+                          {inv.taxInvoiceNo || (
+                            <span className="text-muted-foreground font-sans font-semibold">รอออกเลข…</span>
+                          )}
+                        </TableCell>
                         <TableCell className="min-w-[14rem] max-w-[18rem] w-[16rem]">
                           <div
                             className="flex items-center gap-1.5 text-sm font-bold text-primary min-w-0"

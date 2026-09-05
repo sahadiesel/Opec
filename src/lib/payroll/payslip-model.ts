@@ -11,7 +11,7 @@ import type {
   DailyTimesheet,
 } from '@/lib/types';
 import { formatPriorPeriodAllowancePayslipLabel } from '@/lib/payroll/prior-period-allowance';
-import { formatDateThaiBE, formatOfficePayrollRunPeriodLabelThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
+import { formatDateThaiBE, formatOfficePayrollRunPeriodLabelThaiBE, formatYmdLocalThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { leaveSummaryLabelTh } from '@/lib/payroll/office-payroll-period-deductions';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
 import { resolvePoLineForPayrollTimesheet } from '@/lib/payroll/timesheet-labor-base-cost';
@@ -146,6 +146,34 @@ function formatPaymentDate(ts?: number | null): string {
   return formatDateThaiBE(ts);
 }
 
+/**
+ * วันจ่ายบนสลิป = วันที่บัญชีโอน/ตัด cashbook จริง
+ * ไม่ใช้วันเตรียมจ่าย (financePreparedAt) หรือวันอนุมัติ HR
+ */
+function workerPaymentDateLabel(
+  batch: PayrollBatch,
+  line?: Pick<PayrollBatchLine, 'financePayoutEntryDate' | 'financePaidAt'> | null,
+): string {
+  const lineEntry = line?.financePayoutEntryDate?.trim();
+  if (lineEntry && /^\d{4}-\d{2}-\d{2}$/.test(lineEntry)) {
+    return formatYmdLocalThaiBE(lineEntry);
+  }
+  const batchEntry = batch.financePayoutEntryDate?.trim();
+  if (batchEntry && /^\d{4}-\d{2}-\d{2}$/.test(batchEntry)) {
+    return formatYmdLocalThaiBE(batchEntry);
+  }
+  const linePaid = line?.financePaidAt;
+  if (linePaid != null && Number.isFinite(linePaid)) return formatPaymentDate(linePaid);
+  if (batch.financeApprovedAt != null && Number.isFinite(batch.financeApprovedAt)) {
+    return formatPaymentDate(batch.financeApprovedAt);
+  }
+  if (batch.status === 'PAID' || batch.status === 'LOCKED') {
+    const fallback = batch.lockedAt ?? batch.updatedAt;
+    if (fallback != null && Number.isFinite(fallback)) return formatPaymentDate(fallback);
+  }
+  return '— (ยังไม่ระบุวันจ่าย)';
+}
+
 /** แปลงคีย์ earningsBreakdown / earningsComponents เป็นชื่อที่อ่านได้ */
 export function humanizeWorkerEarningsKey(key: string): string {
   const k = key.replace(/_policy$/i, '').replace(/_package$/i, '');
@@ -183,16 +211,6 @@ function humanizeDeductionKey(key: string): string {
     post_employment_deduction: 'หักหลังวันสิ้นสุดการจ้าง',
   };
   return map[key] || key.replace(/_/g, ' ');
-}
-
-function workerPaymentTimestamp(batch: PayrollBatch): number | undefined {
-  return (
-    batch.financePreparedAt ??
-    batch.hrApprovedAt ??
-    batch.lockedAt ??
-    batch.updatedAt ??
-    batch.createdAt
-  );
 }
 
 function round2(n: number): number {
@@ -399,6 +417,12 @@ function pushStandbyLikePayslipLinesByRate(
   });
 }
 
+/** ชื่อตำแหน่งเติมบนสลิปเมื่อ dailyRowSnapshots ไม่มี positionNameSnapshot */
+export type WorkerPayslipPositionNameOpts = {
+  positionNameById?: ReadonlyMap<string, string>;
+  fallbackPositionName?: string;
+};
+
 /** true ถ้าใส่บรรทัดแทน work_day_package แล้ว */
 function tryPushWorkDayPackageSplitLines(
   lines: PayslipLineItem[],
@@ -407,6 +431,7 @@ function tryPushWorkDayPackageSplitLines(
   labelPrefix: string,
   positionSplits?: PayslipWorkDayPositionSplit[] | null,
   dailyRowSnapshots?: PayrollBatchLine['dailyRowSnapshots'],
+  positionNameOpts?: WorkerPayslipPositionNameOpts,
 ): boolean {
   return pushWorkDayPayslipIncomeLines(
     lines,
@@ -415,6 +440,7 @@ function tryPushWorkDayPackageSplitLines(
     labelPrefix,
     positionSplits,
     dailyRowSnapshots,
+    positionNameOpts,
   );
 }
 
@@ -461,6 +487,7 @@ function payslipIncomeSegmentPrefix(
 export function buildWorkerPayslipIncomeLines(
   line: PayrollBatchLine,
   poPartyLabelById?: ReadonlyMap<string, string>,
+  positionNameOpts?: WorkerPayslipPositionNameOpts,
 ): PayslipLineItem[] {
   const allowanceItems = (line.hrLineAdjustments?.allowanceItems ?? []).filter(
     (x) => (Number(x.amount) || 0) > 0,
@@ -509,6 +536,7 @@ export function buildWorkerPayslipIncomeLines(
             prefix,
             seg.payslipWorkDayPositionSplits,
             line.dailyRowSnapshots,
+            positionNameOpts,
           )
         ) {
           continue;
@@ -551,6 +579,7 @@ export function buildWorkerPayslipIncomeLines(
         '',
         line.payslipWorkDayPositionSplits,
         line.dailyRowSnapshots,
+        positionNameOpts,
       )
     ) {
       continue;
@@ -960,7 +989,7 @@ function applyPriorPaidRefsToNormalPayslip(
     if (ref.batch.batchType === 'SUPPLEMENTAL') hasSupplemental = true;
     const g = Math.max(0, Number(ref.line.grossAmount) || 0);
     const n = resolveLineNetForPayslip(ref.line);
-    const dl = formatPaymentDate(workerPaymentTimestamp(ref.batch));
+    const dl = workerPaymentDateLabel(ref.batch, ref.line);
     if (n > 0.005) {
       priorNetSum = round2(priorNetSum + n);
       if (dl && dl !== '-') dateLabels.push(dl);
@@ -1019,8 +1048,9 @@ function resolveSupplementalFrozenIncomeLines(
   line: PayrollBatchLine,
   grossTotal: number,
   poPartyLabelById?: ReadonlyMap<string, string>,
+  positionNameOpts?: WorkerPayslipPositionNameOpts,
 ): PayslipLineItem[] {
-  const incomeLines = buildWorkerPayslipIncomeLines(line, poPartyLabelById);
+  const incomeLines = buildWorkerPayslipIncomeLines(line, poPartyLabelById, positionNameOpts);
   const sumIncome = sumLines(incomeLines);
   if (incomeLines.length > 0 && Math.abs(sumIncome - grossTotal) < 0.05) {
     return incomeLines;
@@ -1055,6 +1085,8 @@ export function buildPayslipFromWorkerLine(
   priorPaidRefs?: readonly PriorPaidPayrollSlipRef[] | null,
   /** ชื่อลูกค้า/สัญญา ต่อ purchaseOrderId — ใช้แทน Firestore id บนสลิป */
   poPartyLabelById?: ReadonlyMap<string, string>,
+  /** เติมชื่อตำแหน่งเมื่อ snapshot รายวันไม่มีชื่อ (เช่น Electrician จาก master) */
+  positionNameOpts?: WorkerPayslipPositionNameOpts,
 ): PayslipViewModel {
   const { companyNameTh, companyNameEn } = resolvePayslipCompanyNames(companyProfile);
   const hasEarlierPaid = (priorPaidRefs?.length ?? 0) > 0;
@@ -1074,7 +1106,12 @@ export function buildPayslipFromWorkerLine(
     let incomeLines: PayslipLineItem[];
     let grossTotal = storedGross;
     if (isSupplemental) {
-      incomeLines = resolveSupplementalFrozenIncomeLines(line, storedGross, poPartyLabelById);
+      incomeLines = resolveSupplementalFrozenIncomeLines(
+        line,
+        storedGross,
+        poPartyLabelById,
+        positionNameOpts,
+      );
       const sumInc = sumLines(incomeLines);
       if (sumInc > 0.005 && Math.abs(sumInc - storedGross) >= 0.05) {
         grossTotal = sumInc;
@@ -1082,7 +1119,7 @@ export function buildPayslipFromWorkerLine(
         roundingNote = false;
       }
     } else {
-      const built = buildWorkerPayslipIncomeLines(line, poPartyLabelById);
+      const built = buildWorkerPayslipIncomeLines(line, poPartyLabelById, positionNameOpts);
       const sumIncome = sumLines(built);
       /**
        * ใช้รายละเอียดรายได้เมื่อตรงยอดบันทึก หรือเมื่อมียอดเบี้ยเลี้ยงในฟอร์มที่ยังไม่พับเข้า grossAmount
@@ -1133,7 +1170,7 @@ export function buildPayslipFromWorkerLine(
       periodLabel,
       payrollTypeLabel: 'Worker Payroll (Timesheet batch)',
       documentRef: batch.id,
-      paymentDateLabel: formatPaymentDate(workerPaymentTimestamp(batch)),
+      paymentDateLabel: workerPaymentDateLabel(batch, line),
       isSupplemental,
       normalPaymentDateLabel,
       policyVersionLabel: formatPolicyVersionFromSnapshot(line.d8Snapshot),
@@ -1146,7 +1183,7 @@ export function buildPayslipFromWorkerLine(
     };
   }
 
-  const incomeLinesBuilt = buildWorkerPayslipIncomeLines(line, poPartyLabelById);
+  const incomeLinesBuilt = buildWorkerPayslipIncomeLines(line, poPartyLabelById, positionNameOpts);
   let incomeLines = incomeLinesBuilt;
   const deductionLines = buildWorkerPayslipDeductionLines(line);
 
@@ -1196,7 +1233,7 @@ export function buildPayslipFromWorkerLine(
   let normalPaymentDateLabel: string | undefined;
 
   if (isSupplemental && normalLine && normalBatch) {
-    const normInc = buildWorkerPayslipIncomeLines(normalLine, poPartyLabelById);
+    const normInc = buildWorkerPayslipIncomeLines(normalLine, poPartyLabelById, positionNameOpts);
     const normDed = buildWorkerPayslipDeductionLines(normalLine);
     const snapGross = normalLine.d8Snapshot?.gross;
     const sInc = sumLines(normInc);
@@ -1208,7 +1245,7 @@ export function buildPayslipFromWorkerLine(
           : round2(normalLine.grossAmount);
 
     const normNet = resolveLineNetForPayslip(normalLine);
-    normalPaymentDateLabel = formatPaymentDate(workerPaymentTimestamp(normalBatch));
+    normalPaymentDateLabel = workerPaymentDateLabel(normalBatch, normalLine);
 
     const mergedIncMap = new Map<string, number>();
     for (const it of [...normInc, ...incomeLines]) {
@@ -1273,7 +1310,7 @@ export function buildPayslipFromWorkerLine(
     periodLabel,
     payrollTypeLabel: 'Worker Payroll (Timesheet batch)',
     documentRef: batch.id,
-    paymentDateLabel: formatPaymentDate(workerPaymentTimestamp(batch)),
+    paymentDateLabel: workerPaymentDateLabel(batch, line),
     isSupplemental,
     normalPaymentDateLabel,
     policyVersionLabel: formatPolicyVersionFromSnapshot(line.d8Snapshot),
@@ -1294,11 +1331,22 @@ export function buildPayslipFromWorkerLine(
 }
 
 function officePaymentDateLabel(run: OfficePayrollRun): string | undefined {
-  const approvedStatuses: PayrollRunStatus[] = ['HR_APPROVED', 'FINANCE_APPROVED', 'PAID', 'LOCKED'];
-  if (!approvedStatuses.includes(run.status)) return undefined;
-  const ts = run.managerApprovedAt;
-  if (ts == null || !Number.isFinite(ts)) return undefined;
-  return formatDateThaiBE(ts);
+  const paidStatuses: PayrollRunStatus[] = ['FINANCE_APPROVED', 'PAID', 'LOCKED'];
+  if (!paidStatuses.includes(run.status) && !run.financeCashbookEntryId && !run.financePayoutEntryDate) {
+    return undefined;
+  }
+  const entry = run.financePayoutEntryDate?.trim();
+  if (entry && /^\d{4}-\d{2}-\d{2}$/.test(entry)) {
+    return formatYmdLocalThaiBE(entry);
+  }
+  if (run.financeApprovedAt != null && Number.isFinite(run.financeApprovedAt)) {
+    return formatDateThaiBE(run.financeApprovedAt);
+  }
+  if (run.status === 'PAID' || run.status === 'LOCKED') {
+    const ts = run.lockedAt;
+    if (ts != null && Number.isFinite(ts)) return formatDateThaiBE(ts);
+  }
+  return undefined;
 }
 
 export function buildPayslipFromOfficeLine(

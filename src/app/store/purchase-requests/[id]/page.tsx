@@ -53,6 +53,11 @@ import {
   parsePrWhtRatePercent,
   prWhtPersistFields,
 } from '@/components/store/purchase-request-wht-card';
+import {
+  inferSupplierWhtCategoryFromRate,
+  isSupplierWithholdingCategory,
+  type SupplierWithholdingCategory,
+} from '@/lib/ops/supplier-wht-category';
 import { computePurchaseTotalsFromLines, sumLineAmounts } from '@/lib/purchase/pr-totals';
 import { replacePurchaseRequestLines } from '@/lib/purchase/pr-lines-repo';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
@@ -108,6 +113,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     { sequence: 2, label: 'งวดที่ 2', amount: 0 },
   ]);
   const [whtEnabled, setWhtEnabled] = useState(false);
+  const [whtCategory, setWhtCategory] = useState<SupplierWithholdingCategory>('SERVICE');
   const [whtRateInput, setWhtRateInput] = useState('3');
 
   const [saving, setSaving] = useState(false);
@@ -190,6 +196,14 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     setPurchasePaymentType(pr.purchasePaymentType ?? 'CREDIT');
     setPaymentInstallmentsEnabled(!!pr.paymentInstallmentsEnabled);
     setWhtEnabled(!!pr.supplierWithholdingEnabled);
+    const cat = pr.supplierWithholdingCategory;
+    if (isSupplierWithholdingCategory(cat)) {
+      setWhtCategory(cat);
+    } else if (pr.supplierWithholdingEnabled) {
+      setWhtCategory(inferSupplierWhtCategoryFromRate(Number(pr.supplierWithholdingRatePercent) || 3));
+    } else {
+      setWhtCategory('SERVICE');
+    }
     setWhtRateInput(String(pr.supplierWithholdingRatePercent ?? 3));
     if (pr.paymentMilestoneDrafts?.length) {
       setMilestones(pr.paymentMilestoneDrafts);
@@ -358,7 +372,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         purchasePaymentType,
         paymentInstallmentsEnabled: purchasePaymentType === 'CREDIT' ? paymentInstallmentsEnabled : false,
         paymentMilestoneDrafts: milestonePayload ?? undefined,
-        ...prWhtPersistFields(lineEntryMode, whtEnabled, whtRateInput),
+        ...prWhtPersistFields(lineEntryMode, whtEnabled, whtRateInput, whtCategory),
         updatedAt: Date.now(),
       });
       toast({ title: pr.status === 'REJECTED' ? 'บันทึกแล้ว' : 'บันทึกแล้ว' });
@@ -405,7 +419,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         purchasePaymentType,
         paymentInstallmentsEnabled: purchasePaymentType === 'CREDIT' ? paymentInstallmentsEnabled : false,
         paymentMilestoneDrafts: milestonePayload ?? undefined,
-        ...prWhtPersistFields(lineEntryMode, whtEnabled, whtRateInput),
+        ...prWhtPersistFields(lineEntryMode, whtEnabled, whtRateInput, whtCategory),
         status: 'PENDING_APPROVAL' as PurchaseRequestStatus,
         requestedByUid: pr.requestedByUid || currentUser.id,
         requestedByName: pr.requestedByName || currentUser.displayName || currentUser.email || '',
@@ -550,7 +564,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           vatAmount: formEditable ? totals.vatAmount : pr.vatAmount,
           totalAmount: formEditable ? totals.totalAmount : pr.totalAmount,
           ...(formEditable
-            ? prWhtPersistFields(lineEntryMode, whtEnabled, whtRateInput)
+            ? prWhtPersistFields(lineEntryMode, whtEnabled, whtRateInput, whtCategory)
             : {}),
         },
         vendor: vendor ?? undefined,
@@ -594,6 +608,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     vatTreatment,
     lineEntryMode,
     whtEnabled,
+    whtCategory,
     whtRateInput,
     totals,
     printLocale,
@@ -821,12 +836,20 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
         {(formEditable ? lineEntryMode : pr.lineEntryMode || 'SERVICE') === 'SERVICE' ? (
           <PurchaseRequestWhtCard
             enabled={formEditable ? whtEnabled : !!pr.supplierWithholdingEnabled}
+            category={
+              formEditable
+                ? whtCategory
+                : isSupplierWithholdingCategory(pr.supplierWithholdingCategory)
+                  ? pr.supplierWithholdingCategory
+                  : inferSupplierWhtCategoryFromRate(Number(pr.supplierWithholdingRatePercent) || 3)
+            }
             rateInput={
               formEditable
                 ? whtRateInput
                 : String(pr.supplierWithholdingRatePercent ?? 3)
             }
             onEnabledChange={setWhtEnabled}
+            onCategoryChange={setWhtCategory}
             onRateChange={setWhtRateInput}
             readOnly={!formEditable}
           />

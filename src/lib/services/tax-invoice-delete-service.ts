@@ -21,17 +21,21 @@ import {
   deleteTaxInvoiceLinkedArIfPresent,
 } from '@/lib/services/accounts-receivable-delete-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
+import { createTaxInvoiceDraftFromIssuedCommercial } from '@/lib/services/tax-invoice-from-commercial-service';
 
 /**
  * ยกเลิกใบกำกับภาษี (DRAFT / ISSUED → CANCELLED)
- * — ล้างลิงก์บนใบแจ้งหนี้ · ลบลูกหนี้ที่ผูกถ้ายังไม่มีใบเสร็จ/ยืนยันรับเงิน
- * หลังจากนี้ยกเลิกใบแจ้งหนี้ (VOID) ได้ตามปกติ
+ * — คงเลข INV เดิม (ถ้ามี) · ต้องระบุเหตุผล · ล้างลิงก์บนใบแจ้งหนี้ · ลบลูกหนี้เมื่อปลอดภัย
  */
 export async function cancelTaxInvoiceAsAccounting(
   db: Firestore,
   taxInvoiceId: string,
   actor: User,
+  reason: string,
 ): Promise<void> {
+  const reasonTrim = String(reason || '').trim();
+  if (!reasonTrim) throw new Error('กรุณาระบุสาเหตุการยกเลิกเอกสาร');
+
   const taxRef = doc(db, 'tax_invoices', taxInvoiceId);
   const taxSnap = await getDoc(taxRef);
   if (!taxSnap.exists()) throw new Error('ไม่พบใบกำกับภาษี');
@@ -44,6 +48,10 @@ export async function cancelTaxInvoiceAsAccounting(
     return;
   }
 
+  if (invoice.replacedByTaxInvoiceId) {
+    throw new Error('ใบนี้ถูกแทนที่ด้วยฉบับใหม่แล้ว — ไม่สามารถยกเลิกซ้ำ');
+  }
+
   assertTaxInvoiceAllowsRemovingLinkedAr(invoice);
   await deleteTaxInvoiceLinkedArIfPresent(db, invoice, actor);
 
@@ -53,6 +61,10 @@ export async function cancelTaxInvoiceAsAccounting(
     sanitizeFirestorePayload({
       status: 'CANCELLED' as const,
       arEntryId: deleteField(),
+      cancelledAt: now,
+      cancelledByUid: actor.id,
+      cancelledByName: (actor.displayName || actor.email || actor.id).trim(),
+      cancellationReason: reasonTrim,
       updatedAt: now,
     }),
   );
@@ -80,7 +92,7 @@ export async function cancelTaxInvoiceAsAccounting(
     actionType: 'UPDATE',
     entityType: 'TaxInvoice',
     entityId: invoice.id,
-    entityLabel: `${invoice.taxInvoiceNo} → CANCELLED`,
+    entityLabel: `${invoice.taxInvoiceNo || 'DRAFT'} → CANCELLED`,
     sourceModule: 'tax_invoices',
     linkedIds: [
       invoice.customerId,
@@ -89,8 +101,74 @@ export async function cancelTaxInvoiceAsAccounting(
     ],
     taxInvoiceId: invoice.id,
     billingNoteId: invoice.billingNoteId,
-    afterSummary: 'ยกเลิกใบกำกับภาษี — ปลดลิงก์ใบแจ้งหนี้ / ลบลูกหนี้เมื่อปลอดภัย',
+    afterSummary: `ยกเลิกใบกำกับภาษี — ${reasonTrim}`,
   });
+}
+
+/**
+ * ออกใบกำกับร่างใหม่แทนฉบับที่ยกเลิกแล้ว — เลข INV ออกตอนกด ISSUED · วันที่ปัจจุบัน
+ */
+export async function createReplacementTaxInvoiceDraft(
+  db: Firestore,
+  cancelledTaxInvoiceId: string,
+  actor: User,
+): Promise<{ taxInvoiceId: string; billingNoteId: string }> {
+  const taxRef = doc(db, 'tax_invoices', cancelledTaxInvoiceId);
+  const taxSnap = await getDoc(taxRef);
+  if (!taxSnap.exists()) throw new Error('ไม่พบใบกำกับภาษี');
+  const cancelled = { id: taxSnap.id, ...taxSnap.data() } as TaxInvoice;
+
+  if (cancelled.status !== 'CANCELLED') {
+    throw new Error('ออกฉบับแทนที่ได้เฉพาะใบที่สถานะ CANCELLED');
+  }
+  if (cancelled.replacedByTaxInvoiceId) {
+    throw new Error(
+      `ใบนี้ถูกแทนที่แล้วด้วย ${cancelled.replacedByTaxInvoiceNo || cancelled.replacedByTaxInvoiceId}`,
+    );
+  }
+  const commercialId = String(cancelled.sourceCommercialInvoiceId || '').trim();
+  if (!commercialId) {
+    throw new Error('ไม่พบใบเรียกเก็บต้นทาง — สร้างใบกำกับใหม่จากเมนูใบแจ้งหนี้');
+  }
+
+  const created = await createTaxInvoiceDraftFromIssuedCommercial(db, commercialId, actor, {
+    showWithholdingOnDocument: cancelled.showWithholdingOnDocument === true,
+    withholdingTaxRatePercentOnDocument: cancelled.withholdingTaxRatePercentOnDocument ?? 3,
+  });
+
+  const now = Date.now();
+  const newRef = doc(db, 'tax_invoices', created.taxInvoiceId);
+  await updateDoc(
+    newRef,
+    sanitizeFirestorePayload({
+      replacesTaxInvoiceId: cancelled.id,
+      replacesTaxInvoiceNo: cancelled.taxInvoiceNo || '',
+      updatedAt: now,
+    }),
+  );
+  await updateDoc(
+    taxRef,
+    sanitizeFirestorePayload({
+      replacedByTaxInvoiceId: created.taxInvoiceId,
+      replacedByTaxInvoiceNo: '',
+      replacedAt: now,
+      updatedAt: now,
+    }),
+  );
+
+  await writeAuditLog(db, actor, {
+    actionType: 'CREATE',
+    entityType: 'TaxInvoice',
+    entityId: created.taxInvoiceId,
+    entityLabel: `DRAFT replaces ${cancelled.taxInvoiceNo || cancelled.id}`,
+    sourceModule: 'tax_invoices',
+    linkedIds: [cancelled.id, commercialId, created.billingNoteId],
+    taxInvoiceId: created.taxInvoiceId,
+    billingNoteId: created.billingNoteId,
+    afterSummary: `สร้างใบกำกับร่างแทนที่ ${cancelled.taxInvoiceNo || cancelled.id}`,
+  });
+
+  return { taxInvoiceId: created.taxInvoiceId, billingNoteId: created.billingNoteId };
 }
 
 async function clearCommercialLinkedTaxIfMatches(
@@ -131,7 +209,7 @@ export async function deleteTaxInvoiceBundleAsAdmin(
   const bnSnap = await getDoc(bnRef);
   const billingNote = bnSnap.exists() ? ({ ...bnSnap.data(), id: bnSnap.id } as BillingNote) : null;
 
-  const taxInvoiceNo = invoice.taxInvoiceNo;
+  const taxInvoiceNo = String(invoice.taxInvoiceNo || '').trim();
   const billingNoteNo = billingNote?.billingNoteNo;
 
   if (invoice.sourceCommercialInvoiceId) {
@@ -178,7 +256,9 @@ export async function deleteTaxInvoiceBundleAsAdmin(
 
   await deleteDoc(doc(db, 'tax_invoices', invoice.id));
 
-  await releaseSequenceSlotIfLastIssued(db, 'tax_invoice', taxInvoiceNo);
+  if (taxInvoiceNo) {
+    await releaseSequenceSlotIfLastIssued(db, 'tax_invoice', taxInvoiceNo);
+  }
   if (billingNoteNo) {
     await releaseSequenceSlotIfLastIssued(db, 'billing_note', billingNoteNo);
   }
@@ -187,7 +267,7 @@ export async function deleteTaxInvoiceBundleAsAdmin(
     actionType: 'DELETE',
     entityType: 'TaxInvoice',
     entityId: invoice.id,
-    entityLabel: taxInvoiceNo,
+    entityLabel: taxInvoiceNo || 'DRAFT',
     sourceModule: 'tax_invoices',
     linkedIds: [
       invoice.customerId,
@@ -196,6 +276,6 @@ export async function deleteTaxInvoiceBundleAsAdmin(
     ],
     taxInvoiceId: invoice.id,
     billingNoteId: invoice.billingNoteId,
-    afterSummary: `ลบใบกำกับภาษีและใบวางบิลที่คู่กัน — คืนเลขที่ลำดับได้ถ้าเป็นเลขล่าสุดของเดือน (${taxInvoiceNo}${billingNoteNo ? ` / ${billingNoteNo}` : ''})`,
+    afterSummary: `ลบใบกำกับภาษีและใบวางบิลที่คู่กัน — คืนเลขที่ลำดับเมื่อมีเลข INV (${taxInvoiceNo || 'ไม่มีเลข'}${billingNoteNo ? ` / ${billingNoteNo}` : ''})`,
   });
 }

@@ -231,6 +231,15 @@ export function PayrollBatchDetailView({
     return out;
   }, [linesSorted, workers, positions]);
 
+  const positionNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of positions ?? []) {
+      const name = positionListPrimaryName(p).trim();
+      if (p.id && name) m.set(p.id, name);
+    }
+    return m;
+  }, [positions]);
+
   const accountingPaidLineCount = useMemo(
     () => linesSorted.filter((l) => !!(l as PayrollBatchLine).financePayoutCashbookEntryId).length,
     [linesSorted],
@@ -334,6 +343,7 @@ export function PayrollBatchDetailView({
         const lineFrozen = isWorkerPayrollBatchSnapshotFrozen(batch, {
           hasEarlierPaidInPeriod: priorForWorker.length > 0,
         });
+        const fallbackPos = workerPositionLabelByWorkerId.get(line.workerId);
         const model = buildPayslipFromWorkerLine(
           line,
           batch,
@@ -343,6 +353,11 @@ export function PayrollBatchDetailView({
           normalBatch,
           priorForWorker,
           lineFrozen ? undefined : poPartyLabelById,
+          {
+            positionNameById,
+            fallbackPositionName:
+              fallbackPos && fallbackPos !== '—' ? fallbackPos : undefined,
+          },
         );
         m.set(line.id, model);
       } catch {
@@ -359,6 +374,8 @@ export function PayrollBatchDetailView({
     priorPaidRefs,
     companyProfile,
     poPartyLabelById,
+    positionNameById,
+    workerPositionLabelByWorkerId,
   ]);
 
   const displayBatchTotals = useMemo(() => {

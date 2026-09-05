@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { COMPACT_LIST_TABLE } from '@/components/ui/table-density';
 import {
   fmtBaht,
   mergeUniqueProofAttachments,
@@ -33,6 +34,7 @@ import {
   renderWageStatusBadge,
   WHT_LIST_TABLE_COLGROUP,
 } from '@/components/accounting/withholding-wht-pay-tax-ui';
+import { cn } from '@/lib/utils';
 import { useFirestore, useCollection, useMemoFirebase, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { useToast } from '@/hooks/use-toast';
@@ -247,11 +249,14 @@ export default function AccountingWithholdingPayrollExecutivePage() {
     setExecutiveLinesErr(null);
     void (async () => {
       try {
-        const rows: ExecutiveWhtRow[] = [];
         const list = executiveRuns ?? [];
-        for (const run of list) {
-          if (cancelled) return;
-          const snap = await getDocs(collection(firestore, 'executive_payroll_runs', run.id, 'lines'));
+        const snaps = await Promise.all(
+          list.map((run) => getDocs(collection(firestore, 'executive_payroll_runs', run.id, 'lines'))),
+        );
+        if (cancelled) return;
+        const rows: ExecutiveWhtRow[] = [];
+        snaps.forEach((snap, i) => {
+          const run = list[i]!;
           snap.forEach((d) => {
             const line = { id: d.id, ...d.data() } as OfficePayrollLine;
             const tax = officePayrollLineTaxAmount(line);
@@ -265,7 +270,7 @@ export default function AccountingWithholdingPayrollExecutivePage() {
               paymentYmd: payYmd && /^\d{4}-\d{2}-\d{2}$/.test(payYmd) ? payYmd : '—',
             });
           });
-        }
+        });
         rows.sort((a, b) => (b.run.updatedAt ?? 0) - (a.run.updatedAt ?? 0));
         if (!cancelled) setExecutiveRows(rows);
       } catch (e) {
@@ -864,7 +869,7 @@ export default function AccountingWithholdingPayrollExecutivePage() {
               </p>
             ) : (
               <div className="rounded-md border">
-                <Table className="table-fixed w-full">
+                <Table className={cn('table-fixed w-full', COMPACT_LIST_TABLE)}>
                   {WHT_LIST_TABLE_COLGROUP(canPayWhtTax)}
                   <TableHeader>
                     <TableRow>

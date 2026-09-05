@@ -297,16 +297,20 @@ export default function AccountingSocialSecurityPayrollHubPage() {
     setWorkerLinesErr(null);
     void (async () => {
       try {
-        const rows: WorkerSsoRow[] = [];
+        /** อ่านยอด ปกส. จาก snapshot บนบรรทัด (ไม่คำนวณสูตรใหม่) — โหลด lines แบบขนาน */
         const list = batches ?? [];
-        for (const batch of list) {
-          if (cancelled) return;
-          const snap = await getDocs(collection(firestore, 'payroll_batches', batch.id, 'lines'));
+        const snaps = await Promise.all(
+          list.map((batch) => getDocs(collection(firestore, 'payroll_batches', batch.id, 'lines'))),
+        );
+        if (cancelled) return;
+        const rows: WorkerSsoRow[] = [];
+        snaps.forEach((snap, i) => {
+          const batch = list[i]!;
           snap.forEach((d) => {
             const line = { id: d.id, ...d.data() } as PayrollBatchLine;
             const sso = workerLineSsoAmount(line);
             if (sso <= 0.005) return;
-            const payYmd = resolvePayrollWorkerWhtPaymentDateYmd(batch);
+            const payYmd = resolvePayrollWorkerWhtPaymentDateYmd(batch, line);
             rows.push({
               batch,
               line,
@@ -314,7 +318,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
               paymentYmd: payYmd && /^\d{4}-\d{2}-\d{2}$/.test(payYmd) ? payYmd : '—',
             });
           });
-        }
+        });
         rows.sort((a, b) => (b.batch.updatedAt ?? 0) - (a.batch.updatedAt ?? 0));
         if (!cancelled) setWorkerRows(rows);
       } catch (e) {
@@ -335,11 +339,14 @@ export default function AccountingSocialSecurityPayrollHubPage() {
     setOfficeLinesErr(null);
     void (async () => {
       try {
-        const rows: OfficeSsoRow[] = [];
         const list = officeRuns ?? [];
-        for (const run of list) {
-          if (cancelled) return;
-          const snap = await getDocs(collection(firestore, 'office_payroll_runs', run.id, 'lines'));
+        const snaps = await Promise.all(
+          list.map((run) => getDocs(collection(firestore, 'office_payroll_runs', run.id, 'lines'))),
+        );
+        if (cancelled) return;
+        const rows: OfficeSsoRow[] = [];
+        snaps.forEach((snap, i) => {
+          const run = list[i]!;
           snap.forEach((d) => {
             const line = { id: d.id, ...d.data() } as OfficePayrollLine;
             const sso = officeLineSsoAmount(line);
@@ -352,7 +359,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
               paymentYmd: payYmd && /^\d{4}-\d{2}-\d{2}$/.test(payYmd) ? payYmd : '—',
             });
           });
-        }
+        });
         rows.sort((a, b) => (b.run.updatedAt ?? 0) - (a.run.updatedAt ?? 0));
         if (!cancelled) setOfficeRows(rows);
       } catch (e) {
@@ -373,11 +380,14 @@ export default function AccountingSocialSecurityPayrollHubPage() {
     setExecutiveLinesErr(null);
     void (async () => {
       try {
-        const rows: ExecutiveSsoRow[] = [];
         const list = executiveRuns ?? [];
-        for (const run of list) {
-          if (cancelled) return;
-          const snap = await getDocs(collection(firestore, 'executive_payroll_runs', run.id, 'lines'));
+        const snaps = await Promise.all(
+          list.map((run) => getDocs(collection(firestore, 'executive_payroll_runs', run.id, 'lines'))),
+        );
+        if (cancelled) return;
+        const rows: ExecutiveSsoRow[] = [];
+        snaps.forEach((snap, i) => {
+          const run = list[i]!;
           snap.forEach((d) => {
             const line = { id: d.id, ...d.data() } as OfficePayrollLine;
             const sso = officeLineSsoAmount(line);
@@ -390,7 +400,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
               paymentYmd: payYmd && /^\d{4}-\d{2}-\d{2}$/.test(payYmd) ? payYmd : '—',
             });
           });
-        }
+        });
         rows.sort((a, b) => (b.run.updatedAt ?? 0) - (a.run.updatedAt ?? 0));
         if (!cancelled) setExecutiveRows(rows);
       } catch (e) {

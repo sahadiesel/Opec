@@ -363,6 +363,12 @@ export default function PurchasesPage() {
         /** คัดลอกหัก ณ ที่จ่ายจาก PR (SERVICE) — ไม่ต้องตั้งซ้ำที่ PO */
         supplierWithholdingEnabled:
           (pr.lineEntryMode ?? 'INVENTORY') === 'SERVICE' && !!pr.supplierWithholdingEnabled,
+        supplierWithholdingCategory:
+          (pr.lineEntryMode ?? 'INVENTORY') === 'SERVICE' &&
+          !!pr.supplierWithholdingEnabled &&
+          pr.supplierWithholdingCategory
+            ? pr.supplierWithholdingCategory
+            : null,
         supplierWithholdingRatePercent:
           (pr.lineEntryMode ?? 'INVENTORY') === 'SERVICE' &&
           !!pr.supplierWithholdingEnabled &&

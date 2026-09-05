@@ -641,9 +641,9 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     try {
       const { taxInvoiceId } = await createTaxInvoiceDraftFromIssuedCommercial(firestore, invoice.id, currentUser);
       toast({
-        title: 'สร้างใบกำกับภาษี(ตัวจริง) แล้ว',
+        title: 'สร้างใบกำกับภาษีร่างแล้ว',
         description:
-          'ส่งลูกค้า/พิมพ์ได้จากหน้าใบกำกับ — ยังไม่ e-Tax — ใบเสร็จรับเงินอีกขั้นหลังลูกค้าโอนและบัญชียืนยันรับเงิน',
+          'ยังไม่ออกเลข INV — ส่งลูกค้า/พิมพ์ได้จากหน้าใบกำกับ (มีประทับ DRAFT) จนกว่าจะกด ISSUED',
       });
       router.push(`/tax-invoices/${taxInvoiceId}`);
     } catch (e: unknown) {

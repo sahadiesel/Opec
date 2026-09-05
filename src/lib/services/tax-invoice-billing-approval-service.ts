@@ -112,7 +112,9 @@ export async function recordTaxInvoiceBillingCustomerApproval(
     );
   }
 
-  const approvalToken = buildTaxInvoiceBillingApprovalToken(invoice.taxInvoiceNo);
+  const approvalToken = buildTaxInvoiceBillingApprovalToken(
+    String(invoice.taxInvoiceNo || '').trim() || invoice.id,
+  );
   const now = Date.now();
   const eventId =
     typeof crypto !== 'undefined' && crypto.randomUUID

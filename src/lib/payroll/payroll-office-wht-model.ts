@@ -17,11 +17,18 @@ function combineAddressTh(c: CompanyDocumentProfileForPayrollWht | null): string
   return [c.addressLine1, c.addressLine2].filter((x) => (x || '').trim()).join(' ');
 }
 
-function officeRunPaymentTimestamp(run: OfficePayrollRun): number {
-  return run.lockedAt ?? run.updatedAt ?? run.createdAt;
+function officeRunPaymentTimestamp(run: OfficePayrollRun): number | undefined {
+  if (run.financeApprovedAt != null && Number.isFinite(run.financeApprovedAt)) return run.financeApprovedAt;
+  if (run.status === 'FINANCE_APPROVED' || run.status === 'PAID' || run.status === 'LOCKED') {
+    return run.lockedAt ?? run.updatedAt;
+  }
+  return undefined;
 }
 
+/** วันที่จ่ายสำหรับใบหัก — อิงวันโอน/ตัด cashbook จริง */
 export function resolveOfficePayrollWhtPaymentDateYmd(run: OfficePayrollRun): string | undefined {
+  const entry = run.financePayoutEntryDate?.trim();
+  if (entry && /^\d{4}-\d{2}-\d{2}$/.test(entry)) return entry;
   const pick = officeRunPaymentTimestamp(run);
   if (pick == null || !Number.isFinite(pick)) return undefined;
   return timestampMsToBangkokYmd(pick);

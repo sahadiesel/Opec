@@ -14,14 +14,18 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Printer, Receipt } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export function PayslipDialog({
   model,
   trigger,
+  triggerClassName,
   title = 'สลิปเงินเดือน',
 }: {
   model: PayslipViewModel;
   trigger?: ReactNode;
+  /** คลาสปุ่มสลิปเริ่มต้น (เมื่อไม่ส่ง trigger) — ให้แถวตารางสูงเท่ากันได้ */
+  triggerClassName?: string;
   title?: string;
 }) {
   const printRef = useRef<HTMLDivElement>(null);
@@ -82,7 +86,7 @@ export function PayslipDialog({
     <Dialog>
       <DialogTrigger asChild>
         {trigger ?? (
-          <Button type="button" variant="outline" size="sm" className="gap-1">
+          <Button type="button" variant="outline" size="sm" className={cn('gap-1', triggerClassName)}>
             <Receipt className="h-3.5 w-3.5" /> สลิป
           </Button>
         )}

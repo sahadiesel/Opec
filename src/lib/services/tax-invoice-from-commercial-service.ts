@@ -102,15 +102,14 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
     });
   }
 
-  const [{ code: billingNoteNo }, { code: taxInvoiceNo }] = await Promise.all([
+  const [{ code: billingNoteNo }] = await Promise.all([
     generateNextDocumentCode(db, 'billing_note', { actor: actor.displayName, userId: actor.id }),
-    generateNextDocumentCode(db, 'tax_invoice', { actor: actor.displayName, userId: actor.id }),
   ]);
 
   const bnRef = doc(collection(db, 'billing_notes'));
   const taxRef = doc(collection(db, 'tax_invoices'));
   const now = Date.now();
-  /** วันที่ร่าง — ตอนสร้างชุดนี้ (local) ไม่ดึง com.issueDate ที่อาจเป็นวันย้อนหลัง; วันที่ออกเอกสารจริงตามวันที่กด ISSUED */
+  /** วันที่ร่าง — วันที่ออกฉบับจริง + เลข INV กำหนดตอนกด ISSUED */
   const issueYmd = timestampToHtmlDateValue(now);
   const dueYmd = addDaysToHtmlDate(issueYmd, 30);
 
@@ -150,7 +149,8 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
     com.customerApprovalSource === 'CLIENT_PORTAL' ? 'client_portal' : 'internal_representative';
 
   const taxPayload: Omit<TaxInvoice, 'id'> = {
-    taxInvoiceNo,
+    /** ว่างจนกว่าจะ ISSUED — ไม่วิ่งเลข INV ตอนสร้างร่าง */
+    taxInvoiceNo: '',
     billingNoteId: bnRef.id,
     sourceCommercialInvoiceId: com.id,
     customerId: com.customerId,
@@ -203,13 +203,13 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
     actionType: 'CREATE',
     entityType: 'TaxInvoice',
     entityId: taxRef.id,
-    entityLabel: `${taxInvoiceNo} ← ${com.invoiceNo}`,
+    entityLabel: `DRAFT ← ${com.invoiceNo}`,
     sourceModule: 'tax_invoices',
     linkedIds: [com.customerId, com.poId, com.waveId, bnRef.id, com.id],
     taxInvoiceId: taxRef.id,
     billingNoteId: bnRef.id,
-    afterSummary: `สร้างใบกำกับภาษีร่างจากใบเรียกเก็บ ${com.invoiceNo} (พร้อมใบวางบิล ${billingNoteNo})`,
+    afterSummary: `สร้างใบกำกับภาษีร่างจากใบเรียกเก็บ ${com.invoiceNo} (พร้อมใบวางบิล ${billingNoteNo}) — ยังไม่ออกเลข INV`,
   });
 
-  return { taxInvoiceId: taxRef.id, billingNoteId: bnRef.id, taxInvoiceNo };
+  return { taxInvoiceId: taxRef.id, billingNoteId: bnRef.id, taxInvoiceNo: '' };
 }

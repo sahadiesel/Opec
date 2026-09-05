@@ -32,9 +32,11 @@ import type {
   PayrollBatchLine,
   PayrollBatchLineDailyRowSnapshot,
   PayrollPeriod,
+  Position,
   User,
   WorkerPitCalculationMode,
 } from '@/lib/types';
+import { positionListPrimaryName } from '@/lib/position-display';
 import { useRouter } from 'next/navigation';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccess, canPayrollPermission, canView, isMatrixControlledRole } from '@/lib/permissions';
@@ -1139,6 +1141,52 @@ export default function PayrollBatchWorkerLinePage({
   }, [line?.incomeSegments, poMetaById]);
 
   /** สลิปจาก snapshot ในงวดเท่านั้น — ไม่ทับด้วยสูตรสดตอนเปิดหน้า */
+  const [fallbackPositionName, setFallbackPositionName] = useState<string | undefined>();
+  useEffect(() => {
+    if (!firestore || !line) {
+      setFallbackPositionName(undefined);
+      return;
+    }
+    const fromSnaps = (line.dailyRowSnapshots ?? [])
+      .map((s) => String(s.positionNameSnapshot || '').trim())
+      .find((n) => n && n !== 'ไม่ระบุตำแหน่ง');
+    if (fromSnaps) {
+      setFallbackPositionName(fromSnaps);
+      return;
+    }
+    const fromSplits = (line.payslipWorkDayPositionSplits ?? [])
+      .map((s) => String(s.positionNameSnapshot || '').trim())
+      .find((n) => n && n !== 'ไม่ระบุตำแหน่ง');
+    if (fromSplits) {
+      setFallbackPositionName(fromSplits);
+      return;
+    }
+    const posId =
+      String(line.laborCostResolutionSnapshot?.positionId || '').trim() ||
+      String(
+        (line.dailyRowSnapshots ?? []).find((s) => String(s.positionId || '').trim())?.positionId ||
+          '',
+      ).trim();
+    if (!posId) {
+      setFallbackPositionName(undefined);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await getDoc(doc(firestore, 'positions', posId));
+        if (cancelled || !snap.exists()) return;
+        const name = positionListPrimaryName(snap.data() as Position).trim();
+        if (name) setFallbackPositionName(name);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, line]);
+
   const slipModel = useMemo(() => {
     if (!line || !batch) return null;
     const pl = period?.label || batch.payrollPeriodId;
@@ -1146,6 +1194,21 @@ export default function PayrollBatchWorkerLinePage({
     const frozen = isWorkerPayrollBatchSnapshotFrozen(batch, {
       hasEarlierPaidInPeriod: hasEarlier,
     });
+    const positionNameById = new Map<string, string>();
+    for (const s of line.dailyRowSnapshots ?? []) {
+      const id = String(s.positionId || '').trim();
+      const name = String(s.positionNameSnapshot || '').trim();
+      if (id && name && name !== 'ไม่ระบุตำแหน่ง') positionNameById.set(id, name);
+    }
+    for (const s of line.payslipWorkDayPositionSplits ?? []) {
+      const id = String(s.positionId || '').trim();
+      const name = String(s.positionNameSnapshot || '').trim();
+      if (id && name && name !== 'ไม่ระบุตำแหน่ง') positionNameById.set(id, name);
+    }
+    const laborPosId = String(line.laborCostResolutionSnapshot?.positionId || '').trim();
+    if (laborPosId && fallbackPositionName && !positionNameById.has(laborPosId)) {
+      positionNameById.set(laborPosId, fallbackPositionName);
+    }
     return buildPayslipFromWorkerLine(
       line,
       batch,
@@ -1155,6 +1218,10 @@ export default function PayrollBatchWorkerLinePage({
       normalBatch,
       priorPaidRefs as PriorPaidPayrollSlipRef[],
       frozen ? undefined : poPartyLabelById,
+      {
+        positionNameById: positionNameById.size > 0 ? positionNameById : undefined,
+        fallbackPositionName,
+      },
     );
   }, [
     line,
@@ -1167,6 +1234,7 @@ export default function PayrollBatchWorkerLinePage({
     normalBatch,
     priorPaidRefs,
     poPartyLabelById,
+    fallbackPositionName,
   ]);
 
   /** ยอดที่แสดงทั้งหน้า = snapshot ในงวด (ตรงหน้า batch / ปุ่มสร้างงวด) */

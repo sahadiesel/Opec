@@ -275,6 +275,44 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     margin: 0 auto;
     position: relative;
   }
+  .sd-status-watermark {
+    position: absolute;
+    inset: 18% 8% 22% 8%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 5;
+    overflow: hidden;
+  }
+  .sd-status-watermark-text {
+    font-size: 72pt;
+    font-weight: 900;
+    letter-spacing: 0.12em;
+    color: #737373;
+    opacity: 0.5;
+    transform: rotate(-32deg);
+    user-select: none;
+    white-space: nowrap;
+    line-height: 1;
+  }
+  .sd-status-watermark--cancel .sd-status-watermark-text {
+    color: #b91c1c;
+    opacity: 0.48;
+  }
+  .sd-cancel-reason {
+    margin: 6px 0 8px;
+    padding: 6px 8px;
+    border: 1px solid #fecaca;
+    background: #fef2f2;
+    font-size: 9pt;
+    color: #7f1d1d;
+  }
+  .sd-replace-notice {
+    margin: 0 0 8px;
+    font-size: 9pt;
+    color: #525252;
+  }
   @media print {
     .sd-page + .sd-page {
       page-break-before: always;
@@ -995,12 +1033,16 @@ export function assembleStandardPrintPageHtml(params: {
   locale?: PrintDocumentLocale;
   /** ใบแจ้งหนี้เรียกเก็บ — เลย์เอาต์กระชับ (ตาราง / ลายเซ็น) */
   pageVariant?: 'default' | 'commercial';
+  /** HTML ประทับสถานะ (DRAFT / CANCEL) — วางทับกลางหน้า */
+  watermarkHtml?: string;
 }): string {
   const locale = params.locale ?? 'th';
   const pageClass =
     params.pageVariant === 'commercial' ? 'sd-page sd-page--commercial' : 'sd-page';
+  const watermark = params.watermarkHtml?.trim() ? params.watermarkHtml : '';
   return `
 <div class="${pageClass}">
+  ${watermark}
   ${buildStandardPrintStampHtml(params.printedAtMs, locale)}
   ${params.headerHtml}
   ${params.mainHtml}
@@ -1596,14 +1638,24 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
   const amountForWords = invoice.totalAmount;
   const totalWords =
     L === 'en' ? amountToEnglishBahtText(amountForWords) : amountToThaiBahtText(amountForWords);
+  const isDraft = invoice.status === 'DRAFT';
+  const isCancelled = invoice.status === 'CANCELLED';
+  const taxNo = String(invoice.taxInvoiceNo || '').trim();
+  const docNoDisplay = taxNo
+    ? taxNo
+    : isDraft
+      ? printT(L, 'awaitingDocNo')
+      : '—';
+  const issueDateDisplay =
+    isDraft && !taxNo ? (L === 'en' ? '(assigned when issued)' : '(กำหนดเมื่อออกฉบับจริง)') : issueStr;
   const headerHtml = buildStandardDocumentHeaderHtml({
     company,
     documentTitleTh: 'ใบกำกับภาษี',
     documentTitleEn: 'Tax Invoice',
     subtitleUnderTitle: taxInvoiceSheetSubtitleForPrintLocale(params.sheetKind, L),
     metaRows: [
-      { line: `${printT(L, 'dateIssued')} ${issueStr}` },
-      { line: `${printT(L, 'docNo')}: ${invoice.taxInvoiceNo}` },
+      { line: `${printT(L, 'dateIssued')} ${issueDateDisplay}` },
+      { line: `${printT(L, 'docNo')}: ${docNoDisplay}` },
       { line: printT(L, 'docIssuedAsSet') },
     ],
     locale: L,
@@ -1637,7 +1689,26 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
     notes: invoice.notes,
     notesTitle: printT(L, 'termsNotes'),
   });
-  const mainHtml = `${partyHtml}
+  const cancelReason = String(invoice.cancellationReason || '').trim();
+  const cancelReasonHtml =
+    isCancelled && cancelReason
+      ? `<div class="sd-cancel-reason"><strong>${escapeHtmlDoc(printT(L, 'cancellationReasonLabel'))}:</strong> ${escapeHtmlDoc(cancelReason)}</div>`
+      : '';
+  const replaceBits: string[] = [];
+  if (invoice.replacesTaxInvoiceNo) {
+    replaceBits.push(
+      `${printT(L, 'replacesNotice')} ${invoice.replacesTaxInvoiceNo}`,
+    );
+  }
+  if (invoice.replacedByTaxInvoiceNo) {
+    replaceBits.push(
+      `${printT(L, 'replacementNotice')} ${invoice.replacedByTaxInvoiceNo}`,
+    );
+  }
+  const replaceNoticeHtml = replaceBits.length
+    ? `<p class="sd-replace-notice">${escapeHtmlDoc(replaceBits.join(' · '))}</p>`
+    : '';
+  const mainHtml = `${replaceNoticeHtml}${cancelReasonHtml}${partyHtml}
   ${tableHtml}
   ${totalsHtml}`;
   const preparedAccountingName = (() => {
@@ -1654,6 +1725,12 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
     right: { roleLine: printT(L, 'signCustomerAuth'), name: '—' },
     belowHtml: '',
   });
+  let watermarkHtml = '';
+  if (isDraft) {
+    watermarkHtml = `<div class="sd-status-watermark" aria-hidden="true"><span class="sd-status-watermark-text">${escapeHtmlDoc(printT(L, 'docDraft'))}</span></div>`;
+  } else if (isCancelled) {
+    watermarkHtml = `<div class="sd-status-watermark sd-status-watermark--cancel" aria-hidden="true"><span class="sd-status-watermark-text">${escapeHtmlDoc(printT(L, 'docCancelled'))}</span></div>`;
+  }
   return assembleStandardPrintPageHtml({
     printedAtMs,
     headerHtml,
@@ -1661,6 +1738,7 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
     footerHtml,
     locale: L,
     pageVariant: 'commercial',
+    watermarkHtml,
   });
 }
 

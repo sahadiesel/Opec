@@ -14,8 +14,38 @@ import {
   DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT,
 } from '@/lib/hr/pit-thailand';
 import { D8_ENGINE_VERSION } from '@/lib/payroll/d8/constants';
+import type { ResolvedPayrollPolicies } from '@/lib/payroll/d8/policies';
 
-export const PAYROLL_POLICY_VERSION_LABEL = `${D8_ENGINE_VERSION} — pit-thailand annual ladder + policy records (SS ${DEFAULT_SOCIAL_SECURITY_EMPLOYEE_RATE_PERCENT}%, เพดาน ${DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT.toLocaleString('th-TH')} บ./ด.)`;
+/**
+ * ป้าย Policy version จากนโยบายที่ resolve แล้ว (HR Settings / payroll_policies)
+ * — แสดงอัตรา SSO + เพดานจริงที่ระบบใช้คำนวณ
+ */
+export function formatPayrollPolicyVersionLabel(
+  resolved: ResolvedPayrollPolicies | null | undefined,
+): string {
+  const rateRaw = Number(resolved?.sso?.config?.employeeRatePercent);
+  const ceilingRaw = Number(resolved?.sso?.config?.monthlyCeilingBaht);
+  const ssRate =
+    Number.isFinite(rateRaw) && rateRaw > 0
+      ? rateRaw
+      : DEFAULT_SOCIAL_SECURITY_EMPLOYEE_RATE_PERCENT;
+  const ssCeiling =
+    Number.isFinite(ceilingRaw) && ceilingRaw > 0
+      ? ceilingRaw
+      : DEFAULT_SOCIAL_SECURITY_MONTHLY_CEILING_BAHT;
+
+  const taxBit =
+    (resolved?.tax?.name || '').trim() ||
+    (resolved?.tax ? `tax:${resolved.tax.id}` : 'pit-thailand annual ladder');
+  const ssoBit =
+    (resolved?.sso?.name || '').trim() ||
+    (resolved?.sso ? `sso:${resolved.sso.id}` : 'policy records');
+
+  return `${D8_ENGINE_VERSION} — ${taxBit} · ${ssoBit} (SS ${ssRate}%, เพดาน ${ssCeiling.toLocaleString('th-TH')} บ./ด.)`;
+}
+
+/** fallback เมื่อยังโหลด settings ไม่ได้ — ค่า default ในโค้ด ไม่ใช่ค่าสดจาก Firestore */
+export const PAYROLL_POLICY_VERSION_LABEL = formatPayrollPolicyVersionLabel(null);
 
 export type CheckSeverity = 'red' | 'yellow' | 'green';
 
@@ -304,5 +334,5 @@ export const WORKER_FREEZE_BULLETS: string[] = [
 export const OFFICE_FREEZE_BULLETS: string[] = [
   'บรรทัด office_payroll_runs/{id}/lines เป็นยอด snapshot หลังอนุมัติ HR',
   'การแก้ยอดหลัง HR_APPROVED ต้องผ่านบัญชี / correction ตามนโยบาย',
-  'ภาษี/ประกันสังคมอ้างอิง ' + PAYROLL_POLICY_VERSION_LABEL,
+  'ภาษี/ประกันสังคมยึดตาม HR Settings (payroll_policies) ณ ตอนคำนวณงวด — ดูป้าย Policy version ด้านบน',
 ];

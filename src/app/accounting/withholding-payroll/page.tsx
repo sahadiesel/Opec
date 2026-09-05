@@ -26,6 +26,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { COMPACT_LIST_TABLE } from '@/components/ui/table-density';
 import { cn } from '@/lib/utils';
 import { formatPayrollYearMonthMmYyyyThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import {
@@ -197,8 +198,8 @@ const WHT_DATE_COL_WIDTH = '8%';
 const WHT_EQUAL_FIVE_COL_WIDTH = '13%';
 
 const WHT_EQUAL_COL_HEAD =
-  'px-2 py-2 text-xs font-medium leading-snug align-middle whitespace-normal break-words';
-const WHT_EQUAL_COL_CELL = 'px-2 py-3 align-middle max-w-0';
+  'px-2 py-0 text-xs font-medium leading-snug align-middle whitespace-normal break-words';
+const WHT_EQUAL_COL_CELL = 'px-2 py-0 align-middle max-w-0 leading-tight';
 
 const WHT_PAYROLL_TABLE_COLGROUP = (showSelect: boolean) => (
   <colgroup>
@@ -460,16 +461,20 @@ export default function AccountingWithholdingPayrollHubPage() {
     setWorkerLinesErr(null);
     void (async () => {
       try {
-        const rows: WorkerWhtRow[] = [];
+        /** อ่านยอด PIT จาก snapshot บนบรรทัด (ไม่คำนวณสูตรใหม่) — โหลด lines แบบขนาน */
         const list = batches ?? [];
-        for (const batch of list) {
-          if (cancelled) return;
-          const snap = await getDocs(collection(firestore, 'payroll_batches', batch.id, 'lines'));
+        const snaps = await Promise.all(
+          list.map((batch) => getDocs(collection(firestore, 'payroll_batches', batch.id, 'lines'))),
+        );
+        if (cancelled) return;
+        const rows: WorkerWhtRow[] = [];
+        snaps.forEach((snap, i) => {
+          const batch = list[i]!;
           snap.forEach((d) => {
             const line = { id: d.id, ...d.data() } as PayrollBatchLine;
             const pit = workerPayrollLinePitAmount(line);
             if (pit <= 0.005) return;
-            const payYmd = resolvePayrollWorkerWhtPaymentDateYmd(batch);
+            const payYmd = resolvePayrollWorkerWhtPaymentDateYmd(batch, line);
             rows.push({
               batch,
               line,
@@ -478,7 +483,7 @@ export default function AccountingWithholdingPayrollHubPage() {
               paymentYmd: payYmd && /^\d{4}-\d{2}-\d{2}$/.test(payYmd) ? payYmd : '—',
             });
           });
-        }
+        });
         rows.sort((a, b) => (b.batch.updatedAt ?? 0) - (a.batch.updatedAt ?? 0));
         if (!cancelled) setWorkerRows(rows);
       } catch (e) {
@@ -499,11 +504,14 @@ export default function AccountingWithholdingPayrollHubPage() {
     setOfficeLinesErr(null);
     void (async () => {
       try {
-        const rows: OfficeWhtRow[] = [];
         const list = officeRuns ?? [];
-        for (const run of list) {
-          if (cancelled) return;
-          const snap = await getDocs(collection(firestore, 'office_payroll_runs', run.id, 'lines'));
+        const snaps = await Promise.all(
+          list.map((run) => getDocs(collection(firestore, 'office_payroll_runs', run.id, 'lines'))),
+        );
+        if (cancelled) return;
+        const rows: OfficeWhtRow[] = [];
+        snaps.forEach((snap, i) => {
+          const run = list[i]!;
           snap.forEach((d) => {
             const line = { id: d.id, ...d.data() } as OfficePayrollLine;
             const tax = officePayrollLineTaxAmount(line);
@@ -517,7 +525,7 @@ export default function AccountingWithholdingPayrollHubPage() {
               paymentYmd: payYmd && /^\d{4}-\d{2}-\d{2}$/.test(payYmd) ? payYmd : '—',
             });
           });
-        }
+        });
         rows.sort((a, b) => (b.run.updatedAt ?? 0) - (a.run.updatedAt ?? 0));
         if (!cancelled) setOfficeRows(rows);
       } catch (e) {
@@ -538,11 +546,14 @@ export default function AccountingWithholdingPayrollHubPage() {
     setExecutiveLinesErr(null);
     void (async () => {
       try {
-        const rows: ExecutiveWhtRow[] = [];
         const list = executiveRuns ?? [];
-        for (const run of list) {
-          if (cancelled) return;
-          const snap = await getDocs(collection(firestore, 'executive_payroll_runs', run.id, 'lines'));
+        const snaps = await Promise.all(
+          list.map((run) => getDocs(collection(firestore, 'executive_payroll_runs', run.id, 'lines'))),
+        );
+        if (cancelled) return;
+        const rows: ExecutiveWhtRow[] = [];
+        snaps.forEach((snap, i) => {
+          const run = list[i]!;
           snap.forEach((d) => {
             const line = { id: d.id, ...d.data() } as OfficePayrollLine;
             const tax = officePayrollLineTaxAmount(line);
@@ -556,7 +567,7 @@ export default function AccountingWithholdingPayrollHubPage() {
               paymentYmd: payYmd && /^\d{4}-\d{2}-\d{2}$/.test(payYmd) ? payYmd : '—',
             });
           });
-        }
+        });
         rows.sort((a, b) => (b.run.updatedAt ?? 0) - (a.run.updatedAt ?? 0));
         if (!cancelled) setExecutiveRows(rows);
       } catch (e) {
@@ -1690,7 +1701,7 @@ export default function AccountingWithholdingPayrollHubPage() {
               </p>
             ) : (
               <div className="rounded-md border">
-                <Table className="table-fixed w-full">
+                <Table className={cn('table-fixed w-full', COMPACT_LIST_TABLE)}>
                   {WHT_PAYROLL_TABLE_COLGROUP(canPayWhtTax)}
                   <TableHeader>
                     <TableRow>
@@ -1884,7 +1895,7 @@ export default function AccountingWithholdingPayrollHubPage() {
               </p>
             ) : (
               <div className="rounded-md border">
-                <Table className="table-fixed w-full">
+                <Table className={cn('table-fixed w-full', COMPACT_LIST_TABLE)}>
                   {WHT_PAYROLL_TABLE_COLGROUP(canPayWhtTax)}
                   <TableHeader>
                     <TableRow>
@@ -2075,7 +2086,7 @@ export default function AccountingWithholdingPayrollHubPage() {
               </p>
             ) : (
               <div className="rounded-md border">
-                <Table className="table-fixed w-full">
+                <Table className={cn('table-fixed w-full', COMPACT_LIST_TABLE)}>
                   {WHT_PAYROLL_TABLE_COLGROUP(canPayWhtTax)}
                   <TableHeader>
                     <TableRow>

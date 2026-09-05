@@ -107,20 +107,22 @@ function incomeFromPurchase(purchase: Purchase): {
   code: WhtIncomeTypeCode;
   displayTh: string;
 } {
+  const fromCat = incomeFromWhtCategory(purchase.supplierWithholdingCategory);
+  if (fromCat) return fromCat;
   if (purchase.purchaseLineMode === 'SERVICE') {
     return { code: 'SERVICE_CONTRACT', displayTh: 'ค่าจ้างเหมา / ค่าบริการ' };
   }
   return { code: 'GOODS_MANUFACTURING', displayTh: 'ค่าจ้างทำของ' };
 }
 
-/** ข้อความและรหัสประเภทเงินได้บนใบหัก ม.50 — เลือกจากใบวางบิลหรือสันนิษฐานจาก PO */
-export function incomeTypeForVendorBillWht(
-  bill: Pick<PurchaseVendorBill, 'vendorBillWhtPresetCategory'>,
-  purchase: Purchase,
-): { code: WhtIncomeTypeCode; displayTh: string } {
-  const cat = bill.vendorBillWhtPresetCategory;
+function incomeFromWhtCategory(
+  cat: VendorBillWhtPresetCategory | undefined | null,
+): { code: WhtIncomeTypeCode; displayTh: string } | null {
   if (cat === 'TRANSPORT_FREIGHT') {
     return { code: 'OTHER', displayTh: 'ค่าขนส่ง' };
+  }
+  if (cat === 'CONTRACT') {
+    return { code: 'SERVICE_CONTRACT', displayTh: 'ค่าจ้างเหมา' };
   }
   if (cat === 'SERVICE') {
     return { code: 'SERVICE_CONTRACT', displayTh: 'ค่าบริการ' };
@@ -128,6 +130,16 @@ export function incomeTypeForVendorBillWht(
   if (cat === 'RENT') {
     return { code: 'OTHER', displayTh: 'ค่าเช่า' };
   }
+  return null;
+}
+
+/** ข้อความและรหัสประเภทเงินได้บนใบหัก ม.50 — เลือกจากใบวางบิล → ประเภทบน PO → สันนิษฐานจากโหมด PO */
+export function incomeTypeForVendorBillWht(
+  bill: Pick<PurchaseVendorBill, 'vendorBillWhtPresetCategory'>,
+  purchase: Purchase,
+): { code: WhtIncomeTypeCode; displayTh: string } {
+  const fromBill = incomeFromWhtCategory(bill.vendorBillWhtPresetCategory);
+  if (fromBill) return fromBill;
   return incomeFromPurchase(purchase);
 }
 
@@ -348,9 +360,12 @@ export function buildWithholdingCertificateDraft(params: BuildWhtDraftParams): O
     bill.notes ? `ใบวางบิล: ${bill.notes}` : '',
   ].filter(Boolean);
 
-  const presetCat = bill.vendorBillWhtPresetCategory;
+  const presetCat = bill.vendorBillWhtPresetCategory ?? purchase.supplierWithholdingCategory;
   const hasWhtIncomePreset =
-    presetCat === 'TRANSPORT_FREIGHT' || presetCat === 'SERVICE' || presetCat === 'RENT';
+    presetCat === 'TRANSPORT_FREIGHT' ||
+    presetCat === 'CONTRACT' ||
+    presetCat === 'SERVICE' ||
+    presetCat === 'RENT';
 
   const jobDescriptionParts: string[] = [];
   if (hasWhtIncomePreset) {

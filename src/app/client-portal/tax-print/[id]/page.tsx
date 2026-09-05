@@ -254,11 +254,26 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-primary">{en ? 'Tax invoice' : 'ใบกำกับภาษี'}</h1>
-          <p className="font-mono text-lg font-semibold">{invoice.taxInvoiceNo}</p>
+          <p className="font-mono text-lg font-semibold">
+            {invoice.taxInvoiceNo ||
+              (invoice.status === 'DRAFT'
+                ? en
+                  ? 'Document no. pending issue'
+                  : 'รอออกเลขเมื่อยืนยันฉบับจริง'
+                : '—')}
+          </p>
           <p className="text-sm text-muted-foreground">{issueLabelPreview}</p>
+          {invoice.status === 'DRAFT' && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              {en ? 'DRAFT — not an official issued copy.' : 'ฉบับร่าง (DRAFT) — ยังไม่ใช่ฉบับจริง'}
+            </p>
+          )}
           {invoice.status === 'CANCELLED' && (
             <p className="mt-2 text-sm text-destructive">
               {en ? 'This document is cancelled — print only if needed for records.' : 'เอกสารนี้ยกเลิกแล้ว — พิมพ์เฉพาะกรณีเก็บประวัติ'}
+              {invoice.cancellationReason
+                ? ` · ${en ? 'Reason' : 'สาเหตุ'}: ${invoice.cancellationReason}`
+                : ''}
             </p>
           )}
         </div>
@@ -324,7 +339,9 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
                 {printT(docL, 'dateIssued')} {issueLabelPreview}
               </p>
               <p className="font-mono text-sm font-semibold">
-                {printT(docL, 'docNo')}: {invoice.taxInvoiceNo}
+                {printT(docL, 'docNo')}:{' '}
+                {invoice.taxInvoiceNo ||
+                  (invoice.status === 'DRAFT' ? printT(docL, 'awaitingDocNo') : '—')}
               </p>
               <p className="text-[11px] text-muted-foreground">{printT(docL, 'docIssuedAsSet')}</p>
             </div>

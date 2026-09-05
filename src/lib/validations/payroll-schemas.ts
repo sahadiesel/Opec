@@ -185,5 +185,6 @@ export const PayrollBatchLineSchema = z.object({
   payslipWorkDayPositionSplits: z.array(PayslipWorkDayPositionSplitSchema).optional(),
   financePayoutCashbookEntryId: z.string().optional(),
   financePayoutBankAccountId: z.string().optional(),
+  financePayoutEntryDate: z.string().optional(),
   financePaidAt: z.number().optional(),
 });

@@ -2672,6 +2672,10 @@ export interface OfficePayrollRun {
   lockedAt?: number;
   /** บัญชีอนุมัติจ่ายแล้ว — รายการ cashbook ที่สร้างอัตโนมัติ */
   financeCashbookEntryId?: string;
+  /** วันที่โอน/ตัดบัญชีจริง (yyyy-mm-dd) จาก cashbook — ใช้บนสลิปเป็นวันจ่าย */
+  financePayoutEntryDate?: string;
+  /** บัญชียืนยันตัดจ่าย (timestamp) */
+  financeApprovedAt?: number;
   /** บัญชีธนาคารที่ใช้ตัดจ่าย (ถ้าว่าง ระบบใช้บัญชี ACTIVE แรก) */
   payoutBankAccountId?: string;
   notes?: string;
@@ -2865,6 +2869,11 @@ export interface PayrollBatch {
   financeRejectReason?: string;
   /** บัญชียืนยันจ่ายแล้ว — รายการ cashbook ที่สร้างอัตโนมัติ */
   financeCashbookEntryId?: string;
+  /**
+   * วันที่โอน/ตัดบัญชีจริง (yyyy-mm-dd) จาก cashbook ชุดล่าสุดเมื่อจ่ายครบ
+   * — แหล่งหลักของ「วันที่จ่าย」บนสลิป (ไม่ใช้วันเตรียม/อนุมัติ HR)
+   */
+  financePayoutEntryDate?: string;
   /** บัญชีธนาคารที่ใช้ตัดจ่าย (ถ้าว่าง ระบบใช้บัญชี ACTIVE แรก) */
   payoutBankAccountId?: string;
   financeApprovedBy?: string;
@@ -3040,6 +3049,8 @@ export interface PayrollBatchLine {
   /** บัญชีตัดจ่ายแล้ว — ref cashbook ของชุดแถวนี้ (แบ่งจ่ายหลายบัญชีได้) */
   financePayoutCashbookEntryId?: string;
   financePayoutBankAccountId?: string;
+  /** วันที่โอน/ตัดบัญชีจริง (yyyy-mm-dd) จาก cashbook ของชุดนี้ */
+  financePayoutEntryDate?: string;
   financePaidAt?: number;
   /** จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) แล้ว — ref cashbook */
   whtTaxCashbookEntryId?: string;
@@ -3110,6 +3121,11 @@ export interface NumberSequence {
   paddingLength: number;
   lastNumber: number;
   lastIssuedCode?: string | null;
+  /**
+   * เลขรันนิ่งที่คืนหลัง admin ลบเอกสาร (ไม่ใช่ปลายสุด) —
+   * `generateNextDocumentCode` จะใช้ก่อนเพิ่ม lastNumber
+   */
+  releasedRunningNumbers?: number[];
   isActive: boolean;
   updatedAt: number;
   updatedBy: string;
@@ -3316,6 +3332,14 @@ export type PurchaseRequestStatus =
   | 'REJECTED'
   | 'CANCELLED';
 
+export type PurchaseType = 'CASH' | 'CREDIT';
+
+/**
+ * ประเภทหัก ณ ที่จ่ายคู่ค้า — ตั้งบน PR/PO และแก้ได้บนใบวางบิลก่อนจ่าย
+ * (อัตราแนะนำ: ขนส่ง 1% · จ้างเหมา/บริการ 3% · เช่า 5%)
+ */
+export type VendorBillWhtPresetCategory = 'TRANSPORT_FREIGHT' | 'CONTRACT' | 'SERVICE' | 'RENT';
+
 /**
  * คำขออนุมัติสั่งซื้อ (PR) — ต้องอนุมัติก่อนสร้างใบสั่งซื้อ (1 PR สร้าง PO ได้หนึ่งฉบับ)
  */
@@ -3341,10 +3365,12 @@ export interface PurchaseRequest {
   paymentInstallmentsEnabled?: boolean;
   paymentMilestoneDrafts?: PrPaymentMilestoneDraft[];
   /**
-   * หัก ณ ที่จ่าย (งานจ้างเหมา / SERVICE) — ตั้งตอนทำ PR แล้วคัดลอกไป PO
-   * โหมด INVENTORY ไม่ใช้
+   * หัก ณ ที่จ่าย — ตั้งตอนทำ PR แล้วคัดลอกไป PO
+   * ประเภท: จ้างเหมา / งานบริการ / ค่าเช่า (โหมด INVENTORY ไม่ใช้)
    */
   supplierWithholdingEnabled?: boolean;
+  /** ประเภทเงินได้สำหรับใบหัก ม.50 — คัดลอกไป PO / ใช้ตอนบัญชีทำจ่าย */
+  supplierWithholdingCategory?: VendorBillWhtPresetCategory;
   /** อัตราหัก ณ ที่จ่าย เช่น 3 = 3% */
   supplierWithholdingRatePercent?: number;
   status: PurchaseRequestStatus;
@@ -3386,8 +3412,10 @@ export interface Purchase {
   purchaseLineMode?: PurchaseLineEntryMode;
   /** คิด VAT ตามที่อนุมัติใน PR — ถ้าไม่มีถือเป็น EXCLUSIVE (พฤติกรรมเดิม) */
   vatTreatment?: PurchaseRequestVatTreatment;
-  /** งานจ้างเหมา — แสดง/คำนวณหัก ณ ที่จ่ายตามงวด (ฐาน = ส่วนก่อน VAT ของงวด ตามสัดส่วน amountBeforeTax/totalAmount) */
+  /** หัก ณ ที่จ่ายตามประเภทเงินได้ — แสดง/คำนวณตามงวด (ฐาน = ส่วนก่อน VAT ของงวด) */
   supplierWithholdingEnabled?: boolean;
+  /** ประเภท: จ้างเหมา / งานบริการ / ค่าเช่า / (บัญชีอาจตั้งค่าขนส่งบนใบวางบิล) */
+  supplierWithholdingCategory?: VendorBillWhtPresetCategory;
   /** อัตราหัก ณ ที่จ่าย เช่น 3 = 3% */
   supplierWithholdingRatePercent?: number;
   notes?: string;
@@ -3411,7 +3439,6 @@ export interface Purchase {
   updatedAt: number;
 }
 
-export type PurchaseType = 'CASH' | 'CREDIT';
 export type PurchaseStatus =
   | 'DRAFT'
   | 'PENDING_APPROVAL'
@@ -3482,9 +3509,6 @@ export type VendorBillVatTreatmentOverride = 'NONE' | 'VAT_7' | 'VAT_7_INCLUSIVE
 
 /** รับวางบิลจากใบสั่งซื้อที่อนุมัติแล้ว — คลังสร้าง บัญชีติดตามจ่าย */
 export type PurchaseVendorBillStatus = 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_PAID' | 'PAID' | 'CLOSED';
-
-/** บัญชีเลือกประเภทหัก ณ ที่จ่ายบนใบวางบิลก่อนจ่าย — อัตราและข้อความบนใบหัก ม.50 ทวิ */
-export type VendorBillWhtPresetCategory = 'TRANSPORT_FREIGHT' | 'SERVICE' | 'RENT';
 
 /** งวดจ่ายภายในใบรับวางบิลเดียว (แผนที่คลังกำหนด — ไม่ใช่แค่หมายเหตุ) */
 export type VendorBillInstallmentPayStatus = 'PENDING' | 'PAID';
@@ -4053,6 +4077,18 @@ export interface TaxInvoice {
   /** ผู้ยืนยันออกเอกสารจริง (ISSUED) */
   issuedByUid?: string;
   issuedByName?: string;
+  /** ยกเลิกเอกสาร — เลขที่เดิมคงอยู่ · ประทับ CANCEL บนพิมพ์ */
+  cancelledAt?: number;
+  cancelledByUid?: string;
+  cancelledByName?: string;
+  cancellationReason?: string;
+  /** ฉบับใหม่ที่แทนที่ใบนี้ (หลังยกเลิกแล้วออกใหม่) */
+  replacedByTaxInvoiceId?: string;
+  replacedByTaxInvoiceNo?: string;
+  replacedAt?: number;
+  /** ใบนี้แทนที่เลขที่เดิม */
+  replacesTaxInvoiceId?: string;
+  replacesTaxInvoiceNo?: string;
   /** แนบรูปสลิป/เอกสารขณะสถานะ DRAFT */
   timesheetPaperAttachments?: TaxInvoiceTimesheetAttachment[];
   /** แนบรูป/เอกสารหัก ณ ที่จ่าย ที่ได้รับจากลูกค้า */

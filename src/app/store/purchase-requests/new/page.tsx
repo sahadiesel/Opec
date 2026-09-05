@@ -43,6 +43,7 @@ import {
   parsePrWhtRatePercent,
   prWhtPersistFields,
 } from '@/components/store/purchase-request-wht-card';
+import type { SupplierWithholdingCategory } from '@/lib/ops/supplier-wht-category';
 import { computePurchaseTotalsFromLines, sumLineAmounts } from '@/lib/purchase/pr-totals';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
@@ -78,6 +79,7 @@ export default function NewPurchaseRequestPage() {
   ]);
   const [needByDate, setNeedByDate] = useState(timestampToHtmlDateValue(Date.now()));
   const [whtEnabled, setWhtEnabled] = useState(false);
+  const [whtCategory, setWhtCategory] = useState<SupplierWithholdingCategory>('SERVICE');
   const [whtRateInput, setWhtRateInput] = useState('3');
 
   const ok = useMemo(
@@ -191,7 +193,7 @@ export default function NewPurchaseRequestPage() {
               }))
           : undefined;
 
-      const whtFields = prWhtPersistFields(lineEntryMode, whtEnabled, whtRateInput);
+      const whtFields = prWhtPersistFields(lineEntryMode, whtEnabled, whtRateInput, whtCategory);
 
       const batch = writeBatch(firestore);
       batch.set(prRef, {
@@ -349,8 +351,10 @@ export default function NewPurchaseRequestPage() {
         {lineEntryMode === 'SERVICE' ? (
           <PurchaseRequestWhtCard
             enabled={whtEnabled}
+            category={whtCategory}
             rateInput={whtRateInput}
             onEnabledChange={setWhtEnabled}
+            onCategoryChange={setWhtCategory}
             onRateChange={setWhtRateInput}
           />
         ) : null}

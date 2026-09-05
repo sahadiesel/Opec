@@ -2,9 +2,21 @@
 
 import { Firestore, collection, doc, getDoc, increment, writeBatch } from 'firebase/firestore';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
+import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import type { User } from '@/lib/types';
 
 export type PayrollPayoutKind = 'OFFICE_STAFF' | 'EXECUTIVE' | 'WORKER';
+
+function todayYmdLocal(): string {
+  const local = timestampToHtmlDateValue(Date.now());
+  if (local && /^\d{4}-\d{2}-\d{2}$/.test(local)) return local;
+  /** fallback — อย่าใช้ toISOString (UTC) เพราะไทย UTC+7 จะเพี้ยนวันตอนเช้ามืด */
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 /**
  * เมื่อบัญชียืนยันจ่าย (office: FINANCE_APPROVED / worker batch: PAID): สร้างรายการ cashbook จ่ายออก + ลดยอดบัญชีธนาคาร
@@ -22,12 +34,29 @@ export async function recordPayrollFinanceApprovalPayout(
     kind: PayrollPayoutKind;
     /** ต่อท้ายคำอธิบายรายการ cashbook (เช่น แบ่งจ่ายบางคน) */
     descriptionSuffix?: string;
+    /**
+     * วันที่โอน/ตัดบัญชีจริง (yyyy-mm-dd) — ใช้เป็น entryDate ใน cashbook และวันจ่ายบนสลิป
+     * ถ้าว่างใช้วันปัจจุบันตามโซนเวลาเครื่อง (ไม่ใช้ UTC)
+     */
+    entryDate?: string;
   }
-): Promise<{ cashbookEntryId: string; bankAccountId: string }> {
+): Promise<{ cashbookEntryId: string; bankAccountId: string; entryDate: string }> {
+  const entryDate =
+    (params.entryDate?.trim().match(/^\d{4}-\d{2}-\d{2}$/)?.[0] as string | undefined) ?? todayYmdLocal();
+
   if (params.existingCashbookEntryId) {
+    let resolvedDate = entryDate;
+    try {
+      const existing = await getDoc(doc(db, 'cashbook_entries', params.existingCashbookEntryId));
+      const fromBook = String(existing.data()?.entryDate ?? '').trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(fromBook)) resolvedDate = fromBook;
+    } catch {
+      /* keep entryDate */
+    }
     return {
       cashbookEntryId: params.existingCashbookEntryId,
       bankAccountId: params.payoutBankAccountId || '',
+      entryDate: resolvedDate,
     };
   }
 
@@ -51,7 +80,6 @@ export async function recordPayrollFinanceApprovalPayout(
     actor: user.displayName,
   });
 
-  const today = new Date().toISOString().slice(0, 10);
   const kindLabel =
     params.kind === 'EXECUTIVE'
       ? 'ผู้บริหาร'
@@ -73,7 +101,7 @@ export async function recordPayrollFinanceApprovalPayout(
   batch.set(cashbookRef, {
     entryNo,
     bankAccountId,
-    entryDate: today,
+    entryDate,
     direction: 'OUT',
     entryType: 'PAYROLL',
     referenceType: 'OTHER',
@@ -92,5 +120,5 @@ export async function recordPayrollFinanceApprovalPayout(
 
   await batch.commit();
 
-  return { cashbookEntryId: cashbookRef.id, bankAccountId };
+  return { cashbookEntryId: cashbookRef.id, bankAccountId, entryDate };
 }

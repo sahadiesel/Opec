@@ -1694,42 +1694,18 @@ export class PayrollService {
     const allPaidNow = stillUnpaidAfter.length === 0;
 
     /**
-     * บันทึกยอดหลาย PO + หักยอดงวดก่อนหน้าลง line ก่อนตัด cashbook
-     * — ยอดที่ผู้จัดการ/บัญชีอนุมัติแล้วต้องตัดได้เสมอ ถ้าคำนวณใหม่ไม่ได้ให้ใช้ snapshot บนแถว
+     * ยอดตัด cashbook = ยอดสุทธิที่อนุมัติบนแถว (snapshot) — ไม่ใช้ผล recalc สด
      */
-    const refreshedNetByDocId = new Map<string, number>();
-    for (const l of selected) {
-      try {
-        const result = await this.recalculateWorkerPayrollLinePreserveHrAdjustments(
-          id,
-          (l as PayrollBatchLine).workerId,
-          user,
-          { bypassFinanceStatusGate: true, includePriorPaidRecovery: true },
-        );
-        refreshedNetByDocId.set(l.docId, result.netAmount);
-      } catch (err) {
-        console.warn(
-          '[financeConfirmWorkerBatchPaid] skip recalc, use approved snapshot',
-          (l as PayrollBatchLine).workerId,
-          err,
-        );
-      }
-    }
-
     const sumNet =
       Math.round(
-        selected.reduce((s, l) => {
-          const refreshed = refreshedNetByDocId.get(l.docId);
-          const fallback = Number((l as PayrollBatchLine).netAmount) || 0;
-          return s + (refreshed ?? fallback);
-        }, 0) * 100,
+        selected.reduce((s, l) => s + (Number((l as PayrollBatchLine).netAmount) || 0), 0) * 100,
       ) / 100;
     if (!(sumNet > 0)) {
       throw new Error('ยอดสุทธิของชุดที่เลือกไม่ถูกต้อง');
     }
 
     const chunkRef = `${id}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-    const { cashbookEntryId, bankAccountId } = await recordPayrollFinanceApprovalPayout(this.db, user, {
+    const { cashbookEntryId, bankAccountId, entryDate } = await recordPayrollFinanceApprovalPayout(this.db, user, {
       runId: chunkRef,
       netAmount: sumNet,
       payrollRunNo: batch.id,
@@ -1747,6 +1723,7 @@ export class PayrollService {
       wb.update(doc(this.db, 'payroll_batches', id, 'lines', l.docId), {
         financePayoutCashbookEntryId: cashbookEntryId,
         financePayoutBankAccountId: bankAccountId,
+        financePayoutEntryDate: entryDate,
         financePaidAt: now,
         updatedAt: now,
       } as DocumentData);
@@ -1757,6 +1734,7 @@ export class PayrollService {
         status: 'PAID',
         d8LifecycleStatus: batchStatusToD8Lifecycle('PAID'),
         financeCashbookEntryId: cashbookEntryId,
+        financePayoutEntryDate: entryDate,
         payoutBankAccountId: bankAccountId,
         financeApprovedBy: user.displayName,
         financeApprovedAt: now,

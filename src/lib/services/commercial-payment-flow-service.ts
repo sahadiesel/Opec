@@ -79,13 +79,24 @@ export async function verifyOpecCustomerPaymentForCommercial(
     throw new Error('ใบกำกับนี้ถูกออก (ISSUED) แล้ว ใช้งานเดิมในเมนูบัญชี');
   }
 
+  const issuedAt = Date.now();
+  const issueYmd = timestampToHtmlDateValue(issuedAt);
+  let taxInvoiceNo = String(tax.taxInvoiceNo || '').trim();
+  if (!taxInvoiceNo) {
+    const { code } = await generateNextDocumentCode(db, 'tax_invoice', {
+      actor: actor.displayName,
+      userId: actor.id,
+    });
+    taxInvoiceNo = code;
+  }
+
   const billRef = doc(db, 'billing_notes', tax.billingNoteId);
   const billSnap = await getDoc(billRef);
   if (!billSnap.exists()) throw new Error('ไม่พบใบวางบิล');
   const billing = billSnap.data() as { dueDate?: string };
 
   const arExisting = await findArForCommercial(db, com.id);
-  const dueYmd = billing.dueDate || addDaysToHtmlDate(tax.issueDate, 30);
+  const dueYmd = billing.dueDate || addDaysToHtmlDate(issueYmd, 30);
 
   let arId: string;
   if (arExisting) {
@@ -102,8 +113,8 @@ export async function verifyOpecCustomerPaymentForCommercial(
         documentNo: arNo,
         referenceType: 'TAX_INVOICE' as const,
         referenceId: tax.id,
-        referenceNo: tax.taxInvoiceNo,
-        issueDate: tax.issueDate,
+        referenceNo: taxInvoiceNo,
+        issueDate: issueYmd,
         dueDate: dueYmd,
         debitAmount: tax.totalAmount,
         creditAmount: 0,
@@ -135,7 +146,8 @@ export async function verifyOpecCustomerPaymentForCommercial(
       sanitizeFirestorePayload({
         referenceType: 'TAX_INVOICE' as const,
         referenceId: tax.id,
-        referenceNo: tax.taxInvoiceNo,
+        referenceNo: taxInvoiceNo,
+        issueDate: issueYmd,
         dueDate: dueYmd,
         creditAmount: arExisting.debitAmount,
         outstandingAmount: 0,
@@ -160,7 +172,11 @@ export async function verifyOpecCustomerPaymentForCommercial(
     taxRef,
     sanitizeFirestorePayload({
       status: 'ISSUED' as const,
+      taxInvoiceNo,
+      issueDate: issueYmd,
       arEntryId: arId,
+      issuedByUid: actor.id,
+      issuedByName: (actor.displayName || actor.email || actor.id).trim(),
       updatedAt: Date.now(),
     }),
   );
@@ -169,6 +185,8 @@ export async function verifyOpecCustomerPaymentForCommercial(
     billRef,
     sanitizeFirestorePayload({
       status: 'INVOICED' as const,
+      billingDate: issueYmd,
+      dueDate: dueYmd,
       updatedAt: Date.now(),
     }),
   );
@@ -197,12 +215,12 @@ export async function verifyOpecCustomerPaymentForCommercial(
     entityLabel: `${com.invoiceNo} → ยืนยันรับเงิน/ออกใบกำกับ ISSUED`,
     sourceModule: 'commercial_invoices',
     linkedIds: [com.customerId, tax.id, arId, params.bankAccountId],
-    afterSummary: `บัญชียืนยันรับเงิน — ${tax.taxInvoiceNo} → ISSUED, ลง cashbook ${cash.entryNo}`,
+    afterSummary: `บัญชียืนยันรับเงิน — ${taxInvoiceNo} → ISSUED, ลง cashbook ${cash.entryNo}`,
   });
 
   return {
     taxInvoiceId: tax.id,
-    taxInvoiceNo: tax.taxInvoiceNo,
+    taxInvoiceNo,
     arId,
     cashbookEntryId: cash.cashbookEntryId,
     entryNo: cash.entryNo,

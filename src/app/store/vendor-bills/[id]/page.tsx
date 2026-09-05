@@ -82,6 +82,11 @@ import {
   vendorBillWhtPresetRatePercent,
 } from '@/lib/ops/purchase-payment-milestones';
 import {
+  VENDOR_BILL_WHT_PRESET_OPTIONS,
+  inferSupplierWhtCategoryFromRate,
+  supplierWhtCategoryLabel,
+} from '@/lib/ops/supplier-wht-category';
+import {
   buildWithholdingCertificateDocumentHtml,
   buildWithholdingCertificatePayeeCopies12Html,
   openWithholdingCertificatePrintWindow,
@@ -188,16 +193,23 @@ function validateSupportingRow(label: string, row: SupportingFormRow): string | 
   return null;
 }
 
-const WHT_PRESET_OPTIONS: { id: VendorBillWhtPresetCategory; title: string; detail: string }[] = [
-  { id: 'TRANSPORT_FREIGHT', title: 'ค่าขนส่ง', detail: 'หัก ณ ที่จ่าย 1%' },
-  { id: 'SERVICE', title: 'ค่าบริการ', detail: 'หัก ณ ที่จ่าย 3%' },
-  { id: 'RENT', title: 'ค่าเช่า', detail: 'หัก ณ ที่จ่าย 5%' },
-];
+const WHT_PRESET_OPTIONS = VENDOR_BILL_WHT_PRESET_OPTIONS;
 
-function inferWhtPresetFromEffectiveRate(rate: number): VendorBillWhtPresetCategory {
+function inferWhtPresetFromEffectiveRate(
+  rate: number,
+  purchaseCategory?: VendorBillWhtPresetCategory | null,
+): VendorBillWhtPresetCategory {
+  if (
+    purchaseCategory === 'TRANSPORT_FREIGHT' ||
+    purchaseCategory === 'CONTRACT' ||
+    purchaseCategory === 'SERVICE' ||
+    purchaseCategory === 'RENT'
+  ) {
+    return purchaseCategory;
+  }
   if (Math.abs(rate - 1) < 0.02) return 'TRANSPORT_FREIGHT';
   if (Math.abs(rate - 5) < 0.02) return 'RENT';
-  return 'SERVICE';
+  return inferSupplierWhtCategoryFromRate(rate);
 }
 
 type VatModeUi = 'AUTO' | VendorBillVatTreatmentOverride;
@@ -1043,7 +1055,8 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     else setAccountingWhtDraftMode('inherit');
     const r = effectiveVendorBillWhtRatePercent(bill, purchase);
     setAccountingWhtDraftPreset(
-      bill.vendorBillWhtPresetCategory ?? inferWhtPresetFromEffectiveRate(r),
+      bill.vendorBillWhtPresetCategory ??
+        inferWhtPresetFromEffectiveRate(r, purchase.supplierWithholdingCategory),
     );
     setAccountingWhtDialogOpen(true);
   };
@@ -2313,6 +2326,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                           {WHT_PRESET_OPTIONS.find((o) => o.id === bill.vendorBillWhtPresetCategory)?.title ?? 'เมนูบัญชี'}{' '}
                           — เลือกก่อนจ่าย)
                         </span>
+                      ) : purchase?.supplierWithholdingCategory ? (
+                        <span className="text-muted-foreground">
+                          {' '}
+                          (จาก PO: {supplierWhtCategoryLabel(purchase.supplierWithholdingCategory)} ·{' '}
+                          {poWhtRatePercent}%)
+                        </span>
                       ) : hasManualWhtOnly ? (
                         <span className="text-muted-foreground">
                           {' '}
@@ -2354,7 +2373,10 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                           }
                           const next =
                             bill.vendorBillWhtPresetCategory ??
-                            inferWhtPresetFromEffectiveRate(effectiveWhtRatePercent);
+                            inferWhtPresetFromEffectiveRate(
+                              effectiveWhtRatePercent,
+                              purchase?.supplierWithholdingCategory,
+                            );
                           setWhtPresetChoice(next);
                           setWhtPresetDialogOpen(true);
                         }}
@@ -3197,7 +3219,8 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
             <DialogHeader>
               <DialogTitle>แก้ไขหัก ณ ที่จ่าย (บัญชี)</DialogTitle>
               <DialogDescription className="text-sm leading-relaxed">
-                เปิดหรือปิดการหักเฉพาะใบนี้ได้โดยไม่ต้องแก้ PO · เมื่อเปิดหักให้เลือกประเภทตามระบบ (1% / 3% / 5%)
+                เปิดหรือปิดการหักเฉพาะใบนี้ได้โดยไม่ต้องแก้ PO · เมื่อเปิดหักให้เลือกประเภท
+                (จ้างเหมา / งานบริการ / ค่าเช่า / ค่าขนส่ง) เพื่อให้ใบหัก ณ ที่จ่ายตรงกับสรรพากร
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">

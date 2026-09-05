@@ -13,7 +13,8 @@ import { ArrowLeft, Loader2, Printer } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 import { usePoPartyLabels } from '@/hooks/use-po-party-labels';
-import type { PayrollBatch, PayrollBatchLine, PayrollPeriod, User } from '@/lib/types';
+import type { PayrollBatch, PayrollBatchLine, PayrollPeriod, Position, User, Worker } from '@/lib/types';
+import { positionListPrimaryName } from '@/lib/position-display';
 
 export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -64,6 +65,39 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
 
   const poPartyLabelById = usePoPartyLabels(lines);
 
+  const positionsQuery = useMemoFirebase(
+    () => (firestore ? collection(firestore, 'positions') : null),
+    [firestore],
+  );
+  const { data: positions } = useCollection<Position>(positionsQuery as any);
+  const workersQuery = useMemoFirebase(
+    () => (firestore ? collection(firestore, 'workers') : null),
+    [firestore],
+  );
+  const { data: workers } = useCollection<Worker>(workersQuery as any);
+
+  const positionNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of positions ?? []) {
+      const name = positionListPrimaryName(p).trim();
+      if (p.id && name) m.set(p.id, name);
+    }
+    return m;
+  }, [positions]);
+
+  const fallbackPosByWorkerId = useMemo(() => {
+    const workerById = new Map((workers ?? []).map((w) => [w.id, w]));
+    const out = new Map<string, string>();
+    for (const line of lines ?? []) {
+      const snapPosId = String(line.laborCostResolutionSnapshot?.positionId || '').trim();
+      const workerPosId = String(workerById.get(line.workerId)?.currentPositionId || '').trim();
+      const posId = snapPosId || workerPosId;
+      const name = posId ? positionNameById.get(posId) : undefined;
+      if (name) out.set(line.workerId, name);
+    }
+    return out;
+  }, [lines, workers, positionNameById]);
+
   /** สลิปพิมพ์จาก snapshot ในงวดเท่านั้น — ไม่คำนวณสูตรสด */
   const models = useMemo(() => {
     if (!batch || !lines?.length) return [];
@@ -82,6 +116,7 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
       const lineFrozen = isWorkerPayrollBatchSnapshotFrozen(batch, {
         hasEarlierPaidInPeriod: priorForWorker.length > 0,
       });
+      const fallbackPos = fallbackPosByWorkerId.get(line.workerId);
       return buildPayslipFromWorkerLine(
         line,
         batch,
@@ -91,6 +126,10 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
         normalBatch,
         priorForWorker,
         lineFrozen ? undefined : poPartyLabelById,
+        {
+          positionNameById,
+          fallbackPositionName: fallbackPos,
+        },
       );
     });
   }, [
@@ -104,6 +143,8 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
     normalLines,
     priorPaidRefs,
     poPartyLabelById,
+    positionNameById,
+    fallbackPosByWorkerId,
   ]);
 
   const handlePrintAll = () => window.print();

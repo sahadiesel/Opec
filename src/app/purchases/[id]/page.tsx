@@ -25,6 +25,15 @@ import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase
 import { doc, collection, updateDoc, deleteField } from 'firebase/firestore';
 import { roundMoney2, supplierWithholdingOnMilestone } from '@/lib/ops/purchase-payment-milestones';
 import {
+  SUPPLIER_WHT_CATEGORY_OPTIONS,
+  inferSupplierWhtCategoryFromRate,
+  isSupplierWithholdingCategory,
+  supplierWhtCategoryDefaultRate,
+  supplierWhtCategoryLabel,
+  type SupplierWithholdingCategory,
+} from '@/lib/ops/supplier-wht-category';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import {
   buildPurchaseOrderPrintHtml,
   openStandardPrintWindow,
   sanitizePrintFileBaseName,
@@ -213,6 +222,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   const [selectedStoreItemId, setSelectedStoreItemId] = useState<string>('');
   const [managerComment, setManagerComment] = useState('');
   const [whtEnabled, setWhtEnabled] = useState(false);
+  const [whtCategory, setWhtCategory] = useState<SupplierWithholdingCategory>('SERVICE');
   const [whtRateInput, setWhtRateInput] = useState('3');
   const [whtSaving, setWhtSaving] = useState(false);
   const [discountInput, setDiscountInput] = useState('0');
@@ -223,9 +233,23 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
   useEffect(() => {
     if (!purchase) return;
     setWhtEnabled(!!purchase.supplierWithholdingEnabled);
+    const cat = purchase.supplierWithholdingCategory;
+    if (isSupplierWithholdingCategory(cat)) {
+      setWhtCategory(cat);
+    } else if (purchase.supplierWithholdingEnabled) {
+      setWhtCategory(inferSupplierWhtCategoryFromRate(Number(purchase.supplierWithholdingRatePercent) || 3));
+    } else {
+      setWhtCategory('SERVICE');
+    }
     setWhtRateInput(String(purchase.supplierWithholdingRatePercent ?? 3));
     setDiscountInput(String(purchase.discountAmount ?? 0));
-  }, [purchase?.id, purchase?.supplierWithholdingEnabled, purchase?.supplierWithholdingRatePercent, purchase?.discountAmount]);
+  }, [
+    purchase?.id,
+    purchase?.supplierWithholdingEnabled,
+    purchase?.supplierWithholdingRatePercent,
+    purchase?.supplierWithholdingCategory,
+    purchase?.discountAmount,
+  ]);
 
   useEffect(() => {
     if (!purchase || !canPostApprovalEdit(purchase.status)) {
@@ -558,6 +582,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       await updateDocumentNonBlocking(purchaseRef, {
         supplierWithholdingEnabled: whtEnabled,
         supplierWithholdingRatePercent: whtEnabled ? r : null,
+        supplierWithholdingCategory: whtEnabled ? whtCategory : null,
         updatedAt: Date.now(),
       });
       toast({ title: 'บันทึกการตั้งค่าหัก ณ ที่จ่ายแล้ว' });
@@ -987,17 +1012,17 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
               <Card className="border-slate-200 shadow-md">
                 <CardHeader className="border-b bg-slate-50/60 flex flex-row items-start justify-between gap-3">
                   <div className="space-y-1.5 min-w-0">
-                    <CardTitle className="text-base">หัก ณ ที่จ่าย (งานจ้างเหมา)</CardTitle>
+                    <CardTitle className="text-base">หัก ณ ที่จ่าย</CardTitle>
                     <CardDescription>
                       {fiscalTermsEditable
                         ? hasPurchaseRequisition
-                          ? 'ปรับหัก ณ ที่จ่ายได้ในโหมดนี้ (ปกติตั้งตอนทำ PR แล้วคัดลอกมาอัตโนมัติ — ใช้เมื่อลืมตั้งหรือต้องแก้)'
-                          : 'ตั้งค่าหัก ณ ที่จ่ายได้ในโหมดนี้ — ใช้ประกอบการจ่ายผ่านบัญชีและเอกสารรับวางบิลอ้างอิง PO (ไม่จัดงวดชำระใน PO)'
+                          ? 'เลือกประเภท (จ้างเหมา / งานบริการ / ค่าเช่า) และอัตรา — ปกติคัดลอกจาก PR · บัญชียังแก้ได้ตอนทำจ่าย'
+                          : 'เลือกประเภทและอัตราหัก ณ ที่จ่าย — ใช้ประกอบการจ่ายผ่านบัญชีและเอกสารรับวางบิล'
                         : showPostApprovalEditButton
                           ? hasPurchaseRequisition
-                            ? 'ค่าหัก ณ ที่จ่ายมาจาก PR — กด「แก้ไข」เฉพาะเมื่อลืมตั้งตอน PR หรือต้องการปรับ'
-                            : 'กด「แก้ไข」ด้านบนเพื่อปรับหัก ณ ที่จ่าย — ใช้ประกอบการจ่ายผ่านบัญชีและเอกสารรับวางบิลอ้างอิง PO'
-                          : 'กำหนดได้ตอนฉบับร่าง ส่งกลับแก้ไข หรือหลังกด「แก้ไข」เมื่ออนุมัติ/ส่งคู่ค้าแล้ว — ใช้ประกอบการจ่ายผ่านบัญชี'}
+                            ? 'ค่าหัก ณ ที่จ่ายมาจาก PR — กด「แก้ไข」เมื่อต้องปรับประเภทหรืออัตรา'
+                            : 'กด「แก้ไข」ด้านบนเพื่อปรับประเภท/อัตราหัก ณ ที่จ่าย'
+                          : 'กำหนดได้ตอนฉบับร่าง หรือหลังกด「แก้ไข」 — บัญชีแก้ได้ตอนทำจ่ายเพื่อใบหักสรรพากร'}
                     </CardDescription>
                   </div>
                   {showPostApprovalEditButton && !postApprovalEditing ? (
@@ -1015,34 +1040,63 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                 </CardHeader>
                 <CardContent className="pt-4 space-y-4">
                   {fiscalTermsEditable ? (
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
-                      <div className="flex items-center gap-3">
-                        <Switch
-                          id="wht-enabled"
-                          checked={whtEnabled}
-                          onCheckedChange={setWhtEnabled}
-                        />
-                        <Label htmlFor="wht-enabled" className="cursor-pointer">
-                          ใช้การคำนวณหัก ณ ที่จ่ายตามยอด PO (ประกอบจ่ายผ่านใบรับวางบิล)
-                        </Label>
-                      </div>
-                      <div className="flex flex-wrap items-end gap-2">
-                        <div className="space-y-1">
-                          <Label htmlFor="wht-rate">อัตรา (%)</Label>
-                          <Input
-                            id="wht-rate"
-                            className="w-24"
-                            inputMode="decimal"
-                            disabled={!whtEnabled}
-                            value={whtRateInput}
-                            onChange={(e) => setWhtRateInput(e.target.value)}
+                    <div className="space-y-4 print:hidden">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <Switch
+                            id="wht-enabled"
+                            checked={whtEnabled}
+                            onCheckedChange={setWhtEnabled}
                           />
+                          <Label htmlFor="wht-enabled" className="cursor-pointer">
+                            ใช้การคำนวณหัก ณ ที่จ่ายตามยอด PO (ประกอบจ่ายผ่านใบรับวางบิล)
+                          </Label>
                         </div>
-                        <Button type="button" onClick={() => void saveSupplierWithholding()} disabled={whtSaving}>
-                          {whtSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                          บันทึก
-                        </Button>
+                        <div className="flex flex-wrap items-end gap-2">
+                          <div className="space-y-1">
+                            <Label htmlFor="wht-rate">อัตรา (%)</Label>
+                            <Input
+                              id="wht-rate"
+                              className="w-24"
+                              inputMode="decimal"
+                              disabled={!whtEnabled}
+                              value={whtRateInput}
+                              onChange={(e) => setWhtRateInput(e.target.value)}
+                            />
+                          </div>
+                          <Button type="button" onClick={() => void saveSupplierWithholding()} disabled={whtSaving}>
+                            {whtSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                            บันทึก
+                          </Button>
+                        </div>
                       </div>
+                      {whtEnabled ? (
+                        <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+                          <p className="text-xs font-semibold text-muted-foreground">ประเภทเงินได้</p>
+                          <RadioGroup
+                            value={whtCategory}
+                            onValueChange={(v) => {
+                              if (!isSupplierWithholdingCategory(v)) return;
+                              setWhtCategory(v);
+                              setWhtRateInput(String(supplierWhtCategoryDefaultRate(v)));
+                            }}
+                            className="gap-2"
+                          >
+                            {SUPPLIER_WHT_CATEGORY_OPTIONS.map((opt) => (
+                              <label
+                                key={opt.id}
+                                className="flex cursor-pointer items-start gap-3 rounded-md border border-muted bg-background px-3 py-2 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"
+                              >
+                                <RadioGroupItem value={opt.id} id={`po-wht-cat-${opt.id}`} className="mt-0.5" />
+                                <span className="min-w-0">
+                                  <span className="block text-sm font-semibold leading-tight">{opt.title}</span>
+                                  <span className="text-xs text-muted-foreground">{opt.detail}</span>
+                                </span>
+                              </label>
+                            ))}
+                          </RadioGroup>
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
                     <div className="rounded-md border bg-muted/30 px-3 py-2.5 text-sm print:hidden">
@@ -1052,6 +1106,14 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                           <span className="font-semibold text-foreground">เปิดใช้แล้ว</span>
                           <span className="text-muted-foreground">
                             {' '}
+                            ·{' '}
+                            {supplierWhtCategoryLabel(
+                              isSupplierWithholdingCategory(purchase.supplierWithholdingCategory)
+                                ? purchase.supplierWithholdingCategory
+                                : inferSupplierWhtCategoryFromRate(
+                                    Number(purchase.supplierWithholdingRatePercent) || 3,
+                                  ),
+                            )}{' '}
                             · อัตรา {purchase.supplierWithholdingRatePercent}%
                             {hasPurchaseRequisition ? ' (จาก PR / ตามที่บันทึกใน PO)' : ''}
                           </span>
@@ -1067,7 +1129,9 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   <div className="hidden print:block text-sm">
                     {purchase.supplierWithholdingEnabled && (purchase.supplierWithholdingRatePercent ?? 0) > 0 ? (
                       <p>
-                        <strong>หัก ณ ที่จ่าย:</strong> อัตรา {purchase.supplierWithholdingRatePercent}% (ฐาน = ส่วนก่อน VAT ตามสัดส่วนยอดสุทธิ PO — สุทธิ = ยอดรวม VAT − หัก ณ ที่จ่าย)
+                        <strong>หัก ณ ที่จ่าย:</strong>{' '}
+                        {supplierWhtCategoryLabel(purchase.supplierWithholdingCategory)} · อัตรา{' '}
+                        {purchase.supplierWithholdingRatePercent}% (ฐาน = ส่วนก่อน VAT ตามสัดส่วนยอดสุทธิ PO)
                       </p>
                     ) : (
                       <p>ไม่มีการหัก ณ ที่จ่ายตามการตั้งค่าเอกสารนี้</p>

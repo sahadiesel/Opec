@@ -62,7 +62,7 @@ import {
   reconcileTaxInvoiceArIfPaid,
 } from '@/lib/services/reconcile-stale-ar-from-receipts';
 import { recordTaxInvoiceBillingCustomerApproval } from '@/lib/services/tax-invoice-billing-approval-service';
-import { cancelTaxInvoiceAsAccounting } from '@/lib/services/tax-invoice-delete-service';
+import { cancelTaxInvoiceAsAccounting, createReplacementTaxInvoiceDraft } from '@/lib/services/tax-invoice-delete-service';
 import {
   Dialog,
   DialogContent,
@@ -143,6 +143,10 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const [savingNotes, setSavingNotes] = useState(false);
   const [printPresetOpen, setPrintPresetOpen] = useState(false);
   const [accountingPrintPreset, setAccountingPrintPreset] = useState<'p1' | 'p2' | 'p3' | 'p4'>('p1');
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelReasonDraft, setCancelReasonDraft] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+  const [replacing, setReplacing] = useState(false);
   const arReconcileAttempted = useRef(false);
 
   const invRef = useMemoFirebase(() => (firestore ? doc(firestore, 'tax_invoices', id) : null), [firestore, id]);
@@ -301,6 +305,15 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       const issueStartMs = htmlDateValueToTimestampMs(issueYmd) ?? issuedAt;
       const dueYmd = timestampToHtmlDateValue(issueStartMs + 30 * 86400000);
 
+      let taxInvoiceNo = String(invoice.taxInvoiceNo || '').trim();
+      if (!taxInvoiceNo) {
+        const { code } = await generateNextDocumentCode(firestore, 'tax_invoice', {
+          actor: currentUser.displayName,
+          userId: currentUser.id,
+        });
+        taxInvoiceNo = code;
+      }
+
       let arEntryId = invoice.arEntryId;
       if (!arEntryId) {
         const { code: arNo } = await generateNextDocumentCode(firestore, 'ar', {
@@ -310,7 +323,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
           customerId: invoice.customerId,
           referenceType: 'TAX_INVOICE',
           referenceId: invoice.id,
-          referenceNo: invoice.taxInvoiceNo,
+          referenceNo: taxInvoiceNo,
           documentNo: arNo,
           issueDate: issueYmd,
           dueDate: dueYmd,
@@ -324,6 +337,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
         arEntryId = arRef.id;
       } else {
         await updateDoc(doc(firestore, 'accounts_receivable', arEntryId), {
+          referenceNo: taxInvoiceNo,
           issueDate: issueYmd,
           dueDate: dueYmd,
           updatedAt: Date.now(),
@@ -332,6 +346,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
 
       await updateDoc(invRef, {
         status: 'ISSUED' as TaxInvoiceStatus,
+        taxInvoiceNo,
         arEntryId,
         issueDate: issueYmd,
         printDocumentLocale: printLocale,
@@ -351,16 +366,24 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
         await closeOpenCommercialArNow(firestore, invoice.sourceCommercialInvoiceId);
       }
 
+      const replacesId = String(invoice.replacesTaxInvoiceId || '').trim();
+      if (replacesId) {
+        await updateDoc(doc(firestore, 'tax_invoices', replacesId), {
+          replacedByTaxInvoiceNo: taxInvoiceNo,
+          updatedAt: Date.now(),
+        });
+      }
+
       toast({
         title: 'ออกเอกสารจริงแล้ว (ISSUED)',
-        description: 'บันทึกลูกหนี้ (AR) และอัปเดตใบวางบิลเป็น INVOICED',
+        description: `เลขที่ ${taxInvoiceNo} — บันทึกลูกหนี้ (AR) และอัปเดตใบวางบิลเป็น INVOICED`,
       });
     } catch (e) {
       console.error(e);
       toast({
         variant: 'destructive',
         title: 'ไม่สำเร็จ',
-        description: 'ไม่สามารถออกเอกสารหรือสร้าง AR ได้',
+        description: e instanceof Error ? e.message : 'ไม่สามารถออกเอกสารหรือสร้าง AR ได้',
       });
     } finally {
       setIssuing(false);
@@ -405,7 +428,8 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       return;
     }
     if (newStatus === 'CANCELLED') {
-      void handleCancelTaxInvoice();
+      setCancelReasonDraft('');
+      setCancelDialogOpen(true);
       return;
     }
     updateDocumentNonBlocking(invRef, { status: newStatus, updatedAt: Date.now() });
@@ -418,13 +442,21 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
       return;
     }
+    const reason = cancelReasonDraft.trim();
+    if (!reason) {
+      toast({ variant: 'destructive', title: 'ระบุสาเหตุ', description: 'ต้องระบุสาเหตุการยกเลิกเอกสาร' });
+      return;
+    }
+    setCancelling(true);
     try {
-      await cancelTaxInvoiceAsAccounting(firestore, invoice.id, currentUser);
+      await cancelTaxInvoiceAsAccounting(firestore, invoice.id, currentUser, reason);
+      setCancelDialogOpen(false);
+      setCancelReasonDraft('');
       toast({
         title: 'ยกเลิกใบกำกับภาษีแล้ว',
         description: invoice.sourceCommercialInvoiceId
-          ? 'ปลดลิงก์จากใบแจ้งหนี้แล้ว — ยกเลิกใบแจ้งหนี้ได้จากหน้ารายละเอียดใบเรียกเก็บ'
-          : 'สถานะ CANCELLED',
+          ? 'เลขที่เดิมคงอยู่ · ประทับยกเลิกบนเอกสาร — ปลดลิงก์จากใบแจ้งหนี้แล้ว'
+          : 'เลขที่เดิมคงอยู่ · ประทับยกเลิกบนเอกสาร',
       });
     } catch (e: unknown) {
       toast({
@@ -432,6 +464,37 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
         title: 'ยกเลิกใบกำกับไม่สำเร็จ',
         description: e instanceof Error ? e.message : String(e),
       });
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const handleCreateReplacement = async () => {
+    if (!firestore || !invoice || !currentUser) return;
+    if (!isAccountingActor) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
+      return;
+    }
+    setReplacing(true);
+    try {
+      const { taxInvoiceId } = await createReplacementTaxInvoiceDraft(
+        firestore,
+        invoice.id,
+        currentUser as User,
+      );
+      toast({
+        title: 'สร้างฉบับแทนที่แล้ว',
+        description: 'เปิดร่างใหม่ — เลขที่และวันที่ออกเมื่อกด ISSUED',
+      });
+      router.push(`/tax-invoices/${taxInvoiceId}`);
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'สร้างฉบับแทนที่ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setReplacing(false);
     }
   };
 
@@ -577,7 +640,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     });
     if (
       !(await openStandardPrintWindow({
-        windowTitle: invoice.taxInvoiceNo,
+        windowTitle: String(invoice.taxInvoiceNo || '').trim() || 'Tax Invoice DRAFT',
         bodyInnerHtml: body,
         htmlLang: printLocale,
         onClipboardFilenameCopied: () => {
@@ -749,8 +812,12 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
 
   const handleSaveTaxInvoiceNotes = async () => {
     if (!firestore || !invoice || !invRef || !currentUser) return;
-    if (invoice.status === 'CANCELLED') {
-      toast({ variant: 'destructive', title: 'ไม่สามารถแก้ไข', description: 'เอกสารถูกยกเลิกแล้ว' });
+    if (invoice.status !== 'DRAFT') {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่สามารถแก้ไข',
+        description: 'แก้ไขข้อความได้เฉพาะฉบับร่าง (DRAFT) — ฉบับจริงล็อกแล้ว',
+      });
       return;
     }
     if (!isAccountingActor) {
@@ -789,6 +856,9 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   }
 
   const attachments = invoice.timesheetPaperAttachments ?? [];
+  const displayTaxInvoiceNo =
+    String(invoice.taxInvoiceNo || '').trim() ||
+    (invoice.status === 'DRAFT' ? 'รอออกเลขเมื่อยืนยันฉบับจริง' : '—');
 
   return (
     <AppShell user={currentUser as User} onLogout={() => {}}>
@@ -801,7 +871,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
             <div>
               <h1 className="text-2xl font-bold tracking-tight">ใบกำกับภาษี</h1>
               <div className="text-sm text-muted-foreground flex items-center gap-2">
-                <span className="font-mono font-bold text-primary">{invoice.taxInvoiceNo}</span>
+                <span className="font-mono font-bold text-primary">{displayTaxInvoiceNo}</span>
                 <Separator orientation="vertical" className="h-3" />
                 <span>ลูกค้า: {customer?.name || '...'}</span>
               </div>
@@ -817,10 +887,66 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               <Printer className="h-4 w-4" /> พิมพ์เอกสาร
             </Button>
             <Badge variant="outline" className="py-1.5 px-4 font-bold border-primary/20 bg-primary/5 text-primary">
-              {invoice.status === 'DRAFT' ? 'DRAFT — ร่าง' : `STATUS: ${invoice.status}`}
+              {invoice.status === 'DRAFT'
+                ? 'DRAFT — ร่าง'
+                : invoice.status === 'CANCELLED'
+                  ? 'CANCELLED — ยกเลิก'
+                  : `STATUS: ${invoice.status}`}
             </Badge>
           </div>
         </div>
+
+        {invoice.replacesTaxInvoiceId && (
+          <Alert className="border-sky-200 bg-sky-50/80">
+            <Info className="h-4 w-4" />
+            <AlertTitle>ฉบับแทนที่</AlertTitle>
+            <AlertDescription className="text-sm">
+              เอกสารนี้แทนที่{' '}
+              {invoice.replacesTaxInvoiceNo ? (
+                <Link className="font-mono font-semibold underline" href={`/tax-invoices/${invoice.replacesTaxInvoiceId}`}>
+                  {invoice.replacesTaxInvoiceNo}
+                </Link>
+              ) : (
+                <Link className="underline" href={`/tax-invoices/${invoice.replacesTaxInvoiceId}`}>
+                  ใบเดิม
+                </Link>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {invoice.status === 'CANCELLED' && (
+          <Alert variant="destructive">
+            <XCircle className="h-4 w-4" />
+            <AlertTitle>เอกสารถูกยกเลิก</AlertTitle>
+            <AlertDescription className="text-sm space-y-1">
+              {invoice.taxInvoiceNo ? (
+                <p>
+                  เลขที่ <span className="font-mono font-semibold">{invoice.taxInvoiceNo}</span> คงอยู่ในระบบ ·
+                  พิมพ์จะมีประทับ &quot;ยกเลิก / CANCEL&quot;
+                </p>
+              ) : (
+                <p>ยกเลิกขณะยังเป็นร่าง (ยังไม่มีเลข INV)</p>
+              )}
+              {invoice.cancellationReason ? (
+                <p>
+                  <span className="font-semibold">สาเหตุ:</span> {invoice.cancellationReason}
+                </p>
+              ) : null}
+              {invoice.replacedByTaxInvoiceId ? (
+                <p>
+                  ถูกแทนที่ด้วย{' '}
+                  <Link
+                    className="font-mono font-semibold underline"
+                    href={`/tax-invoices/${invoice.replacedByTaxInvoiceId}`}
+                  >
+                    {invoice.replacedByTaxInvoiceNo || 'ฉบับใหม่'}
+                  </Link>
+                </p>
+              ) : null}
+            </AlertDescription>
+          </Alert>
+        )}
 
         {invoice.sourceCommercialInvoiceId && (
           <Alert className="border-teal-200 bg-teal-50/80">
@@ -924,12 +1050,15 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">เลขที่เอกสาร:</Label>
-                  <p className="font-bold text-lg">{invoice.taxInvoiceNo}</p>
+                  <p className="font-bold text-lg">{displayTaxInvoiceNo}</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-[10px] uppercase text-muted-foreground font-bold">วันที่ออกเอกสาร:</Label>
                   <p className="font-medium flex items-center gap-2">
-                    <Calendar className="h-4 w-4" /> {formatStoredDateThaiBE(invoice.issueDate)}
+                    <Calendar className="h-4 w-4" />{' '}
+                    {invoice.status === 'DRAFT' && !String(invoice.taxInvoiceNo || '').trim()
+                      ? 'กำหนดเมื่อออกฉบับจริง'
+                      : formatStoredDateThaiBE(invoice.issueDate)}
                   </p>
                 </div>
                 <div className="space-y-1">
@@ -1162,10 +1291,10 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 {invoice.status === 'ISSUED' && (
                   <div className="p-4 bg-white/10 rounded-lg text-xs flex gap-2">
                     <Info className="h-4 w-4 shrink-0" />
-                    เอกสารออกจริงแล้ว — บันทึกลูกหนี้ (AR) และใบวางบิลเป็น INVOICED
+                    เอกสารออกจริงแล้ว — ล็อกแก้ไขข้อความ · บันทึกลูกหนี้ (AR) และใบวางบิลเป็น INVOICED
                   </div>
                 )}
-                {isAccountingActor && invoice.status !== 'CANCELLED' && (
+                {isAccountingActor && invoice.status === 'DRAFT' && (
                   <Button
                     variant="outline"
                     className="w-full border-white/40 bg-white/10 text-white hover:bg-white/20 font-semibold"
@@ -1208,7 +1337,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                     </p>
                   </div>
                 )}
-                {isAccountingActor && (
+                {isAccountingActor && invoice.status !== 'CANCELLED' && (
                   <Button
                     variant="ghost"
                     className="w-full text-white/60 hover:text-white hover:bg-white/10"
@@ -1217,6 +1346,24 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                     <XCircle className="h-4 w-4 mr-2" /> ยกเลิกใบกำกับภาษี
                   </Button>
                 )}
+                {isAccountingActor &&
+                  invoice.status === 'CANCELLED' &&
+                  !invoice.replacedByTaxInvoiceId &&
+                  !!invoice.sourceCommercialInvoiceId && (
+                    <Button
+                      className="w-full bg-white text-primary hover:bg-slate-100 font-bold"
+                      type="button"
+                      disabled={replacing}
+                      onClick={() => void handleCreateReplacement()}
+                    >
+                      {replacing ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <FileText className="h-4 w-4 mr-2" />
+                      )}
+                      ออกเอกสารใหม่แทนที่
+                    </Button>
+                  )}
               </CardContent>
             </Card>
 
@@ -1553,6 +1700,54 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               </Button>
               <Button type="button" onClick={handleConfirmAccountingPrint}>
                 พิมพ์
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={cancelDialogOpen}
+          onOpenChange={(open) => {
+            if (cancelling) return;
+            setCancelDialogOpen(open);
+            if (!open) setCancelReasonDraft('');
+          }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>ยกเลิกใบกำกับภาษี</DialogTitle>
+              <DialogDescription>
+                เลขที่เดิมจะคงอยู่และมีประทับ &quot;ยกเลิก&quot; บนเอกสาร — ต้องระบุสาเหตุการยกเลิก
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="tax-cancel-reason">สาเหตุการยกเลิก</Label>
+              <Textarea
+                id="tax-cancel-reason"
+                rows={4}
+                value={cancelReasonDraft}
+                onChange={(e) => setCancelReasonDraft(e.target.value)}
+                placeholder="เช่น ออกผิดรายการ / ลูกค้าขอแก้ไขยอด"
+                disabled={cancelling}
+              />
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                variant="outline"
+                type="button"
+                disabled={cancelling}
+                onClick={() => setCancelDialogOpen(false)}
+              >
+                ปิด
+              </Button>
+              <Button
+                variant="destructive"
+                type="button"
+                disabled={cancelling || !cancelReasonDraft.trim()}
+                onClick={() => void handleCancelTaxInvoice()}
+              >
+                {cancelling ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                ยืนยันยกเลิก
               </Button>
             </DialogFooter>
           </DialogContent>

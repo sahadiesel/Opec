@@ -113,7 +113,7 @@ export function PayrollWorkerWhtCertificatePanel({
     };
   }, [active, firestore, line.workerId]);
 
-  const paymentYmd = useMemo(() => resolvePayrollWorkerWhtPaymentDateYmd(batch), [batch]);
+  const paymentYmd = useMemo(() => resolvePayrollWorkerWhtPaymentDateYmd(batch, line), [batch, line]);
 
   const [issueYmd, setIssueYmd] = useState(() => timestampMsToBangkokYmd(Date.now()));
   useEffect(() => {

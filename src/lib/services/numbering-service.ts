@@ -283,6 +283,7 @@ export async function generateNextDocumentCode(
       const seqSnap = await transaction.get(seqRef);
       let lastNumber = 0;
       let existingData: any = {};
+      let periodRolled = false;
 
       if (seqSnap.exists()) {
         existingData = seqSnap.data();
@@ -291,12 +292,34 @@ export async function generateNextDocumentCode(
         // Reset logic
         if (config.resetPolicy === 'yearly' && existingData.year !== currentYear) {
           lastNumber = 0;
-        } else if (config.resetPolicy === 'monthly' && (existingData.month !== currentMonth || existingData.year !== currentYear)) {
+          periodRolled = true;
+        } else if (
+          config.resetPolicy === 'monthly' &&
+          (existingData.month !== currentMonth || existingData.year !== currentYear)
+        ) {
           lastNumber = 0;
+          periodRolled = true;
         }
       }
 
-      const nextNumber = lastNumber + 1;
+      const releasedRaw = Array.isArray(existingData.releasedRunningNumbers)
+        ? (existingData.releasedRunningNumbers as unknown[])
+            .map((n) => Number(n))
+            .filter((n) => Number.isFinite(n) && n > 0)
+        : [];
+      const released = periodRolled ? [] : [...new Set(releasedRaw)].sort((a, b) => a - b);
+
+      let nextNumber: number;
+      let remainingReleased = released;
+      let tipLastNumber = lastNumber;
+      if (released.length > 0) {
+        nextNumber = released[0]!;
+        remainingReleased = released.slice(1);
+      } else {
+        nextNumber = lastNumber + 1;
+        tipLastNumber = nextNumber;
+      }
+
       const code = formatDocumentCode(config, nextNumber, date);
 
       const metadata: NumberSequence = {
@@ -310,15 +333,22 @@ export async function generateNextDocumentCode(
         year: currentYear,
         month: currentMonth,
         paddingLength: config.padding,
-        lastNumber: nextNumber,
+        lastNumber: tipLastNumber,
         lastIssuedCode: code,
         isActive: true,
         updatedAt: Date.now(),
-        updatedBy: actor
+        updatedBy: actor,
       };
 
       // Update sequence metadata
-      transaction.set(seqRef, metadata, { merge: true });
+      transaction.set(
+        seqRef,
+        {
+          ...metadata,
+          releasedRunningNumbers: remainingReleased,
+        },
+        { merge: true },
+      );
 
       // Log issuance
       const auditRef = doc(collection(db, 'audit_logs'));
@@ -333,7 +363,7 @@ export async function generateNextDocumentCode(
         actorRole: 'system',
         eventAt: Date.now(),
         afterSummary: `Issued code ${code} for ${sequenceKey}`,
-        sourceModule: 'system'
+        sourceModule: 'system',
       });
 
       return { code, metadata };
@@ -368,9 +398,8 @@ export function parseMonthlySequenceCode(
 }
 
 /**
- * When the deleted document used the **current last** running number for its month bucket (matches
- * `number_sequences/{key}` year/month and lastNumber), decrement so the next issuance reuses that slot.
- * No-op if the code is from another period or not the tip of the sequence (gaps stay).
+ * คืนช่องเลขรายเดือนเมื่อลบเอกสาร — ถ้าเป็นเลขปลายสุดให้ลด lastNumber
+ * ถ้าไม่ใช่ปลายสุด ให้เก็บใน releasedRunningNumbers เพื่อออกเลขเดิมได้อีก (เลขไม่หายจากระบบ)
  */
 export async function releaseSequenceSlotIfLastIssued(
   db: Firestore,
@@ -394,19 +423,44 @@ export async function releaseSequenceSlotIfLastIssued(
     const sy = data.year;
     const sm = data.month;
 
-    if (sy !== parsed.year || sm !== parsed.month) return false;
-    if (lastNumber !== parsed.runningNumber) return false;
+    if (sy !== parsed.year || sm !== parsed.month) {
+      /** คนละเดือนกับเคาน์เตอร์ปัจจุบัน — เก็บเป็น released ของเดือนนั้นไม่ได้บน doc เดียว → no-op */
+      return false;
+    }
 
-    const nextNumber = Math.max(0, lastNumber - 1);
-    const previewDate = new Date(parsed.year, parsed.month - 1, 15);
-    const prevIssued =
-      nextNumber > 0 ? formatDocumentCode(config, nextNumber, previewDate) : null;
+    if (lastNumber === parsed.runningNumber) {
+      const nextNumber = Math.max(0, lastNumber - 1);
+      const previewDate = new Date(parsed.year, parsed.month - 1, 15);
+      const prevIssued =
+        nextNumber > 0 ? formatDocumentCode(config, nextNumber, previewDate) : null;
+      const releasedRaw = Array.isArray(data.releasedRunningNumbers)
+        ? (data.releasedRunningNumbers as unknown[])
+            .map((n) => Number(n))
+            .filter((n) => Number.isFinite(n) && n > 0 && n !== parsed.runningNumber)
+        : [];
+      transaction.set(
+        seqRef,
+        {
+          lastNumber: nextNumber,
+          ...(prevIssued != null ? { lastIssuedCode: prevIssued } : { lastIssuedCode: null }),
+          releasedRunningNumbers: [...new Set(releasedRaw)].sort((a, b) => a - b),
+          updatedAt: Date.now(),
+          updatedBy: 'sequence_release',
+        },
+        { merge: true },
+      );
+      return true;
+    }
 
+    /** ไม่ใช่ปลายสุด — คืนเข้า pool เพื่อออกเลขเดิมอีกได้หลัง admin ลบ */
+    const releasedRaw = Array.isArray(data.releasedRunningNumbers)
+      ? (data.releasedRunningNumbers as unknown[]).map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)
+      : [];
+    releasedRaw.push(parsed.runningNumber);
     transaction.set(
       seqRef,
       {
-        lastNumber: nextNumber,
-        ...(prevIssued != null ? { lastIssuedCode: prevIssued } : { lastIssuedCode: null }),
+        releasedRunningNumbers: [...new Set(releasedRaw)].sort((a, b) => a - b),
         updatedAt: Date.now(),
         updatedBy: 'sequence_release',
       },

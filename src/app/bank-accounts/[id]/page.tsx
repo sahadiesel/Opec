@@ -329,6 +329,31 @@ function BankAccountDetailContent({ id }: { id: string }) {
     };
   }, [movementRows, directionFilter]);
 
+  /** ยอดหลังรายการสุดท้ายในเดือน (คำนวณจากยกมา + ทุกรายการเดือนนี้ ไม่ขึ้นกับตัวกรองรับ/จ่าย) */
+  const balanceAtEndOfSelectedMonth = useMemo(() => {
+    if (movementRowsWithBalance.length === 0) return balanceAtStartOfSelectedMonth;
+    return movementRowsWithBalance[movementRowsWithBalance.length - 1]!.balanceAfter;
+  }, [movementRowsWithBalance, balanceAtStartOfSelectedMonth]);
+
+  const isViewingCurrentCalendarMonth = useMemo(() => {
+    const now = new Date();
+    const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    return selectedMonth === ym;
+  }, [selectedMonth]);
+
+  /** เตือนเฉพาะเมื่อดูเดือนปัจจุบัน — ยอดเงินปัจจุบันต้องเท่าสิ้นเดือนที่คำนวณ */
+  const currentBalanceDrift = useMemo(() => {
+    if (!isViewingCurrentCalendarMonth) return null;
+    const stored = roundMoney2(Number(accData?.currentBalance ?? formData.currentBalance ?? 0));
+    const diff = roundMoney2(stored - balanceAtEndOfSelectedMonth);
+    return Math.abs(diff) >= 0.01 ? { stored, computed: balanceAtEndOfSelectedMonth, diff } : null;
+  }, [
+    isViewingCurrentCalendarMonth,
+    accData?.currentBalance,
+    formData.currentBalance,
+    balanceAtEndOfSelectedMonth,
+  ]);
+
   const movementBlockLoading =
     cashbookLoad || (isPettyAccount && pettyLoad) || preCbLoad || (isPettyAccount && prePtLoad);
 
@@ -700,9 +725,35 @@ function BankAccountDetailContent({ id }: { id: string }) {
                         ฿ {monthTotals.net.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </span>
+                    <span className="text-muted-foreground/60">|</span>
+                    <span>
+                      <span className="text-muted-foreground">ยอดสิ้นเดือน (คำนวณ):</span>{' '}
+                      <span className="font-mono font-bold text-primary">
+                        ฿{' '}
+                        {balanceAtEndOfSelectedMonth.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                    </span>
                   </div>
+                  {currentBalanceDrift ? (
+                    <p className="mb-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                      ยอดเงินปัจจุบันในบัตรบัญชี (฿{' '}
+                      {currentBalanceDrift.stored.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                      ) ไม่ตรงยอดสิ้นเดือนที่คำนวณจากรายการ (฿{' '}
+                      {currentBalanceDrift.computed.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                      ) — ระบบจะซิงค์อัตโนมัติเมื่อเปิดหน้า หรือตรวจยอดยกมา / รายการก่อนเดือนนี้
+                    </p>
+                  ) : null}
                   <p className="mb-2 text-xs text-muted-foreground">
-                    รายการเรียงตามเวลา (เก่า → ใหม่) — ยอดคงเหลือ = ยอดหลังรายการนั้น
+                    รายการเรียงตามเวลา (เก่า → ใหม่) — ยอดคงเหลือ = ยอดหลังรายการนั้น · สูตร: ยอดก่อนเดือนนี้ + รับ − จ่าย
                   </p>
                   <div className="overflow-x-auto rounded-md border">
                     <Table className="min-w-[920px]">

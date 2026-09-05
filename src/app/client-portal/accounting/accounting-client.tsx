@@ -351,7 +351,9 @@ export function AccountingContent() {
                     {taxList.map((inv) => {
                       return (
                         <TableRow key={inv.id} className="cursor-pointer" onClick={() => openTax(inv)}>
-                          <TableCell className="font-mono text-sm font-medium">{inv.taxInvoiceNo}</TableCell>
+                          <TableCell className="font-mono text-sm font-medium">
+                            {inv.taxInvoiceNo || (inv.status === 'DRAFT' ? 'รอออกเลข…' : '—')}
+                          </TableCell>
                           <TableCell className="text-sm">{formatStoredDateThaiBE(inv.issueDate)}</TableCell>
                           <TableCell className="text-right text-sm tabular-nums">
                             {inv.currency}{' '}

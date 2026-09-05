@@ -31,10 +31,13 @@ import type {
   PayrollBatchLine,
   PayrollPeriod,
   PayrollRunStatus,
+  Position,
   User,
 } from '@/lib/types';
+import { positionListPrimaryName } from '@/lib/position-display';
 import {
   PAYROLL_POLICY_VERSION_LABEL,
+  formatPayrollPolicyVersionLabel,
   WORKER_FREEZE_BULLETS,
   OFFICE_FREEZE_BULLETS,
   countAnomalies,
@@ -43,11 +46,14 @@ import {
   validateWorkerPayrollBatch,
   type ValidationCheck,
 } from '@/lib/hr/payroll-approval-d6';
+import { loadPayrollPoliciesFromFirestore } from '@/lib/payroll/d8/policy-loader';
+import { resolvePayrollPoliciesForDate } from '@/lib/payroll/d8/policies';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { COMPACT_LIST_TABLE } from '@/components/ui/table-density';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -76,7 +82,7 @@ import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine, buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { cn } from '@/lib/utils';
-import { formatPayrollYearMonthEnAbbrev, formatPayrollYearMonthMmYyyyThaiBE } from '@/lib/date-thai';
+import { formatPayrollYearMonthEnAbbrev, formatPayrollYearMonthMmYyyyThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { runStatusToD8Lifecycle } from '@/lib/payroll/d8';
 import { workerPayrollBatchStatusLabelTh } from '@/lib/payroll/worker-batch-status-display';
 import {
@@ -114,11 +120,13 @@ const WORKER_PAYSLIP_VISIBLE_STATUSES = new Set([
 ]);
 const OFFICE_PAYSLIP_AFTER_APPROVAL = new Set(['HR_APPROVED', 'FINANCE_APPROVED', 'PAID', 'LOCKED']);
 
+const D6_COMPACT_LIST_TABLE = COMPACT_LIST_TABLE;
+
 function moneyTH(n: number) {
   return `฿${Number(n || 0).toLocaleString('th-TH')}`;
 }
 
-function CheckRow({ c }: { c: ValidationCheck }) {
+function CheckRow({ c, forceOpen }: { c: ValidationCheck; forceOpen?: boolean }) {
   const [open, setOpen] = useState(false);
   const Icon = c.severity === 'red' ? XCircle : c.severity === 'yellow' ? AlertTriangle : CheckCircle2;
   const color =
@@ -130,8 +138,15 @@ function CheckRow({ c }: { c: ValidationCheck }) {
   const hasInspect = (c.inspectItems?.length ?? 0) > 0;
   const ExpandIcon = open ? ChevronDown : ChevronRight;
 
+  useEffect(() => {
+    if (forceOpen && hasInspect) setOpen(true);
+  }, [forceOpen, hasInspect, c.id]);
+
   return (
-    <div className="rounded-md border border-border/60 bg-muted/20 text-sm">
+    <div
+      id={`d6-check-${c.id}`}
+      className="rounded-md border border-border/60 bg-muted/20 text-sm scroll-mt-24"
+    >
       <button
         type="button"
         disabled={!hasInspect}
@@ -247,6 +262,26 @@ export function PayrollApprovalCenterD6({
   const { payroll } = usePermissions(currentUser);
   const useMatrixGuards = isMatrixControlledRole(currentUser);
 
+  const [policyVersionLabel, setPolicyVersionLabel] = useState(PAYROLL_POLICY_VERSION_LABEL);
+
+  useEffect(() => {
+    if (!firestore) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const all = await loadPayrollPoliciesFromFirestore(firestore);
+        const asOf = timestampToHtmlDateValue(Date.now());
+        const workerResolved = resolvePayrollPoliciesForDate(asOf, all, 'worker');
+        if (!cancelled) setPolicyVersionLabel(formatPayrollPolicyVersionLabel(workerResolved));
+      } catch {
+        if (!cancelled) setPolicyVersionLabel(PAYROLL_POLICY_VERSION_LABEL);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore]);
+
   const canWorker = useMatrixGuards
     ? canAccess(currentUser, 'worker_payroll', 'view') || canAccess(currentUser, 'payroll_runs', 'view')
     : canView(currentUser, 'worker_payroll');
@@ -282,6 +317,20 @@ export function PayrollApprovalCenterD6({
     return collection(firestore, 'office_staff');
   }, [firestore, canOffice]);
   const { data: officeStaff } = useCollection<OfficeStaff>(staffQuery as any);
+
+  const positionsQuery = useMemoFirebase(() => {
+    if (!firestore || !canWorker) return null;
+    return collection(firestore, 'positions');
+  }, [firestore, canWorker]);
+  const { data: positions } = useCollection<Position>(positionsQuery as any);
+  const positionNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of positions ?? []) {
+      const name = positionListPrimaryName(p).trim();
+      if (p.id && name) m.set(p.id, name);
+    }
+    return m;
+  }, [positions]);
 
   const periodById = useMemo(() => {
     const m = new Map<string, PayrollPeriod>();
@@ -359,6 +408,8 @@ export function PayrollApprovalCenterD6({
   const [officeLines, setOfficeLines] = useState<OfficePayrollLine[] | null>(null);
   const [linesLoading, setLinesLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** เมื่อกดลิงก์จาก Summary → เลื่อนไปแผง B และเปิดรายละเอียดข้อผิดปกติ */
+  const [validationFocusCheckId, setValidationFocusCheckId] = useState<string | null>(null);
 
   const selectedBatch = useMemo(
     () => workerBatches.find((b) => b.id === selectedBatchId) || null,
@@ -420,6 +471,13 @@ export function PayrollApprovalCenterD6({
     else if (tab === 'office' && selectedRunId) void loadOfficeLines(selectedRunId);
   }, [tab, selectedBatchId, selectedRunId, loadWorkerLines, loadOfficeLines]);
 
+  /** กันค้าง null หลังคลิกแถวเดิม / HMR — ถ้ามีงวดเลือกอยู่แต่ยังไม่มีบรรทัด ให้โหลดซ้ำ */
+  useEffect(() => {
+    if (tab !== 'worker' || !selectedBatchId || linesLoading) return;
+    if (workerLines != null) return;
+    void loadWorkerLines(selectedBatchId);
+  }, [tab, selectedBatchId, workerLines, linesLoading, loadWorkerLines]);
+
   useEffect(() => {
     if (!initialWorkerBatchId || !workerBatches.length) return;
     if (workerBatches.some((b) => b.id === initialWorkerBatchId)) {
@@ -474,6 +532,29 @@ export function PayrollApprovalCenterD6({
       })
     );
   }, [officeLines]);
+
+  const workerAnomalyChecks = useMemo(
+    () => workerChecks.filter((c) => c.severity === 'red' || c.severity === 'yellow'),
+    [workerChecks],
+  );
+
+  const jumpToWorkerValidation = useCallback(
+    (checkId?: string) => {
+      const targetId =
+        checkId ||
+        workerAnomalyChecks.find((c) => (c.inspectItems?.length ?? 0) > 0)?.id ||
+        workerAnomalyChecks[0]?.id ||
+        null;
+      if (targetId) setValidationFocusCheckId(targetId);
+      requestAnimationFrame(() => {
+        const el = document.getElementById(
+          targetId ? `d6-check-${targetId}` : 'd6-worker-validation',
+        );
+        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    },
+    [workerAnomalyChecks],
+  );
 
   const workerBlocking = hasBlockingRed(workerChecks);
   const officeBlocking = hasBlockingRed(officeChecks);
@@ -634,7 +715,7 @@ export function PayrollApprovalCenterD6({
                     </CardDescription>
                   </CardHeader>
                 <CardContent className="p-0">
-                  <Table>
+                  <Table className={D6_COMPACT_LIST_TABLE}>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Batch</TableHead>
@@ -647,7 +728,7 @@ export function PayrollApprovalCenterD6({
                     <TableBody>
                       {workerBatches.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={5} className="text-center text-muted-foreground py-10">
+                          <TableCell colSpan={5} className="text-center text-muted-foreground py-10 h-auto">
                             ไม่มีงวดในรายการ D6 (รวมงวดย้อนหลังสำหรับสลิป)
                           </TableCell>
                         </TableRow>
@@ -657,8 +738,15 @@ export function PayrollApprovalCenterD6({
                             key={b.id}
                             className={cn('cursor-pointer', selectedBatchId === b.id && 'bg-muted/50')}
                             onClick={() => {
+                              const same = selectedBatchId === b.id;
                               setSelectedBatchId(b.id);
-                              setWorkerLines(null);
+                              setValidationFocusCheckId(null);
+                              /** ถ้าคลิกแถวเดิม selectedBatchId ไม่เปลี่ยน → effect ไม่รัน — ต้องโหลดบรรทัดเอง */
+                              if (same) {
+                                void loadWorkerLines(b.id);
+                              } else {
+                                setWorkerLines(null);
+                              }
                             }}
                           >
                             <TableCell className="font-mono text-xs">{b.id}</TableCell>
@@ -741,20 +829,51 @@ export function PayrollApprovalCenterD6({
                         <div className="text-muted-foreground text-xs uppercase">Net</div>
                         <div className="font-medium tabular-nums">{moneyTH(selectedBatch.netAmount)}</div>
                       </div>
-                      <div className="sm:col-span-2 lg:col-span-3">
+                      <div className="sm:col-span-2 lg:col-span-3 space-y-1.5">
                         <div className="text-muted-foreground text-xs uppercase">จำนวนรายการผิดปกติ (จากแผงตรวจ)</div>
-                        <div className="font-medium tabular-nums">
-                          {workerLines ? countAnomalies(workerChecks) : linesLoading ? '…' : '—'}
+                        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                          <span className="font-medium tabular-nums text-base">
+                            {workerLines ? countAnomalies(workerChecks) : linesLoading ? '…' : '—'}
+                          </span>
+                          {workerLines && workerAnomalyChecks.length > 0 ? (
+                            <button
+                              type="button"
+                              className="text-sm font-semibold text-primary underline underline-offset-2 hover:text-primary/80"
+                              onClick={() => jumpToWorkerValidation()}
+                            >
+                              ดูว่าอะไรผิด →
+                            </button>
+                          ) : null}
                         </div>
+                        {workerLines && workerAnomalyChecks.length > 0 ? (
+                          <ul className="space-y-1 text-sm">
+                            {workerAnomalyChecks.map((c) => (
+                              <li key={c.id}>
+                                <button
+                                  type="button"
+                                  className={cn(
+                                    'text-left underline-offset-2 hover:underline',
+                                    c.severity === 'red' ? 'text-destructive font-medium' : 'text-amber-800 font-medium',
+                                  )}
+                                  onClick={() => jumpToWorkerValidation(c.id)}
+                                >
+                                  {c.severity === 'red' ? 'บล็อก: ' : 'เตือน: '}
+                                  {c.label}
+                                  {(c.inspectItems?.length ?? 0) > 0 ? ' — เปิดรายละเอียด' : ''}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
                       </div>
                     </CardContent>
                   </Card>
 
                   {/* B. Validation */}
-                  <Card>
+                  <Card id="d6-worker-validation" className="scroll-mt-24">
                     <CardHeader>
                       <CardTitle className="text-base">B. Validation (ก่อนอนุมัติ)</CardTitle>
-                      <CardDescription>ข้อแดง = บล็อกการอนุมัติ</CardDescription>
+                      <CardDescription>ข้อแดง = บล็อกการอนุมัติ · กดแถวที่มี「กดดูรายละเอียด」เพื่อดูรายการที่ผิด</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-2">
                       {linesLoading && (
@@ -762,7 +881,23 @@ export function PayrollApprovalCenterD6({
                           <Loader2 className="h-4 w-4 animate-spin" /> กำลังโหลดบรรทัด…
                         </div>
                       )}
-                      {!linesLoading && workerLines && workerChecks.map((c) => <CheckRow key={c.id} c={c} />)}
+                      {!linesLoading && !workerLines && (
+                        <p className="text-sm text-muted-foreground">
+                          ยังไม่ได้โหลดบรรทัดงวด — คลิกแถวงวดด้านบนอีกครั้ง หรือรีเฟรชหน้า
+                        </p>
+                      )}
+                      {!linesLoading && workerLines && workerChecks.length === 0 && (
+                        <p className="text-sm text-muted-foreground">ไม่พบรายการตรวจ (validation ว่าง)</p>
+                      )}
+                      {!linesLoading &&
+                        workerLines &&
+                        workerChecks.map((c) => (
+                          <CheckRow
+                            key={c.id}
+                            c={c}
+                            forceOpen={validationFocusCheckId === c.id}
+                          />
+                        ))}
                       {workerBlocking && (
                         <Alert variant="destructive" className="mt-2">
                           <AlertTitle>อนุมัติไม่ได้จนกว่าจะแก้ข้อแดง</AlertTitle>
@@ -813,12 +948,15 @@ export function PayrollApprovalCenterD6({
                   <Card>
                     <CardHeader>
                       <CardTitle className="text-base">D. Audit / Freeze preview</CardTitle>
-                      <CardDescription>ก่อนกดอนุมัติ — สิ่งที่ระบบจะยึดตามนโยบายปัจจุบัน</CardDescription>
+                      <CardDescription>ก่อนกดอนุมัติ — Policy version อ่านจาก HR Settings ปัจจุบัน</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3 text-sm">
                       <div>
                         <div className="text-muted-foreground text-xs uppercase mb-1">Policy version</div>
-                        <p className="leading-snug">{PAYROLL_POLICY_VERSION_LABEL}</p>
+                        <p className="leading-snug">{policyVersionLabel}</p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          จาก HR Settings (`payroll_policies`) — ใช้ตอน Generate/คำนวณใหม่
+                        </p>
                       </div>
                       <div>
                         <div className="text-muted-foreground text-xs uppercase mb-1">ข้อมูลที่จะถือเป็น snapshot หลังอนุมัติ</div>
@@ -837,9 +975,7 @@ export function PayrollApprovalCenterD6({
                   </Card>
 
                   {WORKER_PAYSLIP_VISIBLE_STATUSES.has(selectedBatch.status) &&
-                    canGeneratePayslips(currentUser, selectedBatch.status) &&
-                    workerLinesSortedForSlips &&
-                    workerLinesSortedForSlips.length > 0 && (
+                    canGeneratePayslips(currentUser, selectedBatch.status) && (
                       <Card>
                         <CardHeader>
                           <CardTitle className="text-base">สลิปเงินเดือน (จาก Payroll Line)</CardTitle>
@@ -854,34 +990,59 @@ export function PayrollApprovalCenterD6({
                               พิมพ์ / PDF ทั้ง batch
                             </Link>
                           </Button>
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead>ลูกจ้าง</TableHead>
-                                <TableHead className="text-right">สุทธิ</TableHead>
-                                <TableHead className="text-right w-[120px]">สลิป</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {workerLinesSortedForSlips.map((line) => {
-                                const pl =
-                                  periodById.get(selectedBatch.payrollPeriodId)?.label ||
-                                  selectedBatch.payrollPeriodId;
-                                const model = buildPayslipFromWorkerLine(line, selectedBatch, pl, companyProfile ?? undefined);
-                                return (
-                                  <TableRow key={line.id}>
-                                    <TableCell className="font-medium">{line.workerNameSnapshot}</TableCell>
-                                    <TableCell className="text-right tabular-nums">
-                                      {moneyTH(line.netAmount)}
-                                    </TableCell>
-                                    <TableCell className="text-right">
-                                      <PayslipDialog model={model} />
-                                    </TableCell>
-                                  </TableRow>
-                                );
-                              })}
-                            </TableBody>
-                          </Table>
+                          {linesLoading && (
+                            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+                              <Loader2 className="h-4 w-4 animate-spin" /> กำลังโหลดรายชื่อสำหรับสลิป…
+                            </div>
+                          )}
+                          {!linesLoading && !workerLinesSortedForSlips?.length && (
+                            <p className="text-sm text-muted-foreground">ยังไม่มีบรรทัดในงวดนี้สำหรับแสดงสลิป</p>
+                          )}
+                          {workerLinesSortedForSlips && workerLinesSortedForSlips.length > 0 && (
+                            <Table className={D6_COMPACT_LIST_TABLE}>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>ลูกจ้าง</TableHead>
+                                  <TableHead className="text-right">สุทธิ</TableHead>
+                                  <TableHead className="text-right w-[120px]">สลิป</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {workerLinesSortedForSlips.map((line) => {
+                                  const pl =
+                                    periodById.get(selectedBatch.payrollPeriodId)?.label ||
+                                    selectedBatch.payrollPeriodId;
+                                  const posId = String(line.laborCostResolutionSnapshot?.positionId || '').trim();
+                                  const fallbackPos = posId ? positionNameById.get(posId) : undefined;
+                                  const model = buildPayslipFromWorkerLine(
+                                    line,
+                                    selectedBatch,
+                                    pl,
+                                    companyProfile ?? undefined,
+                                    undefined,
+                                    undefined,
+                                    undefined,
+                                    undefined,
+                                    {
+                                      positionNameById,
+                                      fallbackPositionName: fallbackPos,
+                                    },
+                                  );
+                                  return (
+                                    <TableRow key={line.id}>
+                                      <TableCell className="font-medium">{line.workerNameSnapshot}</TableCell>
+                                      <TableCell className="text-right tabular-nums">
+                                        {moneyTH(line.netAmount)}
+                                      </TableCell>
+                                      <TableCell className="text-right">
+                                        <PayslipDialog model={model} triggerClassName="h-7 gap-1 px-2 text-xs" />
+                                      </TableCell>
+                                    </TableRow>
+                                  );
+                                })}
+                              </TableBody>
+                            </Table>
+                          )}
                         </CardContent>
                       </Card>
                     )}
@@ -1209,7 +1370,10 @@ export function PayrollApprovalCenterD6({
                     <CardContent className="space-y-3 text-sm">
                       <div>
                         <div className="text-muted-foreground text-xs uppercase mb-1">Policy version</div>
-                        <p className="leading-snug">{PAYROLL_POLICY_VERSION_LABEL}</p>
+                        <p className="leading-snug">{policyVersionLabel}</p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          จาก HR Settings (`payroll_policies`) — ใช้ตอน Generate/คำนวณใหม่
+                        </p>
                       </div>
                       <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
                         {OFFICE_FREEZE_BULLETS.map((t) => (
@@ -1241,7 +1405,7 @@ export function PayrollApprovalCenterD6({
                               พิมพ์ / PDF ทั้งงวด
                             </Link>
                           </Button>
-                          <Table>
+                          <Table className={D6_COMPACT_LIST_TABLE}>
                             <TableHeader>
                               <TableRow>
                                 <TableHead>พนักงาน</TableHead>
@@ -1259,7 +1423,7 @@ export function PayrollApprovalCenterD6({
                                       {moneyTH(line.netPay)}
                                     </TableCell>
                                     <TableCell className="text-right">
-                                      <PayslipDialog model={model} />
+                                      <PayslipDialog model={model} triggerClassName="h-7 gap-1 px-2 text-xs" />
                                     </TableCell>
                                   </TableRow>
                                 );

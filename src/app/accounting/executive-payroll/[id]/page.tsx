@@ -258,7 +258,7 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
             setStatusBusy(false);
             return;
           }
-          const { cashbookEntryId, bankAccountId } = await recordPayrollFinanceApprovalPayout(
+          const { cashbookEntryId, bankAccountId, entryDate } = await recordPayrollFinanceApprovalPayout(
             firestore,
             currentUser,
             {
@@ -272,6 +272,21 @@ export default function ExecutivePayrollDetailPage({ params }: { params: Promise
           );
           updateData.financeCashbookEntryId = cashbookEntryId;
           updateData.payoutBankAccountId = bankAccountId;
+          updateData.financePayoutEntryDate = entryDate;
+          updateData.financeApprovedAt = Date.now();
+        } else {
+          updateData.financeApprovedAt = Date.now();
+          if (!run.financePayoutEntryDate) {
+            try {
+              const cb = await getDoc(doc(firestore, 'cashbook_entries', run.financeCashbookEntryId));
+              const fromBook = String(cb.data()?.entryDate ?? '').trim();
+              if (/^\d{4}-\d{2}-\d{2}$/.test(fromBook)) {
+                updateData.financePayoutEntryDate = fromBook;
+              }
+            } catch {
+              /* optional backfill */
+            }
+          }
         }
       }
       if (newStatus === 'LOCKED') {

@@ -30,7 +30,7 @@ import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
 import { canPreviewOfficePayrollWht } from '@/lib/payroll/payroll-office-wht-permissions';
 import { useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { collection, doc, query, updateDoc, where, type DocumentData } from 'firebase/firestore';
+import { collection, doc, getDoc, query, updateDoc, where, type DocumentData } from 'firebase/firestore';
 import { OfficePayrollLine, OfficePayrollRun, BankAccount, PayrollRunStatus, User as AppUser } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE, formatPayrollYearMonthEnAbbrev, formatPayrollYearMonthMmYyyyThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
@@ -185,7 +185,7 @@ export default function AccountingOfficePayrollPayoutPage({ params }: { params: 
             setStatusBusy(false);
             return;
           }
-          const { cashbookEntryId, bankAccountId } = await recordPayrollFinanceApprovalPayout(
+          const { cashbookEntryId, bankAccountId, entryDate } = await recordPayrollFinanceApprovalPayout(
             firestore,
             currentUser as AppUser,
             {
@@ -199,6 +199,21 @@ export default function AccountingOfficePayrollPayoutPage({ params }: { params: 
           );
           updateData.financeCashbookEntryId = cashbookEntryId;
           updateData.payoutBankAccountId = bankAccountId;
+          updateData.financePayoutEntryDate = entryDate;
+          updateData.financeApprovedAt = Date.now();
+        } else {
+          updateData.financeApprovedAt = Date.now();
+          if (!run.financePayoutEntryDate) {
+            try {
+              const cb = await getDoc(doc(firestore, 'cashbook_entries', run.financeCashbookEntryId));
+              const fromBook = String(cb.data()?.entryDate ?? '').trim();
+              if (/^\d{4}-\d{2}-\d{2}$/.test(fromBook)) {
+                updateData.financePayoutEntryDate = fromBook;
+              }
+            } catch {
+              /* optional backfill */
+            }
+          }
         }
       }
       if (newStatus === 'LOCKED') {
