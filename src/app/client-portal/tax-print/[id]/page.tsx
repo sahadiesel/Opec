@@ -19,8 +19,10 @@ import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { useToast } from '@/hooks/use-toast';
 import {
+  appendPartyBranchParenToName,
   buildTaxInvoicePrintHtml,
   companyProfileAddressForPrintLocale,
+  formatCustomerPartyNameForPrint,
   openStandardPrintWindow,
 } from '@/lib/documents/standard-document-print';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
@@ -81,6 +83,8 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
     email?: string;
     addressLine1?: string;
     addressLine2?: string;
+    branchType?: 'head_office' | 'branch';
+    branchNo?: string;
   }>(companyProfileRef as any);
 
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
@@ -152,8 +156,14 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
   const companyTitlePreview = useMemo(() => {
     const nameTh = companyProfile?.companyNameTh?.trim();
     const nameEn = companyProfile?.companyNameEn?.trim();
-    return printLocale === 'en' ? nameEn || nameTh || '—' : nameTh || nameEn || '—';
-  }, [companyProfile?.companyNameEn, companyProfile?.companyNameTh, printLocale]);
+    const base = printLocale === 'en' ? nameEn || nameTh || '—' : nameTh || nameEn || '—';
+    return appendPartyBranchParenToName(base, companyProfile, printLocale as PrintDocumentLocale);
+  }, [
+    companyProfile,
+    companyProfile?.companyNameEn,
+    companyProfile?.companyNameTh,
+    printLocale,
+  ]);
 
   const companyAddressPreview = useMemo(() => {
     const raw = companyProfileAddressForPrintLocale(companyProfile, printLocale as PrintDocumentLocale);
@@ -326,7 +336,9 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {printT(docL, 'customerBuyer')}
             </p>
-            <p className="mt-1 font-semibold text-foreground">{customer.name}</p>
+            <p className="mt-1 font-semibold text-foreground">
+              {formatCustomerPartyNameForPrint(customer, null, docL as PrintDocumentLocale)}
+            </p>
             <p className="mt-1 text-sm text-muted-foreground whitespace-pre-wrap">{customer.registeredAddress}</p>
             {customer.taxId ? (
               <p className="mt-1 text-sm text-muted-foreground">

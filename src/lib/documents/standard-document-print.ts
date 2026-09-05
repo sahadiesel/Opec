@@ -65,7 +65,63 @@ export type CompanyProfilePrint = {
   email?: string;
   addressLine1?: string;
   addressLine2?: string;
+  /** จาก Document Header Profile — แสดงท้ายชื่อบริษัทบนเอกสาร */
+  branchType?: 'head_office' | 'branch';
+  branchNo?: string;
 };
+
+/** ฟิลด์สาขาที่ใช้ต่อท้ายชื่อบริษัท/ลูกค้าบนเอกสาร */
+export type PartyBranchFields = {
+  branchType?: 'head_office' | 'branch' | string | null;
+  branchNo?: string | null;
+};
+
+/**
+ * ข้อความวงเล็บสาขา ตามภาษาเอกสาร
+ * TH: `(สำนักงานใหญ่)` / `(สาขา 00004)`
+ * EN: `(HEAD OFFICE)` / `(BRANCH NO. 00004)`
+ */
+export function formatPartyBranchParenLabel(
+  party: PartyBranchFields | null | undefined,
+  locale: PrintDocumentLocale = 'th',
+): string {
+  if (!party) return '';
+  const isBranch = String(party.branchType || '').trim() === 'branch';
+  if (!isBranch) {
+    return locale === 'en' ? '(HEAD OFFICE)' : '(สำนักงานใหญ่)';
+  }
+  const no = String(party.branchNo || '').trim();
+  if (locale === 'en') return no ? `(BRANCH NO. ${no})` : '(BRANCH NO.)';
+  return no ? `(สาขา ${no})` : '(สาขา)';
+}
+
+const BRANCH_PAREN_ALREADY_RE =
+  /\((?:สำนักงานใหญ่|สาขา\s*[^)]+|HEAD OFFICE|Head Office|BRANCH NO\.?\s*[^)]*|Branch\s*[^)]+)\)\s*$/i;
+
+/** ต่อท้ายชื่อด้วยวงเล็บสาขา — ไม่ซ้ำถ้ามีอยู่แล้ว */
+export function appendPartyBranchParenToName(
+  name: string,
+  party: PartyBranchFields | null | undefined,
+  locale: PrintDocumentLocale = 'th',
+): string {
+  const base = String(name || '').trim();
+  if (!base || base === '—') return base || '—';
+  if (BRANCH_PAREN_ALREADY_RE.test(base)) return base;
+  const label = formatPartyBranchParenLabel(party, locale);
+  if (!label) return base;
+  return `${base} ${label}`;
+}
+
+/** ชื่อลูกค้าบนเอกสารพิมพ์ + วงเล็บสาขาจากทะเบียนลูกค้า */
+export function formatCustomerPartyNameForPrint(
+  customer: Pick<Customer, 'name' | 'branchType' | 'branchNo'> | null | undefined,
+  overrideName?: string | null,
+  locale: PrintDocumentLocale = 'th',
+): string {
+  const raw = customer?.name?.trim() || String(overrideName || '').trim() || '—';
+  if (!customer) return raw;
+  return appendPartyBranchParenToName(raw, customer, locale);
+}
 
 /** แถว meta คอลัมน์ขวา: คู่ label–value หรือบรรทัดเต็ม (จัดชิดขวา) */
 export type StandardDocMetaRow = { label: string; value: string } | { line: string };
@@ -705,7 +761,8 @@ export function buildStandardCompanyColumnHtml(
 ): string {
   const nameTh = company?.companyNameTh?.trim();
   const nameEn = company?.companyNameEn?.trim();
-  const cn = locale === 'en' ? nameEn || nameTh || '—' : nameTh || nameEn || '—';
+  const baseName = locale === 'en' ? nameEn || nameTh || '—' : nameTh || nameEn || '—';
+  const cn = appendPartyBranchParenToName(baseName, company, locale);
   const L = locale;
   const singleAddr = companyProfileAddressForPrintLocale(company, L);
   const ph = (company?.phone || '').trim();
@@ -1251,8 +1308,11 @@ export function buildCommercialInvoicePrintHtml(params: {
   );
   const docRefHtml = buildCommercialDocumentReferenceHtml(L, docRef);
 
-  const partyName =
-    params.customerPartyNameOverride?.trim() || customer?.name?.trim() || '—';
+  const partyName = formatCustomerPartyNameForPrint(
+    customer,
+    params.customerPartyNameOverride,
+    L,
+  );
   const partyHtml = buildStandardPartyBoxHtml({
     boxLabel: printT(L, 'customerInfo'),
     partyName,
@@ -1464,7 +1524,7 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
   const loc = L === 'en' ? 'en-GB' : 'th-TH';
   const issueStr = formatIssueDateYmdForPrint(invoice.issueDate, L);
   /** ชื่อบริษัทใน Firestore ก่อน — ค่อย override (เช่น ไม่มี customer record) หลีกเลี่ยงชื่อ user portal ทับลูกค้า */
-  const partyName = customer?.name?.trim() || customerPartyNameOverride?.trim() || '—';
+  const partyName = formatCustomerPartyNameForPrint(customer, customerPartyNameOverride, L);
   const com = params.sourceCommercialInvoice;
   const useCommercialMirror =
     !!invoice.sourceCommercialInvoiceId &&
@@ -1624,7 +1684,7 @@ export function buildQuotationPrintHtml(params: {
   quotation: Quotation;
   lines: QuotationLine[];
   /** ทะเบียนลูกค้า — ใช้เติมที่อยู่เมื่อยังไม่มี billingAddressSnapshot บนใบ */
-  customer?: Pick<Customer, 'billingAddress' | 'registeredAddress'> | null;
+  customer?: Pick<Customer, 'name' | 'billingAddress' | 'registeredAddress' | 'branchType' | 'branchNo'> | null;
   /** ใช้เมื่อพิมพ์จากหน้าแก้ไข — ยอดที่คำนวณจากรายการบนหน้าจอ */
   totalsOverride?: {
     subtotal: number;
@@ -1713,7 +1773,17 @@ export function buildQuotationPrintHtml(params: {
   });
   const partyHtml = buildStandardPartyBoxHtml({
     boxLabel: printT(L, 'customerInfo'),
-    partyName: q.customerNameSnapshot?.trim() || '—',
+    partyName: params.customer
+      ? formatCustomerPartyNameForPrint(
+          {
+            name: params.customer.name || q.customerNameSnapshot || '',
+            branchType: params.customer.branchType,
+            branchNo: params.customer.branchNo,
+          },
+          q.customerNameSnapshot,
+          L,
+        )
+      : q.customerNameSnapshot?.trim() || '—',
     detailLines: partyLines,
   });
   const projectBlock = q.projectTitle?.trim()
@@ -2143,7 +2213,7 @@ function buildMoneyReceiptPrintHtmlSinglePage(params: {
   const L = params.locale ?? 'th';
   const loc = L === 'en' ? 'en-GB' : 'th-TH';
   const issueStr = formatIssueDateYmdForPrint(receipt.receiptDate, L);
-  const partyName = customer?.name?.trim() || '—';
+  const partyName = formatCustomerPartyNameForPrint(customer, null, L);
   const refNoLabel = L === 'en' ? 'Tax invoice no.' : 'อ้างอิงใบกำกับภาษี';
   const refDateLabel = L === 'en' ? 'Tax invoice date' : 'วันที่ออกใบกำกับ';
   const taxInvIssueStr = formatIssueDateYmdForPrint(taxInvoice.issueDate, L);
