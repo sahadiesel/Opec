@@ -21,6 +21,12 @@ import {
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { writeAuditLog } from './audit-service';
 import { canAccess, canEdit } from '@/lib/permissions';
+import {
+  parseTimesheetOtTier,
+  retroOtHoursDeltaPayload,
+  timesheetOtTierLabel,
+  type TimesheetOtTier,
+} from '@/lib/timesheet/ot-tier';
 
 const COLLECTION = 'timesheet_retro_adjustments';
 
@@ -117,7 +123,7 @@ export async function createTimesheetRetroAdjustment(
     entityId: ref.id,
     timesheetId: ts.id,
     sourceModule: 'operations',
-    afterSummary: `Retro adjustment ${ts.date}: +OT15=${ot15} +SB=${standby} +M1=${m1Trips} +D1=${d1Trips} → pay in ${input.applyPayrollYearMonth}`,
+    afterSummary: `Retro adjustment ${ts.date}: +OT1.5=${ot15} +OT2=${ot20} +OT3=${ot30} +SB=${standby} +M1=${m1Trips} +D1=${d1Trips} → pay in ${input.applyPayrollYearMonth}`,
   });
   return ref.id;
 }
@@ -199,6 +205,8 @@ export async function setAbsoluteWorkDayRetroOt(
     targetOtHours: number;
     /** ฐานบนใบงานที่นับเป็นของเดิม (LOCKED = ot บนสลิป; ยังไม่ล็อค = 0 เพราะจะย้ายออกจากใบงาน) */
     baseOtHoursOnSlip: number;
+    /** อัตรา OT ของชม.ที่รอจ่ายใหม่ — ดึงราคาจากสัญญาตอนออกใบแจ้งหนี้ / payroll */
+    otTier?: TimesheetOtTier;
     reason: string;
   },
 ): Promise<{ createdId: string | null; voidedCount: number; addedOtHours: number }> {
@@ -228,11 +236,12 @@ export async function setAbsoluteWorkDayRetroOt(
   /** สร้างรายการใหม่ก่อน แล้วค่อย void ของเดิม — กันข้อมูลหายถ้าคำนวณยอดไม่ผ่าน */
   let createdId: string | null = null;
   if (addedOtHours > 0) {
+    const otTier = parseTimesheetOtTier(input.otTier);
     createdId = await createTimesheetRetroAdjustment(db, user, {
       sourceTimesheet: ts,
       sourceYearMonth: input.sourceYearMonth,
       applyPayrollYearMonth: input.applyPayrollYearMonth,
-      addedOt15Hours: addedOtHours,
+      ...retroOtHoursDeltaPayload(otTier, addedOtHours),
       reason,
     });
   }
@@ -255,7 +264,7 @@ export async function setAbsoluteWorkDayRetroOt(
       entityId: row.id,
       timesheetId: ts.id,
       sourceModule: 'operations',
-      afterSummary: `Void approved retro ${row.workDateYmd}: OT=${sumRetroOtHours(row)} — replaced by absolute OT ${target}`,
+      afterSummary: `Void approved retro ${row.workDateYmd}: OT=${sumRetroOtHours(row)} — replaced by absolute ${timesheetOtTierLabel(parseTimesheetOtTier(input.otTier))} ${target}`,
     });
   }
 

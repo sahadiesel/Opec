@@ -37,6 +37,12 @@ import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, isSystemAdmin } from '@/lib/permissions';
+import {
+  documentCreatorDisplayName,
+  filterToOwnCreatedDocuments,
+} from '@/lib/documents/own-created-list';
+import { canManageDocumentShare } from '@/lib/documents/document-share';
+import { DocumentShareListMarker } from '@/components/documents/document-share-controls';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { collection, query, orderBy, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
@@ -160,6 +166,7 @@ export default function DraftInvoicesPage() {
     [currentUser],
   );
   const canHardDeleteInvoice = useMemo(() => !!currentUser && isSystemAdmin(currentUser), [currentUser]);
+  const showShareColumn = useMemo(() => canManageDocumentShare(currentUser), [currentUser]);
 
   const listQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -167,6 +174,11 @@ export default function DraftInvoicesPage() {
   }, [firestore, isAuthorized]);
 
   const { data: invoices, isLoading } = useCollection<CommercialInvoice>(listQuery as any);
+
+  const visibleInvoices = useMemo(
+    () => filterToOwnCreatedDocuments(currentUser, invoices),
+    [currentUser, invoices],
+  );
 
   const customersQuery = useMemoFirebase(
     () => (firestore && isAuthorized ? collection(firestore, 'customers') : null),
@@ -322,19 +334,18 @@ export default function DraftInvoicesPage() {
 
   const yearOptionsCe = useMemo(() => {
     const set = new Set<string>();
-    for (const inv of invoices ?? []) {
+    for (const inv of visibleInvoices) {
       const ym = (inv.issueDate || '').slice(0, 7);
       if (/^\d{4}-\d{2}$/.test(ym)) set.add(ym);
     }
     return buildYearCeOptions(set);
-  }, [invoices]);
+  }, [visibleInvoices]);
 
   const filteredInvoices = useMemo(() => {
-    const list = invoices ?? [];
-    return list.filter((inv) =>
+    return visibleInvoices.filter((inv) =>
       ymMatchesYearMonthScope((inv.issueDate || '').slice(0, 7), yearFilterCe, monthScope),
     );
-  }, [invoices, yearFilterCe, monthScope]);
+  }, [visibleInvoices, yearFilterCe, monthScope]);
 
   const buildPrintRows = useCallback(
     (list: CommercialInvoice[]): CommercialInvoiceListPrintRow[] =>
@@ -351,7 +362,7 @@ export default function DraftInvoicesPage() {
 
   const runCommercialInvoiceListPrint = useCallback(
     async (scope: 'filtered' | 'all') => {
-      const source = scope === 'filtered' ? filteredInvoices : invoices ?? [];
+      const source = scope === 'filtered' ? filteredInvoices : visibleInvoices;
       if (source.length === 0) {
         toast({
           variant: 'destructive',
@@ -407,7 +418,7 @@ export default function DraftInvoicesPage() {
         setPrintBusy(false);
       }
     },
-    [filteredInvoices, invoices, buildPrintRows, yearFilterCe, monthScope, currentUser?.displayName, toast],
+    [filteredInvoices, visibleInvoices, buildPrintRows, yearFilterCe, monthScope, currentUser?.displayName, toast],
   );
 
   const waveById = useMemo(() => {
@@ -859,7 +870,7 @@ export default function DraftInvoicesPage() {
                 </ul>
                 <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredInvoices.length} รายการ</p>
               </div>
-              <p className="text-xs text-muted-foreground">ข้อมูลทั้งหมดในระบบ: {invoices?.length ?? 0} รายการ</p>
+              <p className="text-xs text-muted-foreground">ข้อมูลทั้งหมดในระบบ: {visibleInvoices.length} รายการ</p>
             </div>
             <DialogFooter className="flex-col sm:flex-row gap-2">
               <Button
@@ -875,11 +886,11 @@ export default function DraftInvoicesPage() {
               <Button
                 type="button"
                 className="w-full sm:w-auto"
-                disabled={printBusy || !(invoices?.length)}
+                disabled={printBusy || visibleInvoices.length === 0}
                 onClick={() => void runCommercialInvoiceListPrint('all')}
               >
                 <Printer className="h-4 w-4 mr-2" />
-                พิมพ์ทั้งหมด ({invoices?.length ?? 0})
+                พิมพ์ทั้งหมด ({visibleInvoices.length})
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1166,6 +1177,8 @@ export default function DraftInvoicesPage() {
                   <TableHead>ลูกค้า</TableHead>
                   <TableHead>Wave / งวด</TableHead>
                   <TableHead className="text-right">ยอดรวม</TableHead>
+                  <TableHead>ผู้สร้าง</TableHead>
+                  {showShareColumn && <TableHead className="w-12 text-center">แชร์</TableHead>}
                   <TableHead>สถานะ</TableHead>
                   <TableHead className="text-right pr-6">จัดการ</TableHead>
                 </TableRow>
@@ -1195,6 +1208,20 @@ export default function DraftInvoicesPage() {
                       <TableCell className="text-right">
                         ฿{(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
                       </TableCell>
+                      <TableCell className="text-sm whitespace-nowrap">
+                        {documentCreatorDisplayName(inv)}
+                      </TableCell>
+                      {showShareColumn && (
+                        <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                          <DocumentShareListMarker
+                            collectionName="commercial_invoices"
+                            documentId={inv.id}
+                            currentUser={currentUser}
+                            sharedWith={inv.sharedWith}
+                            sharedWithUids={inv.sharedWithUids}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell>{statusBadge(inv)}</TableCell>
                       <TableCell className="text-right pr-6">
                         <div className="flex flex-wrap items-center justify-end gap-1">
@@ -1241,16 +1268,16 @@ export default function DraftInvoicesPage() {
                     </TableRow>
                   );
                 })}
-                {(!invoices || invoices.length === 0) && !isLoading && (
+                {visibleInvoices.length === 0 && !isLoading && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                    <TableCell colSpan={showShareColumn ? 8 : 7} className="text-center py-12 text-muted-foreground">
                       ยังไม่มีรายการ — ใช้ปุ่มสร้างด้านบน หรือสร้างจากงวดที่อนุมัติแล้ว
                     </TableCell>
                   </TableRow>
                 )}
-                {(invoices?.length ?? 0) > 0 && filteredInvoices.length === 0 && !isLoading && (
+                {visibleInvoices.length > 0 && filteredInvoices.length === 0 && !isLoading && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                    <TableCell colSpan={showShareColumn ? 8 : 7} className="text-center py-12 text-muted-foreground">
                       ไม่พบรายการในเดือนที่เลือก
                     </TableCell>
                   </TableRow>

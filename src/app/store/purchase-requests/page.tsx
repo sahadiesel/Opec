@@ -21,6 +21,12 @@ import {
 } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canApprovePurchaseAsManager, isSystemAdmin } from '@/lib/permissions';
+import {
+  documentCreatorDisplayName,
+  filterToOwnCreatedDocuments,
+} from '@/lib/documents/own-created-list';
+import { canManageDocumentShare } from '@/lib/documents/document-share';
+import { DocumentShareListMarker } from '@/components/documents/document-share-controls';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { PurchaseRequest, PurchaseRequestStatus, User, Vendor } from '@/lib/types';
 import { Input } from '@/components/ui/input';
@@ -107,6 +113,7 @@ export default function StorePurchaseRequestsPage() {
     () => !!currentUser && (isSystemAdmin(currentUser) || isSimpleAdmin(currentUser)),
     [currentUser]
   );
+  const showShareColumn = useMemo(() => canManageDocumentShare(currentUser), [currentUser]);
   /** คอลัมน์ลบ: แอดมิน หรือผู้มีสิทธิ์คลัง (ลบฉบับร่างได้เอง) */
   const showPrDeleteColumn = showAdminDelete || okStore;
 
@@ -156,6 +163,11 @@ export default function StorePurchaseRequestsPage() {
   }, [firestore, ok]);
 
   const { data: list, isLoading } = useCollection<PurchaseRequest>(prQuery as any);
+
+  const visibleList = useMemo(
+    () => filterToOwnCreatedDocuments(currentUser, list),
+    [currentUser, list],
+  );
   const vendorsQuery = useMemoFirebase(() => (firestore && ok ? collection(firestore, 'vendors') : null), [firestore, ok]);
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
@@ -164,18 +176,18 @@ export default function StorePurchaseRequestsPage() {
 
   const monthOptions = useMemo(() => {
     const set = new Set<string>();
-    (list || []).forEach((r) => {
+    (visibleList || []).forEach((r) => {
       const d = new Date(r.createdAt);
       if (!Number.isFinite(d.getTime())) return;
       const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       set.add(ym);
     });
     return [...set].sort().reverse();
-  }, [list]);
+  }, [visibleList]);
 
   const rows = useMemo(() => {
     const qq = q.trim().toLowerCase();
-    return (list || [])
+    return (visibleList || [])
       .filter((r) => statusFilterMatches(statusFilter, r))
       .filter((r) => {
         if (monthYm === 'all') return true;
@@ -191,7 +203,7 @@ export default function StorePurchaseRequestsPage() {
           (vendors?.find((v) => v.id === r.vendorId)?.vendorName || '').toLowerCase().includes(qq)
         );
       });
-  }, [list, q, statusFilter, vendors, monthYm]);
+  }, [visibleList, q, statusFilter, vendors, monthYm]);
 
   if (isUserLoading || userLoading || !currentUser) {
     return (
@@ -295,6 +307,8 @@ export default function StorePurchaseRequestsPage() {
                     <TableHead>หัวข้อ / รายละเอียด</TableHead>
                     <TableHead>คู่ค้า (เสนอ)</TableHead>
                     <TableHead className="text-right">ประมาณการ</TableHead>
+                    <TableHead>ผู้สร้าง</TableHead>
+                    {showShareColumn && <TableHead className="w-12 text-center">แชร์</TableHead>}
                     <TableHead>สถานะ</TableHead>
                     {showPrDeleteColumn && (
                       <TableHead className="w-14 px-2 text-center text-muted-foreground">ลบ</TableHead>
@@ -329,6 +343,20 @@ export default function StorePurchaseRequestsPage() {
                               : '—';
                           })()}
                         </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {documentCreatorDisplayName(r)}
+                        </TableCell>
+                        {showShareColumn && (
+                          <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                            <DocumentShareListMarker
+                              collectionName="purchase_requests"
+                              documentId={r.id}
+                              currentUser={currentUser}
+                              sharedWith={r.sharedWith}
+                              sharedWithUids={r.sharedWithUids}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell>{statusBadge(effectivePrStatus(r))}</TableCell>
                         {showPrDeleteColumn && (
                           <TableCell
@@ -371,7 +399,7 @@ export default function StorePurchaseRequestsPage() {
                   })}
                   {rows.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={showPrDeleteColumn ? 7 : 6} className="py-16 text-center text-muted-foreground">
+                      <TableCell colSpan={(showPrDeleteColumn ? 8 : 7) + (showShareColumn ? 1 : 0)} className="py-16 text-center text-muted-foreground">
                         ไม่มีรายการ
                       </TableCell>
                     </TableRow>

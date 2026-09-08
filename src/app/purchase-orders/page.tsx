@@ -40,6 +40,12 @@ import { useToast } from '@/hooks/use-toast';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate, isSystemAdmin, canApprovePurchaseAsManager } from '@/lib/permissions';
+import {
+  documentCreatorDisplayName,
+  filterToOwnCreatedDocuments,
+} from '@/lib/documents/own-created-list';
+import { canManageDocumentShare } from '@/lib/documents/document-share';
+import { DocumentShareListMarker } from '@/components/documents/document-share-controls';
 
 function computePoOperationalWindow(
   poType: 'contract' | 'quotation' | undefined,
@@ -86,6 +92,7 @@ function CustomerPOsPageContent() {
   );
   const canApprovePO = useMemo(() => canApprovePurchaseAsManager(currentUser), [currentUser]);
   const isAdminUser = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
+  const showShareColumn = useMemo(() => canManageDocumentShare(currentUser), [currentUser]);
 
   const [listActionId, setListActionId] = useState<string | null>(null);
 
@@ -127,6 +134,11 @@ function CustomerPOsPageContent() {
   }, [firestore, firebaseUser, isUserLoading, currentUser, isAuthorized]);
 
   const { data: pos, isLoading: isPOLoading } = useCollection<PurchaseOrder>(poQuery as any);
+
+  const visiblePos = useMemo(
+    () => filterToOwnCreatedDocuments(currentUser, pos),
+    [currentUser, pos],
+  );
 
   const customersQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
@@ -225,7 +237,9 @@ function CustomerPOsPageContent() {
         customerPoIssueDate: newPO.customerPoIssueDate,
         poWorkMode: newPO.poWorkMode ?? 'OFFSHORE',
         createdAt: Date.now(),
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        createdByUid: currentUser.id,
+        createdByName: currentUser.displayName || currentUser.email || '',
       });
       
       setIsCreateOpen(false);
@@ -514,12 +528,16 @@ function CustomerPOsPageContent() {
                     <TableHead className="font-bold">ลูกค้า (Client Name)</TableHead>
                     <TableHead className="font-bold">โครงการ (Project Context)</TableHead>
                     <TableHead className="font-bold">ระยะเวลาปฏิบัติงาน (Period)</TableHead>
+                    <TableHead className="font-bold">ผู้สร้าง</TableHead>
+                    {showShareColumn && (
+                      <TableHead className="font-bold w-12 text-center">แชร์</TableHead>
+                    )}
                     <TableHead className="font-bold">สถานะ</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pos?.map((po) => {
+                  {visiblePos.map((po) => {
                     const customer = customers?.find(c => c.id === po.customerId);
                     return (
                       <TableRow 
@@ -554,6 +572,20 @@ function CustomerPOsPageContent() {
                             {formatDateRangeThaiBE(po.startDate, po.endDate)}
                           </div>
                         </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {documentCreatorDisplayName(po)}
+                        </TableCell>
+                        {showShareColumn && (
+                          <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                            <DocumentShareListMarker
+                              collectionName="purchase_orders"
+                              documentId={po.id}
+                              currentUser={currentUser}
+                              sharedWith={po.sharedWith}
+                              sharedWithUids={po.sharedWithUids}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell>
                           <Badge variant={po.status === 'active' ? 'default' : 'secondary'} className={po.status === 'active' ? 'bg-green-600' : ''}>
                             {po.status.toUpperCase()}
@@ -644,9 +676,9 @@ function CustomerPOsPageContent() {
                       </TableRow>
                     );
                   })}
-                  {!isPOLoading && (!pos || pos.length === 0) && (
+                  {!isPOLoading && visiblePos.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลใบสั่งซื้อลูกค้าในระบบ</TableCell>
+                      <TableCell colSpan={showShareColumn ? 8 : 7} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลใบสั่งซื้อลูกค้าในระบบ</TableCell>
                     </TableRow>
                   )}
                 </TableBody>

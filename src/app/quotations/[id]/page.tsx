@@ -48,6 +48,7 @@ import { canView, canEdit } from '@/lib/permissions';
 import { buildQuotationPrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
+import { DocumentShareButton } from '@/components/documents/document-share-controls';
 import { QuotationPreviewTab } from './_components/quotation-preview-tab';
 import { QuotationHistoryTab } from './_components/quotation-history-tab';
 import { QuotationLineDialog } from './_components/quotation-line-dialog';
@@ -415,6 +416,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
         createdAt: Date.now(),
         updatedAt: Date.now(),
         createdBy: currentUser.displayName,
+        createdByUid: currentUser.id,
         updatedBy: currentUser.id,
       });
 
@@ -642,6 +644,13 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
             >
               <Printer className="h-4 w-4" /> พิมพ์เอกสาร (Print)
             </Button>
+            <DocumentShareButton
+              collectionName="quotations"
+              documentId={quotation.id}
+              currentUser={currentUser}
+              sharedWith={quotation.sharedWith}
+              sharedWithUids={quotation.sharedWithUids}
+            />
             <Badge variant={isEditLocked ? "default" : "outline"} className={`py-1.5 px-4 font-bold uppercase ${isEditLocked ? "bg-slate-900 text-white" : "border-primary/20 bg-primary/5 text-primary"}`}>
               {isEditLocked && <Lock className="h-3 w-3 mr-2" />}
               STATUS: {statusDisplay}

@@ -12,6 +12,18 @@ import type {
 } from '@/lib/types';
 import { createEmptyPositionRateMatrix, autoCalculateMatrixFields } from '@/lib/commercial/position-rate-matrix';
 
+type SideFieldsProps = {
+  title: string;
+  side: 'offshore' | 'onshore';
+  bundleKey: 'sell' | 'cost';
+  matrix: PositionRateMatrix;
+  mobDemobLocations: ContractMobDemobLocation[];
+  disabled: boolean;
+  onChange: (matrix: PositionRateMatrix) => void;
+  normalWorkHoursOnshore: number;
+  normalWorkHoursOffshore: number;
+};
+
 function SideFields({
   title,
   side,
@@ -25,82 +37,55 @@ function SideFields({
 }: SideFieldsProps) {
   const bundle = matrix[bundleKey] ?? {};
   const sideData = (side === 'offshore' ? bundle.offshore : bundle.onshore) ?? {};
+  const offshore = sideData as PositionRateOffshoreSide;
 
-  const [m1Mult, setM1Mult] = useState<number | 'custom'>(0.5);
-  const [d1Mult, setD1Mult] = useState<number | 'custom'>(0.5);
+  const [tripMult, setTripMult] = useState<number | 'custom'>(0.5);
   const [localRaw, setLocalRaw] = useState<Record<string, string>>({});
 
+  const tripRate = offshore.m1PerTrip ?? offshore.d1PerTrip;
+
   useEffect(() => {
     if (side !== 'offshore') return;
     const wd = sideData.workingDay;
     if (wd == null || !(wd > 0)) return;
-
-    const m1 = (sideData as PositionRateOffshoreSide).m1PerTrip;
-    const d1 = (sideData as PositionRateOffshoreSide).d1PerTrip;
-
-    if (m1 != null && m1 > 0) {
-      const ratio = m1 / wd;
-      if (Math.abs(ratio - 0.5) < 0.01) setM1Mult(0.5);
-      else if (Math.abs(ratio - 1.0) < 0.01) setM1Mult(1.0);
-      else setM1Mult('custom');
+    if (tripRate != null && tripRate > 0) {
+      const ratio = tripRate / wd;
+      if (Math.abs(ratio - 0.5) < 0.01) setTripMult(0.5);
+      else if (Math.abs(ratio - 1.0) < 0.01) setTripMult(1.0);
+      else setTripMult('custom');
     } else {
-      setM1Mult(0.5);
+      setTripMult(0.5);
     }
+  }, [side, sideData.workingDay, tripRate]);
 
-    if (d1 != null && d1 > 0) {
-      const ratio = d1 / wd;
-      if (Math.abs(ratio - 0.5) < 0.01) setD1Mult(0.5);
-      else if (Math.abs(ratio - 1.0) < 0.01) setD1Mult(1.0);
-      else setD1Mult('custom');
-    } else {
-      setD1Mult(0.5);
-    }
-  }, [side, sideData.workingDay, (sideData as PositionRateOffshoreSide).m1PerTrip, (sideData as PositionRateOffshoreSide).d1PerTrip]);
-
-  // UI shows 0.5x when empty, but that used to be display-only — write the baht amount
-  // so Save persists M1/D1. Skip when user chose "คีย์".
+  // UI shows 0.5x when empty — write both M1 and D1 so Save persists the same baht amount.
   useEffect(() => {
     if (side !== 'offshore') return;
     const wd = sideData.workingDay;
     if (wd == null || !(wd > 0)) return;
-
-    const m1 = (sideData as PositionRateOffshoreSide).m1PerTrip;
-    const d1 = (sideData as PositionRateOffshoreSide).d1PerTrip;
-    const patch: Partial<PositionRateOffshoreSide> = {};
-    if (!(m1 != null && m1 > 0) && m1Mult !== 'custom') {
-      const mult = typeof m1Mult === 'number' ? m1Mult : 0.5;
-      patch.m1PerTrip = Math.round(wd * mult * 100) / 100;
-    }
-    if (!(d1 != null && d1 > 0) && d1Mult !== 'custom') {
-      const mult = typeof d1Mult === 'number' ? d1Mult : 0.5;
-      patch.d1PerTrip = Math.round(wd * mult * 100) / 100;
-    }
-    if (Object.keys(patch).length === 0) return;
-
+    if (tripRate != null && tripRate > 0) return;
+    if (tripMult === 'custom') return;
+    const mult = typeof tripMult === 'number' ? tripMult : 0.5;
+    const tripVal = Math.round(wd * mult * 100) / 100;
     onChange({
       ...matrix,
       [bundleKey]: {
         ...bundle,
-        [side]: { ...sideData, ...patch },
+        [side]: { ...sideData, m1PerTrip: tripVal, d1PerTrip: tripVal },
       },
     });
-    setLocalRaw((prev) => ({
-      ...prev,
-      ...(patch.m1PerTrip != null ? { m1PerTrip: String(patch.m1PerTrip) } : {}),
-      ...(patch.d1PerTrip != null ? { d1PerTrip: String(patch.d1PerTrip) } : {}),
-    }));
+    setLocalRaw((prev) => ({ ...prev, m1PerTrip: String(tripVal), d1PerTrip: String(tripVal) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sync empty M1/D1 to multiplier × Working
-  }, [side, sideData.workingDay, (sideData as PositionRateOffshoreSide).m1PerTrip, (sideData as PositionRateOffshoreSide).d1PerTrip, m1Mult, d1Mult]);
+  }, [side, sideData.workingDay, tripRate, tripMult]);
 
   const patchSide = (patch: Partial<PositionRateOffshoreSide & PositionRateOnshoreSide>) => {
     let updatedFields = { ...patch };
     if (patch.workingDay !== undefined) {
       const workingDay = patch.workingDay;
       const normalHours = side === 'offshore' ? normalWorkHoursOffshore : normalWorkHoursOnshore;
-      const m1Multiplier = side === 'offshore' && m1Mult !== 'custom' ? m1Mult : undefined;
-      const d1Multiplier = side === 'offshore' && d1Mult !== 'custom' ? d1Mult : undefined;
+      const tripMultiplier = side === 'offshore' && tripMult !== 'custom' ? tripMult : undefined;
       
-      const computed = autoCalculateMatrixFields(side, workingDay, normalHours, sideData, m1Multiplier, d1Multiplier);
+      const computed = autoCalculateMatrixFields(side, workingDay, normalHours, sideData, tripMultiplier, tripMultiplier);
       updatedFields = { ...computed };
     }
 
@@ -118,6 +103,15 @@ function SideFields({
     setLocalRaw((prev) => ({ ...prev, [field]: raw }));
     const n = parseFloat(raw);
     const val = Number.isFinite(n) && n >= 0 ? n : undefined;
+    if (field === 'm1PerTrip') {
+      patchSide({ m1PerTrip: val, d1PerTrip: val } as Partial<PositionRateOffshoreSide>);
+      setLocalRaw((prev) => ({
+        ...prev,
+        m1PerTrip: raw,
+        d1PerTrip: raw,
+      }));
+      return;
+    }
     patchSide({ [field]: val } as any);
   };
 
@@ -173,79 +167,66 @@ function SideFields({
         {side === 'offshore' ? (
           <>
             <div className="grid gap-1">
-              <Label className="text-xs">OT / ชม.</Label>
+              <Label className="text-xs">OT 1.5 / ชม.</Label>
               <Input
                 type="number"
                 min={0}
                 step="any"
                 disabled={disabled}
-                value={getValue('otPerHour', (sideData as PositionRateOffshoreSide).otPerHour)}
+                value={getValue('otPerHour', offshore.otPerHour)}
                 onChange={(e) => handleInput('otPerHour', e.target.value)}
               />
             </div>
             <div className="grid gap-1">
-              <Label className="text-xs">M1 / เที่ยว</Label>
+              <Label className="text-xs">OT2 / ชม.</Label>
+              <Input
+                type="number"
+                min={0}
+                step="any"
+                disabled={disabled}
+                value={getValue('ot2PerHour', offshore.ot2PerHour)}
+                onChange={(e) => handleInput('ot2PerHour', e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label className="text-xs">OT3 / ชม.</Label>
+              <Input
+                type="number"
+                min={0}
+                step="any"
+                disabled={disabled}
+                value={getValue('ot3PerHour', offshore.ot3PerHour)}
+                onChange={(e) => handleInput('ot3PerHour', e.target.value)}
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label className="text-xs">M1 / D1 / เที่ยว</Label>
               <div className="flex gap-1">
                 <Input
                   type="number"
                   min={0}
                   step="any"
-                  disabled={disabled || m1Mult !== 'custom'}
+                  disabled={disabled || tripMult !== 'custom'}
                   className="w-2/3 font-mono"
-                  value={getValue('m1PerTrip', (sideData as PositionRateOffshoreSide).m1PerTrip)}
+                  value={getValue('m1PerTrip', tripRate)}
                   onChange={(e) => handleInput('m1PerTrip', e.target.value)}
                 />
                 <Select
                   disabled={disabled}
-                  value={String(m1Mult)}
+                  value={String(tripMult)}
                   onValueChange={(v) => {
-                    const nextM1Mult = v === 'custom' ? 'custom' : Number(v);
-                    setM1Mult(nextM1Mult);
-                    if (nextM1Mult !== 'custom') {
+                    const nextTripMult = v === 'custom' ? 'custom' : Number(v);
+                    setTripMult(nextTripMult);
+                    if (nextTripMult !== 'custom') {
                       const wd = sideData.workingDay;
                       if (wd && wd >= 0) {
-                        const m1Val = Math.round((wd * nextM1Mult) * 100) / 100;
-                        patchSide({ m1PerTrip: m1Val } as Partial<PositionRateOffshoreSide>);
-                        setLocalRaw((prev) => ({ ...prev, m1PerTrip: String(m1Val) }));
-                      }
-                    }
-                  }}
-                >
-                  <SelectTrigger className="w-1/3 text-xs px-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0.5">0.5x</SelectItem>
-                    <SelectItem value="1">1.0x</SelectItem>
-                    <SelectItem value="custom">คีย์</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid gap-1">
-              <Label className="text-xs">D1 / เที่ยว</Label>
-              <div className="flex gap-1">
-                <Input
-                  type="number"
-                  min={0}
-                  step="any"
-                  disabled={disabled || d1Mult !== 'custom'}
-                  className="w-2/3 font-mono"
-                  value={getValue('d1PerTrip', (sideData as PositionRateOffshoreSide).d1PerTrip)}
-                  onChange={(e) => handleInput('d1PerTrip', e.target.value)}
-                />
-                <Select
-                  disabled={disabled}
-                  value={String(d1Mult)}
-                  onValueChange={(v) => {
-                    const nextD1Mult = v === 'custom' ? 'custom' : Number(v);
-                    setD1Mult(nextD1Mult);
-                    if (nextD1Mult !== 'custom') {
-                      const wd = sideData.workingDay;
-                      if (wd && wd >= 0) {
-                        const d1Val = Math.round((wd * nextD1Mult) * 100) / 100;
-                        patchSide({ d1PerTrip: d1Val } as Partial<PositionRateOffshoreSide>);
-                        setLocalRaw((prev) => ({ ...prev, d1PerTrip: String(d1Val) }));
+                        const tripVal = Math.round(wd * nextTripMult * 100) / 100;
+                        patchSide({ m1PerTrip: tripVal, d1PerTrip: tripVal } as Partial<PositionRateOffshoreSide>);
+                        setLocalRaw((prev) => ({
+                          ...prev,
+                          m1PerTrip: String(tripVal),
+                          d1PerTrip: String(tripVal),
+                        }));
                       }
                     }
                   }}
@@ -304,7 +285,7 @@ function SideFields({
       {side === 'offshore' && mobDemobLocations.length > 0 && (
         <div className="space-y-2 pt-1 border-t">
           <Label className="text-xs font-semibold">Mob/Demob (ต่อรอบ)</Label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {mobDemobLocations.map((loc) => (
               <div key={loc.key} className="grid gap-1">
                 <Label className="text-[10px] text-muted-foreground truncate" title={loc.label}>
@@ -357,9 +338,9 @@ export function PositionRateMatrixFields({
       <div>
         <Label className="text-sm font-semibold">Rate Sheet ขยาย (Mob / Standby / OT / M1-D1)</Label>
         <p className="text-xs text-muted-foreground mt-1">
-          ราคารายการเพิ่มเติมตามตารางสัญญา — Working / SB / M1 / D1 อ้างอิงชม.แพ็กที่ตั้งไว้ด้านบน
+          ราคารายการเพิ่มเติมตามตารางสัญญา — Working / SB / M1-D1 อ้างอิงชม.แพ็กที่ตั้งไว้ด้านบน
           (มาตรฐาน <strong>Offshore = 12 ชม.</strong> · <strong>Onshore = 8 ชม.</strong>)
-          — ใช้เป็นฐานสัดส่วนเมื่อแก้ชม.วัน M1/D1 หรือ SB
+          — Offshore: OT 1.5 / OT2 / OT3 คำนวณจาก Working ตามกฎหาร 14 หรือ 12 ที่เลือกด้านบน และ M1 กับ D1 ใช้ราคาเดียวกัน
         </p>
       </div>
 

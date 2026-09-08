@@ -1,16 +1,14 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { PositionRate, Position, ContractMobDemobLocation } from '@/lib/types';
-import type { OvertimeRuleKey } from '@/lib/contract-position-rate-extras';
-import { OVERTIME_RULE_OPTIONS } from '@/lib/contract-position-rate-extras';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
 import { legacySellRateMirror, normalizeNormalWorkHoursFields } from '@/lib/commercial/position-rate-sell';
 import { PositionRateMatrixFields } from './position-rate-matrix-fields';
-import { autoCalculateMatrixFields } from '@/lib/commercial/position-rate-matrix';
+import { autoCalculateMatrixFields, createEmptyPositionRateMatrix } from '@/lib/commercial/position-rate-matrix';
+import { parseOffshoreHourlyDivisor } from '@/lib/commercial/package-hourly-rate';
 
 export interface PositionRateFormFieldsProps {
   newRate: Partial<PositionRate>;
@@ -40,8 +38,6 @@ export function PositionRateFormFields({
   positionDisplayName,
   mobDemobLocations = [],
 }: PositionRateFormFieldsProps) {
-  const otKey = (newRate.overtimeRuleKey || 'MULT_1_5') as OvertimeRuleKey;
-
   const positionsForSelect = useMemo(
     () => sortPositionsByDisplayName(allPositions ?? []),
     [allPositions]
@@ -85,7 +81,7 @@ export function PositionRateFormFields({
       </div>
 
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="grid gap-2">
           <Label>ชม.ปกติ Onshore / วัน</Label>
           <Select
@@ -160,9 +156,6 @@ export function PositionRateFormFields({
             </SelectContent>
           </Select>
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="grid gap-2">
           <Label>หน่วยการคิดเงิน</Label>
           <Select onValueChange={(v) => setNewRate({ ...newRate, billingUnit: v as PositionRate['billingUnit'] })} value={newRate.billingUnit}>
@@ -178,38 +171,75 @@ export function PositionRateFormFields({
         </div>
       </div>
 
-      <div className="grid gap-2">
-        <Label>กฎการคิด OT (อัตราต่อชั่วโมงหลังชั่วโมงปกติ)</Label>
-        <Select
-          disabled={isSupplementalContract}
-          value={otKey}
-          onValueChange={(v) => {
-            const key = v as OvertimeRuleKey;
-            const opt = OVERTIME_RULE_OPTIONS.find((o) => o.key === key);
-            setNewRate({
-              ...newRate,
-              overtimeRuleKey: key,
-              overtimeRule: opt ? `${opt.label} — ${opt.description}` : key,
-            });
-          }}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {OVERTIME_RULE_OPTIONS.map((o) => (
-              <SelectItem key={o.key} value={o.key}>
-                <span className="font-medium">{o.label}</span>
-                <span className="text-muted-foreground"> — {o.description}</span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="grid gap-2">
-        <Label>หมายเหตุ</Label>
-        <Input value={newRate.notes || ''} onChange={(e) => setNewRate({ ...newRate, notes: e.target.value })} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid gap-2">
+          <Label className="leading-snug">กฎการคิดชั่วโมงทำงานปกติงาน offshore ฝั่งขาย</Label>
+          <Select
+            disabled={isSupplementalContract || !canEditSellSide}
+            value={String(parseOffshoreHourlyDivisor(newRate.rateMatrix?.sell?.offshore?.hourlyDivisor))}
+            onValueChange={(v) => {
+              const divisor = parseOffshoreHourlyDivisor(Number(v));
+              const matrix = { ...(newRate.rateMatrix ?? createEmptyPositionRateMatrix()) };
+              const bundle = { ...(matrix.sell ?? {}) };
+              const side = { ...(bundle.offshore ?? {}), hourlyDivisor: divisor };
+              const hours = newRate.normalWorkHoursOffshore ?? 12;
+              bundle.offshore = side.workingDay
+                ? autoCalculateMatrixFields('offshore', side.workingDay, hours, side)
+                : side;
+              matrix.sell = bundle;
+              const onshoreVal = matrix.sell?.onshore?.workingDay;
+              const offshoreVal = matrix.sell?.offshore?.workingDay;
+              setNewRate({
+                ...newRate,
+                rateMatrix: matrix,
+                sellRateOnshore: onshoreVal,
+                sellRateOffshore: offshoreVal,
+                sellRate: legacySellRateMirror({
+                  ...newRate,
+                  sellRateOnshore: onshoreVal,
+                  sellRateOffshore: offshoreVal,
+                }),
+              });
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="14">คิดชั่วโมงปกติโดย หาร 14 ชั่วโมงจากราคาขาย</SelectItem>
+              <SelectItem value="12">คิดชั่วโมงปกติโดย หาร 12 ชั่วโมงจากราคาขาย</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {canViewCostFields ? (
+          <div className="grid gap-2">
+            <Label className="leading-snug">กฎการคิดชั่วโมงทำงานปกติงาน offshore ฝั่งต้นทุน</Label>
+            <Select
+              disabled={isSupplementalContract || !canEditCostSide}
+              value={String(parseOffshoreHourlyDivisor(newRate.rateMatrix?.cost?.offshore?.hourlyDivisor))}
+              onValueChange={(v) => {
+                const divisor = parseOffshoreHourlyDivisor(Number(v));
+                const matrix = { ...(newRate.rateMatrix ?? createEmptyPositionRateMatrix()) };
+                const bundle = { ...(matrix.cost ?? {}) };
+                const side = { ...(bundle.offshore ?? {}), hourlyDivisor: divisor };
+                const hours = newRate.normalWorkHoursOffshore ?? 12;
+                bundle.offshore = side.workingDay
+                  ? autoCalculateMatrixFields('offshore', side.workingDay, hours, side)
+                  : side;
+                matrix.cost = bundle;
+                setNewRate({ ...newRate, rateMatrix: matrix });
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="14">คิดชั่วโมงปกติโดย หาร 14 ชั่วโมงจากราคาทุน</SelectItem>
+                <SelectItem value="12">คิดชั่วโมงปกติโดย หาร 12 ชั่วโมงจากราคาทุน</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
       </div>
 
       <PositionRateMatrixFields

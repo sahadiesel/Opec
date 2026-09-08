@@ -145,8 +145,11 @@ export const PositionRateOffshoreSideSchema = z.object({
   workingDay: positiveRate,
   standbyDay: positiveRate,
   otPerHour: positiveRate,
+  ot2PerHour: positiveRate,
+  ot3PerHour: positiveRate,
   m1PerTrip: positiveRate,
   d1PerTrip: positiveRate,
+  hourlyDivisor: z.union([z.literal(12), z.literal(14)]).optional(),
   mobDemobRoundTrip: z.record(z.string(), positiveRate).optional(),
 });
 

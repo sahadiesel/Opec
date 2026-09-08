@@ -362,6 +362,38 @@ export function getStoreOfficerModulePermission(moduleKey: ModuleKey): ModulePer
 }
 
 /**
+ * สิทธิ์โมดูลสำหรับ `sales_officer` — งานขาย/สัญญา + คลัง/คู่ค้า + ลูกหนี้ (ใบกำกับ/ใบเสร็จ)
+ * ดู/สร้าง/แก้ (ไม่ลบ/ไม่อนุมัติ)
+ * ไม่เปิด HR, Manpower, ใบแจ้งหนี้รายเดือน, Petty Cash, AP, เงินเดือน
+ */
+export function getSalesOfficerModulePermission(moduleKey: ModuleKey): ModulePermission {
+  if (moduleKey === 'overview_dashboard') {
+    return { ...READ_ONLY };
+  }
+  if (moduleKey === 'employee_self_profile') {
+    return { ...READ_ONLY, create: true, edit: true };
+  }
+  if (
+    moduleKey === 'customers' ||
+    moduleKey === 'quotations' ||
+    moduleKey === 'main_contracts' ||
+    moduleKey === 'customer_pos' ||
+    moduleKey === 'sales_contract_terms' ||
+    moduleKey === 'rate_conditions' ||
+    moduleKey === 'profit_estimates' ||
+    moduleKey === 'vendors' ||
+    moduleKey === 'purchases' ||
+    moduleKey === 'store_inventory' ||
+    moduleKey === 'tax_invoices' ||
+    moduleKey === 'receipts' ||
+    moduleKey === 'accounts_receivable'
+  ) {
+    return { ...OFFICER_ACCESS };
+  }
+  return { ...NO_ACCESS };
+}
+
+/**
  * สิทธิ์โมดูลสำหรับ `payroll_officer` — เน้น payroll + ทะเบียนลูกจ้าง (Master Data)
  * + Manpower (waves/assignments/mobilization) ดู/สร้าง/แก้ได้ — สอดคล้อง firestore.rules `rs2()`
  * สอดคล้องเมนู HR → ทะเบียน และ matrix `worker` resource
@@ -675,6 +707,11 @@ export function getPermissions(
     return clonePermission(NO_ACCESS);
   }
 
+  /** เจ้าหน้าที่ฝ่ายขาย — งานขาย/สัญญาเท่านั้น (ก่อน tax_invoices / FULL_ACCESS) */
+  if (isSalesOfficer(u)) {
+    return clonePermission(getSalesOfficerModulePermission(moduleKey));
+  }
+
   /** ใบกำกับร่าง + แนบสลิป: พนักงานภายใน (ไม่ใช่บัญชี) ดู/แก้ไขได้ แต่ไม่สร้างเอกสารใหม่ใน UI — ยกเว้นมุมมองบัญชีแบบอ่านอย่างเดียว */
   if (
     moduleKey === 'tax_invoices' &&
@@ -914,6 +951,8 @@ const SALES_PILLAR_UI_KEYS: ModuleKey[] = [
   'customers',
   'quotations',
   'main_contracts',
+  'customer_pos',
+  'sales_contract_terms',
   'rate_conditions',
   'profit_estimates',
 ];
@@ -1181,6 +1220,23 @@ export function getBaselineProfiles(): Partial<PermissionProfile>[] {
       permissions: SYSTEM_MODULES.reduce(
         (acc, mod) => {
           acc[mod.key] = clonePermission(getOperationsOfficerModulePermission(mod.key as ModuleKey));
+          return acc;
+        },
+        {} as Record<string, ModulePermission>,
+      ),
+    },
+    {
+      profileKey: 'sales_officer',
+      profileNameEn: 'Sales officer (customers / contracts)',
+      profileNameTh: 'เจ้าหน้าที่ฝ่ายขาย (ลูกค้า · สัญญา)',
+      departmentGroup: 'operations',
+      primaryRoleTemplateKey: 'sales_officer',
+      department: 'sales',
+      level: 'officer',
+      isActive: true,
+      permissions: SYSTEM_MODULES.reduce(
+        (acc, mod) => {
+          acc[mod.key] = clonePermission(getSalesOfficerModulePermission(mod.key as ModuleKey));
           return acc;
         },
         {} as Record<string, ModulePermission>,

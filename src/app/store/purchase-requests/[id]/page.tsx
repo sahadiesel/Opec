@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ArrowLeft, CheckCircle, Loader2, XCircle, PackageSearch, Send, Ban, Pencil, Printer } from 'lucide-react';
+import { DocumentShareButton } from '@/components/documents/document-share-controls';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@/firebase';
 import { collection, doc, getDocs, updateDoc, deleteField, type UpdateData } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -666,6 +667,13 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
             <Button type="button" variant="outline" className="gap-2" onClick={() => void handlePrint()}>
               <Printer className="h-4 w-4" /> พิมพ์เอกสาร
             </Button>
+            <DocumentShareButton
+              collectionName="purchase_requests"
+              documentId={pr.id}
+              currentUser={currentUser}
+              sharedWith={pr.sharedWith}
+              sharedWithUids={pr.sharedWithUids}
+            />
             <Badge
               className={
                 displayStatus === 'APPROVED'

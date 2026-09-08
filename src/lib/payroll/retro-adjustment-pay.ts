@@ -90,6 +90,23 @@ function requireCostRate(
   return v;
 }
 
+function requireCostRateWithFallback(
+  rate: PositionRate,
+  category: PositionRateMatrixCategory,
+  fallback: PositionRateMatrixCategory,
+  fieldLabel: string,
+  contractId: string,
+  positionId: string,
+  missing: RetroMissingRateInfo[],
+): number | null {
+  const primary = resolveMatrixCostRate(rate, category);
+  if (primary != null && primary > 0) return primary;
+  const fb = resolveMatrixCostRate(rate, fallback);
+  if (fb != null && fb > 0) return fb;
+  missing.push({ fieldLabel, category, contractId, positionId });
+  return null;
+}
+
 /**
  * คำนวณยอดตกเบิกจากฐานรายวันของทะเบียนลูกจ้าง
  * ออฟชอร์ 12 ชม. = 8 ปกติ + 4 OT → OT1.5/ชม. = (D/14)×1.5
@@ -194,10 +211,11 @@ export function computeRetroAdjustmentPayFromRateMatrix(
         if (r != null) amount += ot15 * r;
       }
       if (ot20 > 0) {
-        const r = requireCostRate(
+        const r = requireCostRateWithFallback(
           positionRate,
+          'offshore_ot2_per_hour',
           'offshore_ot_per_hour',
-          'OFF OT/hr (ต้นทุน) — OT2',
+          'OFF OT2/hr (ต้นทุน)',
           contractId,
           positionId,
           missing,
@@ -205,10 +223,11 @@ export function computeRetroAdjustmentPayFromRateMatrix(
         if (r != null) amount += ot20 * r;
       }
       if (ot30 > 0) {
-        const r = requireCostRate(
+        const r = requireCostRateWithFallback(
           positionRate,
+          'offshore_ot3_per_hour',
           'offshore_ot_per_hour',
-          'OFF OT/hr (ต้นทุน) — OT3',
+          'OFF OT3/hr (ต้นทุน)',
           contractId,
           positionId,
           missing,

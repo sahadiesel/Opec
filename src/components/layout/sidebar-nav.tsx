@@ -71,6 +71,7 @@ import {
   isStoreOfficer,
   isPayrollOfficer,
   isOperationsOfficer,
+  isSalesOfficer,
   isTimekeeper,
   getPrimaryLegacyRole,
 } from '@/lib/permissions';
@@ -500,7 +501,12 @@ function canSeeGroup(group: NavGroup, user: User, fullMenuAccess: boolean): bool
     fullMenuAccess || isSimpleAccounting(user) || isSimpleAdmin(user);
 
   if (group.audience === 'admin') return fullMenuAccess;
-  if (group.audience === 'accounting') return acct && !clientUser;
+  if (group.audience === 'accounting') {
+    if (clientUser) return false;
+    if (acct) return true;
+    /** เจ้าหน้าที่ขาย — ระบบลูกหนี้ (ใบกำกับ/ใบเสร็จ) อยู่ในหมวดบัญชี */
+    return isSalesOfficer(user);
+  }
   if (group.audience === 'client') return clientUser;
   if (group.audience === 'internal') return !clientUser;
 

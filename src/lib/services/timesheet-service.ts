@@ -284,7 +284,13 @@ export class TimesheetService {
   async correctClosedPeriodTimesheetHours(
     id: string,
     user: User,
-    input: { ot15Hours: number; normalHours?: number; reason: string },
+    input: {
+      ot15Hours?: number;
+      ot20Hours?: number;
+      ot30Hours?: number;
+      normalHours?: number;
+      reason: string;
+    },
   ): Promise<void> {
     assertPayrollPermission(user, 'timesheet', 'edit');
     const docRef = doc(this.getCollection(), id);
@@ -298,10 +304,12 @@ export class TimesheetService {
     if (!reason) throw new Error('กรุณาระบุเหตุผลการแก้ไข');
 
     const ot15 = Math.min(24, Math.max(0, Number(input.ot15Hours) || 0));
+    const ot20 = Math.min(24, Math.max(0, Number(input.ot20Hours) || 0));
+    const ot30 = Math.min(24, Math.max(0, Number(input.ot30Hours) || 0));
     const patch: Record<string, unknown> = {
       ot15Hours: ot15,
-      ot20Hours: 0,
-      ot30Hours: 0,
+      ot20Hours: ot20,
+      ot30Hours: ot30,
       readyForPayroll: false,
       readyForBilling: false,
       updatedAt: Date.now(),
@@ -320,7 +328,7 @@ export class TimesheetService {
       timesheetId: id,
       reasonText: reason,
       sourceModule: 'operations',
-      afterSummary: `Closed-period correction: OT15=${ot15}h (was ${current.ot15Hours ?? 0}h)`,
+      afterSummary: `Closed-period correction: OT1.5=${ot15}h OT2=${ot20}h OT3=${ot30}h (was 1.5=${current.ot15Hours ?? 0} 2=${current.ot20Hours ?? 0} 3=${current.ot30Hours ?? 0})`,
     });
   }
 

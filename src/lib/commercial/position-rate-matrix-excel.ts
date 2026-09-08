@@ -61,6 +61,13 @@ function matchColumnByHeader(
   const byExcel = columns.find((c) => c.excelKey === norm);
   if (byExcel) return byExcel;
 
+  if (norm === 'offshore_d1_per_trip' || norm === 'd1' || norm === 'm1_d1' || norm === 'm1/d1') {
+    return columns.find((c) => c.id === 'off_m1d1') ?? columns.find((c) => c.category === 'offshore_m1_per_trip') ?? null;
+  }
+  if (norm === 'offshore_ot' || norm === 'off_ot_hr' || norm === 'offshore_ot_1.5_per_hour') {
+    return columns.find((c) => c.category === 'offshore_ot_per_hour') ?? null;
+  }
+
   const byId = columns.find((c) => c.id === norm);
   if (byId) return byId;
 

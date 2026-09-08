@@ -785,9 +785,15 @@ export interface PositionRateOffshoreSide {
   /** Working day (12 hr) — mirrors legacy `sellRateOffshore` / cost offshore daily. */
   workingDay?: number;
   standbyDay?: number;
+  /** OT ×1.5 ต่อชม. (ช่อง OT 1.5 / ชม.) */
   otPerHour?: number;
+  ot2PerHour?: number;
+  ot3PerHour?: number;
+  /** M1 และ D1 ใช้ราคาขายเดียวกัน — UI รวมเป็นช่องเดียว แต่เก็บทั้งสองฟิลด์ */
   m1PerTrip?: number;
   d1PerTrip?: number;
+  /** ตัวหารชม.ปกติจากราคารายวัน สำหรับคำนวณ OT (12 หรือ 14) — ค่าเริ่มต้น 14 */
+  hourlyDivisor?: 12 | 14;
   /** Round-trip mob/demob per `ContractMobDemobLocation.key`. */
   mobDemobRoundTrip?: Record<string, number>;
 }
@@ -818,6 +824,8 @@ export type PositionRateMatrixCategory =
   | 'offshore_working_day'
   | 'offshore_standby_day'
   | 'offshore_ot_per_hour'
+  | 'offshore_ot2_per_hour'
+  | 'offshore_ot3_per_hour'
   | 'offshore_m1_per_trip'
   | 'offshore_d1_per_trip'
   | 'offshore_mob_demob_round_trip'
@@ -1001,7 +1009,7 @@ export interface PositionRate {
   billingUnit: 'daily' | 'monthly' | 'hourly';
   active: boolean;
   overtimeRule: string;
-  /** Canonical OT policy for payroll/billing (UI + snapshots). */
+  /** @deprecated ไม่ใช้คิดเงินแล้ว — ราคา OT มาจาก rateMatrix OT 1.5 / OT2 / OT3; คงไว้ในเอกสารเก่าและ PO snapshot */
   overtimeRuleKey?: 'NONE' | 'MULT_1_0' | 'MULT_1_5' | 'MULT_2_0';
   /** Weekly rest pattern for sell-side day classification */
   sellWeeklyRestPattern?: 'none' | 'sat_sun' | 'sunday_only';
@@ -1065,6 +1073,11 @@ export interface PurchaseOrder {
   notes?: string;
   createdAt: number;
   updatedAt: number;
+  createdByUid?: string;
+  createdByName?: string;
+  /** แชร์ให้ officer ที่ระบุ — ดูได้แม้ไม่ได้เป็นผู้สร้าง */
+  sharedWith?: { uid: string; displayName: string; roleKey?: string }[];
+  sharedWithUids?: string[];
 }
 
 /** กลุ่ม PO Active ต่อลูกค้า + Onshore/Offshore */
@@ -2481,6 +2494,9 @@ export interface CommercialInvoice {
   updatedAt: number;
   updatedByUid?: string;
   updatedByName?: string;
+  /** แชร์ให้ officer ที่ระบุ — ดูได้แม้ไม่ได้เป็นผู้สร้าง */
+  sharedWith?: { uid: string; displayName: string; roleKey?: string }[];
+  sharedWithUids?: string[];
 }
 
 /** เอกสารแนบประกอบใบแจ้งหนี้เชิงพาณิชย์ (ให้ลูกค้าเปิดดูใน portal) */
@@ -3168,8 +3184,12 @@ export interface Quotation {
   grandTotal: number;
   createdAt: number;
   createdBy: string;
+  createdByUid?: string;
   updatedAt: number;
   updatedBy: string;
+  /** แชร์ให้ officer ที่ระบุ — ดูได้แม้ไม่ได้เป็นผู้สร้าง */
+  sharedWith?: { uid: string; displayName: string; roleKey?: string }[];
+  sharedWithUids?: string[];
   /** ลูกค้า (portal) ตอบรับ/ปฏิเสธ — คู่กับ status accepted|rejected */
   portalDecisionAt?: number;
   portalDecisionByUid?: string;
@@ -3385,6 +3405,9 @@ export interface PurchaseRequest {
   linkedPurchaseId?: string;
   createdAt: number;
   updatedAt: number;
+  /** แชร์ให้ officer ที่ระบุ — ดูได้แม้ไม่ได้เป็นผู้สร้าง */
+  sharedWith?: { uid: string; displayName: string; roleKey?: string }[];
+  sharedWithUids?: string[];
 }
 
 export interface Purchase {
@@ -4074,6 +4097,9 @@ export interface TaxInvoice {
   /** ผู้สร้างร่างใบกำกับ (จากใบเรียกเก็บ / บัญชี) */
   createdByUid?: string;
   createdByName?: string;
+  /** แชร์ให้ officer ที่ระบุ — ดูได้แม้ไม่ได้เป็นผู้สร้าง */
+  sharedWith?: { uid: string; displayName: string; roleKey?: string }[];
+  sharedWithUids?: string[];
   /** ผู้ยืนยันออกเอกสารจริง (ISSUED) */
   issuedByUid?: string;
   issuedByName?: string;
@@ -4146,6 +4172,9 @@ export interface MoneyReceipt {
   updatedAt: number;
   createdByUid?: string;
   createdByName?: string;
+  /** แชร์ให้ officer ที่ระบุ — ดูได้แม้ไม่ได้เป็นผู้สร้าง */
+  sharedWith?: { uid: string; displayName: string; roleKey?: string }[];
+  sharedWithUids?: string[];
 }
 
 /** Simple Customer Issue / Dispute Request */

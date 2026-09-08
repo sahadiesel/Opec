@@ -55,7 +55,7 @@ import {
 import { useAppUser } from '@/hooks/use-app-user';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting } from '@/lib/simple-tier-model';
-import { canRecordTaxInvoiceBillingCustomerApproval } from '@/lib/permissions';
+import { canEdit, canRecordTaxInvoiceBillingCustomerApproval } from '@/lib/permissions';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { closeOpenCommercialArNow } from '@/lib/services/accounts-receivable-reconcile-service';
 import {
@@ -94,6 +94,7 @@ import {
 } from '@/lib/services/money-receipt-service';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
+import { DocumentShareButton } from '@/components/documents/document-share-controls';
 import { TaxInvoiceLinesTable } from '@/components/documents/tax-invoice-lines-table';
 import { Checkbox } from '@/components/ui/checkbox';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
@@ -220,6 +221,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
 
   const isAccountingActor =
     !!currentUser && (isSystemAdmin(currentUser) || isSimpleAccounting(currentUser));
+  const canEditTaxInvoiceDoc = !!currentUser && canEdit(currentUser, 'tax_invoices');
 
   useEffect(() => {
     if (!firestore || !invoice || !isAccountingActor || arReconcileAttempted.current) return;
@@ -770,7 +772,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       });
       return;
     }
-    if (!isAccountingActor) {
+    if (!isAccountingActor && !canEditTaxInvoiceDoc) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
       return;
     }
@@ -820,7 +822,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       });
       return;
     }
-    if (!isAccountingActor) {
+    if (!isAccountingActor && !canEditTaxInvoiceDoc) {
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
       return;
     }
@@ -886,6 +888,13 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
             <Button variant="outline" className="gap-2" type="button" onClick={() => handlePrintTaxInvoice()}>
               <Printer className="h-4 w-4" /> พิมพ์เอกสาร
             </Button>
+            <DocumentShareButton
+              collectionName="tax_invoices"
+              documentId={invoice.id}
+              currentUser={currentUser as User}
+              sharedWith={invoice.sharedWith}
+              sharedWithUids={invoice.sharedWithUids}
+            />
             <Badge variant="outline" className="py-1.5 px-4 font-bold border-primary/20 bg-primary/5 text-primary">
               {invoice.status === 'DRAFT'
                 ? 'DRAFT — ร่าง'
@@ -1246,7 +1255,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-6 space-y-3">
-                {invoice.status === 'DRAFT' && isAccountingActor && (
+                {invoice.status === 'DRAFT' && (isAccountingActor || canEditTaxInvoiceDoc) && (
                   <Button
                     variant="outline"
                     className="w-full border-white/40 bg-white/10 text-white hover:bg-white/20 font-semibold"
@@ -1280,7 +1289,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                     รอลูกค้าอนุมัติ billing ก่อนจึงจะออก ISSUED ได้
                   </div>
                 )}
-                {invoice.status === 'DRAFT' && !isAccountingActor && (
+                {invoice.status === 'DRAFT' && !isAccountingActor && !canEditTaxInvoiceDoc && (
                   <div className="p-4 bg-white/10 rounded-lg text-xs flex gap-2">
                     <Info className="h-4 w-4 shrink-0" />
                     {invoice.billingCustomerApprovedAt
@@ -1294,7 +1303,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                     เอกสารออกจริงแล้ว — ล็อกแก้ไขข้อความ · บันทึกลูกหนี้ (AR) และใบวางบิลเป็น INVOICED
                   </div>
                 )}
-                {isAccountingActor && invoice.status === 'DRAFT' && (
+                {(isAccountingActor || canEditTaxInvoiceDoc) && invoice.status === 'DRAFT' && (
                   <Button
                     variant="outline"
                     className="w-full border-white/40 bg-white/10 text-white hover:bg-white/20 font-semibold"

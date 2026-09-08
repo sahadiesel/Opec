@@ -28,6 +28,8 @@ export interface DeriveHourlyInput {
   statedHours: StatedPackageHours;
   /** ตัวคูณ OT หลังเลิกกะ (ฝั่งต้นทุน) เช่น 1, 1.5, 2 */
   otAfterShiftMultiplier: number;
+  /** กฎหารชม.ปกติออฟชอร์จาก Rate Sheet ฝั่งต้นทุน (12 หรือ 14) — ไม่ส่ง = สูตรแพ็ก 8+4×OT */
+  hourlyDivisor?: 12 | 14;
 }
 
 export function deriveCostNormalHourlyRate(input: DeriveHourlyInput): number {
@@ -35,6 +37,7 @@ export function deriveCostNormalHourlyRate(input: DeriveHourlyInput): number {
     input.costPackagePerDay,
     input.statedHours,
     input.otAfterShiftMultiplier,
+    input.hourlyDivisor,
   );
 }
 
@@ -260,6 +263,8 @@ export interface WorkDayPackageCostInput {
   otAfterShiftMultiplier: number;
   /** ปฏิทิน/ตัวคูณวันหยุดลูกจ้างจาก HR Settings */
   payrollRestSchedule: PayrollRestDaySchedule;
+  /** กฎหารชม.ปกติออฟชอร์ฝั่งต้นทุน — ใช้กับ OT นอกแพ็ก ไม่ใช้กับ SB */
+  hourlyDivisor?: 12 | 14;
 }
 
 export interface WorkDayPackageCostResult {
@@ -341,6 +346,7 @@ function resolveWorkDayHourlyAndParts(
     costPackagePerDay: input.costPackagePerDay,
     statedHours: input.statedHours,
     otAfterShiftMultiplier: input.otAfterShiftMultiplier,
+    hourlyDivisor: input.hourlyDivisor,
   });
   const w = parseWorkDayHours(input.timesheet);
   const rest = resolvePayrollRestDay(input.timesheet.date, input.payrollRestSchedule);

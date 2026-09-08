@@ -11,6 +11,11 @@ import type {
   PositionRateWorkModeBundle,
 } from '@/lib/types';
 import { legacySellRateMirror, effectiveSellOnshore, effectiveSellOffshore } from '@/lib/commercial/position-rate-sell';
+import {
+  parseOffshoreHourlyDivisor,
+  offshoreWorkingDayHourlyDivisor,
+  type OffshoreHourlyDivisor,
+} from '@/lib/commercial/package-hourly-rate';
 
 /** Default mob/demob columns (Thai Nippon rate sheet). */
 export const DEFAULT_MOB_DEMOB_LOCATIONS: ContractMobDemobLocation[] = [
@@ -43,19 +48,31 @@ function sanitizeOffshoreSide(side: PositionRateOffshoreSide | undefined): Posit
   const workingDay = parsePositive(side.workingDay);
   const standbyDay = parsePositive(side.standbyDay);
   const otPerHour = parsePositive(side.otPerHour);
+  const ot2PerHour = parsePositive(side.ot2PerHour);
+  const ot3PerHour = parsePositive(side.ot3PerHour);
   let m1PerTrip = parsePositive(side.m1PerTrip);
   let d1PerTrip = parsePositive(side.d1PerTrip);
   const mobDemobRoundTrip = sanitizeMobDemobRoundTrip(side.mobDemobRoundTrip);
   if (workingDay != null) {
     out.workingDay = workingDay;
     // UI default 0.5x — persist baht amounts whenever Working exists
-    if (m1PerTrip == null) m1PerTrip = Math.round(workingDay * 0.5 * 100) / 100;
-    if (d1PerTrip == null) d1PerTrip = Math.round(workingDay * 0.5 * 100) / 100;
+    const tripDefault = Math.round(workingDay * 0.5 * 100) / 100;
+    if (m1PerTrip == null && d1PerTrip == null) {
+      m1PerTrip = tripDefault;
+      d1PerTrip = tripDefault;
+    } else if (m1PerTrip == null) {
+      m1PerTrip = d1PerTrip;
+    } else if (d1PerTrip == null) {
+      d1PerTrip = m1PerTrip;
+    }
   }
   if (standbyDay != null) out.standbyDay = standbyDay;
   if (otPerHour != null) out.otPerHour = otPerHour;
+  if (ot2PerHour != null) out.ot2PerHour = ot2PerHour;
+  if (ot3PerHour != null) out.ot3PerHour = ot3PerHour;
   if (m1PerTrip != null) out.m1PerTrip = m1PerTrip;
   if (d1PerTrip != null) out.d1PerTrip = d1PerTrip;
+  if (side.hourlyDivisor === 12 || side.hourlyDivisor === 14) out.hourlyDivisor = side.hourlyDivisor;
   if (mobDemobRoundTrip) out.mobDemobRoundTrip = mobDemobRoundTrip;
   return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -98,6 +115,18 @@ export function createEmptyPositionRateMatrix(): PositionRateMatrix {
     sell: { offshore: {}, onshore: {} },
     cost: { offshore: {}, onshore: {} },
   };
+}
+
+/** กฎหารชม.ปกติออฟชอร์ จาก matrix — ไม่มีค่า = 14 */
+export function resolveOffshoreHourlyDivisor(
+  bundle: 'sell' | 'cost',
+  ...matrices: Array<PositionRateMatrix | undefined | null>
+): OffshoreHourlyDivisor {
+  for (const matrix of matrices) {
+    const raw = matrix?.[bundle]?.offshore?.hourlyDivisor;
+    if (raw === 12 || raw === 14) return raw;
+  }
+  return parseOffshoreHourlyDivisor(undefined);
 }
 
 export function hasRateMatrixContent(matrix: PositionRateMatrix | undefined | null): boolean {
@@ -180,10 +209,14 @@ export function resolveMatrixSellRate(
       return parsePositive(matrix?.offshore?.standbyDay) ?? null;
     case 'offshore_ot_per_hour':
       return parsePositive(matrix?.offshore?.otPerHour) ?? null;
+    case 'offshore_ot2_per_hour':
+      return parsePositive(matrix?.offshore?.ot2PerHour) ?? null;
+    case 'offshore_ot3_per_hour':
+      return parsePositive(matrix?.offshore?.ot3PerHour) ?? null;
     case 'offshore_m1_per_trip':
-      return parsePositive(matrix?.offshore?.m1PerTrip) ?? null;
+      return parsePositive(matrix?.offshore?.m1PerTrip) ?? parsePositive(matrix?.offshore?.d1PerTrip) ?? null;
     case 'offshore_d1_per_trip':
-      return parsePositive(matrix?.offshore?.d1PerTrip) ?? null;
+      return parsePositive(matrix?.offshore?.d1PerTrip) ?? parsePositive(matrix?.offshore?.m1PerTrip) ?? null;
     case 'offshore_mob_demob_round_trip':
       if (!mobKey) return null;
       return parsePositive(matrix?.offshore?.mobDemobRoundTrip?.[mobKey]) ?? null;
@@ -225,10 +258,14 @@ export function resolveMatrixCostRate(
       return parsePositive(matrix?.offshore?.standbyDay) ?? null;
     case 'offshore_ot_per_hour':
       return parsePositive(matrix?.offshore?.otPerHour) ?? null;
+    case 'offshore_ot2_per_hour':
+      return parsePositive(matrix?.offshore?.ot2PerHour) ?? null;
+    case 'offshore_ot3_per_hour':
+      return parsePositive(matrix?.offshore?.ot3PerHour) ?? null;
     case 'offshore_m1_per_trip':
-      return parsePositive(matrix?.offshore?.m1PerTrip) ?? null;
+      return parsePositive(matrix?.offshore?.m1PerTrip) ?? parsePositive(matrix?.offshore?.d1PerTrip) ?? null;
     case 'offshore_d1_per_trip':
-      return parsePositive(matrix?.offshore?.d1PerTrip) ?? null;
+      return parsePositive(matrix?.offshore?.d1PerTrip) ?? parsePositive(matrix?.offshore?.m1PerTrip) ?? null;
     case 'offshore_mob_demob_round_trip':
       if (!mobKey) return null;
       return parsePositive(matrix?.offshore?.mobDemobRoundTrip?.[mobKey]) ?? null;
@@ -273,9 +310,10 @@ export function buildRateSheetColumns(
     cols.push(
       { id: 'off_work', label: 'Offshore Working (12 Hr.)', shortLabel: 'OFF Work', group: 'offshore', category: 'offshore_working_day', excelKey: 'offshore_working_day' },
       { id: 'off_sb', label: 'Offshore Standby (per Day)', shortLabel: 'OFF SB', group: 'offshore', category: 'offshore_standby_day', excelKey: 'offshore_standby_day' },
-      { id: 'off_ot', label: 'Offshore OT (per Hr.)', shortLabel: 'OFF OT/hr', group: 'offshore', category: 'offshore_ot_per_hour', excelKey: 'offshore_ot_per_hour' },
-      { id: 'off_m1', label: 'M1 (per trip)', shortLabel: 'M1', group: 'offshore', category: 'offshore_m1_per_trip', excelKey: 'offshore_m1_per_trip' },
-      { id: 'off_d1', label: 'D1 (per trip)', shortLabel: 'D1', group: 'offshore', category: 'offshore_d1_per_trip', excelKey: 'offshore_d1_per_trip' },
+      { id: 'off_ot', label: 'Offshore OT 1.5 (per Hr.)', shortLabel: 'OFF OT1.5', group: 'offshore', category: 'offshore_ot_per_hour', excelKey: 'offshore_ot_per_hour' },
+      { id: 'off_ot2', label: 'Offshore OT2 (per Hr.)', shortLabel: 'OFF OT2', group: 'offshore', category: 'offshore_ot2_per_hour', excelKey: 'offshore_ot2_per_hour' },
+      { id: 'off_ot3', label: 'Offshore OT3 (per Hr.)', shortLabel: 'OFF OT3', group: 'offshore', category: 'offshore_ot3_per_hour', excelKey: 'offshore_ot3_per_hour' },
+      { id: 'off_m1d1', label: 'M1 / D1 (per trip)', shortLabel: 'M1/D1', group: 'offshore', category: 'offshore_m1_per_trip', excelKey: 'offshore_m1_per_trip' },
     );
     if (includeMob) {
       for (const loc of mobLocations) {
@@ -393,10 +431,18 @@ export function patchRateSheetCell(
     case 'offshore_ot_per_hour':
       applyScalar('otPerHour');
       break;
+    case 'offshore_ot2_per_hour':
+      applyScalar('ot2PerHour');
+      break;
+    case 'offshore_ot3_per_hour':
+      applyScalar('ot3PerHour');
+      break;
     case 'offshore_m1_per_trip':
       applyScalar('m1PerTrip');
+      applyScalar('d1PerTrip');
       break;
     case 'offshore_d1_per_trip':
+      applyScalar('m1PerTrip');
       applyScalar('d1PerTrip');
       break;
     case 'offshore_mob_demob_round_trip': {
@@ -460,35 +506,37 @@ export function autoCalculateMatrixFields(
   // 2. Calculate Hourly Rate (R) and OT Rates
   let hourlyRate = 0;
   if (side === 'offshore') {
-    const divisor = normalHours === 12 ? 14 : 8;
+    const hourlyDivisor: OffshoreHourlyDivisor = parseOffshoreHourlyDivisor(currentSideData.hourlyDivisor);
+    const divisor = offshoreWorkingDayHourlyDivisor(normalHours, hourlyDivisor);
     hourlyRate = workingDay / divisor;
     
     const otPerHour = Math.round((hourlyRate * 1.5) * 100) / 100;
+    const ot2PerHour = Math.round((hourlyRate * 2.0) * 100) / 100;
+    const ot3PerHour = Math.round((hourlyRate * 3.0) * 100) / 100;
 
-    // M1 / D1: explicit multiplier wins; else keep existing >0; else default 0.5× Working
-    // (matches the Rate Sheet UI which shows 0.5x when the field is empty)
+    // M1 / D1 ราคาเดียวกัน: explicit multiplier wins; else keep existing >0; else default 0.5× Working
     const existingM1 = Number(currentSideData.m1PerTrip);
     const existingD1 = Number(currentSideData.d1PerTrip);
-    const m1PerTrip =
-      m1Multiplier != null
-        ? Math.round(workingDay * m1Multiplier * 100) / 100
-        : Number.isFinite(existingM1) && existingM1 > 0
-          ? existingM1
-          : Math.round(workingDay * 0.5 * 100) / 100;
-    const d1PerTrip =
-      d1Multiplier != null
-        ? Math.round(workingDay * d1Multiplier * 100) / 100
+    const tripMult = m1Multiplier ?? d1Multiplier;
+    const existingTrip =
+      Number.isFinite(existingM1) && existingM1 > 0
+        ? existingM1
         : Number.isFinite(existingD1) && existingD1 > 0
           ? existingD1
           : Math.round(workingDay * 0.5 * 100) / 100;
+    const tripRate =
+      tripMult != null ? Math.round(workingDay * tripMult * 100) / 100 : existingTrip;
 
     return {
       ...currentSideData,
       workingDay,
       standbyDay,
       otPerHour,
-      m1PerTrip,
-      d1PerTrip,
+      ot2PerHour,
+      ot3PerHour,
+      m1PerTrip: tripRate,
+      d1PerTrip: tripRate,
+      hourlyDivisor,
     };
   } else {
     const divisor = normalHours === 12 ? 14 : 8;

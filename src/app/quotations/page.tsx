@@ -41,6 +41,12 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, isSystemAdmin } from '@/lib/permissions';
+import {
+  documentCreatorDisplayName,
+  filterToOwnCreatedDocuments,
+} from '@/lib/documents/own-created-list';
+import { canManageDocumentShare } from '@/lib/documents/document-share';
+import { DocumentShareListMarker } from '@/components/documents/document-share-controls';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import {
@@ -81,6 +87,7 @@ export default function QuotationsPage() {
 
   const isAuthorized = useMemo(() => canView(currentUser, 'quotations'), [currentUser]);
   const showAdminDelete = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
+  const showShareColumn = useMemo(() => canManageDocumentShare(currentUser), [currentUser]);
   const [deleteTarget, setDeleteTarget] = useState<Quotation | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -136,6 +143,7 @@ export default function QuotationsPage() {
         billingAddressSnapshot: customer?.billingAddress || '',
         createdAt: Date.now(),
         createdBy: currentUser.displayName,
+        createdByUid: currentUser.id,
         updatedAt: Date.now(),
         updatedBy: currentUser.id
       });
@@ -194,7 +202,7 @@ export default function QuotationsPage() {
 
   const filteredQuotations = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    return (quotations || []).filter((q) => {
+    return filterToOwnCreatedDocuments(currentUser, quotations).filter((q) => {
       const statusMatched = statusFilter === 'all' || q.status === statusFilter;
       if (!statusMatched) return false;
       if (!term) return true;
@@ -204,7 +212,7 @@ export default function QuotationsPage() {
       const status = (q.status || '').toLowerCase();
       return no.includes(term) || customer.includes(term) || title.includes(term) || status.includes(term);
     });
-  }, [quotations, searchTerm, statusFilter]);
+  }, [quotations, searchTerm, statusFilter, currentUser]);
 
   if (isUserLoading || userLoading || !currentUser) return null;
 
@@ -335,6 +343,10 @@ export default function QuotationsPage() {
                     <TableHead className="font-bold">ลูกค้า (Customer)</TableHead>
                     <TableHead className="font-bold">รายละเอียด (Title)</TableHead>
                     <TableHead className="font-bold text-right">มูลค่าสุทธิ</TableHead>
+                    <TableHead className="font-bold">ผู้สร้าง</TableHead>
+                    {showShareColumn && (
+                      <TableHead className="font-bold w-12 text-center">แชร์</TableHead>
+                    )}
                     <TableHead className="font-bold">สถานะ</TableHead>
                     <TableHead className="text-right pr-6">จัดการ</TableHead>
                   </TableRow>
@@ -358,6 +370,20 @@ export default function QuotationsPage() {
                         <TableCell className="text-right font-black text-primary">
                           {q.currency} {(q.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {documentCreatorDisplayName(q)}
+                        </TableCell>
+                        {showShareColumn && (
+                          <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                            <DocumentShareListMarker
+                              collectionName="quotations"
+                              documentId={q.id}
+                              currentUser={currentUser}
+                              sharedWith={q.sharedWith}
+                              sharedWithUids={q.sharedWithUids}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell>{getStatusBadge(q.status)}</TableCell>
                         <TableCell
                           className="text-right pr-6"
@@ -392,7 +418,7 @@ export default function QuotationsPage() {
                   })}
                   {filteredQuotations.length === 0 && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">ไม่มีรายการใบเสนอราคาในระบบ</TableCell>
+                      <TableCell colSpan={showShareColumn ? 8 : 7} className="text-center py-20 text-muted-foreground italic">ไม่มีรายการใบเสนอราคาในระบบ</TableCell>
                     </TableRow>
                   )}
                 </TableBody>

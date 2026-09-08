@@ -18,6 +18,7 @@ import {
 import { workerGlobalLaborToPayrollRestSchedule } from '@/lib/payroll/worker-global-labor-policy';
 import { applyLaborCostEpochToWorkerForDate } from '@/lib/payroll/remob-position-for-payroll';
 import { resolveFrozenTimesheetGrossAmount } from '@/lib/payroll/prior-paid-timesheet-gross';
+import { resolveOffshoreHourlyDivisor } from '@/lib/commercial/position-rate-matrix';
 
 export type PayslipLineItem = { label: string; amount: number };
 
@@ -303,6 +304,10 @@ function workDayPartsForTimesheet(
     Number(costOt?.afterShift) ||
     Number(deps.workerGlobalLabor.cost.otAfterShift) ||
     1.5;
+  const positionId = (ts.positionId || '').trim();
+  const contractPositionRate = mainContract?.positionRates?.find(
+    (r) => r.positionId === positionId && r.active !== false,
+  );
 
   let parts = computeWorkDayPayslipAmountParts({
     timesheet: ts,
@@ -310,6 +315,11 @@ function workDayPartsForTimesheet(
     statedHours,
     otAfterShiftMultiplier: otMult,
     payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(deps.workerGlobalLabor),
+    hourlyDivisor: resolveOffshoreHourlyDivisor(
+      'cost',
+      contractPositionRate?.rateMatrix,
+      poLine.rateMatrixSnapshot,
+    ),
   });
   if (!parts || parts.gross <= 0) return null;
 

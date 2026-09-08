@@ -33,6 +33,7 @@ import {
 } from '@/lib/documents/standard-document-print';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
+import { DocumentShareButton } from '@/components/documents/document-share-controls';
 import { detectMoneyReceiptWhtUndercharge } from '@/lib/accounting/money-receipt-wht-amount';
 import { fixMoneyReceiptWhtAmount } from '@/lib/services/money-receipt-wht-fix-service';
 import Link from 'next/link';
@@ -222,6 +223,13 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
             <Button variant="outline" className="gap-2" type="button" onClick={handlePrint} disabled={!taxInv}>
               <Printer className="h-4 w-4" /> พิมพ์
             </Button>
+            <DocumentShareButton
+              collectionName="receipts"
+              documentId={receipt.id}
+              currentUser={currentUser as User}
+              sharedWith={receipt.sharedWith}
+              sharedWithUids={receipt.sharedWithUids}
+            />
           </div>
         </div>
 

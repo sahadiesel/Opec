@@ -35,6 +35,12 @@ import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate } from '@/lib/permissions';
+import {
+  documentCreatorDisplayName,
+  filterToOwnCreatedDocuments,
+} from '@/lib/documents/own-created-list';
+import { canManageDocumentShare } from '@/lib/documents/document-share';
+import { DocumentShareListMarker } from '@/components/documents/document-share-controls';
 import { collection, query, orderBy, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { 
@@ -105,6 +111,7 @@ export default function TaxInvoicesPage() {
     () => !!currentUser && canCreate(currentUser, 'tax_invoices'),
     [currentUser]
   );
+  const showShareColumn = useMemo(() => canManageDocumentShare(currentUser), [currentUser]);
 
   const invoicesQuery = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -112,6 +119,11 @@ export default function TaxInvoicesPage() {
   }, [firestore, isAuthorized]);
 
   const { data: invoices, isLoading } = useCollection<TaxInvoice>(invoicesQuery as any);
+
+  const visibleInvoices = useMemo(
+    () => filterToOwnCreatedDocuments(currentUser, invoices),
+    [currentUser, invoices],
+  );
 
   const customersQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'customers') : null), [firestore, isAuthorized]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
@@ -178,17 +190,16 @@ export default function TaxInvoicesPage() {
 
   const yearOptionsCe = useMemo(() => {
     const set = new Set<string>();
-    for (const inv of invoices ?? []) {
+    for (const inv of visibleInvoices) {
       const ym = (inv.issueDate || '').slice(0, 7);
       if (/^\d{4}-\d{2}$/.test(ym)) set.add(ym);
     }
     return buildYearCeOptions(set);
-  }, [invoices]);
+  }, [visibleInvoices]);
 
   const filteredInvoices = useMemo(() => {
-    const list = invoices ?? [];
     const term = searchTerm.trim().toLowerCase();
-    return list.filter((inv) => {
+    return visibleInvoices.filter((inv) => {
       if (!ymMatchesYearMonthScope((inv.issueDate || '').slice(0, 7), yearFilterCe, monthScope)) {
         return false;
       }
@@ -198,7 +209,7 @@ export default function TaxInvoicesPage() {
       const custName = (cust?.name || '').toLowerCase();
       return no.includes(term) || custName.includes(term);
     });
-  }, [invoices, searchTerm, yearFilterCe, monthScope, customers]);
+  }, [visibleInvoices, searchTerm, yearFilterCe, monthScope, customers]);
 
   const printFilterSummary = useMemo(
     () => ({ searchTerm, yearCe: yearFilterCe, monthScope }),
@@ -232,7 +243,7 @@ export default function TaxInvoicesPage() {
 
   const runTaxInvoiceListPrint = useCallback(
     async (scope: 'filtered' | 'all') => {
-      const source = scope === 'filtered' ? filteredInvoices : invoices ?? [];
+      const source = scope === 'filtered' ? filteredInvoices : visibleInvoices;
       if (source.length === 0) {
         toast({
           variant: 'destructive',
@@ -293,7 +304,7 @@ export default function TaxInvoicesPage() {
     },
     [
       filteredInvoices,
-      invoices,
+      visibleInvoices,
       buildPrintRows,
       printFilterSummary,
       yearFilterCe,
@@ -531,7 +542,7 @@ export default function TaxInvoicesPage() {
                 <p className="text-xs font-medium pt-1">จะพิมพ์ {filteredInvoices.length} รายการ</p>
               </div>
               <p className="text-xs text-muted-foreground">
-                ข้อมูลทั้งหมดในระบบ: {invoices?.length ?? 0} รายการ
+                ข้อมูลทั้งหมดในระบบ: {visibleInvoices.length} รายการ
               </p>
             </div>
             <DialogFooter className="flex-col sm:flex-row gap-2">
@@ -548,11 +559,11 @@ export default function TaxInvoicesPage() {
               <Button
                 type="button"
                 className="w-full sm:w-auto"
-                disabled={printBusy || !(invoices?.length)}
+                disabled={printBusy || visibleInvoices.length === 0}
                 onClick={() => void runTaxInvoiceListPrint('all')}
               >
                 <Printer className="h-4 w-4 mr-2" />
-                พิมพ์ทั้งหมด ({invoices?.length ?? 0})
+                พิมพ์ทั้งหมด ({visibleInvoices.length})
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -615,6 +626,10 @@ export default function TaxInvoicesPage() {
                     <TableHead className="text-right font-bold whitespace-nowrap">ยอดรวมสุทธิ</TableHead>
                     <TableHead className="text-right font-bold whitespace-nowrap">ยอด หัก ณ ที่จ่าย</TableHead>
                     <TableHead className="text-right font-bold whitespace-nowrap">ยอดรับสุทธิ</TableHead>
+                    <TableHead className="font-bold whitespace-nowrap">ผู้สร้าง</TableHead>
+                    {showShareColumn && (
+                      <TableHead className="font-bold w-12 text-center whitespace-nowrap">แชร์</TableHead>
+                    )}
                     <TableHead className="text-right font-bold w-[1%] whitespace-nowrap">สถานะ</TableHead>
                     <TableHead className="pr-6 text-right w-[1%] whitespace-nowrap">จัดการ</TableHead>
                   </TableRow>
@@ -682,6 +697,20 @@ export default function TaxInvoicesPage() {
                         <TableCell className="text-right font-mono text-sm font-semibold tabular-nums whitespace-nowrap">
                           {formatTaxInvoiceMoneyPlain(netReceived)}
                         </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {documentCreatorDisplayName(inv)}
+                        </TableCell>
+                        {showShareColumn && (
+                          <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                            <DocumentShareListMarker
+                              collectionName="tax_invoices"
+                              documentId={inv.id}
+                              currentUser={currentUser}
+                              sharedWith={inv.sharedWith}
+                              sharedWithUids={inv.sharedWithUids}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell className="text-right">
                           <div className="flex justify-end">{getStatusBadge(inv.status)}</div>
                         </TableCell>
@@ -720,16 +749,16 @@ export default function TaxInvoicesPage() {
                       </TableRow>
                     );
                   })}
-                  {!isLoading && (!invoices || invoices.length === 0) && (
+                  {!isLoading && visibleInvoices.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={11} className="py-20 text-center italic text-muted-foreground">
+                      <TableCell colSpan={showShareColumn ? 13 : 12} className="py-20 text-center italic text-muted-foreground">
                         ไม่มีรายการใบกำกับภาษีในระบบ
                       </TableCell>
                     </TableRow>
                   )}
-                  {!isLoading && (invoices?.length ?? 0) > 0 && filteredInvoices.length === 0 && (
+                  {!isLoading && visibleInvoices.length > 0 && filteredInvoices.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={11} className="py-20 text-center text-muted-foreground">
+                      <TableCell colSpan={showShareColumn ? 13 : 12} className="py-20 text-center text-muted-foreground">
                         ไม่พบรายการที่ตรงกับการค้นหาหรือเดือนที่เลือก
                       </TableCell>
                     </TableRow>

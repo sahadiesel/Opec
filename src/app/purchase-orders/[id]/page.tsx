@@ -59,6 +59,7 @@ import {
 } from '@/lib/ops/po-active-bundle';
 import { PoActiveBundleLinesPanel } from '@/components/commercial/po-active-bundle-lines-panel';
 import { resolveSafeInternalReturnPath } from '@/lib/navigation/safe-return-path';
+import { DocumentShareButton } from '@/components/documents/document-share-controls';
 
 export default function CustomerPODetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -336,7 +337,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
           <Button variant="ghost" size="icon" asChild>
             <Link href={backHref}><ArrowLeft className="h-5 w-5" /></Link>
           </Button>
-          <div className="flex-1">
+          <div className="flex-1 min-w-0">
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-bold tracking-tight">{po.title}</h1>
               <Badge variant="outline" className="font-mono text-primary border-primary/20">{po.poCode}</Badge>
@@ -376,6 +377,14 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
               )}
             </div>
           </div>
+          <DocumentShareButton
+            collectionName="purchase_orders"
+            documentId={po.id}
+            currentUser={currentUser}
+            sharedWith={po.sharedWith}
+            sharedWithUids={po.sharedWithUids}
+            className="shrink-0 self-start"
+          />
         </div>
 
         {isContractBasedPO && po.status === 'active' && po.poActiveBundleId && (

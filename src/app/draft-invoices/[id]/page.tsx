@@ -89,6 +89,7 @@ import { translateCommercialLineDescriptionToEn, translateCommercialWaveCodeToEn
 import { printT, type PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
+import { DocumentShareButton } from '@/components/documents/document-share-controls';
 import { createTaxInvoiceDraftFromIssuedCommercial } from '@/lib/services/tax-invoice-from-commercial-service';
 import { verifyOpecCustomerPaymentForCommercial } from '@/lib/services/commercial-payment-flow-service';
 import {
@@ -758,6 +759,14 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               <Printer className="h-4 w-4" />
               พิมพ์
             </Button>
+            <DocumentShareButton
+              collectionName="commercial_invoices"
+              documentId={invoice.id}
+              currentUser={currentUser}
+              sharedWith={invoice.sharedWith}
+              sharedWithUids={invoice.sharedWithUids}
+              size="sm"
+            />
           </div>
         </div>
 

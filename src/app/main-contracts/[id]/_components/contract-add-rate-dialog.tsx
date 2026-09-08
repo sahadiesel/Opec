@@ -51,7 +51,7 @@ export function ContractAddRateDialog({
         <DialogHeader>
           <DialogTitle>กำหนดอัตราราคาใหม่</DialogTitle>
           <DialogDescription>
-            วันหยุดทั้งสัญญากำหนดที่แท็บข้อมูลสัญญาหลัก — ที่นี่เฉพาะราคา ชม.ปกติ หน่วย และกฎ OT ต่อตำแหน่ง
+            วันหยุดทั้งสัญญากำหนดที่แท็บข้อมูลสัญญาหลัก — ที่นี่เฉพาะราคา ชม.ปกติ หน่วย และ Rate Sheet ต่อตำแหน่ง
           </DialogDescription>
         </DialogHeader>
 

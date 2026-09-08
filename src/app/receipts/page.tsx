@@ -28,6 +28,12 @@ import type { Customer, MoneyReceipt, User } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
+import {
+  documentCreatorDisplayName,
+  filterToOwnCreatedDocuments,
+} from '@/lib/documents/own-created-list';
+import { canManageDocumentShare } from '@/lib/documents/document-share';
+import { DocumentShareListMarker } from '@/components/documents/document-share-controls';
 import { useToast } from '@/hooks/use-toast';
 import { collection, orderBy, query } from 'firebase/firestore';
 import Link from 'next/link';
@@ -60,6 +66,7 @@ export default function MoneyReceiptsListPage() {
     () => !!currentUser && canView(currentUser, 'receipts'),
     [currentUser],
   );
+  const showShareColumn = useMemo(() => canManageDocumentShare(currentUser), [currentUser]);
 
   const listQ = useMemoFirebase(() => {
     if (!firestore || !isAuthorized) return null;
@@ -67,6 +74,11 @@ export default function MoneyReceiptsListPage() {
   }, [firestore, isAuthorized]);
 
   const { data: rows, isLoading } = useCollection<MoneyReceipt>(listQ as any);
+
+  const visibleRows = useMemo(
+    () => filterToOwnCreatedDocuments(currentUser, rows),
+    [currentUser, rows],
+  );
 
   const customersQ = useMemoFirebase(
     () => (firestore && isAuthorized ? collection(firestore, 'customers') : null),
@@ -85,7 +97,7 @@ export default function MoneyReceiptsListPage() {
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
 
-  const allRows = useMemo(() => rows ?? [], [rows]);
+  const allRows = useMemo(() => visibleRows, [visibleRows]);
 
   const yearOptionsCe = useMemo(() => {
     const set = new Set<string>();
@@ -288,6 +300,8 @@ export default function MoneyReceiptsListPage() {
                       </span>
                     </TableHead>
                     <TableHead className="text-right">ยอดรับ</TableHead>
+                    <TableHead>ผู้สร้าง</TableHead>
+                    {showShareColumn && <TableHead className="w-12 text-center">แชร์</TableHead>}
                     <TableHead className="w-14 text-right" />
                   </TableRow>
                 </TableHeader>
@@ -301,6 +315,20 @@ export default function MoneyReceiptsListPage() {
                       <TableCell className="text-right text-sm">
                         {r.currency} {r.amount.toLocaleString()}
                       </TableCell>
+                      <TableCell className="text-sm whitespace-nowrap">
+                        {documentCreatorDisplayName(r)}
+                      </TableCell>
+                      {showShareColumn && (
+                        <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                          <DocumentShareListMarker
+                            collectionName="receipts"
+                            documentId={r.id}
+                            currentUser={currentUser}
+                            sharedWith={r.sharedWith}
+                            sharedWithUids={r.sharedWithUids}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                         <Button variant="ghost" size="icon" asChild>
                           <Link href={`/receipts/${r.id}`}>
@@ -312,14 +340,14 @@ export default function MoneyReceiptsListPage() {
                   ))}
                   {allRows.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                      <TableCell colSpan={showShareColumn ? 8 : 7} className="py-10 text-center text-muted-foreground">
                         ยังไม่มีใบเสร็จ — ออกหลังยืนยันรับเงินจากใบกำกับภาษี
                       </TableCell>
                     </TableRow>
                   )}
                   {allRows.length > 0 && filteredRows.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                      <TableCell colSpan={showShareColumn ? 8 : 7} className="py-10 text-center text-muted-foreground">
                         ไม่พบรายการที่ตรงกับการค้นหาหรือเดือนที่เลือก
                       </TableCell>
                     </TableRow>

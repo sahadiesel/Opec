@@ -29,6 +29,27 @@ export const PACKAGE_OT_TIER_MULT = {
   OT_3_0: 3,
 } as const;
 
+/** ตัวหารชม.ปกติจากราคารายวันออฟชอร์ 12 ชม. — ค่าเริ่มต้น 14 (8 ปกติ + 4 OT×1.5) */
+export type OffshoreHourlyDivisor = 12 | 14;
+export const DEFAULT_OFFSHORE_HOURLY_DIVISOR: OffshoreHourlyDivisor = 14;
+
+export function parseOffshoreHourlyDivisor(value: unknown): OffshoreHourlyDivisor {
+  return Number(value) === 12 ? 12 : DEFAULT_OFFSHORE_HOURLY_DIVISOR;
+}
+
+/**
+ * ตัวหารที่ใช้คำนวณฐานชม.จากราคารายวันออฟชอร์
+ * - แพ็ก 8 ชม.: หาร 8
+ * - แพ็ก 12 ชม.: ตามกฎตำแหน่ง หาร 14 (มาตรฐาน) หรือ หาร 12
+ */
+export function offshoreWorkingDayHourlyDivisor(
+  statedHours: number,
+  hourlyDivisor?: unknown,
+): number {
+  if (statedHours !== 12) return LEGAL_NORMAL_HOURS_PER_DAY;
+  return parseOffshoreHourlyDivisor(hourlyDivisor);
+}
+
 /** ตัวหารแพ็ก 12 ชม. เมื่อ OT ในแพ็กใช้ตัวคูณ 1.5 → 8 + 4×1.5 = 14 */
 export function offshorePackageHourDenominator(otMultiplier: number = PACKAGE_OT_TIER_MULT.OT_1_5): number {
   const ot = Math.max(0, otMultiplier);
@@ -43,6 +64,7 @@ export function derivePackageNormalHourlyRate(
   packagePerDay: number,
   statedHours: StatedPackageHours,
   otMultiplier: number,
+  hourlyDivisor?: OffshoreHourlyDivisor,
 ): number {
   const pkg = Math.max(0, packagePerDay);
   if (pkg <= 0) return 0;
@@ -51,6 +73,10 @@ export function derivePackageNormalHourlyRate(
 
   if (statedHours === 8) {
     return pkg / LEGAL_NORMAL_HOURS_PER_DAY;
+  }
+
+  if (hourlyDivisor === 12 || hourlyDivisor === 14) {
+    return pkg / hourlyDivisor;
   }
 
   const denom = offshorePackageHourDenominator(ot);
@@ -63,13 +89,19 @@ export function deriveOtHourlyRatesFromDailyPackage(
   packagePerDay: number,
   statedHours: StatedPackageHours,
   otAfterShiftMultiplier: number = PACKAGE_OT_TIER_MULT.OT_1_5,
+  hourlyDivisor?: OffshoreHourlyDivisor,
 ): {
   normalHourly: number;
   ot15Hourly: number;
   ot20Hourly: number;
   ot30Hourly: number;
 } {
-  const normalHourly = derivePackageNormalHourlyRate(packagePerDay, statedHours, otAfterShiftMultiplier);
+  const normalHourly = derivePackageNormalHourlyRate(
+    packagePerDay,
+    statedHours,
+    otAfterShiftMultiplier,
+    hourlyDivisor,
+  );
   return {
     normalHourly,
     ot15Hourly: normalHourly * PACKAGE_OT_TIER_MULT.OT_1_5,

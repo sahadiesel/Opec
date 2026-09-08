@@ -75,6 +75,17 @@ import {
 } from '@/lib/ops/mob-day-charge';
 import { buildMobDayChargeBahtPreviewRates } from '@/lib/ops/mob-day-charge-baht-preview';
 import { MobDayChargeSideEditors } from '@/components/timesheet/mob-day-charge-side-editors';
+import { OtHoursAndTierFields } from '@/components/timesheet/ot-hours-tier-fields';
+import {
+  formatTimesheetOtHoursHint,
+  inferTimesheetOtTierFromTimesheet,
+  resolveOtTierForRetroForm,
+  retroOtHoursDeltaPayload,
+  timesheetOtHoursPayload,
+  timesheetOtTierLabel,
+  totalTimesheetOtHours,
+  type TimesheetOtTier,
+} from '@/lib/timesheet/ot-tier';
 import { resolveBillingSellWorkingDayRate } from '@/lib/commercial/position-rate-sell';
 import { resolveMatrixCostRate } from '@/lib/commercial/position-rate-matrix';
 import { rosterDeploymentTier } from '@/lib/ops/assignment-roster';
@@ -304,8 +315,8 @@ function buildSyntheticTimesheetForRetro(input: {
     eventType,
     normalHours: existingTs?.normalHours ?? 12,
     ot15Hours: existingTs?.ot15Hours ?? 0,
-    ot20Hours: 0,
-    ot30Hours: 0,
+    ot20Hours: existingTs?.ot20Hours ?? 0,
+    ot30Hours: existingTs?.ot30Hours ?? 0,
     waveId: wave.id,
     siteId: wave.id,
     purchaseOrderId: assignment.poId || wave.poId,
@@ -332,6 +343,8 @@ type RetroEditContext = {
   appliedOtHours: number;
   /** ชม. OT จาก retro ที่รอจ่าย (approved) — จะถูกแทนที่เมื่อบันทึกยอดใหม่ */
   approvedOtHours: number;
+  /** อัตรา OT ของรายการรอจ่าย / บนใบงาน — ใช้เป็นค่าเริ่มต้นในฟอร์ม */
+  pendingOtTier: TimesheetOtTier;
 };
 
 function sumAdjustmentOtHours(
@@ -380,6 +393,7 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [retroEdit, setRetroEdit] = useState<RetroEditContext | null>(null);
   const [retroEvent, setRetroEvent] = useState<WaveMonthEventSelectValue>('work_day');
   const [retroAddedOt, setRetroAddedOt] = useState(0);
+  const [retroOtTier, setRetroOtTier] = useState<TimesheetOtTier>('ot15');
   const [retroAddedStandby, setRetroAddedStandby] = useState(0);
   const [retroAddedM1Trips, setRetroAddedM1Trips] = useState(0);
   const [retroAddedD1Trips, setRetroAddedD1Trips] = useState(0);
@@ -395,6 +409,7 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [editEvent, setEditEvent] = useState<WaveMonthEventSelectValue>('work_day');
   const [editHours, setEditHours] = useState(12);
   const [editOtHours, setEditOtHours] = useState(0);
+  const [editOtTier, setEditOtTier] = useState<TimesheetOtTier>('ot15');
   const [editRemark, setEditRemark] = useState('');
   const [editBillingCharge, setEditBillingCharge] = useState<MobDayChargeSpec>({ kind: 'M1', hours: 12 });
   const [editPayrollCharge, setEditPayrollCharge] = useState<MobDayChargeSpec>({ kind: 'M1', hours: 12 });
@@ -438,7 +453,8 @@ export default function WaveMonthTimesheetSummaryPage() {
     const needsPkg =
       et === 'mobilization_day' || et === 'demobilization_day' || et === 'standby_day';
     setEditHours(needsPkg ? (nh > 0 ? nh : pkg) : nh > 0 ? nh : pkg);
-    setEditOtHours(typeof ts?.ot15Hours === 'number' ? ts.ot15Hours : 0);
+    setEditOtHours(totalTimesheetOtHours(ts));
+    setEditOtTier(inferTimesheetOtTierFromTimesheet(ts));
     setEditRemark(ts?.remark ?? '');
     if (ts && needsPkg) {
       setEditBillingCharge(resolveTimesheetBillingCharge(ts));
@@ -499,6 +515,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     setRetroEvent(ev);
     /** OT = ยอดรวมที่ต้องการบนตาราง — เติมค่าที่แสดงอยู่ตอนเปิดฟอร์ม */
     setRetroAddedOt(ev === 'work_day' ? Math.max(0, Number(retroEdit.displayOtHours) || 0) : 0);
+    setRetroOtTier(retroEdit.pendingOtTier);
     setRetroAddedStandby(0);
     setRetroAddedM1Trips(ev === 'mobilization_day' ? 1 : 0);
     setRetroAddedD1Trips(ev === 'demobilization_day' ? 1 : 0);
@@ -536,7 +553,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     }
     const ts = retroEdit.timesheet;
     const locked = isTimesheetPayrollLocked(ts);
-    const base = locked ? Math.max(0, Number(ts.ot15Hours) || 0) : 0;
+    const base = locked ? totalTimesheetOtHours(ts) : 0;
     const applied = Math.max(0, Number(retroEdit.appliedOtHours) || 0);
     const target = Math.max(0, Math.min(24, Number(retroAddedOt) || 0));
     return Math.max(0, target - base - applied);
@@ -573,7 +590,7 @@ export default function WaveMonthTimesheetSummaryPage() {
         try {
           const tsForPay: DailyTimesheet = { ...retroEdit.timesheet, eventType: retroEvent };
           const result = await computeRetroAdjustmentPayFromFirestore(firestore, tsForPay, {
-            addedOt15Hours: retroEvent === 'work_day' ? ot : undefined,
+            ...retroOtHoursDeltaPayload(retroOtTier, retroEvent === 'work_day' ? ot : 0),
             addedStandbyHours:
               retroEvent === 'mobilization_day' ||
               retroEvent === 'demobilization_day' ||
@@ -608,6 +625,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     retroEdit,
     retroEvent,
     retroAddedOt,
+    retroOtTier,
     retroOtPayHours,
     retroAddedStandby,
     retroAddedM1Trips,
@@ -1998,7 +2016,7 @@ export default function WaveMonthTimesheetSummaryPage() {
           seenRetro.add(r.id);
           retroRows.push(r);
         }
-        const baseOt = Math.max(0, Number(retroTs.ot15Hours) || 0);
+        const baseOt = totalTimesheetOtHours(retroTs);
         const appliedOtHours = sumAdjustmentOtHours(retroRows, 'applied');
         const approvedOtHours = sumAdjustmentOtHours(retroRows, 'approved');
         const displayOtHours = baseOt + sumAdjustmentOtHours(retroRows);
@@ -2010,6 +2028,7 @@ export default function WaveMonthTimesheetSummaryPage() {
           displayOtHours,
           appliedOtHours,
           approvedOtHours,
+          pendingOtTier: resolveOtTierForRetroForm(retroTs, retroRows),
         });
         return;
       }
@@ -2209,17 +2228,21 @@ export default function WaveMonthTimesheetSummaryPage() {
 
     const isWorkDay = editEvent === 'work_day';
     const otHours = isWorkDay ? Math.min(24, Math.max(0, Number(editOtHours) || 0)) : 0;
+    const otPayload = timesheetOtHoursPayload(editOtTier, otHours);
 
     if (closedPeriodCorrection && baseTs) {
       setSavingCell(true);
       try {
         await service.correctClosedPeriodTimesheetHours(baseTs.id, currentUser, {
-          ot15Hours: otHours,
+          ...otPayload,
           normalHours:
             editEvent === 'unpaid_leave' ? 0 : Math.min(24, Math.max(0, Number(editHours) || 0)),
           reason: editRemark.trim() || 'แก้ OT จาก wave-month',
         });
-        toast({ title: 'บันทึกแล้ว', description: `อัปเดต OT เป็น ${otHours} ชม.` });
+        toast({
+          title: 'บันทึกแล้ว',
+          description: `อัปเดต ${timesheetOtTierLabel(editOtTier)} เป็น ${otHours} ชม.`,
+        });
         setCellEdit(null);
       } catch (e: unknown) {
         toast({
@@ -2278,6 +2301,7 @@ export default function WaveMonthTimesheetSummaryPage() {
               )
             : Math.min(24, Math.max(0, Number(editHours) || 0));
       const otHours = isWorkDay ? Math.min(24, Math.max(0, Number(editOtHours) || 0)) : 0;
+      const otPayload = timesheetOtHoursPayload(editOtTier, otHours);
 
       const priorRemark = String(baseTs?.remark || '').trim();
       const manualRemark = editRemark.trim();
@@ -2296,9 +2320,7 @@ export default function WaveMonthTimesheetSummaryPage() {
         date: editDate,
         eventType: editEvent,
         normalHours: nHours,
-        ot15Hours: otHours,
-        ot20Hours: 0,
-        ot30Hours: 0,
+        ...otPayload,
         remark: nextRemark,
         waveId: wave.id,
         siteId: wave.id,
@@ -2395,6 +2417,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     editEvent,
     editHours,
     editOtHours,
+    editOtTier,
     editRemark,
     editBillingCharge,
     editPayrollCharge,
@@ -2488,14 +2511,15 @@ export default function WaveMonthTimesheetSummaryPage() {
         if (!isWorkDay) nextOt = 0;
 
         const priorRemark = String(workingTs.remark || '').trim();
+        const unlockedOt = timesheetOtHoursPayload(retroOtTier, nextOt);
         const payload: Partial<DailyTimesheet> = {
           ...workingTs,
           id: undefined,
           eventType: ev,
           normalHours: nextHours,
-          ot15Hours: locked ? Math.max(0, Number(workingTs.ot15Hours) || 0) : nextOt,
-          ot20Hours: 0,
-          ot30Hours: 0,
+          ot15Hours: locked ? Math.max(0, Number(workingTs.ot15Hours) || 0) : unlockedOt.ot15Hours,
+          ot20Hours: locked ? Math.max(0, Number(workingTs.ot20Hours) || 0) : unlockedOt.ot20Hours,
+          ot30Hours: locked ? Math.max(0, Number(workingTs.ot30Hours) || 0) : unlockedOt.ot30Hours,
           remark: priorRemark
             ? `${priorRemark} · แก้ประเภทวัน: ${reason}`
             : `แก้ประเภทวัน (${originalEv}→${ev}): ${reason}`,
@@ -2519,7 +2543,9 @@ export default function WaveMonthTimesheetSummaryPage() {
           id: id || workingTs.id,
           eventType: ev,
           normalHours: nextHours,
-          ot15Hours: (payload.ot15Hours as number) ?? nextOt,
+          ot15Hours: (payload.ot15Hours as number) ?? 0,
+          ot20Hours: (payload.ot20Hours as number) ?? 0,
+          ot30Hours: (payload.ot30Hours as number) ?? 0,
         } as DailyTimesheet;
       }
 
@@ -2528,7 +2554,7 @@ export default function WaveMonthTimesheetSummaryPage() {
          * OT = ยอดรวมที่ต้องการบนตาราง — ยกเลิก approved เดิมแล้วสร้างใหม่ตามส่วนต่าง
          * ใบงานยังไม่ LOCKED: ฐานนับ 0 (จะย้าย OT ออกจากใบงาน) เพื่อไม่บวกซ้ำ
          */
-        const baseOnSlip = locked ? Math.max(0, Number(workingTs.ot15Hours) || 0) : 0;
+        const baseOnSlip = locked ? totalTimesheetOtHours(workingTs) : 0;
         try {
           const result = await setAbsoluteWorkDayRetroOt(firestore, currentUser as User, {
             sourceTimesheet: workingTs,
@@ -2536,14 +2562,17 @@ export default function WaveMonthTimesheetSummaryPage() {
             applyPayrollYearMonth: retroApplyYm.trim(),
             targetOtHours: Math.max(0, Math.min(24, Number(retroAddedOt) || 0)),
             baseOtHoursOnSlip: baseOnSlip,
+            otTier: retroOtTier,
             reason,
           });
 
           if (!locked && workingTs.id && canCorrectTimesheetOtDirect(workingTs)) {
-            const sourceOt = Math.max(0, Number(workingTs.ot15Hours) || 0);
+            const sourceOt = totalTimesheetOtHours(workingTs);
             if (sourceOt > 0) {
               await service.correctClosedPeriodTimesheetHours(workingTs.id, currentUser as User, {
                 ot15Hours: 0,
+                ot20Hours: 0,
+                ot30Hours: 0,
                 reason: `ย้าย OT ${sourceOt} ชม. ไปรายการแก้ไขย้อนหลัง (จ่ายในงวด ${retroApplyYm.trim()})`,
               });
             }
@@ -2555,9 +2584,9 @@ export default function WaveMonthTimesheetSummaryPage() {
               typeChanged && result.addedOtHours <= 0
                 ? `เปลี่ยนประเภทวันเป็นวันทำงานแล้ว`
                 : result.addedOtHours > 0 && retroPayPreview != null && retroPayPreview > 0
-                  ? `OT รวม ${Number(retroAddedOt) || 0} ชม. · ยอดจ่ายประมาณ ฿${retroPayPreview.toLocaleString()} · จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)}`
+                  ? `${timesheetOtTierLabel(retroOtTier)} รวม ${Number(retroAddedOt) || 0} ชม. · ยอดจ่ายประมาณ ฿${retroPayPreview.toLocaleString()} · จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)}`
                   : result.voidedCount > 0
-                    ? `อัปเดต OT รวมเป็น ${Number(retroAddedOt) || 0} ชม. (แทนที่รายการรอจ่ายเดิม)`
+                    ? `อัปเดต ${timesheetOtTierLabel(retroOtTier)} รวมเป็น ${Number(retroAddedOt) || 0} ชม. (แทนที่รายการรอจ่ายเดิม)`
                     : `แสดงบนตารางพร้อมเครื่องหมาย † — จ่ายในงวด ${formatPayrollYearMonthThaiBE(retroApplyYm)}`,
           });
         } catch (e: unknown) {
@@ -2638,6 +2667,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     retroApplyYm,
     retroEvent,
     retroAddedOt,
+    retroOtTier,
     retroAddedStandby,
     retroAddedM1Trips,
     retroAddedD1Trips,
@@ -3341,8 +3371,8 @@ export default function WaveMonthTimesheetSummaryPage() {
                                             : editableGrid
                                               ? `คลิกแก้ไข · ${d} · ${ts.eventType} · ${ts.status}`
                                               : `${d} · ${ts.eventType} · ${ts.status}`) +
-                                          (ts.eventType === 'work_day' && (ts.ot15Hours ?? 0) > 0
-                                            ? ` · OT ${ts.ot15Hours} ชม.`
+                                          (ts.eventType === 'work_day' && totalTimesheetOtHours(ts) > 0
+                                            ? ` · ${formatTimesheetOtHoursHint(ts)}`
                                             : '') +
                                           (hasRetro
                                             ? ` · แก้ไขย้อนหลัง (+OT ${retroAddedOtHours(retroForCell)} ชม.` +
@@ -3567,14 +3597,12 @@ export default function WaveMonthTimesheetSummaryPage() {
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="wm-edit-ot-hours">OT ชม. (0–24)</Label>
-                    <Input
-                      id="wm-edit-ot-hours"
-                      type="number"
-                      min={0}
-                      max={24}
-                      step={0.5}
-                      value={editOtHours}
-                      onChange={(e) => setEditOtHours(Number(e.target.value))}
+                    <OtHoursAndTierFields
+                      hoursId="wm-edit-ot-hours"
+                      hours={editOtHours}
+                      onHoursChange={setEditOtHours}
+                      tier={editOtTier}
+                      onTierChange={setEditOtTier}
                       disabled={
                         savingCell ||
                         cellSaveAwaitingConfirm ||
@@ -3585,7 +3613,9 @@ export default function WaveMonthTimesheetSummaryPage() {
                     {editEvent !== 'work_day' ? (
                       <p className="text-xs text-muted-foreground">OT ใช้ได้เฉพาะวันทำงาน</p>
                     ) : (
-                      <p className="text-xs text-muted-foreground">บันทึกเป็น ot15 สำหรับ payroll/billing</p>
+                      <p className="text-xs text-muted-foreground">
+                        เลือก OT1.5 / OT2 / OT3 ตามสัญญา — ใช้ตอนออกใบแจ้งหนี้ (ขาย) และทำ payroll (ต้นทุน)
+                      </p>
                     )}
                   </div>
                 </div>
@@ -3710,35 +3740,33 @@ export default function WaveMonthTimesheetSummaryPage() {
               ) : retroEvent === 'work_day' ? (
                   <div className="space-y-1.5">
                     <Label htmlFor="retro-ot">OT ชม. ที่ต้องการ (0–24)</Label>
-                    <Input
-                      id="retro-ot"
-                      type="number"
-                      min={0}
-                      max={24}
-                      step={0.5}
-                      value={retroAddedOt}
-                      onChange={(e) => setRetroAddedOt(Number(e.target.value))}
+                    <OtHoursAndTierFields
+                      hoursId="retro-ot"
+                      hours={retroAddedOt}
+                      onHoursChange={setRetroAddedOt}
+                      tier={retroOtTier}
+                      onTierChange={setRetroOtTier}
                       disabled={retroSaving}
                     />
                     <p className="text-xs text-muted-foreground">
                       {isTimesheetPayrollLocked(retroEdit.timesheet) ? (
                         <>
-                          ของเดิมในสลิป: OT {retroEdit.timesheet.ot15Hours ?? 0} ชม.
+                          ของเดิมในสลิป: {formatTimesheetOtHoursHint(retroEdit.timesheet)}
                           {retroEdit.approvedOtHours > 0
-                            ? ` · รอจ่าย (แก้ไขย้อนหลัง): ${retroEdit.approvedOtHours} ชม.`
+                            ? ` · รอจ่าย (แก้ไขย้อนหลัง): ${retroEdit.approvedOtHours} ชม. ${timesheetOtTierLabel(retroEdit.pendingOtTier)}`
                             : ''}
                           {retroEdit.appliedOtHours > 0
                             ? ` · จ่ายแล้วจากแก้ไขย้อนหลัง: ${retroEdit.appliedOtHours} ชม.`
                             : ''}{' '}
-                          — ใส่จำนวน <strong>รวม</strong> ที่ต้องการให้แสดง (เช่น 4 = W+4 ไม่ใช่บวกเพิ่ม)
+                          — ใส่จำนวน <strong>รวม</strong> ที่ต้องการให้แสดง (เช่น 4 = W+4 ไม่ใช่บวกเพิ่ม) แล้วเลือก OT1.5 / OT2 / OT3 ตามสัญญา
                         </>
                       ) : (
                         <>
-                          ใบงานยังไม่ LOCKED: OT บนใบงาน {retroEdit.timesheet.ot15Hours ?? 0} ชม.
+                          ใบงานยังไม่ LOCKED: OT บนใบงาน {formatTimesheetOtHoursHint(retroEdit.timesheet)}
                           {retroEdit.approvedOtHours > 0
                             ? ` · รอจ่ายอยู่แล้ว ${retroEdit.approvedOtHours} ชม.`
                             : ''}{' '}
-                          — ใส่จำนวน <strong>รวม</strong> ที่ต้องการ (ระบบจะแทนที่รายการรอจ่ายเดิม และย้าย OT ออกจากใบงาน)
+                          — ใส่จำนวน <strong>รวม</strong> ที่ต้องการ แล้วเลือกอัตรา — ระบบจะแทนที่รายการรอจ่ายเดิม และย้าย OT ออกจากใบงาน
                         </>
                       )}
                     </p>
@@ -3865,7 +3893,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                   <span className="text-muted-foreground">
                   ยอดจ่ายเพิ่ม
                   {retroEvent === 'work_day' && retroOtPayHours > 0
-                    ? ` (OT ${retroOtPayHours} ชม. ที่รอจ่ายใหม่)`
+                    ? ` (${timesheetOtTierLabel(retroOtTier)} ${retroOtPayHours} ชม. ที่รอจ่ายใหม่)`
                     : ''}
                   {retroPayRateSource === 'worker_custom'
                     ? ' (จากฐานทะเบียนลูกจ้าง): '
@@ -3887,11 +3915,11 @@ export default function WaveMonthTimesheetSummaryPage() {
                 <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
                   {retroPayRateSource === 'worker_custom' ? (
                     <>
-                      ยึดฐานออฟชอร์/ออนชอร์จากหน้าลูกจ้าง · แพ็ก 12 ชม. = 8 ปกติ + 4 OT → OT/ชม. = (ฐานวัน÷14)×1.5
+                      ยึดฐานออฟชอร์/ออนชอร์จากหน้าลูกจ้าง · อัตรา OT ตามที่เลือก (OT1.5 / OT2 / OT3)
                     </>
                   ) : (
                     <>
-                      ดึงจากตารางอัตราสัญญา ฝั่ง <strong>ต้นทุน (Cost)</strong> — เช่น OFF OT/hr, OFF M1/trip
+                      ดึงจากตารางอัตราสัญญา ฝั่ง <strong>ต้นทุน (Cost)</strong> ตามอัตราที่เลือก — เช่น OFF OT1.5/OT2/OT3, OFF M1/trip
                     </>
                   )}
                 </p>

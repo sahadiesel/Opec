@@ -28,6 +28,7 @@ import { isYmdWithinAssignmentMobTimesheetWindow } from '@/lib/constants/timeshe
 import { normalizeTimesheetsForBillingLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 import {
   resolveBillingMatrixEventDayRate,
+  resolveBillingMatrixOtTierHourlyRate,
   resolveBillingSellOtHourlyRate,
   resolveBillingSellWorkingDayRate,
 } from '@/lib/commercial/position-rate-sell';
@@ -350,9 +351,13 @@ function workDayFromDayRateBilling(
 
   const statedHours = resolveStatedPackageHoursForBilling(poLine, workMode);
   const sellOtMult = sellOtMultiplierForBilling(poLine, mainContract);
-  /** อัตรา OT x1.5 เต็มต่อชม. (ช่อง OT / ชม. บน rate sheet) — ไม่ใช่ฐานชม.ก่อนคูณ */
+  /** อัตรา OT x1.5 เต็มต่อชม. (ช่อง OT 1.5 / ชม. บน rate sheet) — ไม่ใช่ฐานชม.ก่อนคูณ */
   const otHourlyFull = resolveBillingSellOtHourlyRate(rateCtx, statedHours);
   if (otHourlyFull <= 0) return;
+  const ot2Hourly =
+    resolveBillingMatrixOtTierHourlyRate(rateCtx, 2) ?? Math.round(otHourlyFull * (2 / 1.5) * 100) / 100;
+  const ot3Hourly =
+    resolveBillingMatrixOtTierHourlyRate(rateCtx, 3) ?? Math.round(otHourlyFull * 2 * 100) / 100;
 
   const nh = Math.max(0, ts.normalHours || 0);
   const o15 = Math.max(0, ts.ot15Hours || 0);
@@ -416,10 +421,10 @@ function workDayFromDayRateBilling(
     pushOtLine('ot_1.5', o15, o15 * otHourlyFull);
   }
   if (o20 > 0) {
-    pushOtLine('ot_2.0', o20, o20 * otHourlyFull * (2 / 1.5));
+    pushOtLine('ot_2.0', o20, o20 * ot2Hourly);
   }
   if (o30 > 0) {
-    pushOtLine('ot_3.0', o30, o30 * otHourlyFull * 2);
+    pushOtLine('ot_3.0', o30, o30 * ot3Hourly);
   }
 }
 

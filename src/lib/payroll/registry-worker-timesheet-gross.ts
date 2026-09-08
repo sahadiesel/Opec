@@ -11,7 +11,7 @@ import {
   resolveEffectivePayrollContractId,
   timesheetToLaborWorkMode,
 } from '@/lib/payroll/timesheet-labor-base-cost';
-import { resolveMatrixCostRate } from '@/lib/commercial/position-rate-matrix';
+import { resolveMatrixCostRate, resolveOffshoreHourlyDivisor } from '@/lib/commercial/position-rate-matrix';
 import {
   type WorkerGlobalLaborContext,
   workerGlobalLaborToPayrollRestSchedule,
@@ -261,6 +261,11 @@ export function computeRegistryWorkerTimesheetGross(
       statedHours,
       otAfterShiftMultiplier: otMult,
       payrollRestSchedule,
+      hourlyDivisor: resolveOffshoreHourlyDivisor(
+        'cost',
+        contractPositionRate?.rateMatrix,
+        poLine.rateMatrixSnapshot,
+      ),
     });
     return {
       gross: pkg.amount,

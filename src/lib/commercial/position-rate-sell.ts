@@ -1,4 +1,12 @@
-import type { JobMode, POLine, PositionRate, PositionRateMatrix, RateConditionEventType } from '@/lib/types';
+import type {
+  JobMode,
+  POLine,
+  PositionRate,
+  PositionRateMatrix,
+  PositionRateOffshoreSide,
+  PositionRateOnshoreSide,
+  RateConditionEventType,
+} from '@/lib/types';
 
 export const DEFAULT_NORMAL_WORK_HOURS_ONSHORE = 8 as const;
 export const DEFAULT_NORMAL_WORK_HOURS_OFFSHORE = 12 as const;
@@ -11,7 +19,7 @@ function parsePositive(value: unknown): number | undefined {
 function sellMatrixSide(
   matrix: PositionRateMatrix | undefined,
   mode: JobMode,
-): { workingDay?: number; standbyDay?: number; m1PerTrip?: number; d1PerTrip?: number; otPerHour?: number } | undefined {
+): PositionRateOffshoreSide | PositionRateOnshoreSide | undefined {
   if (!matrix?.sell) return undefined;
   return mode === 'OFFSHORE' ? matrix.sell.offshore : matrix.sell.onshore;
 }
@@ -150,11 +158,11 @@ export function resolveBillingMatrixEventDayRate(
     const side = sellMatrixSide(matrix, ctx.workMode);
     if (!side) continue;
     if (eventType === 'mobilization_day') {
-      const v = parsePositive(side.m1PerTrip);
+      const v = parsePositive(side.m1PerTrip) ?? parsePositive((side as PositionRateOffshoreSide).d1PerTrip);
       if (v != null) return v;
     }
     if (eventType === 'demobilization_day') {
-      const v = parsePositive(side.d1PerTrip);
+      const v = parsePositive((side as PositionRateOffshoreSide).d1PerTrip) ?? parsePositive(side.m1PerTrip);
       if (v != null) return v;
     }
     if (eventType === 'standby_day') {
@@ -167,21 +175,22 @@ export function resolveBillingMatrixEventDayRate(
 
 /**
  * อัตรา OT x1.5 ต่อชม. จากราคารายวัน — สูตรเดียวกับ rate sheet (`autoCalculateMatrixFields`)
- * - แพ็ก 12 ชม.: วัน ÷ 14 × 1.5  (เช่น 2500 → 267.86)
+ * - แพ็ก 12 ชม.: วัน ÷ 14 × 1.5 (มาตรฐาน) หรือ ÷ 12 ตามกฎตำแหน่ง
  * - แพ็ก 8 ชม.: วัน ÷ 8 × 1.5
  */
 export function deriveBillingSellOtHourlyFromDayRate(
   workingDayRate: number,
   statedHours: 8 | 12,
+  hourlyDivisor?: 12 | 14,
 ): number {
   const day = Number(workingDayRate);
   if (!Number.isFinite(day) || day <= 0) return 0;
-  const divisor = statedHours === 12 ? 14 : 8;
+  const divisor = statedHours === 12 ? (hourlyDivisor === 12 ? 12 : 14) : 8;
   return Math.round((day / divisor) * 1.5 * 100) / 100;
 }
 
 /**
- * อัตรา OT ต่อชม. จาก matrix (ค่าเต็ม x1.5 ตามช่อง OT / ชม. บน rate sheet)
+ * อัตรา OT ต่อชม. จาก matrix (ค่าเต็ม x1.5 ตามช่อง OT 1.5 / ชม. บน rate sheet)
  * เรียงสัญญาหลักก่อน แล้วค่อย PO snapshot — null = ให้ผู้เรียก derive จากราคารายวัน
  */
 export function resolveBillingMatrixOtHourlyRate(ctx: BillingSellRateContext): number | null {
@@ -192,12 +201,33 @@ export function resolveBillingMatrixOtHourlyRate(ctx: BillingSellRateContext): n
     const side = sellMatrixSide(matrix, ctx.workMode);
     if (!side) continue;
     if (ctx.workMode === 'OFFSHORE') {
-      const v = parsePositive(side.otPerHour);
+      const v = parsePositive((side as PositionRateOffshoreSide).otPerHour);
       if (v != null) return v;
     } else {
-      const v = parsePositive((side as { otNormalPerHour?: number }).otNormalPerHour);
+      const v = parsePositive((side as PositionRateOnshoreSide).otNormalPerHour);
       if (v != null) return v;
     }
+  }
+  return null;
+}
+
+function otTierField(side: PositionRateOffshoreSide | PositionRateOnshoreSide, tier: 2 | 3): number | undefined {
+  return tier === 2 ? side.ot2PerHour : side.ot3PerHour;
+}
+
+/** อัตรา OT2 / OT3 ต่อชม. จาก matrix — null = ให้ผู้เรียกสเกลจาก OT 1.5 */
+export function resolveBillingMatrixOtTierHourlyRate(
+  ctx: BillingSellRateContext,
+  tier: 2 | 3,
+): number | null {
+  const matrices = [ctx.contractRate?.rateMatrix, ctx.poLine.rateMatrixSnapshot].filter(
+    Boolean,
+  ) as PositionRateMatrix[];
+  for (const matrix of matrices) {
+    const side = sellMatrixSide(matrix, ctx.workMode);
+    if (!side) continue;
+    const v = parsePositive(otTierField(side, tier));
+    if (v != null) return v;
   }
   return null;
 }
@@ -211,7 +241,13 @@ export function resolveBillingSellOtHourlyRate(
   statedHours: 8 | 12,
 ): number {
   const workingDay = resolveBillingSellWorkingDayRate(ctx);
-  const derived = deriveBillingSellOtHourlyFromDayRate(workingDay, statedHours);
+  const hourlyDivisor =
+    ctx.workMode === 'OFFSHORE'
+      ? [ctx.contractRate?.rateMatrix, ctx.poLine.rateMatrixSnapshot]
+          .map((m) => m?.sell?.offshore?.hourlyDivisor)
+          .find((d): d is 12 | 14 => d === 12 || d === 14)
+      : undefined;
+  const derived = deriveBillingSellOtHourlyFromDayRate(workingDay, statedHours, hourlyDivisor);
   const fromMatrix = resolveBillingMatrixOtHourlyRate(ctx);
   if (fromMatrix == null || fromMatrix <= 0) return derived;
   if (derived > 0 && fromMatrix > derived * 2.5) return derived;
