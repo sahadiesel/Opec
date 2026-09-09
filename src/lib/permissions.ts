@@ -362,9 +362,9 @@ export function getStoreOfficerModulePermission(moduleKey: ModuleKey): ModulePer
 }
 
 /**
- * สิทธิ์โมดูลสำหรับ `sales_officer` — งานขาย/สัญญา + คลัง/คู่ค้า + ลูกหนี้ (ใบกำกับ/ใบเสร็จ)
+ * สิทธิ์โมดูลสำหรับ `sales_officer` — งานขาย + คลัง/คู่ค้า + ลูกหนี้ (ใบกำกับ/ใบเสร็จ)
  * ดู/สร้าง/แก้ (ไม่ลบ/ไม่อนุมัติ)
- * ไม่เปิด HR, Manpower, ใบแจ้งหนี้รายเดือน, Petty Cash, AP, เงินเดือน
+ * ไม่เปิดสัญญาหลัก, HR, Manpower, ใบแจ้งหนี้รายเดือน, Petty Cash, AP, เงินเดือน
  */
 export function getSalesOfficerModulePermission(moduleKey: ModuleKey): ModulePermission {
   if (moduleKey === 'overview_dashboard') {
@@ -376,7 +376,6 @@ export function getSalesOfficerModulePermission(moduleKey: ModuleKey): ModulePer
   if (
     moduleKey === 'customers' ||
     moduleKey === 'quotations' ||
-    moduleKey === 'main_contracts' ||
     moduleKey === 'customer_pos' ||
     moduleKey === 'sales_contract_terms' ||
     moduleKey === 'rate_conditions' ||
@@ -707,7 +706,7 @@ export function getPermissions(
     return clonePermission(NO_ACCESS);
   }
 
-  /** เจ้าหน้าที่ฝ่ายขาย — งานขาย/สัญญาเท่านั้น (ก่อน tax_invoices / FULL_ACCESS) */
+  /** เจ้าหน้าที่ฝ่ายขาย — งานขาย + คลัง/ลูกหนี้ (ไม่เปิดสัญญาหลัก) */
   if (isSalesOfficer(u)) {
     return clonePermission(getSalesOfficerModulePermission(moduleKey));
   }

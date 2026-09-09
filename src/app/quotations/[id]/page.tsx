@@ -44,6 +44,7 @@ import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit } from '@/lib/permissions';
+import { officerCanAccessDocument } from '@/lib/documents/own-created-list';
 
 import { buildQuotationPrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
@@ -602,6 +603,16 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
           <Button type="button" variant="outline" onClick={() => router.push('/quotations')}>
             <ArrowLeft className="h-4 w-4 mr-2" /> กลับไปรายการใบเสนอราคา
           </Button>
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (!officerCanAccessDocument(currentUser, quotation)) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">
+          คุณไม่มีสิทธิ์เข้าถึงเอกสารนี้
         </div>
       </AppShell>
     );

@@ -14,6 +14,7 @@ import {
   canSeeAccountingPillarUi,
   isClient,
   isPrimaryHrOfficer,
+  canManageEquipmentRentalContracts,
 } from '@/lib/permissions';
 import {
   isSystemAdmin,
@@ -410,6 +411,10 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
 
   if (p === '/store/purchase-requests' || p.startsWith('/store/purchase-requests/')) {
     if (canApprovePurchaseAsManager(user) || canView(user, 'store_inventory', profile)) return true;
+  }
+
+  if (p === '/rent-contracts' || p.startsWith('/rent-contracts/')) {
+    return canManageEquipmentRentalContracts(user);
   }
 
   for (const [prefix, key] of SORTED_PREFIXES) {

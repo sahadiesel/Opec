@@ -56,6 +56,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting } from '@/lib/simple-tier-model';
 import { canEdit, canRecordTaxInvoiceBillingCustomerApproval } from '@/lib/permissions';
+import { officerCanAccessDocument } from '@/lib/documents/own-created-list';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { closeOpenCommercialArNow } from '@/lib/services/accounts-receivable-reconcile-service';
 import {
@@ -854,6 +855,16 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="h-12 w-12 text-primary animate-spin" />
       </div>
+    );
+  }
+
+  if (!officerCanAccessDocument(currentUser, invoice)) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">
+          คุณไม่มีสิทธิ์เข้าถึงเอกสารนี้
+        </div>
+      </AppShell>
     );
   }
 

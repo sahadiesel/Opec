@@ -37,7 +37,8 @@ import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
-import { canSeeSalesPillarUi } from '@/lib/permissions';
+import { canSeeSalesPillarUi, canView } from '@/lib/permissions';
+import { filterToOwnCreatedDocuments } from '@/lib/documents/own-created-list';
 import { getEffectiveAccessLevel, isSystemAdmin } from '@/lib/permission-core';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -71,10 +72,15 @@ export default function SalesDashboardPage() {
   }, [firestore, isSalesAuthorized]);
   const { data: activeQuotations } = useCollection<Quotation>(quoQuery as any);
 
+  const canViewMainContracts = useMemo(
+    () => canView(currentUser, 'main_contracts'),
+    [currentUser],
+  );
+
   const contractsQuery = useMemoFirebase(() => {
-    if (!firestore || !isSalesAuthorized) return null;
+    if (!firestore || !isSalesAuthorized || !canViewMainContracts) return null;
     return query(collection(firestore, 'main_contracts'), where('status', '==', 'active'));
-  }, [firestore, isSalesAuthorized]);
+  }, [firestore, isSalesAuthorized, canViewMainContracts]);
   const { data: activeContracts } = useCollection<MainContract>(contractsQuery as any);
 
   const posQuery = useMemoFirebase(() => {
@@ -82,6 +88,10 @@ export default function SalesDashboardPage() {
     return query(collection(firestore, 'purchase_orders'), where('status', '==', 'active'));
   }, [firestore, isSalesAuthorized]);
   const { data: activePOs } = useCollection<PurchaseOrder>(posQuery as any);
+  const visibleActivePOs = useMemo(
+    () => filterToOwnCreatedDocuments(currentUser, activePOs),
+    [currentUser, activePOs],
+  );
 
   const pendingApprovalsQuery = useMemoFirebase(() => {
     if (!firestore || !isSalesAuthorized) return null;
@@ -109,12 +119,12 @@ export default function SalesDashboardPage() {
       totalCustomers: customers?.length || 0,
       activeQuos: activeQuotations?.length || 0,
       activeContracts: activeContracts?.length || 0,
-      activePOs: activePOs?.length || 0,
+      activePOs: visibleActivePOs.length,
       expiringSoon: activeContracts?.filter(c => c.endDate < sixtyDaysFromNow).length || 0,
       pendingClientReview: pendingApprovals?.filter(a => a.clientApprovalStatus === 'PENDING').length || 0,
       rejectedByClient: pendingApprovals?.filter(a => a.clientApprovalStatus === 'REJECTED').length || 0,
     };
-  }, [customers, activeQuotations, activeContracts, activePOs, pendingApprovals]);
+  }, [customers, activeQuotations, activeContracts, visibleActivePOs, pendingApprovals]);
 
   const urgentActions = useMemo(() => {
     const actions: Array<{
@@ -208,9 +218,13 @@ export default function SalesDashboardPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           <StatCard title="ลูกค้าทั้งหมด" value={stats.totalCustomers} sub="Total Customers" icon={Building2} colorClass="border-l-blue-600" />
           <StatCard title="เสนอราคาค้าง" value={stats.activeQuos} sub="Active Quotations" icon={FileSignature} colorClass="border-l-amber-500" />
-          <StatCard title="สัญญาที่ใช้งาน" value={stats.activeContracts} sub="Active Contracts" icon={FileText} colorClass="border-l-green-600" />
+          {canViewMainContracts && (
+            <StatCard title="สัญญาที่ใช้งาน" value={stats.activeContracts} sub="Active Contracts" icon={FileText} colorClass="border-l-green-600" />
+          )}
           <StatCard title="PO ที่ใช้งานอยู่" value={stats.activePOs} sub="Active POs" icon={ShoppingCart} colorClass="border-l-purple-600" />
-          <StatCard title="สัญญาใกล้หมด" value={stats.expiringSoon} sub="Expiring Soon" icon={Clock} colorClass={stats.expiringSoon > 0 ? "border-l-red-600 text-red-600" : "border-l-slate-200"} />
+          {canViewMainContracts && (
+            <StatCard title="สัญญาใกล้หมด" value={stats.expiringSoon} sub="Expiring Soon" icon={Clock} colorClass={stats.expiringSoon > 0 ? "border-l-red-600 text-red-600" : "border-l-slate-200"} />
+          )}
           <StatCard title="รอลูกค้าอนุมัติ" value={stats.pendingClientReview} sub="Pending Approval" icon={UserCheck} colorClass="border-l-indigo-500" />
         </div>
 
@@ -349,7 +363,9 @@ export default function SalesDashboardPage() {
                 <CardContent className="pt-4 space-y-2">
                   <ShortcutItem href="/customers" label="ทะเบียนลูกค้า" sub="Customer Directory" icon={Building2} />
                   <ShortcutItem href="/quotations" label="ใบเสนอราคา" sub="Quotations" icon={FileSignature} />
-                  <ShortcutItem href="/main-contracts" label="สัญญาหลัก" sub="MSAs & Rates" icon={FileText} />
+                  {canViewMainContracts && (
+                    <ShortcutItem href="/main-contracts" label="สัญญาหลัก" sub="MSAs & Rates" icon={FileText} />
+                  )}
                   <ShortcutItem href="/purchase-orders" label="ใบสั่งซื้อลูกค้า" sub="Project POs" icon={ShoppingCart} />
                   <ShortcutItem href="/draft-invoices" label="รายการใบแจ้งหนี้ ( Invoice )" sub="Draft invoices" icon={FileText} />
                   <ShortcutItem href="/client-portal" label="Client Portal Preview" sub="Monitoring View" icon={UserCheck} />

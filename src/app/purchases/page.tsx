@@ -31,6 +31,11 @@ import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canApprovePurchaseAsManager, isSystemAdmin } from '@/lib/permissions';
+import {
+  filterPurchasesForSalesOfficerBySourcePr,
+  salesOfficerCanAccessDocument,
+  shouldRestrictSalesOfficerOwnDocuments,
+} from '@/lib/documents/own-created-list';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import {
   addDoc,
@@ -214,9 +219,32 @@ export default function PurchasesPage() {
   }, [firestore, isAuthorized]);
   const { data: approvedPrs } = useCollection<PurchaseRequest>(prApprovedQuery as any);
 
+  const allPrQuery = useMemoFirebase(() => {
+    if (!firestore || !isAuthorized) return null;
+    return collection(firestore, 'purchase_requests');
+  }, [firestore, isAuthorized]);
+  const { data: allPrs, isLoading: isAllPrsLoading } = useCollection<PurchaseRequest>(allPrQuery as any);
+
+  const prById = useMemo(() => {
+    const m = new Map<string, PurchaseRequest>();
+    for (const r of allPrs ?? []) m.set(r.id, r);
+    return m;
+  }, [allPrs]);
+
+  const visiblePurchases = useMemo(
+    () => filterPurchasesForSalesOfficerBySourcePr(currentUser, purchases, prById),
+    [currentUser, purchases, prById],
+  );
+
+  const listLoading =
+    isLoading || (shouldRestrictSalesOfficerOwnDocuments(currentUser) && isAllPrsLoading);
+
   const availablePrs = useMemo(
-    () => (approvedPrs || []).filter((r) => !r.linkedPurchaseId),
-    [approvedPrs]
+    () =>
+      (approvedPrs || [])
+        .filter((r) => !r.linkedPurchaseId)
+        .filter((r) => salesOfficerCanAccessDocument(currentUser, r)),
+    [approvedPrs, currentUser],
   );
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -259,8 +287,8 @@ export default function PurchasesPage() {
   const [poVendorId, setPoVendorId] = useState<string>('all');
   /** รออนุมัติเฉพาะ PO เก่าที่ไม่อ้าง PR — ทางทำงานหลักอนุมัติที่ PR ไม่ใช่ PO */
   const pendingApprovalCount = useMemo(
-    () => (purchases || []).filter((p) => p.status === 'PENDING_APPROVAL' && !p.purchaseRequestId).length,
-    [purchases]
+    () => visiblePurchases.filter((p) => p.status === 'PENDING_APPROVAL' && !p.purchaseRequestId).length,
+    [visiblePurchases]
   );
 
   function purchaseRowMonth(purchaseDate: string | undefined): string {
@@ -272,7 +300,7 @@ export default function PurchasesPage() {
 
   const purchasesFiltered = useMemo(() => {
     const qq = poSearch.trim().toLowerCase();
-    return (purchases || []).filter((p) => {
+    return (visiblePurchases || []).filter((p) => {
       const v = vendors?.find((x) => x.id === p.vendorId);
       if (poVendorId !== 'all' && p.vendorId !== poVendorId) return false;
       const ym = purchaseRowMonth(p.purchaseDate);
@@ -284,16 +312,16 @@ export default function PurchasesPage() {
         (p.purchaseRequestId || '').toLowerCase().includes(qq)
       );
     });
-  }, [purchases, poSearch, poMonth, poVendorId, vendors]);
+  }, [visiblePurchases, poSearch, poMonth, poVendorId, vendors]);
 
   const purchaseMonthOptions = useMemo(() => {
     const set = new Set<string>();
-    (purchases || []).forEach((p) => {
+    (visiblePurchases || []).forEach((p) => {
       const ym = purchaseRowMonth(p.purchaseDate);
       if (ym) set.add(ym);
     });
     return [...set].sort().reverse();
-  }, [purchases]);
+  }, [visiblePurchases]);
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -312,6 +340,15 @@ export default function PurchasesPage() {
       return;
     }
     const pr = prSnap.data() as PurchaseRequest;
+
+    if (!salesOfficerCanAccessDocument(currentUser, pr)) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีสิทธิ์',
+        description: 'เปิดใบสั่งซื้อได้เฉพาะ PR ที่คุณสร้าง หรือที่ผู้จัดการ/แอดมินแชร์ให้',
+      });
+      return;
+    }
 
     if (!pr.vendorId?.trim()) {
       toast({
@@ -704,7 +741,7 @@ export default function PurchasesPage() {
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
-            {isLoading ? (
+            {listLoading ? (
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูล...</div>
             ) : (
               <Table>
@@ -790,7 +827,7 @@ export default function PurchasesPage() {
                       </TableRow>
                     );
                   })}
-                  {purchasesFiltered.length === 0 && !isLoading && (
+                  {purchasesFiltered.length === 0 && !listLoading && (
                     <TableRow>
                       <TableCell
                         colSpan={showPoDeleteColumn ? 8 : 7}

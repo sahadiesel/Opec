@@ -48,6 +48,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { writeAuditLog } from '@/lib/services/audit-service';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete, isSystemAdmin, canApprovePurchaseAsManager } from '@/lib/permissions';
+import { officerCanAccessDocument } from '@/lib/documents/own-created-list';
 import {
   aggregateActiveLineTotals,
   buildPoFulfillmentByLine,
@@ -320,6 +321,15 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="flex items-center justify-center min-h-[50vh]">
           <Loader2 className="h-12 w-12 text-primary animate-spin" />
+        </div>
+      </AppShell>
+    );
+  }
+  if (!officerCanAccessDocument(currentUser, po)) {
+    return (
+      <AppShell user={currentUser} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">
+          คุณไม่มีสิทธิ์เข้าถึงเอกสารนี้
         </div>
       </AppShell>
     );

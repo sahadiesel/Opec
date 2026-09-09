@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, type MouseEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,103 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
+import { isActiveOfficeStaffStatus } from '@/lib/hr/office-staff-active';
+
+function officeStaffStatusBadge(status: StaffStatus) {
+  switch (status) {
+    case 'ACTIVE':
+      return <Badge className="bg-green-600">ACTIVE</Badge>;
+    case 'INACTIVE':
+      return <Badge variant="secondary">INACTIVE</Badge>;
+    case 'RESIGNED':
+      return <Badge variant="destructive">RESIGNED</Badge>;
+    default:
+      return <Badge variant="outline">{status}</Badge>;
+  }
+}
+
+function OfficeStaffTable({
+  rows,
+  emptyLabel,
+  onOpen,
+  onDelete,
+}: {
+  rows: OfficeStaff[];
+  emptyLabel: string;
+  onOpen: (id: string) => void;
+  onDelete: (id: string, e: MouseEvent) => void;
+}) {
+  return (
+    <Table>
+      <TableHeader className="bg-muted/50">
+        <TableRow>
+          <TableHead className="font-bold py-4 pl-6">รหัส (Code)</TableHead>
+          <TableHead className="font-bold">ชื่อ-นามสกุล (Full Name)</TableHead>
+          <TableHead className="font-bold">แผนก & ตำแหน่ง</TableHead>
+          <TableHead className="font-bold">ประเภทการจ้าง</TableHead>
+          <TableHead className="font-bold">ฐานเงินเดือน</TableHead>
+          <TableHead className="font-bold">สถานะ</TableHead>
+          <TableHead className="text-right pr-6">จัดการ</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((staff) => (
+          <TableRow
+            key={staff.id}
+            className="cursor-pointer hover:bg-muted/30 group transition-all"
+            onClick={() => onOpen(staff.id)}
+          >
+            <TableCell className="py-4 pl-6 font-mono text-xs font-bold text-primary">{staff.staffCode}</TableCell>
+            <TableCell>
+              <div className="flex flex-col">
+                <span className="font-bold text-base text-primary">{staff.fullName}</span>
+                <span className="text-xs text-muted-foreground">ชื่อเล่น: {staff.nickname || '-'}</span>
+              </div>
+            </TableCell>
+            <TableCell>
+              <div className="flex flex-col">
+                <span className="text-sm font-medium flex items-center gap-1"><Building2 className="h-3 w-3" /> {staff.department}</span>
+                <span className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><Briefcase className="h-2.5 w-2.5" /> {staff.positionTitle}</span>
+              </div>
+            </TableCell>
+            <TableCell>
+              <Badge variant="outline" className="text-[10px] font-bold">
+                {staff.employmentType.replace('_', ' ')}
+              </Badge>
+            </TableCell>
+            <TableCell>
+              <div className="flex flex-col">
+                <span className="font-bold text-sm">฿{staff.monthlySalary.toLocaleString()}</span>
+                <span className="text-[10px] text-muted-foreground">{staff.salaryType}</span>
+              </div>
+            </TableCell>
+            <TableCell>{officeStaffStatusBadge(staff.status)}</TableCell>
+            <TableCell className="text-right pr-6">
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-destructive h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={(e) => onDelete(staff.id, e)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+                <ChevronRight className="h-5 w-5 text-muted-foreground" />
+              </div>
+            </TableCell>
+          </TableRow>
+        ))}
+        {rows.length === 0 && (
+          <TableRow>
+            <TableCell colSpan={7} className="text-center py-12 text-muted-foreground italic">
+              {emptyLabel}
+            </TableCell>
+          </TableRow>
+        )}
+      </TableBody>
+    </Table>
+  );
+}
 
 export default function OfficeStaffPage() {
   const router = useRouter();
@@ -64,6 +161,23 @@ export default function OfficeStaffPage() {
     });
   }, [staffList, searchTerm, deptFilter, typeFilter]);
 
+  const activeStaff = useMemo(
+    () => filteredStaff.filter((s) => isActiveOfficeStaffStatus(s.status)),
+    [filteredStaff],
+  );
+  const resignedStaff = useMemo(
+    () => filteredStaff.filter((s) => (s.status || '').trim().toUpperCase() === 'RESIGNED'),
+    [filteredStaff],
+  );
+  const inactiveStaff = useMemo(
+    () =>
+      filteredStaff.filter((s) => {
+        const st = (s.status || '').trim().toUpperCase();
+        return st !== 'ACTIVE' && st !== 'RESIGNED';
+      }),
+    [filteredStaff],
+  );
+
   const departments = useMemo(() => {
     if (!staffList) return [];
     return Array.from(new Set(staffList.map(s => s.department))).sort();
@@ -75,15 +189,6 @@ export default function OfficeStaffPage() {
     if (confirm('ยืนยันการลบข้อมูลพนักงานออฟฟิศ?')) {
       deleteDocumentNonBlocking(doc(firestore, 'office_staff', id));
       toast({ title: "ลบข้อมูลสำเร็จ" });
-    }
-  };
-
-  const getStatusBadge = (status: StaffStatus) => {
-    switch (status) {
-      case 'ACTIVE': return <Badge className="bg-green-600">ACTIVE</Badge>;
-      case 'INACTIVE': return <Badge variant="secondary">INACTIVE</Badge>;
-      case 'RESIGNED': return <Badge variant="destructive">RESIGNED</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
     }
   };
 
@@ -151,75 +256,68 @@ export default function OfficeStaffPage() {
           </Button>
         </div>
 
-        <Card className="shadow-lg border-none overflow-hidden">
-          <CardContent className="p-0">
-            {isLoading ? (
+        {isLoading ? (
+          <Card className="shadow-lg border-none overflow-hidden">
+            <CardContent className="p-0">
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลพนักงาน...</div>
-            ) : (
-              <Table>
-                <TableHeader className="bg-muted/50">
-                  <TableRow>
-                    <TableHead className="font-bold py-4 pl-6">รหัส (Code)</TableHead>
-                    <TableHead className="font-bold">ชื่อ-นามสกุล (Full Name)</TableHead>
-                    <TableHead className="font-bold">แผนก & ตำแหน่ง</TableHead>
-                    <TableHead className="font-bold">ประเภทการจ้าง</TableHead>
-                    <TableHead className="font-bold">ฐานเงินเดือน</TableHead>
-                    <TableHead className="font-bold">สถานะ</TableHead>
-                    <TableHead className="text-right pr-6">จัดการ</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredStaff.map((staff) => (
-                    <TableRow 
-                      key={staff.id} 
-                      className="cursor-pointer hover:bg-muted/30 group transition-all"
-                      onClick={() => router.push(`/office-staff/${staff.id}`)}
-                    >
-                      <TableCell className="py-4 pl-6 font-mono text-xs font-bold text-primary">{staff.staffCode}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-bold text-base text-primary">{staff.fullName}</span>
-                          <span className="text-xs text-muted-foreground">ชื่อเล่น: {staff.nickname || '-'}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="text-sm font-medium flex items-center gap-1"><Building2 className="h-3 w-3" /> {staff.department}</span>
-                          <span className="text-[10px] text-muted-foreground uppercase flex items-center gap-1"><Briefcase className="h-2.5 w-2.5" /> {staff.positionTitle}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-[10px] font-bold">
-                          {staff.employmentType.replace('_', ' ')}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-bold text-sm">฿{staff.monthlySalary.toLocaleString()}</span>
-                          <span className="text-[10px] text-muted-foreground">{staff.salaryType}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>{getStatusBadge(staff.status)}</TableCell>
-                      <TableCell className="text-right pr-6">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon" className="text-destructive h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => handleDelete(staff.id, e)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                          <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {filteredStaff.length === 0 && !isLoading && (
-                    <TableRow>
-                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลพนักงานในระบบ</TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+            </CardContent>
+          </Card>
+        ) : (
+          <>
+            <Card className="shadow-lg border-none overflow-hidden">
+              <CardHeader className="pb-3 border-b bg-green-50/70">
+                <CardTitle className="text-lg font-bold text-primary flex items-center justify-between gap-3">
+                  <span>พนักงานปฏิบัติงาน (Active)</span>
+                  <Badge className="bg-green-600">{activeStaff.length} คน</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <OfficeStaffTable
+                  rows={activeStaff}
+                  emptyLabel="ไม่พบพนักงานสถานะ Active ตามตัวกรอง"
+                  onOpen={(id) => router.push(`/office-staff/${id}`)}
+                  onDelete={handleDelete}
+                />
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-lg border-none overflow-hidden">
+              <CardHeader className="pb-3 border-b bg-red-50/70">
+                <CardTitle className="text-lg font-bold text-primary flex items-center justify-between gap-3">
+                  <span>พนักงานลาออก (Resigned)</span>
+                  <Badge variant="destructive">{resignedStaff.length} คน</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <OfficeStaffTable
+                  rows={resignedStaff}
+                  emptyLabel="ไม่พบพนักงานสถานะ Resigned ตามตัวกรอง"
+                  onOpen={(id) => router.push(`/office-staff/${id}`)}
+                  onDelete={handleDelete}
+                />
+              </CardContent>
+            </Card>
+
+            {inactiveStaff.length > 0 && (
+              <Card className="shadow-lg border-none overflow-hidden">
+                <CardHeader className="pb-3 border-b bg-muted/40">
+                  <CardTitle className="text-lg font-bold text-primary flex items-center justify-between gap-3">
+                    <span>ไม่ปฏิบัติงาน (Inactive)</span>
+                    <Badge variant="secondary">{inactiveStaff.length} คน</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <OfficeStaffTable
+                    rows={inactiveStaff}
+                    emptyLabel="ไม่พบพนักงานสถานะ Inactive ตามตัวกรอง"
+                    onOpen={(id) => router.push(`/office-staff/${id}`)}
+                    onDelete={handleDelete}
+                  />
+                </CardContent>
+              </Card>
             )}
-          </CardContent>
-        </Card>
+          </>
+        )}
 
         <Card className="bg-primary/5 border-primary/10 border-dashed">
           <CardHeader className="pb-3">

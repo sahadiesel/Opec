@@ -15,6 +15,7 @@ import { useFirestore, useDoc, useMemoFirebase, useUser, useCollection } from '@
 import { collection, doc, getDocs, updateDoc, deleteField, type UpdateData } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canDecidePurchaseRequest, canApprovePurchaseAsManager } from '@/lib/permissions';
+import { officerCanAccessDocument } from '@/lib/documents/own-created-list';
 import type {
   PurchaseRequest,
   User,
@@ -635,6 +636,13 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
       <div className="flex min-h-[50vh] w-full items-center justify-center">
         <Loader2 className="h-10 w-10 animate-spin text-primary" />
       </div>
+    );
+  }
+  if (!officerCanAccessDocument(currentUser, pr)) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <p className="p-8 text-center text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงเอกสารนี้</p>
+      </AppShell>
     );
   }
 

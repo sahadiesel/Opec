@@ -22,7 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
-import { collection, query, orderBy, doc, getDoc, where } from 'firebase/firestore';
+import { collection, query, orderBy, doc, getDoc } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { formatStoredDateThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
@@ -65,6 +65,10 @@ import {
   buildSupersededCommercialInvoiceIds,
   filterSupersededCommercialArEntries,
 } from '@/lib/accounts-receivable/ar-list-display';
+import {
+  filterArForSalesOfficerByTaxInvoice,
+  shouldRestrictSalesOfficerOwnDocuments,
+} from '@/lib/documents/own-created-list';
 
 function formatArMoney(amount: number): string {
   return `฿ ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -105,10 +109,10 @@ export default function AccountsReceivablePage() {
   const { data: arItems, isLoading } = useCollection<AccountsReceivable>(arQuery as any);
 
   const taxInvoicesQuery = useMemoFirebase(
-    () => (firestore && isAuthorized ? query(collection(firestore, 'tax_invoices'), where('status', '==', 'ISSUED')) : null),
+    () => (firestore && isAuthorized ? collection(firestore, 'tax_invoices') : null),
     [firestore, isAuthorized],
   );
-  const { data: issuedTaxInvoices } = useCollection<TaxInvoice>(taxInvoicesQuery as any);
+  const { data: taxInvoices, isLoading: taxInvoicesLoading } = useCollection<TaxInvoice>(taxInvoicesQuery as any);
 
   const commercialQuery = useMemoFirebase(
     () => (firestore && isAuthorized ? collection(firestore, 'commercial_invoices') : null),
@@ -125,6 +129,11 @@ export default function AccountsReceivablePage() {
     return m;
   }, [customers]);
 
+  const issuedTaxInvoices = useMemo(
+    () => (taxInvoices ?? []).filter((inv) => inv.status === 'ISSUED'),
+    [taxInvoices],
+  );
+
   const supersededCommercialIds = useMemo(
     () =>
       buildSupersededCommercialInvoiceIds({
@@ -134,10 +143,13 @@ export default function AccountsReceivablePage() {
     [issuedTaxInvoices, commercialInvoices],
   );
 
-  const visibleArItems = useMemo(
-    () => filterSupersededCommercialArEntries(arItems ?? [], supersededCommercialIds),
-    [arItems, supersededCommercialIds],
-  );
+  const visibleArItems = useMemo(() => {
+    const withoutSuperseded = filterSupersededCommercialArEntries(arItems ?? [], supersededCommercialIds);
+    return filterArForSalesOfficerByTaxInvoice(currentUser, withoutSuperseded, taxInvoices);
+  }, [arItems, supersededCommercialIds, currentUser, taxInvoices]);
+
+  const listLoading =
+    isLoading || (shouldRestrictSalesOfficerOwnDocuments(currentUser) && taxInvoicesLoading);
 
   const yearOptionsCe = useMemo(() => {
     const set = new Set<string>();
@@ -506,7 +518,7 @@ export default function AccountsReceivablePage() {
 
         <Card className="shadow-lg border-none overflow-hidden">
           <CardContent className="p-0">
-            {isLoading ? (
+            {listLoading ? (
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลลูกหนี้...</div>
             ) : (
               <Table>
@@ -568,14 +580,14 @@ export default function AccountsReceivablePage() {
                       </TableRow>
                     );
                   })}
-                  {(!visibleArItems.length) && !isLoading && (
+                  {(!visibleArItems.length) && !listLoading && (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
                         ไม่มีรายการลูกหนี้ในระบบ
                       </TableCell>
                     </TableRow>
                   )}
-                  {visibleArItems.length > 0 && filteredItems.length === 0 && !isLoading && (
+                  {visibleArItems.length > 0 && filteredItems.length === 0 && !listLoading && (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
                         {searchQuery.trim()

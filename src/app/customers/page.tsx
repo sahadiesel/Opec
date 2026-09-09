@@ -38,6 +38,7 @@ export default function CustomersPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
   const canViewCustomers = useMemo(() => canView(currentUser, 'customers'), [currentUser]);
+  const canViewMainContracts = useMemo(() => canView(currentUser, 'main_contracts'), [currentUser]);
   const canCreateCustomers = useMemo(() => canCreate(currentUser, 'customers'), [currentUser]);
   const canDeleteCustomers = useMemo(() => canDelete(currentUser, 'customers'), [currentUser]);
 
@@ -313,6 +314,7 @@ export default function CustomersPage() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              {canViewMainContracts && (
               <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
                 <div className="bg-primary/10 p-2 rounded text-primary font-bold">1</div>
                 <div>
@@ -320,8 +322,9 @@ export default function CustomersPage() {
                   <p className="text-muted-foreground text-xs">หลังจากเพิ่มลูกค้า ให้เริ่มสร้างสัญญาซื้อขาย (Master Agreement) เพื่อระบุราคากลางรายตำแหน่ง</p>
                 </div>
               </div>
+              )}
               <div className="flex items-start gap-3 p-4 bg-white rounded-md border shadow-sm">
-                <div className="bg-primary/10 p-2 rounded text-primary font-bold">2</div>
+                <div className="bg-primary/10 p-2 rounded text-primary font-bold">{canViewMainContracts ? '2' : '1'}</div>
                 <div>
                   <p className="font-bold">จัดการใบสั่งซื้อ (Receive Customer POs)</p>
                   <p className="text-muted-foreground text-xs">เปิดใบสั่งซื้อเพื่อจองโควต้าพนักงานและบันทึกราคาสรุปสำหรับแต่ละโครงการ</p>
@@ -329,11 +332,13 @@ export default function CustomersPage() {
               </div>
             </div>
           </CardContent>
+          {canViewMainContracts && (
           <CardFooter className="pt-0 justify-end">
             <Button variant="link" className="gap-2 text-primary font-bold" asChild>
               <a href="/main-contracts">ไปยังระบบสัญญาหลัก (Main Contracts) <ArrowRight className="h-4 w-4" /></a>
             </Button>
           </CardFooter>
+          )}
         </Card>
       </div>
     </AppShell>

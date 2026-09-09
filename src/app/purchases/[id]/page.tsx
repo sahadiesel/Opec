@@ -76,6 +76,7 @@ import {
 } from '@/components/ui/select';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete, canApprovePurchaseAsManager } from '@/lib/permissions';
+import { salesOfficerCanAccessDocument } from '@/lib/documents/own-created-list';
 import { Switch } from '@/components/ui/switch';
 import { computePurchaseTotalsFromLines, sumLineAmounts } from '@/lib/purchase/pr-totals';
 
@@ -685,6 +686,27 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="h-12 w-12 text-primary animate-spin" />
       </div>
+    );
+  }
+  if (purchase.purchaseRequestId && isLinkedPrLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-12 w-12 text-primary animate-spin" />
+      </div>
+    );
+  }
+  if (
+    !salesOfficerCanAccessDocument(
+      currentUser,
+      purchase.purchaseRequestId ? linkedPr : purchase,
+    )
+  ) {
+    return (
+      <AppShell user={currentUser as User} onLogout={() => {}}>
+        <div className="max-w-5xl mx-auto py-10 text-center text-muted-foreground">
+          คุณไม่มีสิทธิ์เข้าถึงเอกสารนี้
+        </div>
+      </AppShell>
     );
   }
 

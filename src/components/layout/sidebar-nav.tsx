@@ -74,6 +74,7 @@ import {
   isSalesOfficer,
   isTimekeeper,
   getPrimaryLegacyRole,
+  canManageEquipmentRentalContracts,
 } from '@/lib/permissions';
 import { isSystemAdmin, isExecutiveViewer } from '@/lib/permission-core';
 import { isSimpleAccounting, isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
@@ -889,6 +890,9 @@ export function SidebarNav({
               !isClient(user)
             ) {
               return true;
+            }
+            if (item.href.split('?')[0] === '/rent-contracts') {
+              return canManageEquipmentRentalContracts(user);
             }
             const byMatrix = sidebarMatrixVisibility(user, item);
             if (byMatrix !== null) return byMatrix;

@@ -67,6 +67,7 @@ import { PageGuidance } from '@/components/layout/page-guidance';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete } from '@/lib/permissions';
+import { filterToOwnCreatedDocuments } from '@/lib/documents/own-created-list';
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -76,6 +77,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
   const auth = useAuth();
   const { toast } = useToast();
   const canViewCustomers = useMemo(() => canView(currentUser, 'customers'), [currentUser]);
+  const canViewMainContracts = useMemo(() => canView(currentUser, 'main_contracts'), [currentUser]);
   const canEditCustomers = useMemo(() => canEdit(currentUser, 'customers'), [currentUser]);
   const canDeleteCustomers = useMemo(() => canDelete(currentUser, 'customers'), [currentUser]);
 
@@ -132,6 +134,10 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     return query(collection(firestore, 'purchase_orders'), where('customerId', '==', id));
   }, [firestore, id, canViewCustomers]);
   const { data: customerPOs } = useCollection<PurchaseOrder>(poQuery as any);
+  const visibleCustomerPOs = useMemo(
+    () => filterToOwnCreatedDocuments(currentUser, customerPOs),
+    [currentUser, customerPOs],
+  );
 
   // users list: Firestore rules allow list only for canManageSystem (admin)
   const portalUsersQuery = useMemoFirebase(() => {
@@ -147,6 +153,10 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
     return query(collection(firestore, 'quotations'), where('customerId', '==', id));
   }, [firestore, id, canViewCustomers]);
   const { data: customerQuos } = useCollection<Quotation>(quosQuery as any);
+  const visibleCustomerQuos = useMemo(
+    () => filterToOwnCreatedDocuments(currentUser, customerQuos),
+    [currentUser, customerQuos],
+  );
 
   // --- Operational Queries for Summary ---
 
@@ -556,9 +566,11 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
         <div className="space-y-1.5 border-b border-dashed pb-4 mb-2">
           {/* Commercial Summary */}
           <div className="flex gap-8 px-2 text-[10px] uppercase font-black tracking-widest text-muted-foreground/60">
-            <span>Quotations: <b className="text-primary">{customerQuos?.length || 0}</b></span>
-            <span>Active Contracts: <b className="text-primary">{customerContracts?.filter(c => c.status === 'active').length || 0}</b></span>
-            <span>Active POs: <b className="text-primary">{customerPOs?.filter(p => p.status === 'active').length || 0}</b></span>
+            <span>Quotations: <b className="text-primary">{visibleCustomerQuos.length}</b></span>
+            {canViewMainContracts && (
+              <span>Active Contracts: <b className="text-primary">{customerContracts?.filter(c => c.status === 'active').length || 0}</b></span>
+            )}
+            <span>Active POs: <b className="text-primary">{visibleCustomerPOs.filter(p => p.status === 'active').length}</b></span>
             <span>Portal Users: <b className="text-primary">{portalUsers?.filter(u => u.isActive).length || 0}</b></span>
           </div>
           {/* Operations Summary */}
@@ -575,7 +587,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
             <TabsTrigger value="info" className="gap-2 py-2 px-6"><Building2 className="h-4 w-4" /> ข้อมูลบริษัท</TabsTrigger>
             <TabsTrigger value="contacts" className="gap-2 py-2 px-6"><Users className="h-4 w-4" /> ผู้ติดต่อ</TabsTrigger>
             <TabsTrigger value="quotations" className="gap-2 py-2 px-6"><FileSignature className="h-4 w-4" /> ใบเสนอราคา</TabsTrigger>
-            <TabsTrigger value="contracts" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> สัญญาหลัก</TabsTrigger>
+            {canViewMainContracts && (
+              <TabsTrigger value="contracts" className="gap-2 py-2 px-6"><FileText className="h-4 w-4" /> สัญญาหลัก</TabsTrigger>
+            )}
             <TabsTrigger value="pos" className="gap-2 py-2 px-6"><ShoppingCart className="h-4 w-4" /> ใบสั่งซื้อ (POs)</TabsTrigger>
             <TabsTrigger value="portal" className="gap-2 py-2 px-6"><Lock className="h-4 w-4" /> Portal Access</TabsTrigger>
           </TabsList>
@@ -933,7 +947,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {customerQuos?.map(quo => (
+                    {visibleCustomerQuos.map(quo => (
                       <TableRow key={quo.id} className="cursor-pointer hover:bg-muted/5" onClick={() => router.push(`/quotations/${quo.id}`)}>
                         <TableCell className="pl-6 font-mono font-bold text-primary">{quo.quotationNo}</TableCell>
                         <TableCell className="text-sm font-medium">{quo.projectTitle}</TableCell>
@@ -960,7 +974,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                         </TableCell>
                       </TableRow>
                     ))}
-                    {(!customerQuos || customerQuos.length === 0) && (
+                    {visibleCustomerQuos.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ไม่พบประวัติใบเสนอราคา</TableCell>
                       </TableRow>
@@ -972,6 +986,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
           </TabsContent>
 
           {/* Main Contracts Tab */}
+          {canViewMainContracts && (
           <TabsContent value="contracts" className="mt-6">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
@@ -1048,6 +1063,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
               </CardContent>
             </Card>
           </TabsContent>
+          )}
 
           {/* Customer POs Tab */}
           <TabsContent value="pos" className="mt-6">
@@ -1071,7 +1087,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {customerPOs?.map(po => (
+                    {visibleCustomerPOs.map(po => (
                       <TableRow key={po.id} className="cursor-pointer hover:bg-muted/5" onClick={() => router.push(`/purchase-orders/${po.id}`)}>
                         <TableCell className="pl-6 font-mono font-bold text-primary">{po.poCode}</TableCell>
                         <TableCell>
@@ -1102,7 +1118,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                         </TableCell>
                       </TableRow>
                     ))}
-                    {(!customerPOs || customerPOs.length === 0) && (
+                    {visibleCustomerPOs.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-10 text-muted-foreground italic">ไม่พบใบสั่งซื้อ</TableCell>
                       </TableRow>

@@ -43,7 +43,7 @@ Re-run: `npx tsx scripts/generate-role-permission-matrix.ts`
 |--------|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `overview_dashboard` — แดชบอร์ดหลัก | VCEDA | VCEDA | VCEDA | V | VCEDA | V | V | VCEDA | V | — | VCEDA | VCEDA | — | — | V |
 | `customers` — ทะเบียนลูกค้า | VCEDA | VCEDA | V | — | VCEDA | VCE | — | VCEDA | — | — | VCEDA | VCED | — | — | V |
-| `main_contracts` — สัญญาหลัก | VCEDA | VCEDA | V | — | VCEDA | VCE | — | VCEDA | — | — | VCEDA | V | V | — | V |
+| `main_contracts` — สัญญาหลัก | VCEDA | VCEDA | V | — | VCEDA | — | — | VCEDA | — | — | VCEDA | V | V | — | V |
 | `customer_pos` — ใบสั่งซื้อลูกค้า | VCEDA | VCEDA | V | — | VCEDA | VCE | — | VCEDA | — | — | VCEDA | VCE | V | — | V |
 | `quotations` — ใบเสนอราคา | VCEDA | VCEDA | — | — | VCEDA | VCE | — | VCEDA | — | — | VCEDA | VCE | V | — | V |
 | `sales_contract_terms` — เงื่อนไขการขาย | VCEDA | VCEDA | — | — | VCEDA | VCE | — | VCEDA | — | — | VCEDA | — | — | — | V |
