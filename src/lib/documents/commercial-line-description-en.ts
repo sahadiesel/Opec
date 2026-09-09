@@ -88,6 +88,9 @@ export function translateCommercialLineDescriptionToEn(text: string): string {
   s = s.replace(/ชม\.ปกติเกินกรอบ 8 ชม\. \(ขาย\)/g, 'Normal hours beyond 8 hrs (billing)');
   s = s.replace(/ทำงานวันหยุดนักขัตฤกษ์/g, 'Public holiday work');
   s = s.replace(/ทำงานวันหยุด/g, 'Weekly off-day work');
+  s = s.replace(/OT x1\.5/g, 'OT1.5');
+  s = s.replace(/OT x2(?!\d)/g, 'OT2');
+  s = s.replace(/OT x3/g, 'OT3');
   s = s.replace(/ค่าแรงวันทำงาน/g, 'Daily wage');
   // Compound standby + mob/demob before single-word replaces (spelling variants included)
   s = s.replace(

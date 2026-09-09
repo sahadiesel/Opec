@@ -24,6 +24,8 @@ import {
   isPayrollOfficer,
   getPrimaryLegacyRole,
   isTimekeeper,
+  isAccountingOfficer,
+  isAccountingManager,
 } from '@/lib/permission-core';
 import { isSimpleAdmin, isSimpleInternalEligible } from '@/lib/simple-tier-model';
 import { deriveBusinessRoleKey } from '@/lib/auth-mapping';
@@ -73,6 +75,12 @@ export function canViewHrFieldTimesheetSubsection(
   const fieldTsRole = getPrimaryLegacyRole(user);
   if (
     (fieldTsRole === 'operations_officer' || fieldTsRole === 'timekeeper') &&
+    canView(user, 'timesheets', profile)
+  ) {
+    return true;
+  }
+  if (
+    (isAccountingOfficer(user) || isAccountingManager(user)) &&
     canView(user, 'timesheets', profile)
   ) {
     return true;

@@ -50,7 +50,7 @@ Re-run: `npx tsx scripts/generate-role-permission-matrix.ts`
 | `rate_conditions` — กฎการคำนวณราคา | VCEDA | VCEDA | — | — | VCEDA | VCE | — | VCEDA | — | — | VCEDA | — | — | — | V |
 | `profit_estimates` — ประมาณการกำไร | VCEDA | VCEDA | — | — | VCEDA | VCE | — | VCEDA | — | — | VCEDA | — | — | — | V |
 | `hr_hub` — ศูนย์กลาง HR | VCEDA | VCEDA | VCEDA | V | VCEDA | — | — | VCEDA | — | — | VCEDA | — | — | — | V |
-| `timesheets` — ลงเวลาทำงาน | VCEDA | VCEDA | VCE | VCE | VCEDA | — | — | VCEDA | VCEDA | VCEDA | VCEDA | — | V | — | V |
+| `timesheets` — ลงเวลาทำงาน | VCEDA | VCEDA | VCE | VCE | VCEDA | — | — | VCEDA | VCEDA | VCEDA | VCEDA | VCED | V | — | V |
 | `worker_payroll` — จ่ายเงินคนงาน | VCEDA | VCEDA | VCE | VCE | VCEDA | — | — | VCEDA | — | — | VCEDA | VCED | — | — | V |
 | `payroll_runs` — รอบจ่ายคนงาน | VCEDA | VCEDA | — | VCE | VCEDA | — | — | VCEDA | — | — | VCEDA | — | — | — | V |
 | `payslips` — สลิปเงินเดือนคนงาน | VCEDA | VCEDA | — | VCE | VCEDA | — | — | VCEDA | — | — | VCEDA | — | — | — | V |

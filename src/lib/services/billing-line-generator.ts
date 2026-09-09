@@ -188,6 +188,65 @@ function mergeRetroDeltasIntoTimesheets(
   });
 }
 
+function retroOtHoursTotal(retros: readonly TimesheetRetroAdjustment[]): number {
+  let n = 0;
+  for (const r of retros) {
+    if (r.status === 'void') continue;
+    n += Math.max(0, Number(r.addedOt15Hours) || 0);
+    n += Math.max(0, Number(r.addedOt20Hours) || 0);
+    n += Math.max(0, Number(r.addedOt30Hours) || 0);
+  }
+  return n;
+}
+
+async function applyRetroHoursForCommercialBilling(
+  db: Firestore,
+  timesheets: DailyTimesheet[],
+  retros: readonly TimesheetRetroAdjustment[],
+  periodStart: string,
+  periodEnd: string,
+): Promise<DailyTimesheet[]> {
+  if (!retros.length) return timesheets;
+  const enriched = await enrichTimesheetsForRetroSources(db, timesheets, retros, periodStart, periodEnd);
+  return mergeRetroDeltasIntoTimesheets(enriched, retros);
+}
+
+/** Retro OT/SB ของ PO ในงวด — ตารางรายเดือนโชว์ W+n† แต่ daily_timesheets อาจเป็น 0 ชม. */
+async function loadRetroAdjustmentsForPoPeriod(
+  db: Firestore,
+  poId: string,
+  periodStart: string,
+  periodEnd: string,
+  timesheetIds: ReadonlySet<string>,
+): Promise<TimesheetRetroAdjustment[]> {
+  const { loadTimesheetRetroAdjustmentsForMonth } = await import(
+    '@/lib/services/timesheet-retro-adjustment-service'
+  );
+  const months = new Set<string>([periodStart.slice(0, 7), periodEnd.slice(0, 7)]);
+  const out: TimesheetRetroAdjustment[] = [];
+  const seen = new Set<string>();
+  for (const ym of months) {
+    const rows = await loadTimesheetRetroAdjustmentsForMonth(db, ym);
+    for (const r of rows) {
+      if (r.status === 'void') continue;
+      const rid = String(r.id || '').trim();
+      if (rid && seen.has(rid)) continue;
+      const d = String(r.workDateYmd || '').slice(0, 10);
+      if (d < periodStart || d > periodEnd) continue;
+      const po = String(r.purchaseOrderId || '').trim();
+      const sid = String(r.sourceTimesheetId || '').trim();
+      if (po) {
+        if (po !== poId) continue;
+      } else if (!sid || !timesheetIds.has(sid)) {
+        continue;
+      }
+      if (rid) seen.add(rid);
+      out.push(r);
+    }
+  }
+  return out;
+}
+
 /** ใบงานต้นทางของ retro ที่อยู่ในรอบแต่ไม่ถูกดึงมา (เช่น LOCKED ก่อนแก้ readyForBilling) */
 async function enrichTimesheetsForRetroSources(
   db: Firestore,
@@ -353,11 +412,14 @@ function workDayFromDayRateBilling(
   const sellOtMult = sellOtMultiplierForBilling(poLine, mainContract);
   /** อัตรา OT x1.5 เต็มต่อชม. (ช่อง OT 1.5 / ชม. บน rate sheet) — ไม่ใช่ฐานชม.ก่อนคูณ */
   const otHourlyFull = resolveBillingSellOtHourlyRate(rateCtx, statedHours);
-  if (otHourlyFull <= 0) return;
   const ot2Hourly =
-    resolveBillingMatrixOtTierHourlyRate(rateCtx, 2) ?? Math.round(otHourlyFull * (2 / 1.5) * 100) / 100;
+    otHourlyFull > 0
+      ? (resolveBillingMatrixOtTierHourlyRate(rateCtx, 2) ?? Math.round(otHourlyFull * (2 / 1.5) * 100) / 100)
+      : 0;
   const ot3Hourly =
-    resolveBillingMatrixOtTierHourlyRate(rateCtx, 3) ?? Math.round(otHourlyFull * 2 * 100) / 100;
+    otHourlyFull > 0
+      ? (resolveBillingMatrixOtTierHourlyRate(rateCtx, 3) ?? Math.round(otHourlyFull * 2 * 100) / 100)
+      : 0;
 
   const nh = Math.max(0, ts.normalHours || 0);
   const o15 = Math.max(0, ts.ot15Hours || 0);
@@ -388,6 +450,8 @@ function workDayFromDayRateBilling(
       quantity: 1,
     });
   }
+
+  if (otHourlyFull <= 0) return;
 
   const pushOtLine = (
     eventType: string,
@@ -619,11 +683,11 @@ function descriptionForLine(acc: LineAcc, positionTitle: string): string {
     case 'work_day':
       return `${title} — ค่าแรงวันทำงาน (${qtyPhrase})`;
     case 'ot_1.5':
-      return `${title} — OT x1.5 (${qtyPhrase})`;
+      return `${title} — OT1.5 (${qtyPhrase})`;
     case 'ot_2.0':
-      return `${title} — OT x2 (${qtyPhrase})`;
+      return `${title} — OT2 (${qtyPhrase})`;
     case 'ot_3.0':
-      return `${title} — OT x3 (${qtyPhrase})`;
+      return `${title} — OT3 (${qtyPhrase})`;
     case 'off_day_worked':
       return `${title} — ทำงานวันหยุด (${qtyPhrase})`;
     case 'standby_day':
@@ -765,12 +829,29 @@ export async function generateBillingLines(
       }
 
       let list = [...byId.values()];
-      list = await enrichTimesheetsForRetroSources(db, list, allRetro, periodStart, periodEnd);
+      list = await applyRetroHoursForCommercialBilling(db, list, allRetro, periodStart, periodEnd);
       tripCommercialRetroAdjustments = allRetro;
-      return mergeRetroDeltasIntoTimesheets(list, allRetro);
+      return list;
     }
     const snap = await getDocs(query(collection(db, 'daily_timesheets'), ...tsConstraints));
-    return snap.docs.map((d) => ({ ...d.data(), id: d.id } as DailyTimesheet));
+    let list = snap.docs.map((d) => ({ ...d.data(), id: d.id } as DailyTimesheet));
+    const poRetro = await loadRetroAdjustmentsForPoPeriod(
+      db,
+      poId,
+      periodStart,
+      periodEnd,
+      new Set(list.map((t) => t.id)),
+    );
+    if (poRetro.length > 0) {
+      list = mergeRetroDeltasIntoTimesheets(list, poRetro);
+      const otH = retroOtHoursTotal(poRetro);
+      if (otH > 0) {
+        warnings.push(
+          `รวม OT จากแก้ไขย้อนหลัง ${otH} ชม. ในใบแจ้งหนี้ (อัตราขาย ตาม OT1.5/OT2/OT3) — ไม่แก้ payroll`,
+        );
+      }
+    }
+    return list;
   };
 
   const [poLinesSnap, timesheetsRaw, mobSnap] = await Promise.all([

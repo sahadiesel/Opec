@@ -131,7 +131,7 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
   {
     title: 'ลงเวลาและภารกิจหน้างาน',
     description:
-      'ลงเวลารายวัน/รายเดือน — timekeeper · operations_officer · payroll lead',
+      'ลงเวลารายวัน/รายเดือน — timekeeper · operations_officer · payroll lead · accounting',
     icon: Grid3X3,
     audienceFieldOpsTimesheets: true,
     items: [

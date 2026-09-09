@@ -489,6 +489,7 @@ const ACCOUNTING_OFFICER_DOC_ACCESS: ModulePermission = {
  * Commercial:
  * - quotations / customer_pos: ดู + สร้าง + แก้ไข (สร้าง PO จากโควต้าสัญญา / แก้ใบเสนอราคา)
  * - main_contracts: ดูอย่างเดียว (ไม่สร้าง/ไม่แก้สัญญา — ใช้โควต้าบนสัญญาเพื่อสร้าง PO ได้ผ่าน UI)
+ * - timesheets: ดู/สร้าง/แก้/ลบ (ลงเวลารายวัน-รายเดือน สำหรับออกใบแจ้งหนี้) — ไม่อนุมัติ ไม่จัดการ Kiosk
  */
 export function getAccountingOfficerModulePermission(moduleKey: ModuleKey): ModulePermission {
   if (moduleKey === 'overview_dashboard') {
@@ -540,7 +541,8 @@ export function getAccountingOfficerModulePermission(moduleKey: ModuleKey): Modu
     moduleKey === 'accounts_payable' ||
     moduleKey === 'withholding_tax_items' ||
     moduleKey === 'office_payroll' ||
-    moduleKey === 'worker_payroll'
+    moduleKey === 'worker_payroll' ||
+    moduleKey === 'timesheets'
   ) {
     return { ...ACCOUNTING_OFFICER_DOC_ACCESS };
   }
@@ -553,7 +555,6 @@ export function getAccountingOfficerModulePermission(moduleKey: ModuleKey): Modu
 
   if (
     moduleKey === 'hr_hub' ||
-    moduleKey === 'timesheets' ||
     moduleKey === 'workers' ||
     moduleKey === 'worker_documents' ||
     moduleKey === 'office_staff' ||
