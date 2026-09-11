@@ -2232,8 +2232,9 @@ export class PayrollService {
   }
 
   /**
-   * ฐานรายได้ (gross) จากงวด NORMAL ในเดือนภาษีเดียวกัน — ใช้คิด ภงด. ส่วนต่างรอบตกเบิก
-   * รวมทั้งที่ยังไม่ PAID (เพื่อให้ preview/recalc สอดคล้องตอนสร้าง supplemental)
+   * ฐานรายได้ (gross) จากงวด NORMAL ในเดือนภาษีเดียวกัน
+   * — เดิมใช้คิด ภงด. ส่วนต่างรอบตกเบิก; ตอนนี้ภงด. ตกเบิกคิดจากยอดจ่ายครั้งนี้เท่านั้น
+   *   ยังเรียกได้เพื่ออ้างอิง/เข้ากันได้กับ caller เดิม (ผลไม่เข้าสูตรภาษีแล้ว)
    */
   private async sumPriorNormalTaxableGrossForWorker(
     batch: PayrollBatch & { id: string },

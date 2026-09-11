@@ -1725,8 +1725,8 @@ export default function PayrollBatchWorkerLinePage({
               {isSupplementalBatch ? (
                 <>
                   งวดตกเบิกอย่างเดียว (ไม่มีค่าแรงเดือนปัจจุบันในงวดนี้): <strong>ไม่หักประกันสังคม</strong>
-                  {' '}· คิด <strong>ภงด.1 ตามเกณฑ์ปกติ</strong> จากยอดตกเบิก (ถ้าถึงเกณฑ์หลังประมาณการ ×12)
-                  — ตั้งค่าที่{' '}
+                  {' '}· คิด <strong>ภงด.1 จากยอดตกเบิกครั้งนี้เท่านั้น</strong> (สูตรเดียวกับทดสอบ HR — ไม่รวมเงินเดือนงวดปกติที่จ่ายแล้ว)
+                  ถ้ายังไม่ถึงเกณฑ์หลังประมาณการ ×12 − ลดหย่อน → ภาษี = 0 — ตั้งค่าที่{' '}
                   <Link href="/hr/settings" className="underline font-medium">
                     HR settings
                   </Link>

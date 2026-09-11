@@ -191,6 +191,67 @@ export async function voidApprovedRetroAdjustmentsForTimesheet(
 }
 
 /**
+ * ย้ายรายการแก้ไขย้อนหลัง (approved ยังไม่จ่าย) ของเดือนต้นทางไปตั้งจ่ายในงวด payroll อื่น
+ * — ใช้เมื่อ default เดือนถัดไปทำให้สร้างงวดตกเบิกของเดือนต้นทางไม่เจอคน
+ */
+export async function reassignApprovedRetroApplyYm(
+  db: Firestore,
+  user: User,
+  input: {
+    sourceYearMonth: string;
+    targetApplyPayrollYearMonth: string;
+    reason?: string;
+  },
+): Promise<{ updatedCount: number; skippedAppliedOrVoid: number }> {
+  if (!canManageRetro(user)) throw new Error('ไม่มีสิทธิ์ย้ายงวดจ่ายของรายการแก้ไขย้อนหลัง');
+  const sourceYm = String(input.sourceYearMonth || '').trim();
+  const targetYm = String(input.targetApplyPayrollYearMonth || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(sourceYm) || !/^\d{4}-\d{2}$/.test(targetYm)) {
+    throw new Error('รูปแบบงวด YYYY-MM ไม่ถูกต้อง');
+  }
+  if (sourceYm === targetYm) {
+    /** ยังย้ายจาก apply อื่น → target ได้แม้ target = source (เคสปกติหลังปิดงวด) */
+  }
+
+  const snap = await getDocs(
+    query(collection(db, COLLECTION), where('sourceYearMonth', '==', sourceYm)),
+  );
+  const now = Date.now();
+  const note =
+    String(input.reason || '').trim() ||
+    `ย้ายจ่ายในงวด payroll เป็น ${targetYm} (สร้างงวดตกเบิกเดือนต้นทาง)`;
+  let updatedCount = 0;
+  let skippedAppliedOrVoid = 0;
+
+  for (const d of snap.docs) {
+    const row = { id: d.id, ...(d.data() as object) } as TimesheetRetroAdjustment;
+    if (row.status === 'applied' || row.status === 'void') {
+      skippedAppliedOrVoid += 1;
+      continue;
+    }
+    if (row.status !== 'approved') continue;
+    const prevApply = String(row.applyPayrollYearMonth || '').trim();
+    if (prevApply === targetYm) continue;
+
+    await updateDoc(doc(db, COLLECTION, d.id), {
+      applyPayrollYearMonth: targetYm,
+      updatedAt: now,
+    });
+    updatedCount += 1;
+    await writeAuditLog(db, user, {
+      actionType: 'UPDATE',
+      entityType: 'TimesheetRetroAdjustment',
+      entityId: d.id,
+      timesheetId: row.sourceTimesheetId,
+      sourceModule: 'operations',
+      afterSummary: `Reassign retro apply ${prevApply || '—'} → ${targetYm} (${row.workDateYmd} · ${row.workerNameSnapshot || row.workerId}): ${note}`,
+    });
+  }
+
+  return { updatedCount, skippedAppliedOrVoid };
+}
+
+/**
  * ตั้ง OT แก้ไขย้อนหลังแบบยอดรวมที่ต้องการบนตาราง (ไม่บวกทับ)
  * — ยกเลิก approved เดิมของใบงาน แล้วสร้างใหม่เท่าที่ยังขาดจากฐานสลิป + ที่จ่ายแล้ว (applied)
  */

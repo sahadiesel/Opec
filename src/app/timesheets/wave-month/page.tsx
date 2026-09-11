@@ -914,12 +914,6 @@ export default function WaveMonthTimesheetSummaryPage() {
     return hit?.id ?? null;
   }, [payrollBatchesForMonth]);
 
-  /** มีงวดจ่ายเดือนนี้แล้ว → default จ่ายตกเบิกในงวดเดียวกัน · ยังไม่มี → default เดือนถัดไป */
-  useEffect(() => {
-    if (!retroEdit || !/^\d{4}-\d{2}$/.test(monthYm)) return;
-    setRetroApplyYm(hasPayrollBatchForMonth ? monthYm : defaultApplyPayrollYmAfter(monthYm));
-  }, [retroEdit, monthYm, hasPayrollBatchForMonth]);
-
   const [workerClosureRows, setWorkerClosureRows] = useState<WorkerMonthTimesheetClosure[]>([]);
   const [workerClosureLoading, setWorkerClosureLoading] = useState(false);
   const [selectedPartialKeys, setSelectedPartialKeys] = useState<Set<string>>(() => new Set());
@@ -998,6 +992,16 @@ export default function WaveMonthTimesheetSummaryPage() {
     () => isRetroOnlyPayrollMonth(monthYm, monthSheetsForOpenPos, poMonthRows ?? undefined),
     [monthYm, monthSheetsForOpenPos, poMonthRows],
   );
+
+  /** มีงวดจ่ายเดือนนี้แล้ว หรือเดือนปิดแล้ว (แก้ย้อนหลังอย่างเดียว) → default จ่ายตกเบิกในงวดเดียวกัน */
+  useEffect(() => {
+    if (!retroEdit || !/^\d{4}-\d{2}$/.test(monthYm)) return;
+    setRetroApplyYm(
+      hasPayrollBatchForMonth || retroOnlyPayrollMonth
+        ? monthYm
+        : defaultApplyPayrollYmAfter(monthYm),
+    );
+  }, [retroEdit, monthYm, hasPayrollBatchForMonth, retroOnlyPayrollMonth]);
 
   /** คน ACTIVE ในชุดนี้ที่ยังแก้ตารางได้ — ใช้ทั้งซิงก์เงียบและปุ่ม Auto gen */
   const poActiveAutoDailyEligibleIds = useMemo(() => {

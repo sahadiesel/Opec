@@ -3,9 +3,11 @@
  *
  * ## งวดตกเบิกอย่างเดียว (SUPPLEMENTAL) — ไม่มีค่าแรงเดือนปัจจุบันในงวดนี้
  * - **ไม่หักประกันสังคม** (ไม่มีค่าจ้างงวดปัจจุบันที่นำส่ง ปสง.)
- * - **คิด ภงด.1 ตามปกติ** จากยอดตกเบิก (+ ฐานงวด NORMAL ในเดือนภาษีเดียวกัน ถ้ามี)
- *   แบบส่วนต่าง: tax(prior + supplemental) − tax(prior) โดยฐานภาษีใช้ SSO = 0
- * - ถ้ายังไม่ถึงเกณฑ์ขั้นบันไดหลังประมาณการ ×12 − ลดหย่อน → ภงด. = 0
+ * - **คิด ภงด.1 จากยอดจ่ายตกเบิกครั้งนี้เท่านั้น** (สูตรเดียวกับกล่องทดสอบ HR:
+ *   ประมาณการ ×12 − ลดหย่อนรายปี → ขั้นบันได → หาร 12) โดยฐานภาษีใช้ SSO = 0
+ * - **ห้าม**นำเงินเดือนงวด NORMAL ที่จ่ายแล้วมารวมฐาน ×12
+ *   (เคยทำให้ OT ~หมื่นบาทถูกหักภาษีผิด เพราะระบบคิดเหมือนได้เพิ่มทุกเดือน)
+ * - ถ้ายอดตกเบิกยังไม่ถึงเกณฑ์หลังประมาณการ ×12 − ลดหย่อน → ภงด. = 0
  */
 
 import {
@@ -29,38 +31,29 @@ export function forceSupplementalNoSocialSecurity(
 }
 
 /**
- * ภงด. ส่วนต่างรอบตกเบิก — ไม่หัก ปสง. ออกจากฐาน (customSso = 0)
+ * ภงด. ของงวดตกเบิก — คิดจากยอดจ่ายครั้งนี้เท่านั้น (ไม่ปนงวดปกติ)
+ * ไม่หัก ปสง. ออกจากฐาน (customSso = 0)
  */
 export function supplementalIncrementalPitBaht(input: {
   supplementalGross: number;
-  priorPaidTaxableGross: number;
+  /** ไม่ใช้แล้ว — คงพารามิเตอร์ไว้เพื่อไม่พัง call sites เดิม */
+  priorPaidTaxableGross?: number;
   policies: ResolvedPayrollPolicies;
   maxMarginalRatePercent?: number | null;
 }): number {
   const gross = Math.max(0, input.supplementalGross);
-  const prior = Math.max(0, input.priorPaidTaxableGross);
   const mr = input.maxMarginalRatePercent;
   if (mr != null && Number.isFinite(mr)) {
     const clamped = Math.max(0, Math.min(35, Number(mr)));
-    const taxTotal = pitFromMonthlyGrossWithMarginalCeiling(
-      prior + gross,
+    return pitFromMonthlyGrossWithMarginalCeiling(
+      gross,
       input.policies.tax,
       input.policies.sso,
       clamped,
       0,
     );
-    const taxPrior = pitFromMonthlyGrossWithMarginalCeiling(
-      prior,
-      input.policies.tax,
-      input.policies.sso,
-      clamped,
-      0,
-    );
-    return Math.max(0, taxTotal - taxPrior);
   }
-  const taxTotal = pitFromMonthlyGross(prior + gross, input.policies.tax, input.policies.sso, 0);
-  const taxPrior = pitFromMonthlyGross(prior, input.policies.tax, input.policies.sso, 0);
-  return Math.max(0, taxTotal - taxPrior);
+  return pitFromMonthlyGross(gross, input.policies.tax, input.policies.sso, 0);
 }
 
 export type ResolveWorkerPitModeInput = {

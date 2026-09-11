@@ -22,8 +22,7 @@ export type WorkerPayrollD8Input = {
   earningsBreakdown: Record<string, number>;
   batchType?: 'NORMAL' | 'SUPPLEMENTAL';
   /**
-   * ฐานรายได้ของรอบ NORMAL ในเดือนภาษีเดียวกัน (เพื่อคิด ภงด. ส่วนต่างรอบตกเบิก)
-   * — งวดตกเบิกอย่างเดียวไม่มีค่าแรงเดือนปัจจุบัน → prior = 0
+   * @deprecated ภงด. งวดตกเบิกไม่ใช้ฐานงวดปกติแล้ว — คง field ไว้เพื่อไม่พัง caller
    */
   priorPaidTaxableGross?: number;
 };
@@ -32,7 +31,7 @@ export type WorkerPayrollD8Input = {
  * D8 — คำนวณบรรทัด worker หลังรวม gross จาก timesheet แล้ว
  *
  * SUPPLEMENTAL (ตกเบิกเดือนก่อน / ไม่มีค่าแรงงวดปัจจุบันใน batch นี้):
- * ไม่หักประกันสังคม · คิด ภงด. ตามเกณฑ์ปกติ (ส่วนต่างจากฐาน prior ถ้ามี)
+ * ไม่หักประกันสังคม · คิด ภงด. จากยอดตกเบิกครั้งนี้เท่านั้น (สูตร HR ×12)
  */
 export function computeWorkerPayrollLineD8(input: WorkerPayrollD8Input): {
   deductionsBreakdown: Record<string, number>;

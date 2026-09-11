@@ -48,6 +48,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PayrollService, type PayrollPreflightResult } from '@/lib/services/payroll-service';
+import { reassignApprovedRetroApplyYm } from '@/lib/services/timesheet-retro-adjustment-service';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -230,6 +231,7 @@ function PayrollBatchesPageContent() {
   const [batchType, setBatchType] = useState<'NORMAL' | 'SUPPLEMENTAL'>('NORMAL');
   const [workModeFilter, setWorkModeScope] = useState<'onshore' | 'offshore' | 'mixed'>('mixed');
   const [preflight, setPreflight] = useState<PayrollPreflightResult | null>(null);
+  const [reassigningRetroApply, setReassigningRetroApply] = useState(false);
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<Set<string>>(() => new Set());
   const [deleteTarget, setDeleteTarget] = useState<PayrollBatch | null>(null);
   const [regenTarget, setRegenTarget] = useState<PayrollBatch | null>(null);
@@ -280,6 +282,35 @@ function PayrollBatchesPageContent() {
       toast({ variant: 'destructive', title: 'ตรวจสอบล้มเหลว', description: e.message });
     } finally {
       setIsChecking(false);
+    }
+  };
+
+  const handleReassignMisappliedRetros = async () => {
+    if (!firestore || !currentUser || !preflight?.supplementalMisappliedHint || !preflight.payrollYearMonth) {
+      return;
+    }
+    setReassigningRetroApply(true);
+    try {
+      const { updatedCount } = await reassignApprovedRetroApplyYm(firestore, currentUser, {
+        sourceYearMonth: preflight.supplementalMisappliedHint.sourceYearMonth,
+        targetApplyPayrollYearMonth: preflight.payrollYearMonth,
+      });
+      toast({
+        title: updatedCount > 0 ? 'ย้ายงวดจ่ายแล้ว' : 'ไม่มีรายการที่ต้องย้าย',
+        description:
+          updatedCount > 0
+            ? `อัปเดต ${updatedCount} รายการ → จ่ายในงวด ${preflight.payrollYearMonth} — กำลังตรวจสอบใหม่`
+            : 'รายการอาจถูกย้ายไปแล้วหรือถูกใช้ในงวดอื่นแล้ว',
+      });
+      await handlePreflight();
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ย้ายงวดจ่ายไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setReassigningRetroApply(false);
     }
   };
 
@@ -649,9 +680,21 @@ function PayrollBatchesPageContent() {
                               ))}
                             </ul>
                             <p>
-                              วิธีแก้: เปิดสรุปรายเดือนเดือนต้นทาง → คลิกวัน OT → ตั้ง «จ่ายในงวด payroll» เป็น{' '}
-                              <strong>{preflight.payrollYearMonth}</strong> แล้วบันทึกใหม่ — หรือสร้างงวดตกเบิกของเดือนที่ระบบแสดงด้านบน
+                              รายการเหล่านี้ถูกตั้งจ่ายเดือนถัดไปตอนบันทึกแก้ย้อนหลัง — กดปุ่มด้านล่างเพื่อย้ายมาจ่ายในงวด{' '}
+                              <strong>{preflight.payrollYearMonth}</strong> แล้วระบบจะตรวจสอบใหม่ (เช่น Klanarong)
                             </p>
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-8 font-semibold"
+                              disabled={reassigningRetroApply || isChecking || !currentUser}
+                              onClick={() => void handleReassignMisappliedRetros()}
+                            >
+                              {reassigningRetroApply ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                              ) : null}
+                              ย้ายรายการเหล่านี้ไปงวด {preflight.payrollYearMonth} (ทั้งหมด)
+                            </Button>
                           </div>
                         ) : (
                           <p>
