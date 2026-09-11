@@ -11,14 +11,13 @@ import {
   Search,
   ChevronRight,
   FileBadge,
-  Building2,
-  Calendar,
   Info,
   Loader2,
   Trash2,
   Printer,
   AlertTriangle,
 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import {
   formatStoredDateThaiBE,
 } from '@/lib/date-thai';
@@ -92,6 +91,30 @@ function formatTaxInvoiceMoneyPlain(amount: number): string {
 function taxInvoiceWhtAmount(inv: TaxInvoice): number {
   const w = Number(inv.withholdingTaxAmount) || 0;
   return w > 0.005 ? roundMoney2(w) : 0;
+}
+
+/** ตารางรายการ — ตัวอักษรเล็ก + table-fixed ให้พอดีหน้าโดยไม่เลื่อนซ้ายขวา */
+const TAX_INV_LIST_TABLE =
+  'table-fixed w-full text-[11px] leading-tight [&_th]:!h-8 [&_th]:!px-1.5 [&_th]:!py-0.5 [&_th]:align-middle [&_th]:whitespace-normal [&_th]:leading-tight [&_th]:font-semibold [&_td]:!px-1.5 [&_td]:!py-1 [&_td]:align-middle';
+
+function TaxInvoiceListColgroup({ showShare }: { showShare: boolean }) {
+  return (
+    <colgroup>
+      <col style={{ width: '12%' }} />
+      <col style={{ width: showShare ? '14%' : '15%' }} />
+      <col style={{ width: '7.5%' }} />
+      <col style={{ width: showShare ? '11%' : '12%' }} />
+      <col style={{ width: '7%' }} />
+      <col style={{ width: '6%' }} />
+      <col style={{ width: '7%' }} />
+      <col style={{ width: '7%' }} />
+      <col style={{ width: '7%' }} />
+      <col style={{ width: showShare ? '8%' : '9%' }} />
+      {showShare ? <col style={{ width: '3%' }} /> : null}
+      <col style={{ width: '6%' }} />
+      <col style={{ width: '4.5%' }} />
+    </colgroup>
+  );
 }
 
 export default function TaxInvoicesPage() {
@@ -381,11 +404,12 @@ export default function TaxInvoicesPage() {
   };
 
   const getStatusBadge = (status: TaxInvoiceStatus) => {
+    const compact = 'h-5 px-1.5 text-[10px] font-semibold leading-none';
     switch (status) {
-      case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
-      case 'ISSUED': return <Badge className="bg-green-600">ISSUED</Badge>;
-      case 'CANCELLED': return <Badge variant="secondary">CANCELLED</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
+      case 'DRAFT': return <Badge variant="outline" className={cn(compact, 'bg-slate-50 text-slate-600 border-slate-200')}>DRAFT</Badge>;
+      case 'ISSUED': return <Badge className={cn(compact, 'bg-green-600')}>ISSUED</Badge>;
+      case 'CANCELLED': return <Badge variant="secondary" className={compact} title="CANCELLED">CXL</Badge>;
+      default: return <Badge variant="outline" className={compact}>{status}</Badge>;
     }
   };
 
@@ -393,7 +417,7 @@ export default function TaxInvoicesPage() {
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="space-y-6 max-w-[1600px] mx-auto">
+      <div className="mx-auto w-full min-w-0 max-w-[1600px] space-y-6">
         <div className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
             <FileBadge className="h-8 w-8" /> ใบกำกับภาษีขาย
@@ -609,29 +633,31 @@ export default function TaxInvoicesPage() {
           </AlertDialogContent>
         </AlertDialog>
 
-        <Card className="shadow-lg border-none overflow-hidden">
-          <CardContent className="p-0">
+        <Card className="min-w-0 overflow-hidden border-none shadow-lg">
+          <CardContent className="min-w-0 overflow-hidden p-0">
             {isLoading ? (
               <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูล...</div>
             ) : (
-              <Table>
+              <div className="min-w-0 [&>div]:overflow-hidden">
+              <Table className={TAX_INV_LIST_TABLE}>
+                <TaxInvoiceListColgroup showShare={showShareColumn} />
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="py-4 pl-6 font-bold whitespace-nowrap">เลขที่ (Invoice No.)</TableHead>
-                    <TableHead className="font-bold min-w-[14rem] max-w-[18rem] w-[16rem]">ลูกค้า (Customer)</TableHead>
-                    <TableHead className="font-bold whitespace-nowrap">วันที่ออก</TableHead>
-                    <TableHead className="font-bold whitespace-nowrap">เลขที่ใบเสร็จ</TableHead>
-                    <TableHead className="text-right font-bold whitespace-nowrap">ก่อนภาษี</TableHead>
-                    <TableHead className="text-right font-bold whitespace-nowrap">ภาษี</TableHead>
-                    <TableHead className="text-right font-bold whitespace-nowrap">ยอดรวมสุทธิ</TableHead>
-                    <TableHead className="text-right font-bold whitespace-nowrap">ยอด หัก ณ ที่จ่าย</TableHead>
-                    <TableHead className="text-right font-bold whitespace-nowrap">ยอดรับสุทธิ</TableHead>
-                    <TableHead className="font-bold whitespace-nowrap">ผู้สร้าง</TableHead>
+                    <TableHead title="เลขที่ใบกำกับภาษี">เลขที่</TableHead>
+                    <TableHead>ลูกค้า</TableHead>
+                    <TableHead>วันที่ออก</TableHead>
+                    <TableHead title="เลขที่ใบเสร็จ">ใบเสร็จ</TableHead>
+                    <TableHead className="text-right">ก่อนภาษี</TableHead>
+                    <TableHead className="text-right">ภาษี</TableHead>
+                    <TableHead className="text-right" title="ยอดรวมสุทธิ">ยอดสุทธิ</TableHead>
+                    <TableHead className="text-right">หัก ณ ที่จ่าย</TableHead>
+                    <TableHead className="text-right">ยอดรับสุทธิ</TableHead>
+                    <TableHead>ผู้สร้าง</TableHead>
                     {showShareColumn && (
-                      <TableHead className="font-bold w-12 text-center whitespace-nowrap">แชร์</TableHead>
+                      <TableHead className="text-center">แชร์</TableHead>
                     )}
-                    <TableHead className="text-right font-bold w-[1%] whitespace-nowrap">สถานะ</TableHead>
-                    <TableHead className="pr-6 text-right w-[1%] whitespace-nowrap">จัดการ</TableHead>
+                    <TableHead className="text-center">สถานะ</TableHead>
+                    <TableHead className="text-right pr-2"> </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -641,50 +667,48 @@ export default function TaxInvoicesPage() {
                     const whtAmt = taxInvoiceWhtAmount(inv);
                     const netReceived = roundMoney2((Number(inv.totalAmount) || 0) - whtAmt);
                     const hasWhtDoc = (inv.whtAttachments?.length ?? 0) > 0;
+                    const creatorName = documentCreatorDisplayName(inv);
                     return (
                       <TableRow 
                         key={inv.id} 
                         className="cursor-pointer hover:bg-muted/30 group transition-all" 
                         onClick={() => router.push(`/tax-invoices/${inv.id}`)}
                       >
-                        <TableCell className="py-4 pl-6 font-bold text-primary font-mono">
-                          {inv.taxInvoiceNo || (
-                            <span className="text-muted-foreground font-sans font-semibold">รอออกเลข…</span>
-                          )}
+                        <TableCell className="max-w-0 font-bold text-primary font-mono">
+                          <span className="block truncate" title={inv.taxInvoiceNo || 'รอออกเลข'}>
+                            {inv.taxInvoiceNo || (
+                              <span className="text-muted-foreground font-sans font-semibold">รอออกเลข…</span>
+                            )}
+                          </span>
                         </TableCell>
-                        <TableCell className="min-w-[14rem] max-w-[18rem] w-[16rem]">
-                          <div
-                            className="flex items-center gap-1.5 text-sm font-bold text-primary min-w-0"
-                            title={customer?.name || 'N/A'}
-                          >
-                            <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                            <span className="truncate">{customer?.name || 'N/A'}</span>
-                          </div>
+                        <TableCell className="max-w-0">
+                          <span className="block truncate font-semibold text-primary" title={customer?.name || 'N/A'}>
+                            {customer?.name || 'N/A'}
+                          </span>
                         </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <Calendar className="h-3 w-3" />
-                            {formatStoredDateThaiBE(inv.issueDate)}
-                          </div>
+                        <TableCell className="text-muted-foreground whitespace-nowrap">
+                          {formatStoredDateThaiBE(inv.issueDate)}
                         </TableCell>
-                        <TableCell className="font-mono text-sm text-muted-foreground">{receiptNo}</TableCell>
-                        <TableCell className="text-right font-mono text-sm tabular-nums whitespace-nowrap">
+                        <TableCell className="max-w-0 font-mono text-muted-foreground">
+                          <span className="block truncate" title={receiptNo}>{receiptNo}</span>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-[10px] tabular-nums tracking-tight whitespace-nowrap">
                           {formatTaxInvoiceMoneyPlain(inv.taxableAmount ?? 0)}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm tabular-nums whitespace-nowrap">
+                        <TableCell className="text-right font-mono text-[10px] tabular-nums tracking-tight whitespace-nowrap">
                           {formatTaxInvoiceMoneyPlain(inv.vatAmount ?? 0)}
                         </TableCell>
-                        <TableCell className="text-right font-black text-primary tabular-nums whitespace-nowrap">
+                        <TableCell className="text-right font-mono text-[10px] font-bold text-primary tabular-nums tracking-tight whitespace-nowrap">
                           {formatTaxInvoiceMoneyPlain(inv.totalAmount ?? 0)}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm tabular-nums whitespace-nowrap">
+                        <TableCell className="text-right font-mono text-[10px] tabular-nums tracking-tight whitespace-nowrap">
                           {whtAmt > 0 ? (
-                            <span className="inline-flex items-center justify-end gap-1">
+                            <span className="inline-flex items-center justify-end gap-0.5">
                               {formatTaxInvoiceMoneyPlain(whtAmt)}
                               {!hasWhtDoc ? (
                                 <span title="ยังไม่มีเอกสารแนบหัก ณ ที่จ่าย">
                                   <AlertTriangle
-                                    className="h-3.5 w-3.5 shrink-0 text-amber-500 stroke-[2.5] stroke-red-600 fill-amber-300"
+                                    className="h-3 w-3 shrink-0 text-amber-500 stroke-[2.5] stroke-red-600 fill-amber-300"
                                     aria-label="ยังไม่มีเอกสารแนบหัก ณ ที่จ่าย"
                                   />
                                 </span>
@@ -694,11 +718,11 @@ export default function TaxInvoicesPage() {
                             <span className="text-muted-foreground">-</span>
                           )}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm font-semibold tabular-nums whitespace-nowrap">
+                        <TableCell className="text-right font-mono text-[10px] font-semibold tabular-nums tracking-tight whitespace-nowrap">
                           {formatTaxInvoiceMoneyPlain(netReceived)}
                         </TableCell>
-                        <TableCell className="text-sm whitespace-nowrap">
-                          {documentCreatorDisplayName(inv)}
+                        <TableCell className="max-w-0">
+                          <span className="block truncate" title={creatorName}>{creatorName}</span>
                         </TableCell>
                         {showShareColumn && (
                           <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
@@ -708,19 +732,20 @@ export default function TaxInvoicesPage() {
                               currentUser={currentUser}
                               sharedWith={inv.sharedWith}
                               sharedWithUids={inv.sharedWithUids}
+                              className="h-7 w-7"
                             />
                           </TableCell>
                         )}
-                        <TableCell className="text-right">
-                          <div className="flex justify-end">{getStatusBadge(inv.status)}</div>
+                        <TableCell className="text-center">
+                          {getStatusBadge(inv.status)}
                         </TableCell>
-                        <TableCell className="text-right pr-6">
-                          <div className="inline-flex items-center gap-1 justify-end">
+                        <TableCell className="text-right pr-2">
+                          <div className="inline-flex items-center justify-end">
                             {canAdminDelete && inv.status !== 'ISSUED' && (
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
                                 title="ลบชุดเอกสาร (ผู้ดูแลระบบ)"
                                 type="button"
                                 onClick={(e) => {
@@ -729,20 +754,20 @@ export default function TaxInvoicesPage() {
                                   setDeleteDialogOpen(true);
                                 }}
                               >
-                                <Trash2 className="h-5 w-5" />
+                                <Trash2 className="h-3.5 w-3.5" />
                               </Button>
                             )}
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="group-hover:text-primary"
+                              className="h-7 w-7 group-hover:text-primary"
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 router.push(`/tax-invoices/${inv.id}`);
                               }}
                             >
-                              <ChevronRight className="h-5 w-5" />
+                              <ChevronRight className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         </TableCell>
@@ -765,6 +790,7 @@ export default function TaxInvoicesPage() {
                   )}
                 </TableBody>
               </Table>
+              </div>
             )}
           </CardContent>
         </Card>

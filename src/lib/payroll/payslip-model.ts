@@ -829,12 +829,17 @@ export function applyLiveTimesheetIncomeToPayslip(
   };
 }
 
-export function buildWorkerPayslipDeductionLines(line: PayrollBatchLine): PayslipLineItem[] {
+export function buildWorkerPayslipDeductionLines(
+  line: PayrollBatchLine,
+  opts?: { isSupplemental?: boolean },
+): PayslipLineItem[] {
+  const isSupplemental = opts?.isSupplemental === true;
   const d = line.deductionsBreakdown || line.d8Snapshot?.deductions || {};
   const manual = line.hrLineAdjustments?.deductionItems ?? [];
   const out: PayslipLineItem[] = [];
 
-  const ss = round2(Number(d.social_security) || 0);
+  /** งวดตกเบิก: ไม่หัก/ไม่แสดงประกันสังคมของงวดปกติที่จ่ายแล้ว */
+  const ss = isSupplemental ? 0 : round2(Number(d.social_security) || 0);
   if (ss > 0.005) {
     out.push({ label: 'ประกันสังคม', amount: ss });
   }
@@ -847,8 +852,9 @@ export function buildWorkerPayslipDeductionLines(line: PayrollBatchLine): Paysli
   const pit = round2(Number(d.pit_withholding) || 0);
   if (Math.abs(pit) > 0.005) {
     const periodYm = (line.periodEndDate || line.periodStartDate || '').slice(0, 7);
-    const pitLabel =
-      /^\d{4}-\d{2}$/.test(periodYm)
+    const pitLabel = isSupplemental
+      ? 'ภาษี ณ ที่จ่าย (ภงด. 1) — การจ่ายตกเบิกครั้งนี้'
+      : /^\d{4}-\d{2}$/.test(periodYm)
         ? `ภาษี ณ ที่จ่าย (ภงด. 1) — งวด ${periodYm}`
         : 'ภาษี ณ ที่จ่าย (ภงด. 1)';
     out.push({ label: pitLabel, amount: pit });
@@ -864,22 +870,35 @@ export function buildWorkerPayslipDeductionLines(line: PayrollBatchLine): Paysli
     });
   });
 
-  const known = new Set<string>(['social_security', 'employee_assistance_fund', 'pit_withholding']);
+  const known = new Set<string>([
+    'social_security',
+    'employee_assistance_fund',
+    'pit_withholding',
+    PRIOR_PAID_RECOVERY_DEDUCTION_KEY,
+  ]);
   manual.forEach((_, i) => known.add(`manual_ded_${i}`));
 
   for (const [k, v] of Object.entries(d)) {
     if (known.has(k)) continue;
+    /** งวดตกเบิกห้ามโชว์หักยอดที่ชำระไปแล้ว / SSO ค้างจากข้อมูลเก่า */
+    if (isSupplemental) {
+      if (k === PRIOR_PAID_RECOVERY_DEDUCTION_KEY) continue;
+      if (/social.?security|ประกันสังคม/i.test(k)) continue;
+      if (/prior.?paid|already.?paid|หักยอดที่ชำระ/i.test(k)) continue;
+    }
     const amt = round2(Number(v) || 0);
     if (amt === 0) continue;
     /** กันซ้ำประกันสังคมจาก key อื่น */
     const label = humanizeDeductionKey(k);
     if (label === 'ประกันสังคม' || /social.?security|ประกันสังคม/i.test(k)) {
+      if (isSupplemental) continue;
       const existing = out.find((x) => x.label === 'ประกันสังคม');
       if (existing) {
         existing.amount = round2(existing.amount + amt);
         continue;
       }
     }
+    if (isSupplemental && label.includes('หักยอดที่ชำระไปแล้ว')) continue;
     out.push({ label, amount: amt });
   }
 
@@ -1097,7 +1116,7 @@ export function buildPayslipFromWorkerLine(
 
   /** งวดจ่ายแล้ว — คงยอดในงวด + แนบงวดตกเบิก/จ่ายแล้วต้นเดือนถ้ามี */
   if (frozen) {
-    let deductionLines = buildWorkerPayslipDeductionLines(line);
+    let deductionLines = buildWorkerPayslipDeductionLines(line, { isSupplemental });
     let deductionsTotal = sumLines(deductionLines);
     const storedGross = round2(line.grossAmount);
     let netPay = resolveLineNetForPayslip(line);
@@ -1144,7 +1163,9 @@ export function buildPayslipFromWorkerLine(
 
     let normalPaymentDateLabel: string | undefined;
 
-    if (!isSupplemental && priorPaidRefs && priorPaidRefs.length > 0) {
+    if (isSupplemental && normalLine && normalBatch) {
+      normalPaymentDateLabel = workerPaymentDateLabel(normalBatch, normalLine);
+    } else if (!isSupplemental && priorPaidRefs && priorPaidRefs.length > 0) {
       const attached = applyPriorPaidRefsToNormalPayslip(line, priorPaidRefs, poPartyLabelById, {
         incomeLines,
         deductionLines,
@@ -1168,7 +1189,9 @@ export function buildPayslipFromWorkerLine(
       companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
       employeeName: line.workerNameSnapshot || line.workerId,
       periodLabel,
-      payrollTypeLabel: 'Worker Payroll (Timesheet batch)',
+      payrollTypeLabel: isSupplemental
+        ? 'Worker Payroll · ตกเบิก (Supplemental)'
+        : 'Worker Payroll (Timesheet batch)',
       documentRef: batch.id,
       paymentDateLabel: workerPaymentDateLabel(batch, line),
       isSupplemental,
@@ -1185,7 +1208,7 @@ export function buildPayslipFromWorkerLine(
 
   const incomeLinesBuilt = buildWorkerPayslipIncomeLines(line, poPartyLabelById, positionNameOpts);
   let incomeLines = incomeLinesBuilt;
-  const deductionLines = buildWorkerPayslipDeductionLines(line);
+  const deductionLines = buildWorkerPayslipDeductionLines(line, { isSupplemental });
 
   const snapshotGross = line.d8Snapshot?.gross;
   const sumIncome = sumLines(incomeLines);
@@ -1228,61 +1251,15 @@ export function buildPayslipFromWorkerLine(
     roundingNote = false;
   }
 
-  let normalDeductionLines: PayslipLineItem[] | undefined;
-  let normalDeductionsTotal: number | undefined;
   let normalPaymentDateLabel: string | undefined;
 
+  /**
+   * งวดตกเบิก = การจ่ายแยกจากงวดปกติที่จ่ายแล้ว
+   * — เก็บวันที่จ่ายงวดปกติไว้เป็นข้อมูลอ้างอิงบนสลิปเท่านั้น
+   * — ห้ามรวมรายได้/หัก/สุทธิของงวดปกติ และห้ามสร้างบรรทัด「หักยอดที่ชำระไปแล้ว」
+   */
   if (isSupplemental && normalLine && normalBatch) {
-    const normInc = buildWorkerPayslipIncomeLines(normalLine, poPartyLabelById, positionNameOpts);
-    const normDed = buildWorkerPayslipDeductionLines(normalLine);
-    const snapGross = normalLine.d8Snapshot?.gross;
-    const sInc = sumLines(normInc);
-    const normGross =
-      snapGross != null && Number.isFinite(snapGross)
-        ? round2(snapGross)
-        : sInc > 0
-          ? sInc
-          : round2(normalLine.grossAmount);
-
-    const normNet = resolveLineNetForPayslip(normalLine);
     normalPaymentDateLabel = workerPaymentDateLabel(normalBatch, normalLine);
-
-    const mergedIncMap = new Map<string, number>();
-    for (const it of [...normInc, ...incomeLines]) {
-      mergedIncMap.set(it.label, (mergedIncMap.get(it.label) || 0) + it.amount);
-    }
-    incomeLines = [];
-    for (const [label, amount] of mergedIncMap.entries()) {
-      if (amount !== 0) incomeLines.push({ label, amount: round2(amount) });
-    }
-
-    const mergedDedMap = new Map<string, number>();
-    for (const it of [...normDed, ...deductionLines]) {
-      /** รวมประกันสังคมเป็นรายการเดียว */
-      if (it.label === 'ประกันสังคม' || it.label.startsWith('ภาษี ณ ที่จ่าย')) {
-        const key = it.label.startsWith('ภาษี ณ ที่จ่าย') ? 'ภาษี ณ ที่จ่าย (ภงด. 1)' : 'ประกันสังคม';
-        const label =
-          key === 'ประกันสังคม'
-            ? 'ประกันสังคม'
-            : it.label.startsWith('ภาษี ณ ที่จ่าย')
-              ? it.label
-              : key;
-        mergedDedMap.set(label, (mergedDedMap.get(label) || 0) + it.amount);
-        continue;
-      }
-      mergedDedMap.set(it.label, (mergedDedMap.get(it.label) || 0) + it.amount);
-    }
-    deductionLines.length = 0;
-    for (const [label, amount] of mergedDedMap.entries()) {
-      if (amount !== 0) deductionLines.push({ label, amount: round2(amount) });
-    }
-
-    pushAlreadyPaidDeduction(deductionLines, normNet, 'งวดปกติ', normalPaymentDateLabel);
-
-    grossTotal = round2(normGross + grossTotal);
-    deductionsTotal = sumLines(deductionLines);
-    netPay = round2(grossTotal - deductionsTotal);
-    roundingNote = false;
   } else if (!isSupplemental && priorPaidRefs && priorPaidRefs.length > 0) {
     const attached = applyPriorPaidRefsToNormalPayslip(line, priorPaidRefs, poPartyLabelById, {
       incomeLines,
@@ -1302,13 +1279,27 @@ export function buildPayslipFromWorkerLine(
     normalPaymentDateLabel = attached.normalPaymentDateLabel;
   }
 
+  /** งวดตกเบิก: บังคับยอดตรงสลิป = ยอดที่บันทึกในงวด (ไม่ปนงวดปกติ) */
+  if (isSupplemental) {
+    grossTotal = storedGross;
+    deductionsTotal = sumLines(deductionLines);
+    netPay = resolveLineNetForPayslip(line);
+    const impliedSupp = round2(grossTotal - deductionsTotal);
+    if (Math.abs(impliedSupp - netPay) >= 0.02) {
+      netPay = impliedSupp;
+    }
+    roundingNote = false;
+  }
+
   return {
     companyNameTh,
     companyNameEn,
     companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
     employeeName: line.workerNameSnapshot || line.workerId,
     periodLabel,
-    payrollTypeLabel: 'Worker Payroll (Timesheet batch)',
+    payrollTypeLabel: isSupplemental
+      ? 'Worker Payroll · ตกเบิก (Supplemental)'
+      : 'Worker Payroll (Timesheet batch)',
     documentRef: batch.id,
     paymentDateLabel: workerPaymentDateLabel(batch, line),
     isSupplemental,
@@ -1325,8 +1316,6 @@ export function buildPayslipFromWorkerLine(
     deductionsTotal,
     netPay,
     roundingNote,
-    normalDeductionLines,
-    normalDeductionsTotal,
   };
 }
 

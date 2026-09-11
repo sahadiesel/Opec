@@ -198,6 +198,18 @@ export interface PayrollPreflightResult {
   /** รอบ MONTHLY: ยังไม่มี po_month / wave_month ที่ปิดงวดแล้ว (ล็อก/ส่งตรวจ/อนุมัติ) ใน yyyy-MM ของรอบ */
   missingApprovedMonthlyTimesheet: boolean;
   payrollYearMonth: string | null;
+  /**
+   * งวด SUPPLEMENTAL: เมื่อ eligible = 0 — บอกว่ารายการแก้ไขย้อนหลังของเดือนต้นทาง
+   * ถูกตั้งจ่ายในงวดอื่น (เช่น ตั้ง ก.ย. แต่กำลังสร้างงวด ส.ค.)
+   */
+  supplementalMisappliedHint?: {
+    sourceYearMonth: string;
+    items: Array<{
+      applyPayrollYearMonth: string;
+      count: number;
+      workerNames: string[];
+    }>;
+  } | null;
 }
 
 function isAdminPayrollBatchDeleteBlocked(status: PayrollBatchStatus): boolean {
@@ -516,7 +528,44 @@ export class PayrollService {
       }
       
       eligibleWorkers.sort((a, b) => a.workerName.localeCompare(b.workerName, 'th'));
-      
+
+      let supplementalMisappliedHint: PayrollPreflightResult['supplementalMisappliedHint'] = null;
+      if (eligibleWorkers.length === 0) {
+        /** หา retros ของเดือนต้นทางเดียวกันที่ตั้งจ่ายคนละงวด — กันเคส default เดือนถัดไป */
+        const sourceQ = query(
+          collection(this.db, 'timesheet_retro_adjustments'),
+          where('sourceYearMonth', '==', payrollYearMonth),
+        );
+        const sourceSnap = await getDocs(sourceQ);
+        const byApply = new Map<string, { count: number; names: Set<string> }>();
+        for (const d of sourceSnap.docs) {
+          const r = { ...d.data(), id: d.id } as import('@/lib/types').TimesheetRetroAdjustment;
+          if (r.status !== 'approved') continue;
+          const apply = String(r.applyPayrollYearMonth || '').trim();
+          if (!apply || apply === payrollYearMonth) continue;
+          let bucket = byApply.get(apply);
+          if (!bucket) {
+            bucket = { count: 0, names: new Set() };
+            byApply.set(apply, bucket);
+          }
+          bucket.count += 1;
+          const nm = String(r.workerNameSnapshot || r.workerId || '').trim();
+          if (nm) bucket.names.add(nm);
+        }
+        if (byApply.size > 0) {
+          supplementalMisappliedHint = {
+            sourceYearMonth: payrollYearMonth,
+            items: [...byApply.entries()]
+              .map(([applyPayrollYearMonth, v]) => ({
+                applyPayrollYearMonth,
+                count: v.count,
+                workerNames: [...v.names].sort((a, b) => a.localeCompare(b, 'th')).slice(0, 8),
+              }))
+              .sort((a, b) => a.applyPayrollYearMonth.localeCompare(b.applyPayrollYearMonth)),
+          };
+        }
+      }
+
       return {
         totalWorkers: eligibleWorkers.length,
         totalTimesheets: retroItems.length,
@@ -525,6 +574,7 @@ export class PayrollService {
         hasWarnings: false,
         missingApprovedMonthlyTimesheet: monthlyGate.missingApprovedMonthlyTimesheet,
         payrollYearMonth: monthlyGate.payrollYearMonth,
+        supplementalMisappliedHint,
       };
     }
 
@@ -667,6 +717,7 @@ export class PayrollService {
       hasWarnings: zeroGrossWorkers.length > 0,
       missingApprovedMonthlyTimesheet: monthlyGate.missingApprovedMonthlyTimesheet,
       payrollYearMonth: monthlyGate.payrollYearMonth,
+      supplementalMisappliedHint: null,
     };
   }
 

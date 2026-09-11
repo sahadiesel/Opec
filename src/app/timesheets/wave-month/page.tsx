@@ -519,13 +519,12 @@ export default function WaveMonthTimesheetSummaryPage() {
     setRetroAddedStandby(0);
     setRetroAddedM1Trips(ev === 'mobilization_day' ? 1 : 0);
     setRetroAddedD1Trips(ev === 'demobilization_day' ? 1 : 0);
-    setRetroApplyYm(defaultApplyPayrollYmAfter(monthYm));
     setRetroReason('');
     setRetroPayPreview(null);
     setRetroPayMissing([]);
     setRetroPayContractId('');
     setRetroPayRateSource(null);
-  }, [retroEdit, monthYm]);
+  }, [retroEdit]);
 
   const onRetroEventChange = useCallback(
     (next: WaveMonthEventSelectValue) => {
@@ -914,6 +913,12 @@ export default function WaveMonthTimesheetSummaryPage() {
     const hit = (payrollBatchesForMonth ?? []).find((b) => (Number(b.totalWorkers) || 0) > 0);
     return hit?.id ?? null;
   }, [payrollBatchesForMonth]);
+
+  /** มีงวดจ่ายเดือนนี้แล้ว → default จ่ายตกเบิกในงวดเดียวกัน · ยังไม่มี → default เดือนถัดไป */
+  useEffect(() => {
+    if (!retroEdit || !/^\d{4}-\d{2}$/.test(monthYm)) return;
+    setRetroApplyYm(hasPayrollBatchForMonth ? monthYm : defaultApplyPayrollYmAfter(monthYm));
+  }, [retroEdit, monthYm, hasPayrollBatchForMonth]);
 
   const [workerClosureRows, setWorkerClosureRows] = useState<WorkerMonthTimesheetClosure[]>([]);
   const [workerClosureLoading, setWorkerClosureLoading] = useState(false);
@@ -3875,6 +3880,19 @@ export default function WaveMonthTimesheetSummaryPage() {
                   onChange={(e) => setRetroApplyYm(e.target.value)}
                   disabled={retroSaving}
                 />
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  {hasPayrollBatchForMonth ? (
+                    <>
+                      มีงวดจ่ายเดือนนี้แล้ว — ค่าเริ่มต้นคือจ่ายในงวดเดียวกัน (สร้าง{' '}
+                      <strong>ตกเบิก</strong> เดือน {monthYm}) ถ้าจะเลื่อนไปเดือนถัดไปให้เปลี่ยนที่ช่องนี้
+                    </>
+                  ) : (
+                    <>
+                      ยังไม่มีงวดจ่ายเดือนนี้ — ค่าเริ่มต้นคือเดือนถัดไป ถ้าจะจ่ายในงวดตกเบิกเดือน{' '}
+                      {monthYm} ให้เลือก {monthYm} ที่ช่องนี้ก่อนบันทึก
+                    </>
+                  )}
+                </p>
               </div>
               ) : null}
               <div className="space-y-1.5">

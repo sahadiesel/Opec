@@ -189,8 +189,12 @@ export function PayslipDocument({ model, className }: { model: PayslipViewModel;
           <div>
             <dt>วันที่จ่าย / Payment date</dt>
             <dd style={{ lineHeight: 1.6 }}>
-              <div style={{ color: '#0f766e' }}>งวดปกติ: {model.normalPaymentDateLabel || '—'}</div>
-              <div style={{ color: '#0369a1' }}>ตกเบิก: {model.paymentDateLabel || '—'}</div>
+              <div>จ่ายตกเบิก: {model.paymentDateLabel || '— (ยังไม่ระบุวันจ่าย)'}</div>
+              {model.normalPaymentDateLabel ? (
+                <div style={{ color: '#64748b', fontSize: '0.85em', marginTop: 2 }}>
+                  อ้างอิง: งวดปกติจ่ายแล้ว {model.normalPaymentDateLabel} (ไม่รวมในยอดสลิปนี้)
+                </div>
+              ) : null}
             </dd>
           </div>
         ) : model.paymentDateLabel ? (

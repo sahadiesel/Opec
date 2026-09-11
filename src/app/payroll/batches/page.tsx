@@ -628,11 +628,38 @@ function PayrollBatchesPageContent() {
                 <Alert className="bg-muted/50 border-muted-foreground/20">
                   <Info className="h-5 w-5" />
                   <AlertTitle className="font-bold">ไม่มีคนงานพร้อมจ่ายในรอบนี้</AlertTitle>
-                  <AlertDescription className="text-xs">
+                  <AlertDescription className="text-xs space-y-2">
                     {batchType === 'SUPPLEMENTAL' ? (
                       <>
-                        ยังไม่มีรายการ «แก้ไขย้อนหลัง» สถานะ approved ที่ตั้ง<strong>จ่ายในงวด</strong>เป็นเดือนนี้ —
-                        ไปหน้าสรุปรายเดือนของเดือนที่ทำงาน (เช่น ก.ค.) คลิกวันที่มี OT → บันทึกแก้ไขย้อนหลัง → เลือกจ่ายในงวดเป็นเดือนนี้ (เช่น ส.ค.) แล้วกดตรวจสอบใหม่
+                        {preflight.supplementalMisappliedHint &&
+                        preflight.supplementalMisappliedHint.items.length > 0 ? (
+                          <div className="space-y-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-amber-950">
+                            <p className="font-semibold">
+                              พบรายการแก้ไขย้อนหลังของเดือนต้นทาง{' '}
+                              {preflight.supplementalMisappliedHint.sourceYearMonth} แต่ตั้งจ่ายในงวดอื่น
+                            </p>
+                            <ul className="list-disc pl-4 space-y-1">
+                              {preflight.supplementalMisappliedHint.items.map((it) => (
+                                <li key={it.applyPayrollYearMonth}>
+                                  จ่ายในงวด <strong>{it.applyPayrollYearMonth}</strong>: {it.count} รายการ
+                                  {it.workerNames.length > 0
+                                    ? ` (${it.workerNames.join(', ')}${it.count > it.workerNames.length ? '…' : ''})`
+                                    : ''}
+                                </li>
+                              ))}
+                            </ul>
+                            <p>
+                              วิธีแก้: เปิดสรุปรายเดือนเดือนต้นทาง → คลิกวัน OT → ตั้ง «จ่ายในงวด payroll» เป็น{' '}
+                              <strong>{preflight.payrollYearMonth}</strong> แล้วบันทึกใหม่ — หรือสร้างงวดตกเบิกของเดือนที่ระบบแสดงด้านบน
+                            </p>
+                          </div>
+                        ) : (
+                          <p>
+                            ยังไม่มีรายการ «แก้ไขย้อนหลัง» สถานะ approved ที่ตั้ง<strong>จ่ายในงวด</strong>เป็นเดือนนี้ —
+                            ไปหน้าสรุปรายเดือนของเดือนที่ทำงาน คลิกวันที่มี OT → บันทึกแก้ไขย้อนหลัง → เลือกจ่ายในงวดเป็นเดือนนี้
+                            แล้วกดตรวจสอบใหม่
+                          </p>
+                        )}
                       </>
                     ) : (
                       <>

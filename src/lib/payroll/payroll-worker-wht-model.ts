@@ -145,7 +145,9 @@ export function buildPayrollWorkerWhtPrintVm(input: {
     .filter((x) => (Number(x.amount) || 0) !== 0)
     .map((x) => ({ label: x.label, amount: round2(Number(x.amount) || 0) }));
 
-  const deductionLines = buildWorkerPayslipDeductionLines(line);
+  const deductionLines = buildWorkerPayslipDeductionLines(line, {
+    isSupplemental: batch.batchType === 'SUPPLEMENTAL',
+  });
   const deductionsRows = deductionLines
     .filter((x) => (Number(x.amount) || 0) !== 0)
     .map((x) => ({ label: x.label, amount: round2(Number(x.amount) || 0) }));

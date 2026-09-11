@@ -121,13 +121,24 @@ function allowanceItemsTotal(line: PayrollBatchLine): number {
 }
 
 /** รายการหักสำหรับแสดง (SS / ภงด. / หักพิเศษที่บันทึก) */
-function deductionDisplayRows(line: PayrollBatchLine): Array<{ label: string; amount: number }> {
+function deductionDisplayRows(
+  line: PayrollBatchLine,
+  opts?: { isSupplemental?: boolean },
+): Array<{ label: string; amount: number }> {
+  const isSupplemental = opts?.isSupplemental === true;
   const d = line.deductionsBreakdown || {};
   const rows: Array<{ label: string; amount: number }> = [];
-  const ss = Number(d.social_security) || 0;
-  rows.push({ label: 'ประกันสังคม', amount: ss });
+  const ss = isSupplemental ? 0 : Number(d.social_security) || 0;
+  if (ss > 0.005 || !isSupplemental) {
+    rows.push({ label: 'ประกันสังคม', amount: ss });
+  }
   const pit = Number(d.pit_withholding) || 0;
-  rows.push({ label: 'ภาษี ณ ที่จ่าย (ภงด.)', amount: pit });
+  rows.push({
+    label: isSupplemental
+      ? 'ภาษี ณ ที่จ่าย (ภงด.) — การจ่ายตกเบิกครั้งนี้'
+      : 'ภาษี ณ ที่จ่าย (ภงด.)',
+    amount: pit,
+  });
   const caAmt = Number(d[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]) || 0;
   if (caAmt > 0) {
     rows.push({
@@ -141,10 +152,16 @@ function deductionDisplayRows(line: PayrollBatchLine): Array<{ label: string; am
     const amt = Number(d[key]);
     if (amt > 0) rows.push({ label: item.label?.trim() || `หักพิเศษ (${idx + 1})`, amount: amt });
   });
-  const known = new Set<string>(['social_security', 'pit_withholding', CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]);
+  const known = new Set<string>([
+    'social_security',
+    'pit_withholding',
+    CASH_ADVANCE_PAYROLL_DEDUCTION_KEY,
+    'prior_paid_recovery',
+  ]);
   manual.forEach((_, idx) => known.add(`manual_ded_${idx}`));
   for (const [k, v] of Object.entries(d)) {
     if (known.has(k)) continue;
+    if (isSupplemental && (/prior.?paid|หักยอดที่ชำระ|social.?security/i.test(k))) continue;
     const n = Number(v) || 0;
     if (n !== 0) rows.push({ label: k, amount: n });
   }
@@ -1356,10 +1373,12 @@ export default function PayrollBatchWorkerLinePage({
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-xs uppercase text-muted-foreground">
-                Gross (ยอดบันทึกในงวด)
+                {isSupplementalBatch ? 'Gross (ยอดตกเบิกในงวด)' : 'Gross (ยอดบันทึกในงวด)'}
               </CardTitle>
               <CardDescription className="text-[11px] leading-snug text-muted-foreground">
-                จากตอนสร้างงวด (เริ่มการประมวลผล) — เปิดหน้านี้ไม่คำนวณซ้ำ
+                {isSupplementalBatch
+                  ? 'เฉพาะรายได้ตกเบิกที่กำลังจ่าย — ไม่รวมเงินเดือนงวดปกติที่จ่ายแล้ว'
+                  : 'จากตอนสร้างงวด (เริ่มการประมวลผล) — เปิดหน้านี้ไม่คำนวณซ้ำ'}
               </CardDescription>
             </CardHeader>
             <CardContent className="text-2xl font-black text-primary">
@@ -1370,9 +1389,11 @@ export default function PayrollBatchWorkerLinePage({
             <CardHeader className="pb-2">
               <CardTitle className="text-xs uppercase text-muted-foreground">รวมรายได้ (ตรงสลิป)</CardTitle>
               <CardDescription className="text-[11px] text-muted-foreground">
-                {priorPaidGrossTotal > 0.005
-                  ? 'Gross งวด + เบี้ยเลี้ยง + รายได้ตกเบิกที่จ่ายแล้วต้นเดือน'
-                  : 'Gross งวด + รายการเบี้ยเลี้ยงในฟอร์ม (preview ตอนแก้)'}
+                {isSupplementalBatch
+                  ? 'ยอดตกเบิกที่บันทึกในงวดนี้เท่านั้น (ไม่รวมเงินเดือนงวดปกติที่จ่ายแล้ว)'
+                  : priorPaidGrossTotal > 0.005
+                    ? 'Gross งวด + เบี้ยเลี้ยง + รายได้ตกเบิกที่จ่ายแล้วต้นเดือน'
+                    : 'Gross งวด + รายการเบี้ยเลี้ยงในฟอร์ม (preview ตอนแก้)'}
               </CardDescription>
             </CardHeader>
             <CardContent className="text-2xl font-black text-primary">
@@ -1383,9 +1404,11 @@ export default function PayrollBatchWorkerLinePage({
             <CardHeader className="pb-2">
               <CardTitle className="text-xs uppercase text-muted-foreground">Net (ยอดตรงสลิป)</CardTitle>
               <CardDescription className="text-[11px] leading-snug">
-                {priorPaidNetTotal > 0.005
-                  ? `หลังหักยอดที่ชำระไปแล้ว ฿${priorPaidNetTotal.toLocaleString()} · บันทึกในงวด ฿${line.netAmount.toLocaleString()}`
-                  : `ตรงกับหน้า batch / สลิป · ฿${line.netAmount.toLocaleString()}`}
+                {isSupplementalBatch
+                  ? `สุทธิการจ่ายตกเบิกครั้งนี้ · บันทึกในงวด ฿${line.netAmount.toLocaleString()}`
+                  : priorPaidNetTotal > 0.005
+                    ? `หลังหักยอดที่ชำระไปแล้ว ฿${priorPaidNetTotal.toLocaleString()} · บันทึกในงวด ฿${line.netAmount.toLocaleString()}`
+                    : `ตรงกับหน้า batch / สลิป · ฿${line.netAmount.toLocaleString()}`}
               </CardDescription>
             </CardHeader>
             <CardContent className="text-2xl font-black text-emerald-700 flex items-center gap-2 min-h-[2.5rem]">
@@ -1419,7 +1442,36 @@ export default function PayrollBatchWorkerLinePage({
           </div>
         )}
 
-        {(priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0 && (
+        {isSupplementalBatch && normalBatch && normalLine ? (
+          <Card className="border-slate-200 bg-slate-50/60">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base text-slate-900">อ้างอิง — งวดปกติที่จ่ายแล้ว</CardTitle>
+              <CardDescription className="text-slate-700">
+                ข้อมูลประกอบเท่านั้น — ไม่รวมใน Gross / รายการหัก / Net ของการจ่ายตกเบิกครั้งนี้
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="text-sm space-y-1">
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                <span className="font-mono text-muted-foreground">{normalBatch.id}</span>
+                <span>
+                  จ่ายแล้ว{' '}
+                  {displaySlip?.normalPaymentDateLabel ||
+                    (normalLine.financePaidAt
+                      ? new Date(normalLine.financePaidAt).toLocaleDateString('th-TH')
+                      : '—')}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-muted-foreground">
+                <span>
+                  Gross งวดปกติ ฿{Number(normalLine.grossAmount || 0).toLocaleString()}
+                </span>
+                <span>Net ที่จ่ายแล้ว ฿{Number(normalLine.netAmount || 0).toLocaleString()}</span>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {(priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0 && !isSupplementalBatch && (
           <Card className="border-sky-200 bg-sky-50/40">
             <CardHeader>
               <CardTitle className="text-base text-sky-950">
@@ -2102,7 +2154,8 @@ export default function PayrollBatchWorkerLinePage({
                   ฿{(displaySlip?.grossTotal ?? pageIncomeTotal).toLocaleString()}
                 </span>
               </div>
-              {(allowanceItemsTotal(line) > 0.005 || priorPaidGrossTotal > 0.005) && (
+              {(allowanceItemsTotal(line) > 0.005 ||
+                (!isSupplementalBatch && priorPaidGrossTotal > 0.005)) && (
                 <div className="space-y-1 text-[11px] text-muted-foreground border-t border-amber-200/60 pt-2">
                   {allowanceItemsTotal(line) > 0.005 ? (
                     <div className="flex justify-between gap-4">
@@ -2112,7 +2165,7 @@ export default function PayrollBatchWorkerLinePage({
                       </span>
                     </div>
                   ) : null}
-                  {priorPaidGrossTotal > 0.005 ? (
+                  {!isSupplementalBatch && priorPaidGrossTotal > 0.005 ? (
                     <div className="flex justify-between gap-4">
                       <span>ในนั้น · รายได้ตกเบิกที่จ่ายแล้ว</span>
                       <span className="font-mono tabular-nums">
@@ -2128,7 +2181,10 @@ export default function PayrollBatchWorkerLinePage({
                 </p>
                 {(displaySlip?.deductionLines?.length
                   ? displaySlip.deductionLines
-                  : deductionDisplayRows(line).map((r) => ({ label: r.label, amount: r.amount }))
+                  : deductionDisplayRows(line, { isSupplemental: isSupplementalBatch }).map((r) => ({
+                      label: r.label,
+                      amount: r.amount,
+                    }))
                 ).map((row, i) => (
                   <div key={`${row.label}-${i}`} className="flex justify-between gap-4 text-sm">
                     <span className="text-muted-foreground">{row.label}</span>
@@ -2137,7 +2193,9 @@ export default function PayrollBatchWorkerLinePage({
                 ))}
               </div>
               <div className="flex justify-between gap-4 border-t border-amber-200/80 pt-3 font-medium">
-                <span>หักรวม (รวมหักยอดที่ชำระไปแล้ว)</span>
+                <span>
+                  {isSupplementalBatch ? 'หักรวม (ของการจ่ายตกเบิกครั้งนี้)' : 'หักรวม (รวมหักยอดที่ชำระไปแล้ว)'}
+                </span>
                 <span className="font-mono tabular-nums">
                   ฿
                   {(
@@ -2147,7 +2205,7 @@ export default function PayrollBatchWorkerLinePage({
                 </span>
               </div>
               <div className="flex justify-between gap-4 border-t border-amber-200/80 pt-3 font-black text-emerald-800">
-                <span>รับสุทธิ (ตรงสลิป)</span>
+                <span>{isSupplementalBatch ? 'รับสุทธิการตกเบิก (ตรงสลิป)' : 'รับสุทธิ (ตรงสลิป)'}</span>
                 <span className="font-mono tabular-nums">
                   ฿{(displaySlip?.netPay ?? previewNet ?? line.netAmount).toLocaleString()}
                 </span>
@@ -2157,9 +2215,11 @@ export default function PayrollBatchWorkerLinePage({
                   ตรวจเลข: รายได้ ฿{displaySlip.grossTotal.toLocaleString()} − หัก ฿
                   {displaySlip.deductionsTotal.toLocaleString()} = สุทธิ ฿
                   {displaySlip.netPay.toLocaleString()}
-                  {displaySlip.deductionLines.some((d) => d.label.includes('หักยอดที่ชำระไปแล้ว'))
-                    ? ' (หักรวมรวมยอดที่บัญชีจ่ายไปแล้วในงวดก่อนของเดือนเดียวกัน)'
-                    : ''}
+                  {isSupplementalBatch
+                    ? ' · ยอดตกเบิกครั้งนี้เท่านั้น (ไม่ปนเงินเดือนงวดปกติที่จ่ายแล้ว)'
+                    : displaySlip.deductionLines.some((d) => d.label.includes('หักยอดที่ชำระไปแล้ว'))
+                      ? ' (หักรวมรวมยอดที่บัญชีจ่ายไปแล้วในงวดก่อนของเดือนเดียวกัน)'
+                      : ''}
                 </p>
               ) : null}
               <Button
