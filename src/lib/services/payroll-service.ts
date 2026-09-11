@@ -154,7 +154,8 @@ import {
   markRetroAdjustmentsApplied, 
   retroAdjustmentsToPriorPeriodLabels,
   retroAdjustmentsToPriorPeriodItemsWithPay,
-  revertRetroAdjustmentsForPayrollBatch 
+  revertRetroAdjustmentsForPayrollBatch,
+  loadApprovedRetrosForSupplementalPayrollYm,
 } from './timesheet-retro-adjustment-service';
 
 function round2Payroll(n: number): number {
@@ -243,17 +244,11 @@ export class PayrollService {
     if (!payrollYearMonth) throw new Error('รอบบัญชีมีวันที่เริ่มต้นไม่ถูกต้อง');
     console.log('[Supplemental] Step 1: ✅ อ่านรอบบัญชีสำเร็จ ym=', payrollYearMonth);
 
-    // 1. รายการแก้ไขย้อนหลังที่ตั้งใจจ่ายในงวดนี้ (applyPayrollYearMonth)
-    //    — ไม่ใช้ sourceYearMonth (เดือนที่ทำงาน) เพราะ OT ก.ค. จ่ายใน ส.ค. ต้องมากับงวด ส.ค.
-    console.log('[Supplemental] Step 2: ดึง retro adjustments (applyPayrollYearMonth=' + payrollYearMonth + ')...');
-    const retroQuery = query(
-      collection(this.db, 'timesheet_retro_adjustments'),
-      where('applyPayrollYearMonth', '==', payrollYearMonth),
-    );
-    const retroSnap = await getDocs(retroQuery);
-    let retroItems = retroSnap.docs
-      .map(d => ({ ...d.data(), id: d.id } as import('@/lib/types').TimesheetRetroAdjustment))
-      .filter((r) => r.status === 'approved');
+    // 1. รายการแก้ไขย้อนหลังที่ยังไม่จ่าย (approved)
+    //    — เดือนชุดจ่าย P = งวดที่ผู้ใช้เลือกสร้าง; ยอดยังผูก sourceYearMonth (เดือนทำ OT)
+    //    — ไม่บังคับให้ applyPayrollYearMonth ตรง P
+    console.log('[Supplemental] Step 2: ดึง retro adjustments ที่รอจ่ายสำหรับ ym=', payrollYearMonth);
+    let retroItems = await loadApprovedRetrosForSupplementalPayrollYm(this.db, payrollYearMonth);
     console.log('[Supplemental] Step 2: ✅ พบ retro adjustments', retroItems.length, 'รายการ');
 
     if (filters?.workerIds?.length) {
@@ -262,7 +257,7 @@ export class PayrollService {
     }
 
     if (retroItems.length === 0) {
-      throw new Error('ไม่พบรายการแก้ไขย้อนหลัง (ตกเบิก) ที่รอจ่ายในรอบนี้');
+      throw new Error('ไม่พบรายการแก้ไขย้อนหลัง (ตกเบิก) ที่รอจ่าย — ตรวจว่าบันทึกแก้ย้อนหลังแล้วและยังไม่ได้จ่ายในงวดอื่น');
     }
 
     // 2. Group by worker
@@ -501,15 +496,11 @@ export class PayrollService {
     if (filters?.batchType === 'SUPPLEMENTAL') {
       const payrollYearMonth = calendarYearMonthFromPeriodStart(period.startDate);
       if (!payrollYearMonth) throw new Error('รอบบัญชีมีวันที่เริ่มต้นไม่ถูกต้อง');
-      /** ดึงตามงวดที่จะจ่าย (apply) — OT ต้นทาง ก.ค. ที่ตั้งจ่าย ส.ค. ต้องโผล่ตอนเลือกงวด ส.ค. */
-      const retroQuery = query(
-        collection(this.db, 'timesheet_retro_adjustments'),
-        where('applyPayrollYearMonth', '==', payrollYearMonth),
-      );
-      const retroSnap = await getDocs(retroQuery);
-      const retroItems = retroSnap.docs
-        .map(d => ({ ...d.data(), id: d.id } as import('@/lib/types').TimesheetRetroAdjustment))
-        .filter((r) => r.status === 'approved');
+      /**
+       * ดึงรายการที่ยังไม่จ่าย (approved) — เดือนชุดจ่าย = งวดที่เลือกสร้าง
+       * ยอดยังเป็นของเดือนต้นทาง (source); ไม่บังคับย้าย apply
+       */
+      const retroItems = await loadApprovedRetrosForSupplementalPayrollYm(this.db, payrollYearMonth);
       
       const workerRetroMap = new Map<string, import('@/lib/types').TimesheetRetroAdjustment[]>();
       for (const r of retroItems) {
@@ -529,52 +520,16 @@ export class PayrollService {
       
       eligibleWorkers.sort((a, b) => a.workerName.localeCompare(b.workerName, 'th'));
 
-      let supplementalMisappliedHint: PayrollPreflightResult['supplementalMisappliedHint'] = null;
-      if (eligibleWorkers.length === 0) {
-        /** หา retros ของเดือนต้นทางเดียวกันที่ตั้งจ่ายคนละงวด — กันเคส default เดือนถัดไป */
-        const sourceQ = query(
-          collection(this.db, 'timesheet_retro_adjustments'),
-          where('sourceYearMonth', '==', payrollYearMonth),
-        );
-        const sourceSnap = await getDocs(sourceQ);
-        const byApply = new Map<string, { count: number; names: Set<string> }>();
-        for (const d of sourceSnap.docs) {
-          const r = { ...d.data(), id: d.id } as import('@/lib/types').TimesheetRetroAdjustment;
-          if (r.status !== 'approved') continue;
-          const apply = String(r.applyPayrollYearMonth || '').trim();
-          if (!apply || apply === payrollYearMonth) continue;
-          let bucket = byApply.get(apply);
-          if (!bucket) {
-            bucket = { count: 0, names: new Set() };
-            byApply.set(apply, bucket);
-          }
-          bucket.count += 1;
-          const nm = String(r.workerNameSnapshot || r.workerId || '').trim();
-          if (nm) bucket.names.add(nm);
-        }
-        if (byApply.size > 0) {
-          supplementalMisappliedHint = {
-            sourceYearMonth: payrollYearMonth,
-            items: [...byApply.entries()]
-              .map(([applyPayrollYearMonth, v]) => ({
-                applyPayrollYearMonth,
-                count: v.count,
-                workerNames: [...v.names].sort((a, b) => a.localeCompare(b, 'th')).slice(0, 8),
-              }))
-              .sort((a, b) => a.applyPayrollYearMonth.localeCompare(b.applyPayrollYearMonth)),
-          };
-        }
-      }
-
       return {
         totalWorkers: eligibleWorkers.length,
         totalTimesheets: retroItems.length,
         eligibleWorkers,
         zeroGrossWorkers: [],
         hasWarnings: false,
-        missingApprovedMonthlyTimesheet: monthlyGate.missingApprovedMonthlyTimesheet,
-        payrollYearMonth: monthlyGate.payrollYearMonth,
-        supplementalMisappliedHint,
+        /** งวดตกเบิกไม่ต้องรอปิด timesheet ของเดือนชุดจ่าย */
+        missingApprovedMonthlyTimesheet: false,
+        payrollYearMonth,
+        supplementalMisappliedHint: null,
       };
     }
 

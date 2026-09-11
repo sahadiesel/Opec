@@ -34,6 +34,63 @@ function canManageRetro(user: User): boolean {
   return canEdit(user, 'timesheets') || canAccess(user, 'timesheets', 'edit');
 }
 
+/** เลื่อน YYYY-MM เป็นจำนวนเดือน (ติดลบ = ย้อนหลัง) */
+export function shiftCalendarYearMonth(ym: string, deltaMonths: number): string | null {
+  if (!/^\d{4}-\d{2}$/.test(ym)) return null;
+  const y = Number(ym.slice(0, 4));
+  const m = Number(ym.slice(5, 7));
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return null;
+  const d = new Date(Date.UTC(y, m - 1 + deltaMonths, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * รายการแก้ไขย้อนหลังที่ยังไม่จ่าย (approved) สำหรับสร้างงวด SUPPLEMENTAL ของเดือนชุดจ่าย P
+ *
+ * - ยอดยังเป็นของเดือนต้นทาง (sourceYearMonth = เดือนทำ OT) บนสลิป
+ * - เดือน P = เดือนที่ผู้ใช้เลือกสร้างชุดจ่าย (ก.ย./ต.ค./พ.ย. ก็ได้)
+ * - ไม่บังคับให้ applyPayrollYearMonth ตรง P — ถ้าจ่ายไปแล้ว (applied) จะไม่ดึง
+ */
+export async function loadApprovedRetrosForSupplementalPayrollYm(
+  db: Firestore,
+  payrollYearMonth: string,
+  opts?: { lookbackMonths?: number },
+): Promise<TimesheetRetroAdjustment[]> {
+  const P = String(payrollYearMonth || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(P)) return [];
+  const lookback = Math.max(1, Math.min(24, opts?.lookbackMonths ?? 12));
+  const byId = new Map<string, TimesheetRetroAdjustment>();
+
+  const sourceMonths: string[] = [];
+  for (let i = 0; i < lookback; i++) {
+    const ym = shiftCalendarYearMonth(P, -i);
+    if (ym) sourceMonths.push(ym);
+  }
+
+  await Promise.all(
+    sourceMonths.map(async (ym) => {
+      const snap = await getDocs(query(collection(db, COLLECTION), where('sourceYearMonth', '==', ym)));
+      for (const d of snap.docs) {
+        const r = { id: d.id, ...(d.data() as object) } as TimesheetRetroAdjustment;
+        if (r.status !== 'approved') continue;
+        byId.set(d.id, r);
+      }
+    }),
+  );
+
+  /** เผื่อรายการที่ source เก่าเกิน lookback แต่ตั้งจ่ายในงวด P */
+  const applySnap = await getDocs(
+    query(collection(db, COLLECTION), where('applyPayrollYearMonth', '==', P)),
+  );
+  for (const d of applySnap.docs) {
+    const r = { id: d.id, ...(d.data() as object) } as TimesheetRetroAdjustment;
+    if (r.status !== 'approved') continue;
+    byId.set(d.id, r);
+  }
+
+  return [...byId.values()];
+}
+
 export async function createTimesheetRetroAdjustment(
   db: Firestore,
   user: User,

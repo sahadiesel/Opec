@@ -48,7 +48,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PayrollService, type PayrollPreflightResult } from '@/lib/services/payroll-service';
-import { reassignApprovedRetroApplyYm } from '@/lib/services/timesheet-retro-adjustment-service';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -231,7 +230,6 @@ function PayrollBatchesPageContent() {
   const [batchType, setBatchType] = useState<'NORMAL' | 'SUPPLEMENTAL'>('NORMAL');
   const [workModeFilter, setWorkModeScope] = useState<'onshore' | 'offshore' | 'mixed'>('mixed');
   const [preflight, setPreflight] = useState<PayrollPreflightResult | null>(null);
-  const [reassigningRetroApply, setReassigningRetroApply] = useState(false);
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<Set<string>>(() => new Set());
   const [deleteTarget, setDeleteTarget] = useState<PayrollBatch | null>(null);
   const [regenTarget, setRegenTarget] = useState<PayrollBatch | null>(null);
@@ -282,35 +280,6 @@ function PayrollBatchesPageContent() {
       toast({ variant: 'destructive', title: 'ตรวจสอบล้มเหลว', description: e.message });
     } finally {
       setIsChecking(false);
-    }
-  };
-
-  const handleReassignMisappliedRetros = async () => {
-    if (!firestore || !currentUser || !preflight?.supplementalMisappliedHint || !preflight.payrollYearMonth) {
-      return;
-    }
-    setReassigningRetroApply(true);
-    try {
-      const { updatedCount } = await reassignApprovedRetroApplyYm(firestore, currentUser, {
-        sourceYearMonth: preflight.supplementalMisappliedHint.sourceYearMonth,
-        targetApplyPayrollYearMonth: preflight.payrollYearMonth,
-      });
-      toast({
-        title: updatedCount > 0 ? 'ย้ายงวดจ่ายแล้ว' : 'ไม่มีรายการที่ต้องย้าย',
-        description:
-          updatedCount > 0
-            ? `อัปเดต ${updatedCount} รายการ → จ่ายในงวด ${preflight.payrollYearMonth} — กำลังตรวจสอบใหม่`
-            : 'รายการอาจถูกย้ายไปแล้วหรือถูกใช้ในงวดอื่นแล้ว',
-      });
-      await handlePreflight();
-    } catch (e: unknown) {
-      toast({
-        variant: 'destructive',
-        title: 'ย้ายงวดจ่ายไม่สำเร็จ',
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setReassigningRetroApply(false);
     }
   };
 
@@ -505,9 +474,9 @@ function PayrollBatchesPageContent() {
                 <DialogDescription>
                   {batchType === 'SUPPLEMENTAL' ? (
                     <>
-                      เลือกรอบบัญชีที่ตรงกับ<strong>เดือนที่จะจ่ายตกเบิก</strong> (เช่น ส.ค.) — ระบบดึงเฉพาะรายการ
-                      «แก้ไขย้อนหลัง» ที่ตั้ง <strong>จ่ายในงวด</strong> เป็นเดือนนั้น ไม่ใช้ใบงาน readyForPayroll ของเดือนนี้
-                      (Natthawut ไม่ต้องมีงานใน ส.ค.)
+                      เลือกรอบ = <strong>เดือนที่ต้องการสร้างชุดจ่าย</strong> (ก.ย. / ต.ค. / พ.ย. ก็ได้) —
+                      ยอดยังเป็น<strong>ตกเบิกของเดือนที่ทำ OT</strong> ตามที่บันทึกแก้ย้อนหลัง (เช่น OT ส.ค. ยังเป็นยอดตกเบิก ส.ค. บนสลิป)
+                      · ระบบดึงเฉพาะรายการที่<strong>ยังไม่จ่าย</strong> ไม่ต้องย้ายงวดจ่าย
                     </>
                   ) : (
                     <>
@@ -662,47 +631,11 @@ function PayrollBatchesPageContent() {
                   <AlertDescription className="text-xs space-y-2">
                     {batchType === 'SUPPLEMENTAL' ? (
                       <>
-                        {preflight.supplementalMisappliedHint &&
-                        preflight.supplementalMisappliedHint.items.length > 0 ? (
-                          <div className="space-y-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-amber-950">
-                            <p className="font-semibold">
-                              พบรายการแก้ไขย้อนหลังของเดือนต้นทาง{' '}
-                              {preflight.supplementalMisappliedHint.sourceYearMonth} แต่ตั้งจ่ายในงวดอื่น
-                            </p>
-                            <ul className="list-disc pl-4 space-y-1">
-                              {preflight.supplementalMisappliedHint.items.map((it) => (
-                                <li key={it.applyPayrollYearMonth}>
-                                  จ่ายในงวด <strong>{it.applyPayrollYearMonth}</strong>: {it.count} รายการ
-                                  {it.workerNames.length > 0
-                                    ? ` (${it.workerNames.join(', ')}${it.count > it.workerNames.length ? '…' : ''})`
-                                    : ''}
-                                </li>
-                              ))}
-                            </ul>
-                            <p>
-                              รายการเหล่านี้ถูกตั้งจ่ายเดือนถัดไปตอนบันทึกแก้ย้อนหลัง — กดปุ่มด้านล่างเพื่อย้ายมาจ่ายในงวด{' '}
-                              <strong>{preflight.payrollYearMonth}</strong> แล้วระบบจะตรวจสอบใหม่ (เช่น Klanarong)
-                            </p>
-                            <Button
-                              type="button"
-                              size="sm"
-                              className="h-8 font-semibold"
-                              disabled={reassigningRetroApply || isChecking || !currentUser}
-                              onClick={() => void handleReassignMisappliedRetros()}
-                            >
-                              {reassigningRetroApply ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-                              ) : null}
-                              ย้ายรายการเหล่านี้ไปงวด {preflight.payrollYearMonth} (ทั้งหมด)
-                            </Button>
-                          </div>
-                        ) : (
-                          <p>
-                            ยังไม่มีรายการ «แก้ไขย้อนหลัง» สถานะ approved ที่ตั้ง<strong>จ่ายในงวด</strong>เป็นเดือนนี้ —
-                            ไปหน้าสรุปรายเดือนของเดือนที่ทำงาน คลิกวันที่มี OT → บันทึกแก้ไขย้อนหลัง → เลือกจ่ายในงวดเป็นเดือนนี้
-                            แล้วกดตรวจสอบใหม่
-                          </p>
-                        )}
+                        <p>
+                          ยังไม่มีรายการ «แก้ไขย้อนหลัง» สถานะ approved ที่รอจ่ายในช่วง 12 เดือนย้อนหลังจากงวดนี้ —
+                          ไปหน้าสรุปรายเดือนของเดือนที่ทำงาน คลิกวันที่มี OT → บันทึกแก้ไขย้อนหลัง แล้วกลับมากดตรวจสอบใหม่
+                          (ถ้าจ่ายในงวดอื่นไปแล้วจะไม่โผล่ซ้ำ)
+                        </p>
                       </>
                     ) : (
                       <>
