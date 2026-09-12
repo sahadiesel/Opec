@@ -186,6 +186,10 @@ export interface PayrollPreflightEligibleWorker {
   timesheetCount: number;
   /** true = ทุกใบงานในรอบนี้คำนวณ gross ได้ 0 */
   hasZeroGross: boolean;
+  /** SUPPLEMENTAL: เดือนต้นทางของรายการรอจ่าย (เช่น 2026-07, 2026-08) */
+  retroSourceYearMonths?: string[];
+  /** SUPPLEMENTAL: วันที่ทำงานบนรายการแก้ไขย้อนหลัง */
+  retroWorkDates?: string[];
 }
 
 export interface PayrollPreflightResult {
@@ -510,11 +514,27 @@ export class PayrollService {
       
       const eligibleWorkers: PayrollPreflightEligibleWorker[] = [];
       for (const [workerId, items] of workerRetroMap.entries()) {
+        const sourceMonths = [
+          ...new Set(
+            items
+              .map((it) => String(it.sourceYearMonth || '').trim())
+              .filter((ym) => /^\d{4}-\d{2}$/.test(ym)),
+          ),
+        ].sort();
+        const workDates = [
+          ...new Set(
+            items
+              .map((it) => String(it.workDateYmd || '').trim().slice(0, 10))
+              .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+          ),
+        ].sort();
         eligibleWorkers.push({
           workerId,
           workerName: items[0].workerNameSnapshot || 'Unknown',
           timesheetCount: items.length, // representing adjustment count
           hasZeroGross: false,
+          retroSourceYearMonths: sourceMonths,
+          retroWorkDates: workDates,
         });
       }
       

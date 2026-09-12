@@ -474,9 +474,9 @@ function PayrollBatchesPageContent() {
                 <DialogDescription>
                   {batchType === 'SUPPLEMENTAL' ? (
                     <>
-                      เลือกรอบ = <strong>เดือนที่ต้องการสร้างชุดจ่าย</strong> (ก.ย. / ต.ค. / พ.ย. ก็ได้) —
-                      ยอดยังเป็น<strong>ตกเบิกของเดือนที่ทำ OT</strong> ตามที่บันทึกแก้ย้อนหลัง (เช่น OT ส.ค. ยังเป็นยอดตกเบิก ส.ค. บนสลิป)
-                      · ระบบดึงเฉพาะรายการที่<strong>ยังไม่จ่าย</strong> ไม่ต้องย้ายงวดจ่าย
+                      เลือกรอบ = <strong>เดือนของชุดจ่ายตกเบิก</strong> —
+                      ระบบดึงรายการ「แก้ไขย้อนหลัง」ที่ยังไม่จ่าย ซึ่งต้นทางเป็นเดือนนี้ หรือตั้งจ่ายในงวดนี้
+                      (ไม่ใช่รายชื่อคนบนสรุปรายเดือน PO ที่เปิดดูอยู่) · ยอดบนสลิปยังแสดงเดือนที่ทำ OT ตามต้นทาง
                     </>
                   ) : (
                     <>
@@ -551,7 +551,8 @@ function PayrollBatchesPageContent() {
                     </Select>
                     {batchType === 'SUPPLEMENTAL' ? (
                       <p className="text-xs text-muted-foreground leading-snug">
-                        ไม่ดึงใบงานเดือนนี้ — ใช้รายการแก้ไขย้อนหลังที่เลือก «จ่ายในงวด» = เดือนของรอบบัญชีด้านบน
+                        ไม่ดึงรายชื่อจากสรุปรายเดือน PO — ดึงจากรายการ「แก้ไขย้อนหลัง」ที่ยังไม่จ่าย
+                        ซึ่งต้นทางเป็นเดือนของรอบนี้ หรือตั้งจ่ายในงวดนี้ (อาจมาจาก PO/คนอื่นที่ไม่ได้โชว์บนตารางที่เปิดอยู่)
                       </p>
                     ) : null}
                   </div>
@@ -613,8 +614,21 @@ function PayrollBatchesPageContent() {
                             <span className="font-semibold">{w.workerName}</span>
                             <span className="text-muted-foreground text-xs">
                               {' '}
-                              ({w.timesheetCount} ใบงาน
-                              {w.hasZeroGross ? ' · ⚠ อาจได้ค่าจ้าง 0' : ''})
+                              ({w.timesheetCount} รายการ
+                              {w.hasZeroGross ? ' · ⚠ อาจได้ค่าจ้าง 0' : ''}
+                              {batchType === 'SUPPLEMENTAL' &&
+                              w.retroSourceYearMonths &&
+                              w.retroSourceYearMonths.length > 0
+                                ? ` · ต้นทาง ${w.retroSourceYearMonths.join(', ')}`
+                                : ''}
+                              {batchType === 'SUPPLEMENTAL' &&
+                              w.retroWorkDates &&
+                              w.retroWorkDates.length > 0
+                                ? ` · วัน ${w.retroWorkDates.slice(0, 3).join(', ')}${
+                                    w.retroWorkDates.length > 3 ? '…' : ''
+                                  }`
+                                : ''}
+                              )
                             </span>
                           </span>
                         </label>
@@ -632,7 +646,7 @@ function PayrollBatchesPageContent() {
                     {batchType === 'SUPPLEMENTAL' ? (
                       <>
                         <p>
-                          ยังไม่มีรายการ «แก้ไขย้อนหลัง» สถานะ approved ที่รอจ่ายในช่วง 12 เดือนย้อนหลังจากงวดนี้ —
+                          ยังไม่มีรายการ「แก้ไขย้อนหลัง」สถานะ approved ที่ต้นทางเป็นเดือนนี้ หรือตั้งจ่ายในงวดนี้ —
                           ไปหน้าสรุปรายเดือนของเดือนที่ทำงาน คลิกวันที่มี OT → บันทึกแก้ไขย้อนหลัง แล้วกลับมากดตรวจสอบใหม่
                           (ถ้าจ่ายในงวดอื่นไปแล้วจะไม่โผล่ซ้ำ)
                         </p>
