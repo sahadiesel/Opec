@@ -14,7 +14,6 @@ import {
   Coins,
   AlertTriangle,
   Info,
-  Clock,
   Loader2,
   ShieldAlert,
   Trash2,
@@ -25,7 +24,7 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
-import { OfficePayrollRun, OfficeStaff, PayrollRunStatus } from '@/lib/types';
+import { OfficePayrollRun, OfficeStaff } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import {
@@ -56,7 +55,7 @@ import { canView, canCreate, canPreparePayroll, canExecuteBankCashbookPayments }
 import { isSystemAdmin, canSubmitOfficeRunForManagerReview } from '@/lib/permission-core';
 import { usePermissions } from '@/hooks/use-permissions';
 import { submitOfficeRunForManagerReview } from '@/lib/payroll/office-submit-hr-review';
-import { officePayrollRunStatusLabelTh } from '@/lib/payroll/office-payroll-run-status-display';
+import { OfficePayrollRunStatusBadge } from '@/lib/payroll/office-payroll-run-status-badge';
 import {
   OFFICE_RUN_STATUSES_FOR_ACCOUNTING_PAYOUT,
   shouldFilterToAccountingPayoutQueue,
@@ -553,20 +552,6 @@ export default function OfficePayrollPage() {
     }
   };
 
-  const getStatusBadge = (status: PayrollRunStatus) => {
-    const label = officePayrollRunStatusLabelTh(status);
-    switch (status) {
-      case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">{label}</Badge>;
-      case 'CALCULATED': return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">{label}</Badge>;
-      case 'HR_REVIEW': return <Badge className="bg-amber-600 hover:bg-amber-600">{label}</Badge>;
-      case 'HR_APPROVED': return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">{label}</Badge>;
-      case 'FINANCE_APPROVED': return <Badge className="bg-green-600">{label}</Badge>;
-      case 'LOCKED': return <Badge className="bg-primary text-primary-foreground"><Clock className="h-3 w-3 mr-1" /> {label}</Badge>;
-      case 'CANCELLED': return <Badge variant="secondary">{label}</Badge>;
-      default: return <Badge variant="outline">{label}</Badge>;
-    }
-  };
-
   const calculatedRunsAwaitingSubmit = useMemo(
     () => (displayRuns || []).filter((r) => r.status === 'CALCULATED'),
     [displayRuns]
@@ -974,7 +959,9 @@ export default function OfficePayrollPage() {
                       <TableCell className="text-right font-black text-primary">
                         ฿{run.netAmount.toLocaleString()}
                       </TableCell>
-                      <TableCell>{getStatusBadge(run.status)}</TableCell>
+                      <TableCell>
+                        <OfficePayrollRunStatusBadge status={run.status} flavor="office" />
+                      </TableCell>
                       <TableCell
                         className="text-right pr-2"
                         onClick={(e) => e.stopPropagation()}

@@ -1,18 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import type { Firestore } from 'firebase/firestore';
-import { Loader2, Printer } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import type { ExecutivePayrollStaff, OfficePayrollLine, OfficePayrollRun, OfficeStaff, User } from '@/lib/types';
 import type { WithholdingCertificateCopyVariant } from '@/lib/types';
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
@@ -34,12 +24,7 @@ import {
 } from '@/lib/payroll/payroll-executive-wht-audit';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting } from '@/lib/simple-tier-model';
-
-const ALL_VARIANTS: WithholdingCertificateCopyVariant[] = [
-  'COPY_PAYEE_TAX_RETURN',
-  'COPY_PAYEE_RECORD',
-  'COPY_PAYER_RECORD',
-];
+import { PayrollWhtCertificatePanelShell } from '@/components/payroll/payroll-wht-certificate-panel-shell';
 
 function buildPrintOpts(user: User, company: CompanyDocumentProfileForPayrollWht | null): PayrollWorkerWhtPrintBaseOptions {
   const disp = company?.whtCertificateDisplay;
@@ -210,78 +195,19 @@ export function PayrollExecutiveWhtCertificatePanel({
 
   const canXml = isSystemAdmin(currentUser) || isSimpleAccounting(currentUser);
 
-  const toolbar: ReactNode = (
-    <div className="flex flex-wrap gap-2 justify-end">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button type="button" size="sm" disabled={!vm || !validation.ok} className="gap-1.5">
-            <Printer className="h-4 w-4" />
-            พิมพ์…
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => void handlePrint(['COPY_PAYEE_TAX_RETURN'])}>พิมพ์ฉบับที่ 1</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void handlePrint(['COPY_PAYEE_RECORD'])}>พิมพ์ฉบับที่ 2</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void handlePrint(['COPY_PAYER_RECORD'])}>พิมพ์สำเนาผู้หักภาษี</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void handlePrint([...ALL_VARIANTS])}>พิมพ์ครบชุด (3 ฉบับ)</DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      {canXml ? (
-        <Button type="button" variant="secondary" size="sm" disabled={!vm || !validation.ok} onClick={() => void handleXmlPayload()}>
-          Generate Internal XML (JSON)
-        </Button>
-      ) : null}
-    </div>
-  );
-
   return (
-    <>
-      {toolbarHost ? createPortal(toolbar, toolbarHost) : toolbar}
-
-      {loading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground py-6">
-          <Loader2 className="h-5 w-5 animate-spin" /> กำลังโหลดทะเบียนผู้บริหาร…
-        </div>
-      ) : null}
-
-      {loadErr ? (
-        <Alert variant="destructive">
-          <AlertTitle>โหลดข้อมูลไม่สำเร็จ</AlertTitle>
-          <AlertDescription>{loadErr}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      {!loading && !loadErr && !validation.ok ? (
-        <Alert variant="destructive">
-          <AlertTitle>ตรวจสอบข้อมูลก่อนพิมพ์</AlertTitle>
-          <AlertDescription>
-            <ul className="list-disc pl-5 space-y-1">
-              {validation.errors.map((e) => (
-                <li key={e}>{e}</li>
-              ))}
-            </ul>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {!loading && !loadErr && validation.warnings.length > 0 ? (
-        <Alert>
-          <AlertTitle>หมายเหตุ</AlertTitle>
-          <AlertDescription>
-            <ul className="list-disc pl-5 space-y-1">
-              {validation.warnings.map((w) => (
-                <li key={w}>{w}</li>
-              ))}
-            </ul>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {previewHtml ? (
-        <iframe title="executive-payroll-wht-preview" className="w-full min-h-[560px] border rounded-md bg-white" srcDoc={previewHtml} />
-      ) : (
-        <p className="text-sm text-muted-foreground py-6">ยังไม่มีตัวอย่าง — โหลดข้อมูลหรือแก้ validation ก่อน</p>
-      )}
-    </>
+    <PayrollWhtCertificatePanelShell
+      loading={loading}
+      loadingLabel="กำลังโหลดทะเบียนผู้บริหาร…"
+      loadErr={loadErr}
+      validation={validation}
+      previewHtml={previewHtml}
+      iframeTitle="executive-payroll-wht-preview"
+      canPrint={!!vm && validation.ok}
+      canXml={canXml}
+      onPrint={(variants) => void handlePrint(variants)}
+      onXml={() => void handleXmlPayload()}
+      toolbarHost={toolbarHost}
+    />
   );
 }

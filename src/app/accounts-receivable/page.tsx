@@ -18,7 +18,8 @@ import {
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { AccountsReceivable, ARStatus, User, Customer, TaxInvoice, CommercialInvoice } from '@/lib/types';
-import { Badge } from '@/components/ui/badge';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { arStatusBadge } from '@/lib/accounts-receivable/ar-status-badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
@@ -336,15 +337,7 @@ export default function AccountsReceivablePage() {
     setDeleteDialogOpen(true);
   };
 
-  const getStatusBadge = (status: ARStatus) => {
-    switch (status) {
-      case 'OPEN': return <Badge variant="outline" className="border-blue-200 text-blue-700 bg-blue-50">OPEN</Badge>;
-      case 'PARTIALLY_PAID': return <Badge variant="outline" className="border-amber-200 text-amber-700 bg-amber-50">PARTIAL</Badge>;
-      case 'PAID': return <Badge className="bg-green-600">PAID</Badge>;
-      case 'OVERDUE': return <Badge variant="destructive">OVERDUE</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
-    }
-  };
+  const getStatusBadge = (status: ARStatus) => <StatusBadge {...arStatusBadge(status)} />;
 
   if (isUserLoading || userLoading || !currentUser) return null;
 

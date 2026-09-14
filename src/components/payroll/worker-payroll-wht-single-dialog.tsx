@@ -1,13 +1,10 @@
 'use client';
 
-import { useState } from 'react';
 import type { Firestore } from 'firebase/firestore';
-import { FileText } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import type { PayrollBatch, PayrollBatchLine, User } from '@/lib/types';
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
 import { PayrollWorkerWhtCertificatePanel } from '@/components/payroll/payroll-worker-wht-certificate-panel';
+import { PayrollWhtSingleDialog } from '@/components/payroll/payroll-wht-single-dialog';
 
 export function WorkerPayrollWhtSingleDialog({
   firestore,
@@ -28,30 +25,18 @@ export function WorkerPayrollWhtSingleDialog({
   disabled?: boolean;
   disabledTitle?: string;
 }) {
-  const [open, setOpen] = useState(false);
-
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="gap-1 whitespace-nowrap"
-          disabled={disabled}
-          title={disabledTitle}
-        >
-          <FileText className="h-3.5 w-3.5 shrink-0" />
-          ใบหักฯ
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="max-h-[92vh] overflow-y-auto w-[calc(100vw-1rem)] sm:max-w-5xl">
-        <DialogHeader>
-          <DialogTitle>หนังสือรับรองการหักภาษี ณ ที่จ่าย (ลูกจ้าง)</DialogTitle>
-          <DialogDescription>
-            {line.workerNameSnapshot} · {batch.id}
-          </DialogDescription>
-        </DialogHeader>
+    <PayrollWhtSingleDialog
+      title="หนังสือรับรองการหักภาษี ณ ที่จ่าย (ลูกจ้าง)"
+      description={
+        <>
+          {line.workerNameSnapshot} · {batch.id}
+        </>
+      }
+      disabled={disabled}
+      disabledTitle={disabledTitle}
+    >
+      {(open) => (
         <PayrollWorkerWhtCertificatePanel
           active={open}
           firestore={firestore}
@@ -61,7 +46,7 @@ export function WorkerPayrollWhtSingleDialog({
           companyProfile={companyProfile}
           currentUser={currentUser}
         />
-      </DialogContent>
-    </Dialog>
+      )}
+    </PayrollWhtSingleDialog>
   );
 }

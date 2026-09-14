@@ -52,19 +52,22 @@ export async function resolveLaborCostTermId(
   timesheetDate: string,
 ): Promise<string | undefined> {
   if (!purchaseOrderId) return undefined;
+  /** equality เดียว — กรอง status ฝั่ง client (ไม่ต้องรอ composite index) */
   const q = query(
     collection(db, 'labor_cost_contract_terms'),
     where('relatedPurchaseOrderId', '==', purchaseOrderId),
-    where('status', '==', 'ACTIVE'),
   );
   const snap = await getDocs(q);
   if (snap.empty) return undefined;
 
-  const terms = snap.docs.map(d => ({ ...d.data(), id: d.id } as LaborCostContractTerm));
+  const terms = snap.docs
+    .map((d) => ({ ...d.data(), id: d.id } as LaborCostContractTerm))
+    .filter((t) => (t.status || 'ACTIVE') === 'ACTIVE');
+  if (terms.length === 0) return undefined;
 
   // Prefer the term whose effective range covers the timesheet date
   const dateMatch = terms.find(
-    t => t.effectiveDate <= timesheetDate && t.endDate >= timesheetDate,
+    (t) => t.effectiveDate <= timesheetDate && t.endDate >= timesheetDate,
   );
   if (dateMatch) return dateMatch.id;
 

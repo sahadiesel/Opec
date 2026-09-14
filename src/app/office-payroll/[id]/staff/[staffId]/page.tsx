@@ -47,32 +47,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { useToast } from '@/hooks/use-toast';
 import { PayrollService } from '@/lib/services/payroll-service';
 import { pickOfficePayrollLineForStaff } from '@/lib/payroll/office-payroll-line-ids';
-
-function hrAllowanceTotal(line: OfficePayrollLine): number {
-  return (line.hrLineAdjustments?.allowanceItems ?? []).reduce((s, x) => s + (Number(x.amount) || 0), 0);
-}
-
-function snapshotDeductionLabel(
-  key: string,
-  line: OfficePayrollLine,
-): string {
-  if (key === 'social_security') return 'ประกันสังคม';
-  if (key === 'pit_withholding') return 'ภาษี ณ ที่จ่าย (ภงด.)';
-  if (key === 'pre_employment_deduction') return 'หักก่อนวันเริ่มงาน (เงินเดือนไม่เต็มเดือน)';
-  if (key === 'post_employment_deduction') return 'หักหลังวันสิ้นสุดการจ้าง';
-  if (key === 'late_deduction') return 'หักมาสาย';
-  if (key === 'absence_deduction') return 'หักขาดงาน (จากสแกน)';
-  if (key === 'unpaid_leave_deduction') return 'หักลาเกินสิทธิ์ / ลาไม่อนุมัติ';
-  if (key === 'cash_advance_recovery') return 'หักคืนเบิกล่วงหน้า';
-  const m = /^manual_ded_(\d+)$/.exec(key);
-  if (m) {
-    const idx = Number(m[1]);
-    const item = line.hrLineAdjustments?.deductionItems?.[idx];
-    if (item?.label?.trim()) return item.label.trim();
-    return `หักเพิ่ม (${idx + 1})`;
-  }
-  return key.replace(/_/g, ' ');
-}
+import { hrAllowanceTotal, snapshotDeductionLabel } from '@/lib/payroll/payslip-deduction-display';
 
 const OFFICE_PAYROLL_LIST_HREF = '/office-payroll';
 const OFFICE_PAYROLL_APPROVAL_HREF = '/hr/payroll-approval';

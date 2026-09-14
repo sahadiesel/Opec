@@ -1,9 +1,10 @@
-import type { StoreItem } from '@/lib/types';
 import { escapeHtmlDoc } from '@/lib/documents/standard-document-print';
+import {
+  sumChildStock,
+  type StoreCatalogDisplayRow,
+} from '@/lib/store/store-catalog-rows';
 
-export type StoreCatalogDisplayRow =
-  | { kind: 'group'; header: StoreItem; children: StoreItem[] }
-  | { kind: 'standalone'; item: StoreItem };
+export type { StoreCatalogDisplayRow };
 
 export type StoreCatalogListPrintRow = {
   itemCode: string;
@@ -37,10 +38,6 @@ function stockLine(stock: number, unit: string, suffix?: string): string {
   const u = (unit || 'Unit').trim();
   const base = `${stock} ${u}`;
   return suffix ? `${base} ${suffix}` : base;
-}
-
-function sumChildStock(children: StoreItem[]): number {
-  return children.reduce((s, c) => s + (Number(c.currentStock) || 0), 0);
 }
 
 export function flattenStoreCatalogDisplayRows(rows: StoreCatalogDisplayRow[]): StoreCatalogListPrintRow[] {

@@ -48,10 +48,13 @@ import {
 } from '@/lib/services/timesheet-retro-adjustment-service';
 import { PayrollService } from '@/lib/services/payroll-service';
 import { useToast } from '@/hooks/use-toast';
-import { formatDateThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
+import { formatDateThaiBE } from '@/lib/date-thai';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
+import { WorkerLineSummaryCards } from '@/components/payroll/worker-line/worker-line-summary-cards';
+import { WorkerLinePriorPaidReference } from '@/components/payroll/worker-line/worker-line-prior-paid-reference';
+import { WorkerLineSlipSummaryBox } from '@/components/payroll/worker-line/worker-line-slip-summary-box';
 import { buildPayslipFromWorkerLine, normalizeIncomeSegments, isWorkerPayrollBatchSnapshotFrozen, payrollBatchChronologyMs, type PriorPaidPayrollSlipRef } from '@/lib/payroll/payslip-model';
-import { formatPriorPeriodAllowancePayslipLabel } from '@/lib/payroll/prior-period-allowance';
+import { allowanceItemsTotal } from '@/lib/payroll/payslip-deduction-display';
 import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
@@ -110,62 +113,6 @@ function localWeekdayIndex(dateStr: string): number {
   const d = parts[2];
   if (!y || !m || !d) return 0;
   return new Date(y, m - 1, d).getDay();
-}
-
-function lineDeductionsTotal(line: PayrollBatchLine): number {
-  return Object.values(line.deductionsBreakdown || {}).reduce((a, b) => a + (Number(b) || 0), 0);
-}
-
-function allowanceItemsTotal(line: PayrollBatchLine): number {
-  return (line.hrLineAdjustments?.allowanceItems ?? []).reduce((s, x) => s + (Number(x.amount) || 0), 0);
-}
-
-/** รายการหักสำหรับแสดง (SS / ภงด. / หักพิเศษที่บันทึก) */
-function deductionDisplayRows(
-  line: PayrollBatchLine,
-  opts?: { isSupplemental?: boolean },
-): Array<{ label: string; amount: number }> {
-  const isSupplemental = opts?.isSupplemental === true;
-  const d = line.deductionsBreakdown || {};
-  const rows: Array<{ label: string; amount: number }> = [];
-  const ss = isSupplemental ? 0 : Number(d.social_security) || 0;
-  if (ss > 0.005 || !isSupplemental) {
-    rows.push({ label: 'ประกันสังคม', amount: ss });
-  }
-  const pit = Number(d.pit_withholding) || 0;
-  rows.push({
-    label: isSupplemental
-      ? 'ภาษี ณ ที่จ่าย (ภงด.) — การจ่ายตกเบิกครั้งนี้'
-      : 'ภาษี ณ ที่จ่าย (ภงด.)',
-    amount: pit,
-  });
-  const caAmt = Number(d[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]) || 0;
-  if (caAmt > 0) {
-    rows.push({
-      label: 'หักคืนเบิกล่วงหน้า (อัตโนมัติ · จ่ายแล้วรอหักสลิป)',
-      amount: caAmt,
-    });
-  }
-  const manual = line.hrLineAdjustments?.deductionItems ?? [];
-  manual.forEach((item, idx) => {
-    const key = `manual_ded_${idx}`;
-    const amt = Number(d[key]);
-    if (amt > 0) rows.push({ label: item.label?.trim() || `หักพิเศษ (${idx + 1})`, amount: amt });
-  });
-  const known = new Set<string>([
-    'social_security',
-    'pit_withholding',
-    CASH_ADVANCE_PAYROLL_DEDUCTION_KEY,
-    'prior_paid_recovery',
-  ]);
-  manual.forEach((_, idx) => known.add(`manual_ded_${idx}`));
-  for (const [k, v] of Object.entries(d)) {
-    if (known.has(k)) continue;
-    if (isSupplemental && (/prior.?paid|หักยอดที่ชำระ|social.?security/i.test(k))) continue;
-    const n = Number(v) || 0;
-    if (n !== 0) rows.push({ label: k, amount: n });
-  }
-  return rows;
 }
 
 /** รวมยอด earningsBreakdown ที่นับเข้า eventType เดียวกัน (สอดคล้อง payroll-service) */
@@ -1369,53 +1316,15 @@ export default function PayrollBatchWorkerLinePage({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs uppercase text-muted-foreground">
-                {isSupplementalBatch ? 'Gross (ยอดตกเบิกในงวด)' : 'Gross (ยอดบันทึกในงวด)'}
-              </CardTitle>
-              <CardDescription className="text-[11px] leading-snug text-muted-foreground">
-                {isSupplementalBatch
-                  ? 'เฉพาะรายได้ตกเบิกที่กำลังจ่าย — ไม่รวมเงินเดือนงวดปกติที่จ่ายแล้ว'
-                  : 'จากตอนสร้างงวด (เริ่มการประมวลผล) — เปิดหน้านี้ไม่คำนวณซ้ำ'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="text-2xl font-black text-primary">
-              ฿{line.grossAmount.toLocaleString()}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs uppercase text-muted-foreground">รวมรายได้ (ตรงสลิป)</CardTitle>
-              <CardDescription className="text-[11px] text-muted-foreground">
-                {isSupplementalBatch
-                  ? 'ยอดตกเบิกที่บันทึกในงวดนี้เท่านั้น (ไม่รวมเงินเดือนงวดปกติที่จ่ายแล้ว)'
-                  : priorPaidGrossTotal > 0.005
-                    ? 'Gross งวด + เบี้ยเลี้ยง + รายได้ตกเบิกที่จ่ายแล้วต้นเดือน'
-                    : 'Gross งวด + รายการเบี้ยเลี้ยงในฟอร์ม (preview ตอนแก้)'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="text-2xl font-black text-primary">
-              ฿{pageIncomeTotal.toLocaleString()}
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-xs uppercase text-muted-foreground">Net (ยอดตรงสลิป)</CardTitle>
-              <CardDescription className="text-[11px] leading-snug">
-                {isSupplementalBatch
-                  ? `สุทธิการจ่ายตกเบิกครั้งนี้ · บันทึกในงวด ฿${line.netAmount.toLocaleString()}`
-                  : priorPaidNetTotal > 0.005
-                    ? `หลังหักยอดที่ชำระไปแล้ว ฿${priorPaidNetTotal.toLocaleString()} · บันทึกในงวด ฿${line.netAmount.toLocaleString()}`
-                    : `ตรงกับหน้า batch / สลิป · ฿${line.netAmount.toLocaleString()}`}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="text-2xl font-black text-emerald-700 flex items-center gap-2 min-h-[2.5rem]">
-              <>฿{(displaySlip?.netPay ?? line.netAmount).toLocaleString()}</>
-            </CardContent>
-          </Card>
-        </div>
+        <WorkerLineSummaryCards
+          isSupplementalBatch={isSupplementalBatch}
+          grossAmount={line.grossAmount}
+          pageIncomeTotal={pageIncomeTotal}
+          priorPaidGrossTotal={priorPaidGrossTotal}
+          priorPaidNetTotal={priorPaidNetTotal}
+          lineNetAmount={line.netAmount}
+          displayNetPay={displaySlip?.netPay ?? line.netAmount}
+        />
 
         {line.d8Snapshot?.rate?.summary && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -1442,118 +1351,13 @@ export default function PayrollBatchWorkerLinePage({
           </div>
         )}
 
-        {isSupplementalBatch && normalBatch && normalLine ? (
-          <Card className="border-slate-200 bg-slate-50/60">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base text-slate-900">อ้างอิง — งวดปกติที่จ่ายแล้ว</CardTitle>
-              <CardDescription className="text-slate-700">
-                ข้อมูลประกอบเท่านั้น — ไม่รวมใน Gross / รายการหัก / Net ของการจ่ายตกเบิกครั้งนี้
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="text-sm space-y-1">
-              <div className="flex flex-wrap gap-x-4 gap-y-1">
-                <span className="font-mono text-muted-foreground">{normalBatch.id}</span>
-                <span>
-                  จ่ายแล้ว{' '}
-                  {displaySlip?.normalPaymentDateLabel ||
-                    (normalLine.financePaidAt
-                      ? new Date(normalLine.financePaidAt).toLocaleDateString('th-TH')
-                      : '—')}
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-x-6 gap-y-1 text-muted-foreground">
-                <span>
-                  Gross งวดปกติ ฿{Number(normalLine.grossAmount || 0).toLocaleString()}
-                </span>
-                <span>Net ที่จ่ายแล้ว ฿{Number(normalLine.netAmount || 0).toLocaleString()}</span>
-              </div>
-            </CardContent>
-          </Card>
-        ) : null}
-
-        {(priorPaidRefs as PriorPaidPayrollSlipRef[]).length > 0 && !isSupplementalBatch && (
-          <Card className="border-sky-200 bg-sky-50/40">
-            <CardHeader>
-              <CardTitle className="text-base text-sky-950">
-                รายได้ตกเบิก / งวดที่จ่ายแล้วต้นเดือน
-              </CardTitle>
-              <CardDescription className="text-sky-900/80">
-                รวมตกเบิกเดือนก่อนที่จ่ายในเดือนนี้ และงวดปกติที่จ่ายไปแล้ว — เป็นรายรับของเดือนเดียวกัน · สลิปรอบนี้หักสุทธิงวดนั้นออก
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {(priorPaidRefs as PriorPaidPayrollSlipRef[]).map((ref) => {
-                const retro = (ref.line.hrLineAdjustments?.priorPeriodAllowanceItems ?? []).filter(
-                  (it) => Number(it.amount) > 0,
-                );
-                const days = ref.line.dailyRowSnapshots ?? [];
-                const byId = ref.line.timesheetGrossById ?? {};
-                const dayEntries =
-                  days.length > 0
-                    ? days.map((d) => ({
-                        date: d.date,
-                        eventType: d.eventType,
-                        amount: Number(d.amount) || 0,
-                      }))
-                    : Object.entries(byId).map(([id, amount]) => ({
-                        date: id,
-                        eventType: 'timesheet',
-                        amount: Number(amount) || 0,
-                      }));
-                return (
-                  <div key={ref.batch.id} className="rounded-md border border-sky-200 bg-white p-3 space-y-3">
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                      <span className="font-mono text-muted-foreground">{ref.batch.id}</span>
-                      <span>
-                        Gross ฿{Number(ref.line.grossAmount || 0).toLocaleString()} · Net ฿
-                        {Number(ref.line.netAmount || 0).toLocaleString()}
-                      </span>
-                    </div>
-                    {retro.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-sky-900 mb-1">OT / รายได้ย้อนหลังในงวดนั้น</p>
-                        <ul className="text-sm space-y-1">
-                          {retro.map((it, i) => (
-                            <li key={i} className="flex justify-between gap-3">
-                              <span>{formatPriorPeriodAllowancePayslipLabel(it)}</span>
-                              <span className="tabular-nums font-medium">
-                                ฿{Number(it.amount).toLocaleString()}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {dayEntries.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-sky-900 mb-1">รายวันที่จ่ายในงวดนั้น</p>
-                        <ul className="text-sm space-y-1 max-h-40 overflow-y-auto">
-                          {dayEntries.map((d, i) => (
-                            <li key={i} className="flex justify-between gap-3">
-                              <span>
-                                {/^\d{4}-\d{2}-\d{2}$/.test(d.date)
-                                  ? formatYmdLocalThaiBE(d.date)
-                                  : d.date}{' '}
-                                · {d.eventType}
-                              </span>
-                              <span className="tabular-nums">฿{d.amount.toLocaleString()}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {retro.length === 0 && dayEntries.length === 0 && (
-                      <p className="text-sm text-muted-foreground">
-                        ไม่มีรายละเอียดรายวัน/ตกเบิกใน snapshot งวดนี้ — ยังหักสุทธิ ฿
-                        {Number(ref.line.netAmount || 0).toLocaleString()} จากสลิปรอบหลัง
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
-            </CardContent>
-          </Card>
-        )}
+        <WorkerLinePriorPaidReference
+          isSupplementalBatch={isSupplementalBatch}
+          normalBatch={normalBatch}
+          normalLine={normalLine}
+          normalPaymentDateLabel={displaySlip?.normalPaymentDateLabel}
+          priorPaidRefs={priorPaidRefs as PriorPaidPayrollSlipRef[]}
+        />
 
         <Card>
           <CardHeader>
@@ -2147,91 +1951,17 @@ export default function PayrollBatchWorkerLinePage({
               </div>
 
               <div className="space-y-4 min-w-0 lg:sticky lg:top-4">
-            <div className="rounded-md border border-amber-300 bg-amber-50/50 p-4 text-sm space-y-3">
-              <div className="flex justify-between gap-4 font-medium">
-                <span>รวมรายได้ (ตรงสลิป)</span>
-                <span className="font-mono tabular-nums text-primary">
-                  ฿{(displaySlip?.grossTotal ?? pageIncomeTotal).toLocaleString()}
-                </span>
-              </div>
-              {(allowanceItemsTotal(line) > 0.005 ||
-                (!isSupplementalBatch && priorPaidGrossTotal > 0.005)) && (
-                <div className="space-y-1 text-[11px] text-muted-foreground border-t border-amber-200/60 pt-2">
-                  {allowanceItemsTotal(line) > 0.005 ? (
-                    <div className="flex justify-between gap-4">
-                      <span>ในนั้น · เบี้ยเลี้ยง / รายได้พิเศษ</span>
-                      <span className="font-mono tabular-nums">
-                        ฿{allowanceItemsTotal(line).toLocaleString()}
-                      </span>
-                    </div>
-                  ) : null}
-                  {!isSupplementalBatch && priorPaidGrossTotal > 0.005 ? (
-                    <div className="flex justify-between gap-4">
-                      <span>ในนั้น · รายได้ตกเบิกที่จ่ายแล้ว</span>
-                      <span className="font-mono tabular-nums">
-                        ฿{priorPaidGrossTotal.toLocaleString()}
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
-              )}
-              <div className="space-y-1.5 border-t border-amber-200/80 pt-3">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  รายการหัก (ตรงสลิป)
-                </p>
-                {(displaySlip?.deductionLines?.length
-                  ? displaySlip.deductionLines
-                  : deductionDisplayRows(line, { isSupplemental: isSupplementalBatch }).map((r) => ({
-                      label: r.label,
-                      amount: r.amount,
-                    }))
-                ).map((row, i) => (
-                  <div key={`${row.label}-${i}`} className="flex justify-between gap-4 text-sm">
-                    <span className="text-muted-foreground">{row.label}</span>
-                    <span className="font-mono tabular-nums">−฿{row.amount.toLocaleString()}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex justify-between gap-4 border-t border-amber-200/80 pt-3 font-medium">
-                <span>
-                  {isSupplementalBatch ? 'หักรวม (ของการจ่ายตกเบิกครั้งนี้)' : 'หักรวม (รวมหักยอดที่ชำระไปแล้ว)'}
-                </span>
-                <span className="font-mono tabular-nums">
-                  ฿
-                  {(
-                    displaySlip?.deductionsTotal ??
-                    lineDeductionsTotal(line)
-                  ).toLocaleString()}
-                </span>
-              </div>
-              <div className="flex justify-between gap-4 border-t border-amber-200/80 pt-3 font-black text-emerald-800">
-                <span>{isSupplementalBatch ? 'รับสุทธิการตกเบิก (ตรงสลิป)' : 'รับสุทธิ (ตรงสลิป)'}</span>
-                <span className="font-mono tabular-nums">
-                  ฿{(displaySlip?.netPay ?? previewNet ?? line.netAmount).toLocaleString()}
-                </span>
-              </div>
-              {displaySlip ? (
-                <p className="text-[11px] text-muted-foreground leading-snug pt-1">
-                  ตรวจเลข: รายได้ ฿{displaySlip.grossTotal.toLocaleString()} − หัก ฿
-                  {displaySlip.deductionsTotal.toLocaleString()} = สุทธิ ฿
-                  {displaySlip.netPay.toLocaleString()}
-                  {isSupplementalBatch
-                    ? ' · ยอดตกเบิกครั้งนี้เท่านั้น (ไม่ปนเงินเดือนงวดปกติที่จ่ายแล้ว)'
-                    : displaySlip.deductionLines.some((d) => d.label.includes('หักยอดที่ชำระไปแล้ว'))
-                      ? ' (หักรวมรวมยอดที่บัญชีจ่ายไปแล้วในงวดก่อนของเดือนเดียวกัน)'
-                      : ''}
-                </p>
-              ) : null}
-              <Button
-                type="button"
-                className="w-full"
-                disabled={!canSaveAdjustments || saving}
-                onClick={() => void handleSave()}
-              >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                บันทึกการปรับยอด
-              </Button>
-            </div>
+            <WorkerLineSlipSummaryBox
+              isSupplementalBatch={isSupplementalBatch}
+              line={line}
+              displaySlip={displaySlip}
+              pageIncomeTotal={pageIncomeTotal}
+              priorPaidGrossTotal={priorPaidGrossTotal}
+              previewNet={previewNet}
+              canSaveAdjustments={canSaveAdjustments}
+              saving={saving}
+              onSave={() => void handleSave()}
+            />
               </div>
             </div>
           </CardContent>

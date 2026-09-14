@@ -31,6 +31,8 @@ import {
 } from '@/lib/date-thai';
 import { LaborCostContractTerm, User, Customer, PurchaseOrder, LaborCostContractStatus, LaborScopeType, MainContract } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { laborCostContractStatusBadge } from '@/lib/commercial/labor-cost-contract-status-badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, orderBy, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking } from '@/firebase/non-blocking-updates';
@@ -129,15 +131,9 @@ export default function LaborCostTermsPage() {
     }
   };
 
-  const getStatusBadge = (status: LaborCostContractStatus) => {
-    switch (status) {
-      case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
-      case 'ACTIVE': return <Badge className="bg-green-600">ACTIVE</Badge>;
-      case 'EXPIRED': return <Badge variant="destructive">EXPIRED</Badge>;
-      case 'CLOSED': return <Badge variant="secondary">CLOSED</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
-    }
-  };
+  const getStatusBadge = (status: LaborCostContractStatus) => (
+    <StatusBadge {...laborCostContractStatusBadge(status)} />
+  );
 
   const getScopeBadge = (scope: LaborScopeType) => {
     switch (scope) {

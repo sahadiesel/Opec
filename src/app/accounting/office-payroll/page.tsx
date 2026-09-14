@@ -10,7 +10,8 @@ import { ChevronRight, Coins, Info, Loader2, Search, ShieldAlert } from 'lucide-
 import { Input } from '@/components/ui/input';
 import { formatPayrollYearMonthEnAbbrev, formatPayrollYearMonthMmYyyyThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { OfficePayrollRun } from '@/lib/types';
-import { Badge } from '@/components/ui/badge';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { officeRunAccountingStatusBadge } from '@/lib/payroll/office-run-accounting-status-badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, orderBy, query } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -19,18 +20,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { OFFICE_RUN_STATUSES_FOR_ACCOUNTING_PAYOUT } from '@/lib/payroll/accounting-payout-queue';
 
 function getStatusBadge(status: string) {
-  switch (status) {
-    case 'HR_APPROVED':
-      return <Badge className="bg-amber-600 hover:bg-amber-600">รอทำจ่าย (บัญชี)</Badge>;
-    case 'FINANCE_APPROVED':
-      return <Badge className="bg-blue-600 hover:bg-blue-600">อนุมัติการเงินแล้ว</Badge>;
-    case 'LOCKED':
-      return <Badge className="bg-primary hover:bg-primary">ล็อกแล้ว</Badge>;
-    case 'PAID':
-      return <Badge variant="secondary">PAID</Badge>;
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
+  return <StatusBadge {...officeRunAccountingStatusBadge(status)} />;
 }
 
 export default function AccountingOfficePayrollQueuePage() {

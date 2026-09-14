@@ -53,7 +53,11 @@ import {
 } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { fetchWorkerClosuresForPoMonth } from '@/lib/timesheet/worker-month-closure';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { generateBillingLines, generateBillingLinesForMobCycles } from '@/lib/services/billing-line-generator';
+import {
+  generateBillingLines,
+  generateBillingLinesForMobCycles,
+  type GeneratedBillingLine,
+} from '@/lib/services/billing-line-generator';
 import {
   approveTripBillingBatch,
   markTripBatchInvoiced,
@@ -80,6 +84,103 @@ function roundMoney(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+function newLineId(): string {
+  return typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function computeCommercialInvoiceVatTotals(
+  amountBeforeTax: number,
+  vatPercent: number,
+): { amountBeforeTax: number; vatAmount: number; totalAmount: number } {
+  const abt = roundMoney(amountBeforeTax);
+  const vatAmount = roundMoney((abt * vatPercent) / 100);
+  const totalAmount = roundMoney(abt + vatAmount);
+  return { amountBeforeTax: abt, vatAmount, totalAmount };
+}
+
+function mapGeneratedBillingLinesToInvoiceLines(
+  lines: GeneratedBillingLine[],
+): CommercialInvoiceLine[] {
+  return lines.map((l, idx) => ({
+    id: newLineId(),
+    displayOrder: idx,
+    description: l.description,
+    ...(l.workerId ? { workerId: l.workerId } : {}),
+    ...(l.workerName ? { workerName: l.workerName } : {}),
+    positionId: l.positionId,
+    eventType: l.eventType,
+    timesheetIds: l.timesheetIds,
+    quantity: l.quantity,
+    unitPrice: l.unitPrice,
+    amount: l.amount,
+    lineSource: 'timesheet' as const,
+  }));
+}
+
+/** Caller-prepared draft body — core fills invoiceNo / DRAFT / created* / updatedAt */
+type CommercialDraftInvoiceFields = Omit<
+  CommercialInvoice,
+  'id' | 'invoiceNo' | 'status' | 'createdAt' | 'createdByUid' | 'createdByName' | 'updatedAt'
+>;
+
+/**
+ * Shared Firestore write for commercial DRAFT invoices:
+ * document number → addDoc → revision stamp → optional afterPersist → audit.
+ * Rate / line generation stays in callers.
+ */
+async function writeCommercialDraftInvoiceCore(
+  db: Firestore,
+  actor: User,
+  params: {
+    fields: CommercialDraftInvoiceFields;
+    auditEntityLabel: (invoiceNo: string) => string;
+    auditLinkedIds: string[];
+    auditAfterSummary: (invoiceNo: string) => string;
+    afterPersist?: (created: { id: string; invoiceNo: string }) => Promise<void>;
+  },
+): Promise<{ id: string; invoiceNo: string }> {
+  const { code: invoiceNo } = await generateNextDocumentCode(db, 'commercial_invoice', {
+    actor: actor.displayName,
+    userId: actor.id,
+  });
+
+  const now = Date.now();
+  const payload: Omit<CommercialInvoice, 'id'> = {
+    ...params.fields,
+    invoiceNo,
+    status: 'DRAFT',
+    createdAt: now,
+    createdByUid: actor.id,
+    createdByName: actor.displayName,
+    updatedAt: now,
+  };
+
+  const ref = await addDoc(
+    collection(db, 'commercial_invoices'),
+    sanitizeFirestorePayload(payload as Record<string, unknown>),
+  );
+
+  await stampCommercialInvoiceRevisionRoot(db, ref.id, invoiceNo);
+
+  if (params.afterPersist) {
+    await params.afterPersist({ id: ref.id, invoiceNo });
+  }
+
+  await writeAuditLog(db, actor, {
+    actionType: 'CREATE_COMMERCIAL_INVOICE',
+    entityType: 'CommercialInvoice',
+    entityId: ref.id,
+    entityLabel: params.auditEntityLabel(invoiceNo),
+    sourceModule: 'commercial_invoices',
+    linkedIds: params.auditLinkedIds,
+    afterSummary: params.auditAfterSummary(invoiceNo),
+  });
+
+  return { id: ref.id, invoiceNo };
+}
+
 /** PO จากใบเสนอราคา — ไม่มี Wave; ใช้เป็นค่า waveId เพื่อแยกจากงาน timesheet */
 export const QUOTATION_PO_WAVE_PLACEHOLDER = '__quotation_po__';
 
@@ -98,12 +199,6 @@ export const TRIP_BILLING_WAVE_PLACEHOLDER = '__trip_batch__';
  * - Path **wave+เดือน** / `sourceWaveMonthReviewId` ยังใช้ได้เมื่องวดนั้น “มี effective wave ตัวเดียว” หรือเป็น history — ใบ
  *   `ISSUED` ยกเลิก (VOID) ได้เมื่อยังไม่มีใบกำกับภาษีที่ใช้งาน หรือยกเลิกใบกำกับแล้ว; ราย DRAFT อาจ void แล้วสร้างใหม่จาก PO+เดือนตาม runbook
  */
-function newLineId(): string {
-  return typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
-}
-
 function isTripCommercialInvoice(cur: Pick<
   CommercialInvoice,
   'billingMode' | 'waveId' | 'sourceTripBillingBatchId' | 'memberMobCycleIds'
@@ -444,61 +539,33 @@ export async function createCommercialDraftFromQuotationPoLines(
     po.contractId?.trim() || undefined,
     quotationIdRef || undefined,
   );
-  const vatAmount = roundMoney((amountBeforeTax * vatPercent) / 100);
-  const totalAmount = roundMoney(amountBeforeTax + vatAmount);
-
-  const { code: invoiceNo } = await generateNextDocumentCode(db, 'commercial_invoice', {
-    actor: actor.displayName,
-    userId: actor.id,
-  });
-
-  const now = Date.now();
-  const payload: Omit<CommercialInvoice, 'id'> = {
-    invoiceNo,
-    status: 'DRAFT',
-    customerId: po.customerId,
-    contractId: po.contractId || undefined,
-    poId,
-    waveId: QUOTATION_PO_WAVE_PLACEHOLDER,
-    periodStart,
-    periodEnd,
-    issueDate,
-    currency,
-    vatPercent,
-    amountBeforeTax,
-    vatAmount,
-    withholdingTaxAmount: 0,
-    totalAmount,
-    lines,
-    generationWarnings,
-    timesheetCount: 0,
-    notes: params.notes,
-    createdAt: now,
-    createdByUid: actor.id,
-    createdByName: actor.displayName,
-    updatedAt: now,
-  };
-
-  const ref = await addDoc(
-    collection(db, 'commercial_invoices'),
-    sanitizeFirestorePayload(payload as Record<string, unknown>),
-  );
-
-  await stampCommercialInvoiceRevisionRoot(db, ref.id, invoiceNo);
+  const totals = computeCommercialInvoiceVatTotals(amountBeforeTax, vatPercent);
 
   const linkedIds = [po.customerId, poId, quotationIdRef || undefined].filter(Boolean) as string[];
 
-  await writeAuditLog(db, actor, {
-    actionType: 'CREATE_COMMERCIAL_INVOICE',
-    entityType: 'CommercialInvoice',
-    entityId: ref.id,
-    entityLabel: `${invoiceNo} (PO ใบเสนอราคา)`,
-    sourceModule: 'commercial_invoices',
-    linkedIds,
-    afterSummary: `สร้างใบแจ้งหนี้ (เรียกเก็บ) ${invoiceNo} จาก ${auditLineSource}`,
+  return writeCommercialDraftInvoiceCore(db, actor, {
+    fields: {
+      customerId: po.customerId,
+      contractId: po.contractId || undefined,
+      poId,
+      waveId: QUOTATION_PO_WAVE_PLACEHOLDER,
+      periodStart,
+      periodEnd,
+      issueDate,
+      currency,
+      vatPercent,
+      ...totals,
+      withholdingTaxAmount: 0,
+      lines,
+      generationWarnings,
+      timesheetCount: 0,
+      notes: params.notes,
+    },
+    auditEntityLabel: (invoiceNo) => `${invoiceNo} (PO ใบเสนอราคา)`,
+    auditLinkedIds: linkedIds,
+    auditAfterSummary: (invoiceNo) =>
+      `สร้างใบแจ้งหนี้ (เรียกเก็บ) ${invoiceNo} จาก ${auditLineSource}`,
   });
-
-  return { id: ref.id, invoiceNo };
 }
 
 /**
@@ -818,83 +885,40 @@ export async function createCommercialDraftInvoiceForPoMonth(
     : 'PO+งวด (รวม wave)';
 
   const vatPercent = await resolveVatPercent(db, po.customerId, po.contractId);
-  const amountBeforeTax = roundMoney(gen.totalAmount);
-  const vatAmount = roundMoney((amountBeforeTax * vatPercent) / 100);
-  const totalAmount = roundMoney(amountBeforeTax + vatAmount);
+  const totals = computeCommercialInvoiceVatTotals(gen.totalAmount, vatPercent);
+  const lines = mapGeneratedBillingLinesToInvoiceLines(gen.lines);
 
-  const lines: CommercialInvoiceLine[] = gen.lines.map((l, idx) => ({
-    id: newLineId(),
-    displayOrder: idx,
-    description: l.description,
-    ...(l.workerId ? { workerId: l.workerId } : {}),
-    ...(l.workerName ? { workerName: l.workerName } : {}),
-    positionId: l.positionId,
-    eventType: l.eventType,
-    timesheetIds: l.timesheetIds,
-    quantity: l.quantity,
-    unitPrice: l.unitPrice,
-    amount: l.amount,
-    lineSource: 'timesheet' as const,
-  }));
-
-  const { code: invoiceNo } = await generateNextDocumentCode(db, 'commercial_invoice', {
-    actor: actor.displayName,
-    userId: actor.id,
+  return writeCommercialDraftInvoiceCore(db, actor, {
+    fields: {
+      customerId: po.customerId,
+      contractId: po.contractId || undefined,
+      poId,
+      waveId: PO_MONTH_WAVE_PLACEHOLDER,
+      waveCode: waveCodeLabel,
+      periodStart,
+      periodEnd,
+      issueDate,
+      currency,
+      vatPercent,
+      ...totals,
+      withholdingTaxAmount: 0,
+      lines,
+      generationWarnings: gen.warnings,
+      timesheetCount: gen.timesheetCount,
+      notes: params.notes,
+      sourcePoMonthReviewId,
+      ...(isPartial
+        ? {
+            coveredWorkerIds: workerIds,
+            partialPoMonthBatchNo: params.partialPoMonthBatchNo,
+          }
+        : {}),
+    },
+    auditEntityLabel: (invoiceNo) => `${invoiceNo} (PO+งวด)`,
+    auditLinkedIds: [po.customerId, poId],
+    auditAfterSummary: (invoiceNo) =>
+      `สร้างใบแจ้งหนี้ (เรียกเก็บ) ${invoiceNo} จาก timesheet รวมราย PO+งวด${isPartial ? ' (บางส่วน)' : ''}`,
   });
-
-  const now = Date.now();
-  const payload: Omit<CommercialInvoice, 'id'> = {
-    invoiceNo,
-    status: 'DRAFT',
-    customerId: po.customerId,
-    contractId: po.contractId || undefined,
-    poId,
-    waveId: PO_MONTH_WAVE_PLACEHOLDER,
-    waveCode: waveCodeLabel,
-    periodStart,
-    periodEnd,
-    issueDate,
-    currency,
-    vatPercent,
-    amountBeforeTax,
-    vatAmount,
-    withholdingTaxAmount: 0,
-    totalAmount,
-    lines,
-    generationWarnings: gen.warnings,
-    timesheetCount: gen.timesheetCount,
-    notes: params.notes,
-    sourcePoMonthReviewId,
-    ...(isPartial
-      ? {
-          coveredWorkerIds: workerIds,
-          partialPoMonthBatchNo: params.partialPoMonthBatchNo,
-        }
-      : {}),
-    createdAt: now,
-    createdByUid: actor.id,
-    createdByName: actor.displayName,
-    updatedAt: now,
-  };
-
-  const ref = await addDoc(
-    collection(db, 'commercial_invoices'),
-    sanitizeFirestorePayload(payload as Record<string, unknown>),
-  );
-
-  await stampCommercialInvoiceRevisionRoot(db, ref.id, invoiceNo);
-
-  await writeAuditLog(db, actor, {
-    actionType: 'CREATE_COMMERCIAL_INVOICE',
-    entityType: 'CommercialInvoice',
-    entityId: ref.id,
-    entityLabel: `${invoiceNo} (PO+งวด)`,
-    sourceModule: 'commercial_invoices',
-    linkedIds: [po.customerId, poId],
-    afterSummary: `สร้างใบแจ้งหนี้ (เรียกเก็บ) ${invoiceNo} จาก timesheet รวมราย PO+งวด${isPartial ? ' (บางส่วน)' : ''}`,
-  });
-
-  return { id: ref.id, invoiceNo };
 }
 
 /**
@@ -1173,83 +1197,41 @@ export async function createCommercialDraftInvoiceForTripBatch(
     : `รอบเดินทาง · M1 ${batch.tripAnchorStartDate}`;
 
   const vatPercent = await resolveVatPercent(db, po.customerId, po.contractId);
-  const amountBeforeTax = roundMoney(gen.totalAmount);
-  const vatAmount = roundMoney((amountBeforeTax * vatPercent) / 100);
-  const totalAmount = roundMoney(amountBeforeTax + vatAmount);
+  const totals = computeCommercialInvoiceVatTotals(gen.totalAmount, vatPercent);
+  const lines = mapGeneratedBillingLinesToInvoiceLines(gen.lines);
 
-  const lines: CommercialInvoiceLine[] = gen.lines.map((l, idx) => ({
-    id: newLineId(),
-    displayOrder: idx,
-    description: l.description,
-    ...(l.workerId ? { workerId: l.workerId } : {}),
-    ...(l.workerName ? { workerName: l.workerName } : {}),
-    positionId: l.positionId,
-    eventType: l.eventType,
-    timesheetIds: l.timesheetIds,
-    quantity: l.quantity,
-    unitPrice: l.unitPrice,
-    amount: l.amount,
-    lineSource: 'timesheet' as const,
-  }));
-
-  const { code: invoiceNo } = await generateNextDocumentCode(db, 'commercial_invoice', {
-    actor: actor.displayName,
-    userId: actor.id,
+  return writeCommercialDraftInvoiceCore(db, actor, {
+    fields: {
+      customerId: po.customerId,
+      contractId: po.contractId || undefined,
+      poId: batch.poId,
+      waveId: TRIP_BILLING_WAVE_PLACEHOLDER,
+      waveCode: waveCodeLabel,
+      periodStart,
+      periodEnd,
+      issueDate: issueDate || timestampToHtmlDateValue(Date.now()),
+      currency: 'THB',
+      vatPercent,
+      ...totals,
+      withholdingTaxAmount: 0,
+      lines,
+      generationWarnings: gen.warnings,
+      timesheetCount: gen.timesheetCount,
+      billingMode: 'TRIP',
+      sourceTripBillingBatchId: batch.id,
+      memberMobCycleIds: batch.memberMobCycleIds,
+      memberWorkerNames: batch.memberWorkerNames,
+      coveredWorkerIds: normalizeWorkerIdSet(batch.memberWorkerIds ?? []),
+      ...(tripMobDemobLocationKey ? { tripMobDemobLocationKey } : {}),
+    },
+    auditEntityLabel: (invoiceNo) => `${invoiceNo} (Trip batch)`,
+    auditLinkedIds: [po.customerId, batch.poId, batch.id],
+    auditAfterSummary: (invoiceNo) =>
+      `สร้างใบแจ้งหนี้ ${invoiceNo} จาก trip batch (${batch.memberMobCycleIds.length} คน)`,
+    afterPersist: async ({ id }) => {
+      await markTripBatchInvoiced(db, batch.id, id);
+    },
   });
-
-  const now = Date.now();
-  const payload: Omit<CommercialInvoice, 'id'> = {
-    invoiceNo,
-    status: 'DRAFT',
-    customerId: po.customerId,
-    contractId: po.contractId || undefined,
-    poId: batch.poId,
-    waveId: TRIP_BILLING_WAVE_PLACEHOLDER,
-    waveCode: waveCodeLabel,
-    periodStart,
-    periodEnd,
-    issueDate: issueDate || timestampToHtmlDateValue(now),
-    currency: 'THB',
-    vatPercent,
-    amountBeforeTax,
-    vatAmount,
-    withholdingTaxAmount: 0,
-    totalAmount,
-    lines,
-    generationWarnings: gen.warnings,
-    timesheetCount: gen.timesheetCount,
-    billingMode: 'TRIP',
-    sourceTripBillingBatchId: batch.id,
-    memberMobCycleIds: batch.memberMobCycleIds,
-    memberWorkerNames: batch.memberWorkerNames,
-    coveredWorkerIds: normalizeWorkerIdSet(batch.memberWorkerIds ?? []),
-    ...(tripMobDemobLocationKey ? { tripMobDemobLocationKey } : {}),
-    createdAt: now,
-    createdByUid: actor.id,
-    createdByName: actor.displayName,
-    updatedAt: now,
-  };
-
-  const ref = await addDoc(
-    collection(db, 'commercial_invoices'),
-    sanitizeFirestorePayload(payload as Record<string, unknown>),
-  );
-
-  await stampCommercialInvoiceRevisionRoot(db, ref.id, invoiceNo);
-
-  await markTripBatchInvoiced(db, batch.id, ref.id);
-
-  await writeAuditLog(db, actor, {
-    actionType: 'CREATE_COMMERCIAL_INVOICE',
-    entityType: 'CommercialInvoice',
-    entityId: ref.id,
-    entityLabel: `${invoiceNo} (Trip batch)`,
-    sourceModule: 'commercial_invoices',
-    linkedIds: [po.customerId, batch.poId, batch.id],
-    afterSummary: `สร้างใบแจ้งหนี้ ${invoiceNo} จาก trip batch (${batch.memberMobCycleIds.length} คน)`,
-  });
-
-  return { id: ref.id, invoiceNo };
 }
 
 export async function ensureCommercialDraftInvoiceForTripBatch(
@@ -1327,77 +1309,33 @@ export async function createCommercialDraftInvoice(
   const waveCode = waveSnap.exists() ? String((waveSnap.data() as { waveCode?: string }).waveCode || '') : '';
 
   const vatPercent = await resolveVatPercent(db, po.customerId, po.contractId);
-  const amountBeforeTax = roundMoney(gen.totalAmount);
-  const vatAmount = roundMoney((amountBeforeTax * vatPercent) / 100);
-  const totalAmount = roundMoney(amountBeforeTax + vatAmount);
+  const totals = computeCommercialInvoiceVatTotals(gen.totalAmount, vatPercent);
+  const lines = mapGeneratedBillingLinesToInvoiceLines(gen.lines);
 
-  const lines: CommercialInvoiceLine[] = gen.lines.map((l, idx) => ({
-    id: newLineId(),
-    displayOrder: idx,
-    description: l.description,
-    ...(l.workerId ? { workerId: l.workerId } : {}),
-    ...(l.workerName ? { workerName: l.workerName } : {}),
-    positionId: l.positionId,
-    eventType: l.eventType,
-    timesheetIds: l.timesheetIds,
-    quantity: l.quantity,
-    unitPrice: l.unitPrice,
-    amount: l.amount,
-    lineSource: 'timesheet' as const,
-  }));
-
-  const { code: invoiceNo } = await generateNextDocumentCode(db, 'commercial_invoice', {
-    actor: actor.displayName,
-    userId: actor.id,
+  return writeCommercialDraftInvoiceCore(db, actor, {
+    fields: {
+      customerId: po.customerId,
+      contractId: po.contractId || undefined,
+      poId,
+      waveId,
+      waveCode: waveCode || undefined,
+      periodStart,
+      periodEnd,
+      issueDate,
+      currency,
+      vatPercent,
+      ...totals,
+      withholdingTaxAmount: 0,
+      lines,
+      generationWarnings: gen.warnings,
+      timesheetCount: gen.timesheetCount,
+      notes: params.notes,
+      sourceWaveMonthReviewId: params.sourceWaveMonthReviewId,
+    },
+    auditEntityLabel: (invoiceNo) => `${invoiceNo} (wave ${waveId})`,
+    auditLinkedIds: [po.customerId, poId, waveId],
+    auditAfterSummary: (invoiceNo) => `สร้างใบแจ้งหนี้ (เรียกเก็บ) ${invoiceNo}`,
   });
-
-  const now = Date.now();
-  const payload: Omit<CommercialInvoice, 'id'> = {
-    invoiceNo,
-    status: 'DRAFT',
-    customerId: po.customerId,
-    contractId: po.contractId || undefined,
-    poId,
-    waveId,
-    waveCode: waveCode || undefined,
-    periodStart,
-    periodEnd,
-    issueDate,
-    currency,
-    vatPercent,
-    amountBeforeTax,
-    vatAmount,
-    withholdingTaxAmount: 0,
-    totalAmount,
-    lines,
-    generationWarnings: gen.warnings,
-    timesheetCount: gen.timesheetCount,
-    notes: params.notes,
-    sourceWaveMonthReviewId: params.sourceWaveMonthReviewId,
-    createdAt: now,
-    createdByUid: actor.id,
-    createdByName: actor.displayName,
-    updatedAt: now,
-  };
-
-  const ref = await addDoc(
-    collection(db, 'commercial_invoices'),
-    sanitizeFirestorePayload(payload as Record<string, unknown>),
-  );
-
-  await stampCommercialInvoiceRevisionRoot(db, ref.id, invoiceNo);
-
-  await writeAuditLog(db, actor, {
-    actionType: 'CREATE_COMMERCIAL_INVOICE',
-    entityType: 'CommercialInvoice',
-    entityId: ref.id,
-    entityLabel: `${invoiceNo} (wave ${waveId})`,
-    sourceModule: 'commercial_invoices',
-    linkedIds: [po.customerId, poId, waveId],
-    afterSummary: `สร้างใบแจ้งหนี้ (เรียกเก็บ) ${invoiceNo}`,
-  });
-
-  return { id: ref.id, invoiceNo };
 }
 
 /** PENDING_CUSTOMER + ลูกค้าร้องขอแก้ไข → DRAFT เพื่อแก้บรรทัด */

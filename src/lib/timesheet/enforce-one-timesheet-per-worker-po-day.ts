@@ -55,13 +55,9 @@ export async function deleteConflictingWorkerPoDayTimesheets(
   const keepId =
     args.keepDocId?.trim() || `${workerId}_${keepAid}_${date}`;
 
-  /** query worker+date แล้วกรอง PO ฝั่ง client — เลี่ยง index ใหม่ */
+  /** equality เดียวบน workerId — กรองวัน/PO ฝั่ง client (ไม่ต้อง composite index) */
   const snap = await getDocs(
-    query(
-      collection(db, 'daily_timesheets'),
-      where('workerId', '==', workerId),
-      where('date', '==', date),
-    ),
+    query(collection(db, 'daily_timesheets'), where('workerId', '==', workerId)),
   );
 
   let deleted = 0;
@@ -70,6 +66,7 @@ export async function deleteConflictingWorkerPoDayTimesheets(
   for (const d of snap.docs) {
     if (d.id === keepId) continue;
     const cur = d.data() as DailyTimesheet;
+    if ((cur.date || '').trim().slice(0, 10) !== date) continue;
     if ((cur.purchaseOrderId || '').trim() !== poId) continue;
     if ((cur.assignmentId || '').trim() === keepAid) continue;
     if (isFinanciallyImmutable(cur.status)) {
@@ -111,7 +108,7 @@ export async function deleteOrphanTimesheetsForWorkerPoInRange(
   }
 
   const snap = await getDocs(
-    query(collection(db, 'daily_timesheets'), where('workerId', '==', workerId), where('date', '>=', from)),
+    query(collection(db, 'daily_timesheets'), where('workerId', '==', workerId)),
   );
 
   let deleted = 0;
@@ -155,14 +152,8 @@ export async function healOneTimesheetPerWorkerPoDayInMonth(
     return { deleted: 0, skipped: 0 };
   }
 
-  const monthStart = `${ym}-01`;
   const snap = await getDocs(
-    query(
-      collection(db, 'daily_timesheets'),
-      where('workerId', '==', workerId),
-      where('date', '>=', monthStart),
-      where('date', '<=', `${ym}-31`),
-    ),
+    query(collection(db, 'daily_timesheets'), where('workerId', '==', workerId)),
   );
 
   const byDate = new Map<string, { id: string; ts: DailyTimesheet }[]>();
@@ -223,18 +214,14 @@ export async function healZeroStandbyLikeHoursInMonth(
   }
 
   const snap = await getDocs(
-    query(
-      collection(db, 'daily_timesheets'),
-      where('workerId', '==', workerId),
-      where('date', '>=', `${ym}-01`),
-      where('date', '<=', `${ym}-31`),
-    ),
+    query(collection(db, 'daily_timesheets'), where('workerId', '==', workerId)),
   );
 
   let updated = 0;
   let skipped = 0;
   for (const d of snap.docs) {
     const ts = d.data() as DailyTimesheet;
+    if (!(ts.date || '').trim().startsWith(`${ym}-`)) continue;
     if ((ts.purchaseOrderId || '').trim() !== poId) continue;
     if ((ts.assignmentId || '').trim() !== aid) continue;
     const et = String(ts.eventType || '');

@@ -51,23 +51,7 @@ import { canEdit, canView } from '@/lib/permissions';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { useToast } from '@/hooks/use-toast';
 import { PayrollService } from '@/lib/services/payroll-service';
-
-function hrAllowanceTotal(line: ExecutivePayrollLine): number {
-  return (line.hrLineAdjustments?.allowanceItems ?? []).reduce((s, x) => s + (Number(x.amount) || 0), 0);
-}
-
-function snapshotDeductionLabel(key: string, line: ExecutivePayrollLine): string {
-  if (key === 'social_security') return 'ประกันสังคม';
-  if (key === 'pit_withholding') return 'ภาษี ณ ที่จ่าย (ภงด.)';
-  const m = /^manual_ded_(\d+)$/.exec(key);
-  if (m) {
-    const idx = Number(m[1]);
-    const item = line.hrLineAdjustments?.deductionItems?.[idx];
-    if (item?.label?.trim()) return item.label.trim();
-    return `หักเพิ่ม (${idx + 1})`;
-  }
-  return key.replace(/_/g, ' ');
-}
+import { hrAllowanceTotal, snapshotDeductionLabel } from '@/lib/payroll/payslip-deduction-display';
 
 export default function ExecutivePayrollRunStaffLinePage({
   params,

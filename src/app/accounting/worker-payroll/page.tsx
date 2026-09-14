@@ -10,7 +10,8 @@ import { ChevronRight, Coins, Info, Loader2, Search, ShieldAlert } from 'lucide-
 import { Input } from '@/components/ui/input';
 import { formatPayrollYearMonthEnAbbrev } from '@/lib/date-thai';
 import { PayrollBatch } from '@/lib/types';
-import { Badge } from '@/components/ui/badge';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { workerBatchAccountingStatusBadge } from '@/lib/payroll/worker-batch-accounting-status-badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, limit, orderBy, query } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -23,18 +24,7 @@ import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting } from '@/lib/simple-tier-model';
 
 function getStatusBadge(status: PayrollBatch['status']) {
-  switch (status) {
-    case 'FINANCE_PREPARED':
-      return <Badge className="bg-amber-600 hover:bg-amber-600">รอทำจ่าย (บัญชี)</Badge>;
-    case 'PAYMENT_EXPORTED':
-      return <Badge className="bg-blue-600 hover:bg-blue-600">ส่งไฟล์จ่ายแล้ว</Badge>;
-    case 'PAID':
-      return <Badge className="bg-green-700 hover:bg-green-700">PAID</Badge>;
-    case 'LOCKED':
-      return <Badge variant="secondary">ล็อกแล้ว</Badge>;
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
+  return <StatusBadge {...workerBatchAccountingStatusBadge(status)} />;
 }
 
 export default function AccountingWorkerPayrollQueuePage() {

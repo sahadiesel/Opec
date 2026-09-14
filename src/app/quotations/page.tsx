@@ -21,7 +21,8 @@ import {
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Quotation, QuotationStatus, User, Customer } from '@/lib/types';
-import { Badge } from '@/components/ui/badge';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { quotationStatusBadge } from '@/lib/commercial/quotation-status-badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { collection, query, orderBy, where, getDocs, deleteDoc, doc, limit, type Firestore } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
@@ -187,18 +188,9 @@ export default function QuotationsPage() {
     }
   };
 
-  const getStatusBadge = (status: QuotationStatus) => {
-    switch (status) {
-      case 'draft': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
-      case 'sent': return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">SENT</Badge>;
-      case 'accepted': return <Badge className="bg-green-600 text-white">ACCEPTED</Badge>;
-      case 'rejected': return <Badge variant="destructive">REJECTED</Badge>;
-      case 'cancelled': return <Badge variant="secondary">CANCELLED</Badge>;
-      case 'expired': return <Badge variant="outline" className="text-orange-600 border-orange-200">EXPIRED</Badge>;
-      case 'revised': return <Badge variant="secondary" className="bg-violet-100 text-violet-700">REVISED</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
-    }
-  };
+  const getStatusBadge = (status: QuotationStatus) => (
+    <StatusBadge {...quotationStatusBadge(status)} />
+  );
 
   const filteredQuotations = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();

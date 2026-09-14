@@ -80,7 +80,17 @@ export function resolvePayrollMatrixDecision(
   }
 
   if (persona === 'accounting') {
-    if (resource === 'timesheet' && action !== 'view') return 'deny';
+    /**
+     * Timesheet: defer to module permissions (accounting_officer has V/C/E/D for billing ops).
+     * Hard-deny here blocked Stop/Save even when menu-permissions granted edit.
+     */
+    if (resource === 'timesheet') {
+      if (action === 'verify') return 'deny';
+      if (action === 'view' || action === 'create' || action === 'edit' || action === 'submit') {
+        return 'inherit';
+      }
+      return 'deny';
+    }
     if (resource === 'payroll_worker' || resource === 'payroll_office') {
       if (action === 'view' || action === 'export' || action === 'mark_paid' || action === 'finance_approve') return 'allow';
       if (action === 'edit_batch' || action === 'create_batch' || action === 'approve' || action === 'lock')

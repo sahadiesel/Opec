@@ -26,6 +26,7 @@ import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 import { usePoPartyLabels } from '@/hooks/use-po-party-labels';
 import { buildPayslipFromWorkerLine, normalizeIncomeSegments, isWorkerPayrollBatchSnapshotFrozen, payrollBatchChronologyMs } from '@/lib/payroll/payslip-model';
 import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
+import { lineDeductionsTotal } from '@/lib/payroll/payslip-deduction-display';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
 import { canPreviewWorkerPayrollWht } from '@/lib/payroll/payroll-worker-wht-permissions';
@@ -99,10 +100,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-
-function lineDeductionsTotal(line: PayrollBatchLine): number {
-  return Object.values(line.deductionsBreakdown || {}).reduce((a, b) => a + (Number(b) || 0), 0);
-}
 
 /** กันข้อมูล Firestore ไม่ครบ → .toLocaleString บน undefined ทำให้ React ล่มทั้งหน้า */
 function safeNum(n: unknown): number {

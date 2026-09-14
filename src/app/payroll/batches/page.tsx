@@ -28,8 +28,8 @@ import { Input } from '@/components/ui/input';
 import { formatStoredDateRangeThaiBE } from '@/lib/date-thai';
 import { PayrollBatch, PayrollPeriod, PayrollPeriodStatus, PoMonthTimesheetReview, User } from '@/lib/types';
 import { isSystemAdmin } from '@/lib/permission-core';
-import { workerPayrollBatchStatusLabelTh } from '@/lib/payroll/worker-batch-status-display';
-import { Badge } from '@/components/ui/badge';
+import { workerBatchStatusBadge } from '@/lib/payroll/worker-batch-status-badge';
+import { StatusBadge } from '@/components/ui/status-badge';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, orderBy, limit, where, getDocs, updateDoc, doc, deleteField } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
@@ -367,53 +367,7 @@ function PayrollBatchesPageContent() {
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    const label = workerPayrollBatchStatusLabelTh(status);
-    switch (status) {
-      case 'GENERATED':
-        return (
-          <Badge variant="outline" className="bg-blue-50 text-blue-700" title={status}>
-            {label}
-          </Badge>
-        );
-      case 'HR_REVIEWED':
-        return (
-          <Badge variant="outline" className="border-amber-500/60 bg-amber-50 text-amber-950" title={status}>
-            {label}
-          </Badge>
-        );
-      case 'HR_APPROVED':
-        return (
-          <Badge variant="outline" className="bg-green-50 text-green-700" title={status}>
-            {label}
-          </Badge>
-        );
-      case 'FINANCE_PREPARED':
-        return (
-          <Badge className="bg-amber-500" title={status}>
-            {label}
-          </Badge>
-        );
-      case 'PAID':
-        return (
-          <Badge className="bg-green-600" title={status}>
-            {label}
-          </Badge>
-        );
-      case 'LOCKED':
-        return (
-          <Badge variant="secondary" title={status}>
-            {label}
-          </Badge>
-        );
-      default:
-        return (
-          <Badge variant="outline" title={status}>
-            {label}
-          </Badge>
-        );
-    }
-  };
+  const getStatusBadge = (status: string) => <StatusBadge {...workerBatchStatusBadge(status)} />;
 
   if (userLoading || !currentUser) return null;
   if (!canAccessBatchesPage) {

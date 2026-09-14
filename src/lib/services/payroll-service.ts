@@ -31,6 +31,7 @@ import {
   MainContract,
   PurchaseOrder,
   Customer,
+  PositionRate,
   PayrollLineD8Snapshot,
   PayrollBatchStatus,
   LaborCostResolutionSnapshot,

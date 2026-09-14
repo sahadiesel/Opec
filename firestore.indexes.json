@@ -216,6 +216,22 @@
       ]
     },
     {
+      "collectionGroup": "daily_timesheets",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "workerId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "labor_cost_contract_terms",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "relatedPurchaseOrderId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "tax_invoices",
       "queryScope": "COLLECTION",
       "fields": [

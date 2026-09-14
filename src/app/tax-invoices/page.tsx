@@ -17,7 +17,6 @@ import {
   Printer,
   AlertTriangle,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import {
   formatStoredDateThaiBE,
 } from '@/lib/date-thai';
@@ -30,7 +29,8 @@ import {
 import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import { TaxInvoice, TaxInvoiceStatus, User, Customer, CommercialInvoice, MoneyReceipt } from '@/lib/types';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
-import { Badge } from '@/components/ui/badge';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { taxInvoiceStatusBadge } from '@/lib/tax/tax-invoice-status-badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useFirebaseApp } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canCreate } from '@/lib/permissions';
@@ -403,15 +403,9 @@ export default function TaxInvoicesPage() {
     }
   };
 
-  const getStatusBadge = (status: TaxInvoiceStatus) => {
-    const compact = 'h-5 px-1.5 text-[10px] font-semibold leading-none';
-    switch (status) {
-      case 'DRAFT': return <Badge variant="outline" className={cn(compact, 'bg-slate-50 text-slate-600 border-slate-200')}>DRAFT</Badge>;
-      case 'ISSUED': return <Badge className={cn(compact, 'bg-green-600')}>ISSUED</Badge>;
-      case 'CANCELLED': return <Badge variant="secondary" className={compact} title="CANCELLED">CXL</Badge>;
-      default: return <Badge variant="outline" className={compact}>{status}</Badge>;
-    }
-  };
+  const getStatusBadge = (status: TaxInvoiceStatus) => (
+    <StatusBadge {...taxInvoiceStatusBadge(status)} />
+  );
 
   if (isUserLoading || userLoading || !currentUser) return null;
 

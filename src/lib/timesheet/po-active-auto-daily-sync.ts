@@ -84,13 +84,15 @@ async function loadLaborCostTermsForPo(
   db: Firestore,
   purchaseOrderId: string,
 ): Promise<LaborCostContractTerm[]> {
+  /** equality เดียว — กรอง status ฝั่ง client (ไม่ต้องรอ composite index) */
   const q = query(
     collection(db, 'labor_cost_contract_terms'),
     where('relatedPurchaseOrderId', '==', purchaseOrderId),
-    where('status', '==', 'ACTIVE'),
   );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) } as LaborCostContractTerm));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as object) } as LaborCostContractTerm))
+    .filter((t) => (t.status || 'ACTIVE') === 'ACTIVE');
 }
 
 function pickLaborCostTermIdForDate(terms: LaborCostContractTerm[], date: string): string | undefined {

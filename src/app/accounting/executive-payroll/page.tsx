@@ -14,7 +14,6 @@ import {
   Coins, 
   AlertTriangle,
   Info,
-  Clock,
   CheckCircle2,
   FileText,
   Loader2,
@@ -23,8 +22,7 @@ import {
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { formatPayrollYearMonthMmYyyyThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
-import { ExecutivePayrollStaff, OfficePayrollRun, PayrollRunStatus, User } from '@/lib/types';
-import { Badge } from '@/components/ui/badge';
+import { ExecutivePayrollStaff, OfficePayrollRun } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -61,6 +59,7 @@ import {
   isExecutivePayrollStaffEligible,
 } from '@/lib/payroll/executive-payroll-run-apply';
 import { getPayrollMonthPeriodBounds } from '@/lib/payroll/office-payroll-run-apply';
+import { OfficePayrollRunStatusBadge } from '@/lib/payroll/office-payroll-run-status-badge';
 import { firebaseConfig } from '@/firebase/config';
 
 function initialNewExecutiveRun(): Partial<OfficePayrollRun> {
@@ -207,19 +206,6 @@ export default function ExecutivePayrollPage() {
       });
     } finally {
       setIsDeleting(false);
-    }
-  };
-
-  const getStatusBadge = (status: PayrollRunStatus) => {
-    switch (status) {
-      case 'DRAFT': return <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200">DRAFT</Badge>;
-      case 'CALCULATED': return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">CALCULATED</Badge>;
-      case 'HR_REVIEW': return <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">HR REVIEW</Badge>;
-      case 'HR_APPROVED': return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">HR APPROVED</Badge>;
-      case 'FINANCE_APPROVED': return <Badge className="bg-green-600">FINANCE APPROVED</Badge>;
-      case 'LOCKED': return <Badge className="bg-primary text-primary-foreground"><Clock className="h-3 w-3 mr-1" /> LOCKED</Badge>;
-      case 'CANCELLED': return <Badge variant="secondary">CANCELLED</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
     }
   };
 
@@ -419,7 +405,9 @@ export default function ExecutivePayrollPage() {
                       <TableCell className="text-right font-black text-primary">
                         ฿{run.netAmount.toLocaleString()}
                       </TableCell>
-                      <TableCell>{getStatusBadge(run.status)}</TableCell>
+                      <TableCell>
+                        <OfficePayrollRunStatusBadge status={run.status} flavor="executive" />
+                      </TableCell>
                       <TableCell
                         className="text-right pr-6"
                         onClick={(e) => e.stopPropagation()}
