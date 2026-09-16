@@ -58,6 +58,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { getPreviewPattern } from '@/lib/services/numbering-service';
 import { createTaxInvoiceDraftFromIssuedCommercial } from '@/lib/services/tax-invoice-from-commercial-service';
+import { isConfirmedLatestCommercialInvoice } from '@/lib/commercial/commercial-invoice-revision';
 import { deleteTaxInvoiceBundleAsAdmin } from '@/lib/services/tax-invoice-delete-service';
 import { isSystemAdmin } from '@/lib/permission-core';
 import {
@@ -166,7 +167,7 @@ export default function TaxInvoicesPage() {
 
   const availableCommercialInvoices = useMemo(() => {
     if (!issuedCommercial?.length) return [];
-    return issuedCommercial.filter((c) => !c.linkedTaxInvoiceId);
+    return issuedCommercial.filter((c) => isConfirmedLatestCommercialInvoice(c) && !c.linkedTaxInvoiceId);
   }, [issuedCommercial]);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -485,7 +486,7 @@ export default function TaxInvoicesPage() {
               <DialogHeader>
                 <DialogTitle>สร้างใบกำกับภาษีร่าง</DialogTitle>
                 <DialogDescription>
-                  เลือกใบแจ้งหนี้จากเมนู «รายการใบแจ้งหนี้» ที่ลูกค้า/ผู้จัดการอนุมัติแล้ว (สถานะ ISSUED) และยังไม่เคยออกใบกำกับภาษี — ระบบจะสร้างสถานะ DRAFT สำหรับบัญชีพิมพ์และยืนยันเมื่อรับเงิน
+                  เลือกใบแจ้งหนี้ที่ยืนยันแล้ว (ISSUED) ฉบับล่าสุดเท่านั้น — รุ่นที่ถูกแก้ไข (REVISED) หรือถูกแทนที่แล้วเลือกไม่ได้ และต้องยังไม่เคยออกใบกำกับภาษี
                 </DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-1 gap-4 py-4">
@@ -507,7 +508,7 @@ export default function TaxInvoicesPage() {
                       ))}
                       {availableCommercialInvoices.length === 0 && (
                         <div className="py-3 px-4 text-sm text-muted-foreground italic">
-                          ไม่มีใบแจ้งหนี้ที่พร้อมออกใบกำกับภาษี — ต้องอนุมัติใบในเมนู «รายการใบแจ้งหนี้» และยังไม่เคยสร้างใบกำกับจากใบนั้น
+                          ไม่มีใบแจ้งหนี้ที่ยืนยันแล้วพร้อมออกใบกำกับ — ต้องเป็นฉบับล่าสุดที่สถานะยืนยันแล้ว และยังไม่เคยสร้างใบกำกับจากใบนั้น
                         </div>
                       )}
                     </SelectContent>

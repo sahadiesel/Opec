@@ -10,11 +10,14 @@ import {
 } from '@/lib/payroll/employee-payroll-deductions';
 import type { PayrollPolicyRecord } from '@/lib/types';
 
-/** ปกส. ต้องเป็นจำนวนเงินบาทเต็ม — หากมีเศษให้ปัดขึ้นเสมอ เช่น 337.50 → 338 */
+/**
+ * ปกส. ต้องเป็นจำนวนเงินบาทเต็ม — ปัดแบบครึ่งขึ้น (≥0.5 ขึ้น, <0.5 ลง)
+ * เช่น 543.39 → 543 · 337.50 → 338
+ */
 export function roundSocialSecurityBahtUp(amount: number): number {
   const v = Number(amount);
   if (!Number.isFinite(v) || v <= 0) return 0;
-  return Math.ceil(v);
+  return Math.round(v);
 }
 
 export function resolveSocialSecurityMonthlyCeilingBaht(

@@ -353,6 +353,10 @@ export interface PurchaseOrder {
   updatedAt: number;
   createdByUid?: string;
   createdByName?: string;
+  /** แก้ไขหัว PO ล่าสุด — เก็บชื่อผู้แก้ไว้ดูบนเอกสาร */
+  lastEditedAt?: number;
+  lastEditedByUid?: string;
+  lastEditedByName?: string;
   /** แชร์ให้ officer ที่ระบุ — ดูได้แม้ไม่ได้เป็นผู้สร้าง */
   sharedWith?: { uid: string; displayName: string; roleKey?: string }[];
   sharedWithUids?: string[];

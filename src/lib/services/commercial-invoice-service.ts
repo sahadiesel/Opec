@@ -84,6 +84,14 @@ function roundMoney(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+function assertPurchaseOrderActiveForInvoice(po: Pick<PurchaseOrder, 'status' | 'poCode'>): void {
+  if ((po.status || '') !== 'active') {
+    throw new Error(
+      `ใบสั่งซื้อ ${po.poCode || ''} สถานะ Pending ยังออกใบแจ้งหนี้ไม่ได้ — อนุมัติเป็น Active ก่อน`,
+    );
+  }
+}
+
 function newLineId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
@@ -252,7 +260,7 @@ export async function findCommercialInvoiceByWaveMonthReview(
   if (snap.empty) return null;
   for (const d of snap.docs) {
     const data = d.data() as CommercialInvoice;
-    if (data.status !== 'VOID') {
+    if (data.status !== 'VOID' && !isCommercialInvoiceSuperseded(data)) {
       return { id: d.id, invoiceNo: String(data.invoiceNo || '') };
     }
   }
@@ -445,6 +453,7 @@ export async function createCommercialDraftFromQuotationPoLines(
   const poSnap = await getDoc(doc(db, 'purchase_orders', poId));
   if (!poSnap.exists()) throw new Error('ไม่พบ PO');
   const po = { ...poSnap.data(), id: poSnap.id } as PurchaseOrder;
+  assertPurchaseOrderActiveForInvoice(po);
   if ((po.poType || 'contract') !== 'quotation') {
     throw new Error('ใช้กับ PO จากใบเสนอราคาเท่านั้น — PO จากสัญญาให้ใช้ Wave + timesheet');
   }
@@ -863,6 +872,7 @@ export async function createCommercialDraftInvoiceForPoMonth(
   const poSnapGate = await getDoc(doc(db, 'purchase_orders', poId));
   if (!poSnapGate.exists()) throw new Error('ไม่พบ PO');
   const poGate = { ...poSnapGate.data(), id: poSnapGate.id } as PurchaseOrder;
+  assertPurchaseOrderActiveForInvoice(poGate);
   await assertPoAllowsMonthlyCommercialInvoice(db, poGate, {
     workerIds: isPartial ? workerIds : undefined,
     periodStart,
@@ -1133,6 +1143,7 @@ export async function createCommercialDraftInvoiceForTripBatch(
   const poSnapEarly = await getDoc(doc(db, 'purchase_orders', batch.poId));
   if (!poSnapEarly.exists()) throw new Error('ไม่พบ PO');
   const poEarly = { ...poSnapEarly.data(), id: poSnapEarly.id } as PurchaseOrder;
+  assertPurchaseOrderActiveForInvoice(poEarly);
   const tripMode = await resolveBillingMode(db, poEarly);
   if (tripMode !== 'TRIP') {
     throw new Error(
@@ -1295,6 +1306,7 @@ export async function createCommercialDraftInvoice(
   ]);
   if (!poSnapGate.exists()) throw new Error('ไม่พบ PO');
   const poGate = { ...poSnapGate.data(), id: poSnapGate.id } as PurchaseOrder;
+  assertPurchaseOrderActiveForInvoice(poGate);
   await assertPoAllowsMonthlyCommercialInvoice(db, poGate, { periodStart, periodEnd });
 
   const gen = await generateBillingLines(db, poId, periodStart, periodEnd, waveId);
@@ -1500,6 +1512,9 @@ export async function confirmCommercialInvoiceBilling(
 ): Promise<void> {
   if (invoice.status !== 'PENDING_CUSTOMER') {
     throw new Error('ยืนยันได้เฉพาะเอกสารที่ส่งลูกค้าแล้ว (รอตรวจ)');
+  }
+  if (!isCommercialInvoiceLatestEditable(invoice)) {
+    throw new Error('เอกสารรุ่นนี้ถูกแทนที่แล้ว (REVISED) — ยืนยันได้เฉพาะรุ่นล่าสุดเท่านั้น');
   }
   const now = Date.now();
   const ref = doc(db, 'commercial_invoices', invoice.id);
@@ -1870,7 +1885,7 @@ export async function saveCommercialDraftInvoiceAsNewRevision(
     throw new Error('บันทึกรุ่นใหม่ได้เฉพาะใบสถานะ DRAFT (ตรวจภายใน)');
   }
   if (!isCommercialInvoiceLatestEditable(cur)) {
-    throw new Error('เอกสารรุ่นนี้ถูกแทนที่แล้ว — แก้ไขได้เฉพาะรุ่นล่าสุดเท่านั้น');
+    throw new Error('เอกสารรุ่นนี้ถูกแทนที่แล้ว (REVISED) — แก้ไขได้เฉพาะรุ่นล่าสุดเท่านั้น');
   }
 
   const normalized = normalizeDraftLines(nextLines);
@@ -1929,6 +1944,7 @@ export async function saveCommercialDraftInvoiceAsNewRevision(
   );
 
   await updateDoc(ref, {
+    status: 'REVISED',
     supersededByInvoiceId: newRef.id,
     updatedAt: now,
     updatedByUid: actor.id,

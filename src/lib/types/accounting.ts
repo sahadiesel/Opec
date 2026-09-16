@@ -477,7 +477,7 @@ export type BillingNoteReferenceType = 'CONTRACT' | 'PO' | 'TIMESHEET' | 'SERVIC
  * แยกจาก {@link TaxInvoice} ซึ่งออกทางบัญชีหลังได้รับเงิน
  */
 
-export type CommercialInvoiceStatus = 'DRAFT' | 'PENDING_CUSTOMER' | 'ISSUED' | 'VOID';
+export type CommercialInvoiceStatus = 'DRAFT' | 'PENDING_CUSTOMER' | 'ISSUED' | 'REVISED' | 'VOID';
 
 export interface CommercialInvoiceLine {
   id: string;

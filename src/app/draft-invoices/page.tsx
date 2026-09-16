@@ -113,7 +113,12 @@ function statusBadge(inv: CommercialInvoice) {
       return <Badge className="bg-green-600">ยืนยันแล้ว</Badge>;
     case 'VOID':
       return <Badge variant="outline">ยกเลิก</Badge>;
+    case 'REVISED':
+      return <Badge className="bg-slate-600">มีการแก้ไข</Badge>;
     default:
+      if (inv.supersededByInvoiceId) {
+        return <Badge className="bg-slate-600">มีการแก้ไข</Badge>;
+      }
       return <Badge variant="outline">{status}</Badge>;
   }
 }
@@ -129,8 +134,10 @@ function commercialStatusPrintLabel(inv: CommercialInvoice): string {
       return 'ยืนยันแล้ว';
     case 'VOID':
       return 'ยกเลิก';
+    case 'REVISED':
+      return 'มีการแก้ไข';
     default:
-      return inv.status;
+      return inv.supersededByInvoiceId ? 'มีการแก้ไข' : inv.status;
   }
 }
 
@@ -449,7 +456,10 @@ export default function DraftInvoicesPage() {
   }, [pos, poById, poId]);
 
   const monthlyPosForCreate = useMemo(
-    () => (pos ?? []).filter((p) => resolveBillingModeFromMaps(p, contractsById) !== 'TRIP'),
+    () =>
+      (pos ?? []).filter(
+        (p) => p.status === 'active' && resolveBillingModeFromMaps(p, contractsById) !== 'TRIP',
+      ),
     [pos, contractsById],
   );
 
@@ -469,6 +479,14 @@ export default function DraftInvoicesPage() {
     if (!firestore || !currentUser) return;
     if (!poId) {
       toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือก PO' });
+      return;
+    }
+    if (selectedPo && selectedPo.status !== 'active') {
+      toast({
+        variant: 'destructive',
+        title: 'PO ยังไม่ Active',
+        description: 'ใบสั่งซื้อสถานะ Pending ยังออกใบแจ้งหนี้ไม่ได้ — อนุมัติเป็น Active ก่อน',
+      });
       return;
     }
     if (selectedPo && resolveBillingModeFromMaps(selectedPo, contractsById) === 'TRIP') {
@@ -779,7 +797,7 @@ export default function DraftInvoicesPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>ใบสั่งซื้อ (PO)</Label>
+                    <Label>ใบสั่งซื้อ (PO ที่ Active)</Label>
                   <Select
                     value={poId || '__none__'}
                     onValueChange={(v) => {
@@ -800,6 +818,9 @@ export default function DraftInvoicesPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <p className="text-[11px] text-muted-foreground">
+                    แสดงเฉพาะ PO ที่ Active — ใบ Pending ต้องอนุมัติก่อนจึงออกใบแจ้งหนี้ได้
+                  </p>
                 </div>
                 {!isQuotationPo && (
                   <div className="space-y-2">

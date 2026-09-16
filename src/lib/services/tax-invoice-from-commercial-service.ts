@@ -20,6 +20,7 @@ import type {
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { writeAuditLog } from '@/lib/services/audit-service';
+import { isConfirmedLatestCommercialInvoice } from '@/lib/commercial/commercial-invoice-revision';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 
@@ -81,8 +82,10 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
   if (!snap.exists()) throw new Error('ไม่พบใบเรียกเก็บ');
   const com = { ...snap.data(), id: snap.id } as CommercialInvoice;
 
-  if (com.status !== 'ISSUED') {
-    throw new Error('สร้างใบกำกับภาษีได้หลังยืนยันเรียกเก็บแล้ว (ISSUED) เท่านั้น');
+  if (!isConfirmedLatestCommercialInvoice(com)) {
+    throw new Error(
+      'สร้างใบกำกับภาษีได้เฉพาะใบแจ้งหนี้ที่ยืนยันแล้ว (ISSUED) และเป็นฉบับล่าสุด — รุ่นที่ถูกแก้ไข (REVISED) ใช้ไม่ได้',
+    );
   }
   const linkedTaxId = String(com.linkedTaxInvoiceId || '').trim();
   if (linkedTaxId) {

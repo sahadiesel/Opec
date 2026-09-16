@@ -132,7 +132,12 @@ function statusBadge(invoice: CommercialInvoice) {
       return <Badge className="bg-green-600">ยืนยันเรียกเก็บแล้ว</Badge>;
     case 'VOID':
       return <Badge variant="outline">ยกเลิก</Badge>;
+    case 'REVISED':
+      return <Badge className="bg-slate-600">มีการแก้ไข (REVISED)</Badge>;
     default:
+      if (invoice.supersededByInvoiceId) {
+        return <Badge className="bg-slate-600">มีการแก้ไข (REVISED)</Badge>;
+      }
       return <Badge variant="outline">{status}</Badge>;
   }
 }
@@ -638,6 +643,14 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
   const handleCreateTaxFromCommercial = async () => {
     if (!firestore || !currentUser || !invoice) return;
+    if (!isCommercialInvoiceLatestEditable(invoice) || invoice.status !== 'ISSUED') {
+      toast({
+        variant: 'destructive',
+        title: 'ออกใบกำกับไม่ได้',
+        description: 'เลือกได้เฉพาะใบแจ้งหนี้ที่ยืนยันแล้วและเป็นฉบับล่าสุด',
+      });
+      return;
+    }
     setTaxFromComBusy(true);
     try {
       const { taxInvoiceId } = await createTaxInvoiceDraftFromIssuedCommercial(firestore, invoice.id, currentUser);
@@ -770,15 +783,17 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
           </div>
         </div>
 
-        {supersededById ? (
+        {invoice.status === 'REVISED' || supersededById ? (
           <Alert className="border-slate-300 bg-slate-50/90 dark:bg-slate-900/40">
             <Info className="h-4 w-4" />
-            <AlertTitle>เอกสารรุ่นเก่า — เปิดดูอย่างเดียว</AlertTitle>
+            <AlertTitle>เอกสารรุ่นเก่า (REVISED) — เปิดดูอย่างเดียว</AlertTitle>
             <AlertDescription className="space-y-2">
-              <p>รุ่นนี้ถูกแทนที่แล้วหลังบันทึกแก้ไข — แก้ไขหรือส่งลูกค้าได้เฉพาะรุ่นล่าสุด</p>
-              <Button type="button" variant="outline" size="sm" asChild>
-                <Link href={`/draft-invoices/${supersededById}`}>เปิดรุ่นล่าสุด</Link>
-              </Button>
+              <p>รุ่นนี้ถูกแทนที่แล้วหลังบันทึกแก้ไข — แก้ไขหรือส่งลูกค้าได้เฉพาะรุ่นล่าสุดเท่านั้น</p>
+              {supersededById ? (
+                <Button type="button" variant="outline" size="sm" asChild>
+                  <Link href={`/draft-invoices/${supersededById}`}>เปิดรุ่นล่าสุด</Link>
+                </Button>
+              ) : null}
             </AlertDescription>
           </Alert>
         ) : null}

@@ -31,15 +31,23 @@ export function commercialInvoiceRevisionNoOf(inv: Pick<CommercialInvoice, 'revi
 
 /** รุ่นที่ถูกแทนที่แล้ว — เปิดดูได้อย่างเดียว */
 export function isCommercialInvoiceSuperseded(
-  inv: Pick<CommercialInvoice, 'supersededByInvoiceId'>,
+  inv: Pick<CommercialInvoice, 'status' | 'supersededByInvoiceId'>,
 ): boolean {
+  if ((inv.status || '') === 'REVISED') return true;
   return !!(inv.supersededByInvoiceId || '').trim();
 }
 
-/** แก้ไข/ส่งลูกค้า/แนบไฟล์ได้เฉพาะรุ่นล่าสุดที่ยังไม่ VOID */
+/** แก้ไข/ส่งลูกค้า/แนบไฟล์ได้เฉพาะรุ่นล่าสุดที่ยังไม่ VOID / REVISED */
 export function isCommercialInvoiceLatestEditable(
   inv: Pick<CommercialInvoice, 'status' | 'supersededByInvoiceId'>,
 ): boolean {
-  if (inv.status === 'VOID') return false;
+  if (inv.status === 'VOID' || inv.status === 'REVISED') return false;
   return !isCommercialInvoiceSuperseded(inv);
+}
+
+/** ใบที่ยืนยันแล้วและเป็นฉบับล่าสุด — ใช้เลือกออกใบกำกับภาษี */
+export function isConfirmedLatestCommercialInvoice(
+  inv: Pick<CommercialInvoice, 'status' | 'supersededByInvoiceId'>,
+): boolean {
+  return inv.status === 'ISSUED' && !isCommercialInvoiceSuperseded(inv);
 }

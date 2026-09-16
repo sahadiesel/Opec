@@ -7,10 +7,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import {
-  formatDateThaiBE,
-  formatYmdLocalThaiBE,
-} from '@/lib/date-thai';
+import { formatDateThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -22,9 +19,11 @@ import {
   Building2,
   Calendar,
   CheckCircle2,
-  History,
-  Info,
   Loader2,
+  Pencil,
+  Save,
+  Lock,
+  X,
 } from 'lucide-react';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { doc, collection, query, where, updateDoc, getDocs, writeBatch } from 'firebase/firestore';
@@ -34,20 +33,23 @@ import {
   Customer, 
   MainContract, 
   Position, 
-  User,
   Assignment, 
   Quotation,
   Wave,
   ContractBillingMode,
+  CommercialInvoice,
 } from '@/lib/types';
 import Link from 'next/link';
 import { billingModeLabel } from '@/lib/commercial/resolve-billing-mode';
 import { resyncPoLineRateSnapshotsForPo } from '@/lib/commercial/po-line-rate-snapshot';
+import { listBlockingCommercialInvoicesForPo } from '@/lib/commercial/po-invoice-edit-lock';
+import { createCommercialDraftFromQuotationPoLines } from '@/lib/services/commercial-invoice-service';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { writeAuditLog } from '@/lib/services/audit-service';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView, canEdit, canDelete, isSystemAdmin, canApprovePurchaseAsManager } from '@/lib/permissions';
+import { canView, canEdit, canCreate, isSystemAdmin, canApprovePurchaseAsManager } from '@/lib/permissions';
 import { officerCanAccessDocument } from '@/lib/documents/own-created-list';
 import {
   aggregateActiveLineTotals,
@@ -70,7 +72,7 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const { toast } = useToast();
   const canViewPo = useMemo(() => canView(currentUser, 'customer_pos'), [currentUser]);
   const canEditPo = useMemo(() => canEdit(currentUser, 'customer_pos'), [currentUser]);
-  const canDeletePo = useMemo(() => canDelete(currentUser, 'customer_pos'), [currentUser]);
+  const canCreateInvoice = useMemo(() => canCreate(currentUser, 'draft_invoices'), [currentUser]);
   const canApprovePo = useMemo(() => canApprovePurchaseAsManager(currentUser), [currentUser]);
   const isAdminUser = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
   const [backHref, setBackHref] = useState('/purchase-orders');
@@ -113,6 +115,14 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   );
   const { data: quotation } = useDoc<Quotation>(quotationRef as any);
 
+  const invoicesQuery = useMemoFirebase(
+    () => (firestore && canViewPo ? query(collection(firestore, 'commercial_invoices'), where('poId', '==', id)) : null),
+    [firestore, canViewPo, id],
+  );
+  const { data: poInvoices } = useCollection<CommercialInvoice>(invoicesQuery as any);
+  const blockingInvoices = useMemo(() => listBlockingCommercialInvoicesForPo(poInvoices), [poInvoices]);
+  const isInvoiceLocked = blockingInvoices.length > 0;
+
   const poLinesForPanel = useMemo(
     () => (poLines ?? []).map((l) => ({ ...l, poId: l.poId || id })),
     [poLines, id],
@@ -132,6 +142,31 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
   const [isApprovingPo, setIsApprovingPo] = useState(false);
   const [isClosingPo, setIsClosingPo] = useState(false);
   const [isDeletingPoDoc, setIsDeletingPoDoc] = useState(false);
+  const [isEditingHeader, setIsEditingHeader] = useState(false);
+  const [isSavingHeader, setIsSavingHeader] = useState(false);
+  const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editProjectName, setEditProjectName] = useState('');
+  const [editCustomerPoNumber, setEditCustomerPoNumber] = useState('');
+  const [editCustomerPoIssueDate, setEditCustomerPoIssueDate] = useState<number | undefined>(undefined);
+  const [editStartDate, setEditStartDate] = useState(0);
+  const [editEndDate, setEditEndDate] = useState(0);
+  const [editNotes, setEditNotes] = useState('');
+
+  useEffect(() => {
+    if (!po || isEditingHeader) return;
+    setEditTitle(po.title || '');
+    setEditProjectName(po.projectName || '');
+    setEditCustomerPoNumber(po.customerPONumber || '');
+    setEditCustomerPoIssueDate(
+      po.customerPoIssueDate != null && Number(po.customerPoIssueDate) > 0
+        ? Number(po.customerPoIssueDate)
+        : undefined,
+    );
+    setEditStartDate(Number(po.startDate) || 0);
+    setEditEndDate(Number(po.endDate) || 0);
+    setEditNotes(po.notes || '');
+  }, [po, isEditingHeader]);
 
   const isContractBasedPO = (po?.poType || 'contract') === 'contract';
 
@@ -308,6 +343,148 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
     }
   };
 
+  const beginEditHeader = () => {
+    if (!canEditPo) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข PO' });
+      return;
+    }
+    if (isInvoiceLocked) {
+      toast({
+        variant: 'destructive',
+        title: 'แก้ไขไม่ได้',
+        description: 'PO นี้ออกใบแจ้งหนี้แล้ว — ยกเลิกใบแจ้งหนี้ก่อนจึงจะแก้รายละเอียดได้',
+      });
+      return;
+    }
+    if (!po) return;
+    setEditTitle(po.title || '');
+    setEditProjectName(po.projectName || '');
+    setEditCustomerPoNumber(po.customerPONumber || '');
+    setEditCustomerPoIssueDate(
+      po.customerPoIssueDate != null && Number(po.customerPoIssueDate) > 0
+        ? Number(po.customerPoIssueDate)
+        : undefined,
+    );
+    setEditStartDate(Number(po.startDate) || 0);
+    setEditEndDate(Number(po.endDate) || 0);
+    setEditNotes(po.notes || '');
+    setIsEditingHeader(true);
+  };
+
+  const handleSaveHeader = async () => {
+    if (!poRef || !firestore || !currentUser || !po) return;
+    if (!canEditPo) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไข PO' });
+      return;
+    }
+    if (isInvoiceLocked) {
+      toast({
+        variant: 'destructive',
+        title: 'แก้ไขไม่ได้',
+        description: 'PO นี้ออกใบแจ้งหนี้แล้ว — ยกเลิกใบแจ้งหนี้ก่อนจึงจะแก้รายละเอียดได้',
+      });
+      setIsEditingHeader(false);
+      return;
+    }
+    const title = editTitle.trim();
+    if (!title) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุชื่อโครงการ / หัวข้อ' });
+      return;
+    }
+    if (editStartDate > 0 && editEndDate > 0 && editEndDate < editStartDate) {
+      toast({ variant: 'destructive', title: 'วันที่ไม่ถูกต้อง', description: 'วันสิ้นสุดต้องไม่ก่อนวันเริ่มงาน' });
+      return;
+    }
+    const nextCustomerPo = editCustomerPoNumber.trim();
+    const nextProject = editProjectName.trim();
+    const nextNotes = editNotes.trim();
+    const nextIssue =
+      editCustomerPoIssueDate != null && Number(editCustomerPoIssueDate) > 0
+        ? Number(editCustomerPoIssueDate)
+        : undefined;
+    const changed: string[] = [];
+    if (title !== (po.title || '')) changed.push('title');
+    if (nextProject !== (po.projectName || '')) changed.push('projectName');
+    if (nextCustomerPo !== (po.customerPONumber || '')) changed.push('customerPONumber');
+    if ((nextIssue ?? 0) !== (Number(po.customerPoIssueDate) || 0)) changed.push('customerPoIssueDate');
+    if (editStartDate !== Number(po.startDate)) changed.push('startDate');
+    if (editEndDate !== Number(po.endDate)) changed.push('endDate');
+    if (nextNotes !== (po.notes || '')) changed.push('notes');
+    if (changed.length === 0) {
+      setIsEditingHeader(false);
+      toast({ title: 'ไม่มีการเปลี่ยนแปลง' });
+      return;
+    }
+    const editorName = currentUser.displayName || currentUser.email || currentUser.id;
+    const now = Date.now();
+    setIsSavingHeader(true);
+    try {
+      await updateDoc(poRef, {
+        title,
+        projectName: nextProject,
+        customerPONumber: nextCustomerPo,
+        customerPoIssueDate: nextIssue ?? null,
+        startDate: editStartDate,
+        endDate: editEndDate,
+        notes: nextNotes,
+        updatedAt: now,
+        lastEditedAt: now,
+        lastEditedByUid: currentUser.id,
+        lastEditedByName: editorName,
+      });
+      writeAuditLog(firestore, currentUser, {
+        actionType: 'UPDATE',
+        entityType: 'PurchaseOrder',
+        entityId: id,
+        entityLabel: po.poCode,
+        changedFields: changed,
+        sourceModule: 'commercial',
+        purchaseOrderId: id,
+        afterSummary: `แก้ไขหัว PO โดย ${editorName}: ${changed.join(', ')}`,
+      });
+      setIsEditingHeader(false);
+      toast({ title: 'บันทึกแล้ว', description: `แก้ไขโดย ${editorName}` });
+    } catch (e) {
+      console.error(e);
+      toast({ variant: 'destructive', title: 'บันทึกไม่สำเร็จ', description: 'ลองใหม่หรือตรวจสิทธิ์ Firestore' });
+    } finally {
+      setIsSavingHeader(false);
+    }
+  };
+
+  const handleCreateQuotationInvoice = async () => {
+    if (!firestore || !currentUser || !po) return;
+    if (!canCreateInvoice) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์สร้างใบแจ้งหนี้' });
+      return;
+    }
+    if ((po.poType || 'contract') !== 'quotation') return;
+    if (po.status !== 'active') {
+      toast({ variant: 'destructive', title: 'ยังสร้างใบไม่ได้', description: 'อนุมัติ PO เป็น Active ก่อนออกใบแจ้งหนี้' });
+      return;
+    }
+    setIsCreatingInvoice(true);
+    try {
+      const { id: invoiceId, invoiceNo } = await createCommercialDraftFromQuotationPoLines(firestore, {
+        poId: id,
+        periodStart: timestampToHtmlDateValue(po.startDate || Date.now()),
+        periodEnd: timestampToHtmlDateValue(po.endDate || Date.now()),
+        issueDate: timestampToHtmlDateValue(Date.now()),
+        actor: currentUser,
+      });
+      toast({ title: 'สร้างใบแจ้งหนี้แล้ว', description: `เลขที่ ${invoiceNo}` });
+      router.push(`/draft-invoices/${invoiceId}`);
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'สร้างใบแจ้งหนี้ไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setIsCreatingInvoice(false);
+    }
+  };
+
   if (userLoading || !currentUser) return null;
   if (!canViewPo) {
     return (
@@ -455,16 +632,73 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
             <h2 className="text-lg font-semibold tracking-tight border-b pb-2">ข้อมูลหัว PO</h2>
             <div>
             <Card>
-              <CardHeader><CardTitle>รายละเอียด Customer PO (Header Info)</CardTitle></CardHeader>
+              <CardHeader className="flex flex-row items-start justify-between gap-3">
+                <div>
+                  <CardTitle>รายละเอียด Customer PO (Header Info)</CardTitle>
+                  <CardDescription className="text-xs mt-1">
+                    เลขที่ PO ภายใน ({po.poCode}) รันอัตโนมัติ — แก้ไม่ได้
+                    {(po.lastEditedByName || po.createdByName) ? (
+                      <>
+                        {' · '}
+                        {po.lastEditedByName
+                          ? `แก้ไขล่าสุดโดย ${po.lastEditedByName}${po.lastEditedAt ? ` (${formatDateThaiBE(po.lastEditedAt)})` : ''}`
+                          : `สร้างโดย ${po.createdByName}`}
+                      </>
+                    ) : null}
+                  </CardDescription>
+                </div>
+                {canEditPo && !isEditingHeader && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 gap-1.5"
+                    disabled={isInvoiceLocked}
+                    title={
+                      isInvoiceLocked
+                        ? 'ออกใบแจ้งหนี้แล้ว — ยกเลิกใบแจ้งหนี้ก่อนจึงแก้ได้'
+                        : 'แก้ไขรายละเอียดหัว PO'
+                    }
+                    onClick={() => beginEditHeader()}
+                  >
+                    {isInvoiceLocked ? <Lock className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+                    แก้ไข
+                  </Button>
+                )}
+              </CardHeader>
               <CardContent className="space-y-6">
+                {isInvoiceLocked && (
+                  <Alert>
+                    <Lock className="h-4 w-4" />
+                    <AlertTitle>ล็อกการแก้ไข — มีใบแจ้งหนี้แล้ว</AlertTitle>
+                    <AlertDescription className="text-sm">
+                      ยกเลิกใบแจ้งหนี้ก่อนจึงจะแก้ชื่อโครงการ / เลข PO ลูกค้า / วันที่ / หมายเหตุได้
+                      {blockingInvoices[0] ? (
+                        <>
+                          {' '}
+                          <Link
+                            href={`/draft-invoices/${encodeURIComponent(blockingInvoices[0].id)}`}
+                            className="font-semibold text-primary underline"
+                          >
+                            เปิด {blockingInvoices[0].invoiceNo || 'ใบแจ้งหนี้'}
+                          </Link>
+                        </>
+                      ) : null}
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="space-y-2 min-w-0">
                     <Label className="font-bold">หัวข้อ / ชื่อโครงการ</Label>
-                    <Input disabled value={po.title || ''} />
+                    <Input
+                      disabled={!isEditingHeader}
+                      value={isEditingHeader ? editTitle : (po.title || '')}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                    />
                   </div>
                   <div className="space-y-2 min-w-0">
-                    <Label className="font-bold">เลขที่ Customer PO (PO Code)</Label>
-                    <Input disabled value={po.poCode || ''} />
+                    <Label className="font-bold">เลขที่ PO ภายใน (รันอัตโนมัติ)</Label>
+                    <Input disabled className="bg-muted font-mono" value={po.poCode || ''} />
                   </div>
                   {isContractBasedPO && (
                     <div className="space-y-2 min-w-0">
@@ -484,14 +718,22 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                       เลขที่เอกสาร PO ของลูกค้า
                     </Label>
                     <Input
-                      disabled
-                      value={po.customerPONumber || ''}
+                      disabled={!isEditingHeader}
+                      value={isEditingHeader ? editCustomerPoNumber : (po.customerPONumber || '')}
+                      onChange={(e) => setEditCustomerPoNumber(e.target.value)}
                       placeholder="เช่น PO-CLIENT-2026-00123"
                     />
                   </div>
                   <div className="space-y-2 min-w-0">
                     <Label className="font-bold">วันที่ออก PO ของลูกค้า</Label>
-                    {po.customerPoIssueDate == null || Number(po.customerPoIssueDate) <= 0 ? (
+                    {isEditingHeader ? (
+                      <DatePickerThaiBE
+                        allowClear
+                        value={editCustomerPoIssueDate}
+                        onChange={(ms) => setEditCustomerPoIssueDate(ms)}
+                        onClear={() => setEditCustomerPoIssueDate(undefined)}
+                      />
+                    ) : po.customerPoIssueDate == null || Number(po.customerPoIssueDate) <= 0 ? (
                       <p className="text-sm text-muted-foreground py-2 border rounded-md px-3 bg-muted/30">ยังไม่ระบุ</p>
                     ) : (
                       <DatePickerThaiBE
@@ -503,7 +745,11 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   </div>
                   <div className="space-y-2 min-w-0">
                     <Label className="font-bold">ชื่อโครงการเฉพาะทาง (Project Name)</Label>
-                    <Input disabled value={po.projectName || ''} />
+                    <Input
+                      disabled={!isEditingHeader}
+                      value={isEditingHeader ? editProjectName : (po.projectName || '')}
+                      onChange={(e) => setEditProjectName(e.target.value)}
+                    />
                   </div>
                   {isContractBasedPO && (
                     <div className="space-y-2 min-w-0">
@@ -552,17 +798,17 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   <div className="space-y-2 min-w-0">
                     <Label className="font-bold">วันที่เริ่มงานตาม PO</Label>
                     <DatePickerThaiBE
-                      disabled
-                      value={po.startDate}
-                      onChange={() => {}}
+                      disabled={!isEditingHeader}
+                      value={isEditingHeader ? editStartDate : po.startDate}
+                      onChange={(ms) => setEditStartDate(ms)}
                     />
                   </div>
                   <div className="space-y-2 min-w-0">
                     <Label className="font-bold">วันที่สิ้นสุดงานตาม PO</Label>
                     <DatePickerThaiBE
-                      disabled
-                      value={po.endDate}
-                      onChange={() => {}}
+                      disabled={!isEditingHeader}
+                      value={isEditingHeader ? editEndDate : po.endDate}
+                      onChange={(ms) => setEditEndDate(ms)}
                     />
                   </div>
                   <div className="space-y-2 min-w-0 sm:col-span-2">
@@ -584,9 +830,36 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                 </div>
                 <div className="space-y-2">
                   <Label className="font-bold">หมายเหตุ</Label>
-                  <Textarea disabled value={po.notes || ''} />
+                  <Textarea
+                    disabled={!isEditingHeader}
+                    value={isEditingHeader ? editNotes : (po.notes || '')}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                  />
                 </div>
                 <div className="flex flex-wrap gap-2 justify-end pt-2 border-t">
+                  {isEditingHeader && (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 gap-1.5"
+                        disabled={isSavingHeader}
+                        onClick={() => setIsEditingHeader(false)}
+                      >
+                        <X className="h-4 w-4" />
+                        ยกเลิก
+                      </Button>
+                      <Button
+                        type="button"
+                        className="h-10 gap-1.5"
+                        disabled={isSavingHeader}
+                        onClick={() => void handleSaveHeader()}
+                      >
+                        {isSavingHeader ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                        บันทึกการแก้ไข
+                      </Button>
+                    </>
+                  )}
                   {po.status === 'pending' && canApprovePo && (
                     <Button
                       className="gap-2 bg-emerald-600 hover:bg-emerald-700 h-10"
@@ -654,9 +927,19 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                       <Link href={`/quotations/${encodeURIComponent(po.quotationId)}`}>เปิดใบเสนอราคา</Link>
                     </Button>
                   )}
-                  <Button variant="outline" asChild>
-                    <Link href="/draft-invoices">ทำใบแจ้งหนี้แบบ Monthly</Link>
-                  </Button>
+                  {blockingInvoices[0] ? (
+                    <Button asChild>
+                      <Link href={`/draft-invoices/${encodeURIComponent(blockingInvoices[0].id)}`}>เปิดใบแจ้งหนี้</Link>
+                    </Button>
+                  ) : (
+                    <Button
+                      disabled={!canCreateInvoice || isCreatingInvoice || po.status !== 'active'}
+                      onClick={() => void handleCreateQuotationInvoice()}
+                    >
+                      {isCreatingInvoice ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      สร้างใบแจ้งหนี้
+                    </Button>
+                  )}
                   <Button variant="outline" asChild>
                     <Link href="/tax-invoices">ใบกำกับภาษี</Link>
                   </Button>
@@ -736,9 +1019,19 @@ export default function CustomerPODetailPage({ params }: { params: Promise<{ id:
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-wrap gap-2">
-                  <Button variant="outline" asChild>
-                    <Link href="/draft-invoices">ทำใบแจ้งหนี้แบบ Monthly</Link>
-                  </Button>
+                  {blockingInvoices[0] ? (
+                    <Button asChild>
+                      <Link href={`/draft-invoices/${encodeURIComponent(blockingInvoices[0].id)}`}>เปิดใบแจ้งหนี้</Link>
+                    </Button>
+                  ) : (
+                    <Button
+                      disabled={!canCreateInvoice || isCreatingInvoice || po.status !== 'active'}
+                      onClick={() => void handleCreateQuotationInvoice()}
+                    >
+                      {isCreatingInvoice ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      สร้างใบแจ้งหนี้
+                    </Button>
+                  )}
                   <Button variant="outline" asChild>
                     <Link href="/tax-invoices">ใบกำกับภาษี</Link>
                   </Button>
