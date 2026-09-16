@@ -7,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 import {
   MONTH_SCOPE_SELECT_OPTIONS,
   isMonthScopeLookback,
@@ -20,6 +21,8 @@ type YearMonthScopeSelectsProps = {
   yearOptionsCe: number[];
   onYearCeChange: (yearCe: number) => void;
   onMonthScopeChange: (monthScope: string) => void;
+  yearTriggerClassName?: string;
+  monthTriggerClassName?: string;
 };
 
 /** ช่องเลือกปี (พ.ศ.) + เดือน — ค่าเริ่มต้นใช้ปี/เดือนปัจจุบันจาก parent */
@@ -30,6 +33,8 @@ export function YearMonthScopeSelects({
   yearOptionsCe,
   onYearCeChange,
   onMonthScopeChange,
+  yearTriggerClassName,
+  monthTriggerClassName,
 }: YearMonthScopeSelectsProps) {
   const lookback = isMonthScopeLookback(monthScope);
   const years = yearOptionsCe.includes(yearCe)
@@ -45,7 +50,7 @@ export function YearMonthScopeSelects({
       >
         <SelectTrigger
           id={`${idPrefix}-year`}
-          className="h-10 w-[min(100%,8.5rem)] shrink-0 bg-background"
+          className={cn('h-10 w-[min(100%,8.5rem)] shrink-0 bg-background', yearTriggerClassName)}
           aria-label="เลือกปี"
         >
           <SelectValue placeholder="เลือกปี" />
@@ -61,7 +66,7 @@ export function YearMonthScopeSelects({
       <Select value={monthScope} onValueChange={onMonthScopeChange}>
         <SelectTrigger
           id={`${idPrefix}-month`}
-          className="h-10 w-[min(100%,11rem)] shrink-0 bg-background"
+          className={cn('h-10 w-[min(100%,11rem)] shrink-0 bg-background', monthTriggerClassName)}
           aria-label="เลือกเดือน"
         >
           <SelectValue placeholder="เลือกเดือน" />

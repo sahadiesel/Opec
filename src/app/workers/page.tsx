@@ -80,6 +80,12 @@ import {
   describeWorkerListPrintFilters,
   type WorkerListPrintRow,
 } from '@/lib/documents/worker-list-print';
+import {
+  accumulateWorkerHoursFromTimesheets,
+  workerAccumulatedStandbyHours,
+  workerAccumulatedWorkHours,
+  type WorkerAccumulatedHours,
+} from '@/lib/timesheet/worker-accumulated-hours';
 
 type WorkerSortKey = 'name' | 'hours';
 type WorkerSortDir = 'asc' | 'desc';
@@ -118,19 +124,16 @@ function compareWorkersByName(a: Worker, b: Worker, dir: WorkerSortDir): number 
   return dir === 'asc' ? idc : -idc;
 }
 
-function workerTotalHours(
-  w: Worker,
-  hoursMap: Map<string, { totalHours: number; firstWorkedAt: number | null; lastWorkedAt: number | null }>,
-): number {
-  return Number(hoursMap.get(w.id)?.totalHours || w.totalWorkedHours || 0);
+function workerTotalHours(w: Worker, hoursMap: Map<string, WorkerAccumulatedHours>): number {
+  return workerAccumulatedWorkHours(w, hoursMap);
 }
 
-/** ชั่วโมง: desc = มาก→น้อย, asc = น้อย→มาก — เทียบเท่ากันเรียงชื่อ A–Z */
+/** ชั่วโมงทำงาน: desc = มาก→น้อย, asc = น้อย→มาก — เทียบเท่ากันเรียงชื่อ A–Z */
 function compareWorkersByHours(
   a: Worker,
   b: Worker,
   dir: WorkerSortDir,
-  hoursMap: Map<string, { totalHours: number; firstWorkedAt: number | null; lastWorkedAt: number | null }>,
+  hoursMap: Map<string, WorkerAccumulatedHours>,
 ): number {
   const ha = workerTotalHours(a, hoursMap);
   const hb = workerTotalHours(b, hoursMap);
@@ -209,7 +212,7 @@ export default function WorkersPage() {
     if (!firestore || !firebaseUser || !canViewWorkers) return null;
     return collection(firestore, 'daily_timesheets');
   }, [firestore, firebaseUser, canViewWorkers]);
-  const { data: allTimesheets } = useCollection<DailyTimesheet>(timesheetsQuery as any);
+  const { data: allTimesheets, isLoading: timesheetsLoading } = useCollection<DailyTimesheet>(timesheetsQuery as any);
 
   const canDeleteWorkerRecord = useMemo(() => {
     if (!currentUser) return false;
@@ -238,50 +241,35 @@ export default function WorkersPage() {
     return m;
   }, [allCustomers]);
 
-  const workerHoursById = useMemo(() => {
-    const bucket = new Map<string, { totalHours: number; firstWorkedAt: number | null; lastWorkedAt: number | null }>();
-    (allTimesheets || []).forEach((ts) => {
-      const workerId = ts.workerId;
-      if (!workerId) return;
-      const tsTime = ts.date ? new Date(ts.date).getTime() : NaN;
-      const normalHours = Number(ts.normalHours || 0);
-      const ot15Hours = Number(ts.ot15Hours || 0);
-      const ot20Hours = Number(ts.ot20Hours || 0);
-      const ot30Hours = Number(ts.ot30Hours || 0);
-      const holidayHours = Number(ts.holidayHours || 0);
-      const totalHours = normalHours + ot15Hours + ot20Hours + ot30Hours + holidayHours;
-      const current = bucket.get(workerId) || { totalHours: 0, firstWorkedAt: null, lastWorkedAt: null };
-      current.totalHours += totalHours;
-      if (!Number.isNaN(tsTime)) {
-        current.firstWorkedAt = current.firstWorkedAt === null ? tsTime : Math.min(current.firstWorkedAt, tsTime);
-        current.lastWorkedAt = current.lastWorkedAt === null ? tsTime : Math.max(current.lastWorkedAt, tsTime);
-      }
-      bucket.set(workerId, current);
-    });
-    return bucket;
-  }, [allTimesheets]);
+  const workerHoursById = useMemo(
+    () => accumulateWorkerHoursFromTimesheets(allTimesheets),
+    [allTimesheets],
+  );
 
   useEffect(() => {
-    if (!firestore || !workers || workers.length === 0) return;
+    if (!firestore || !workers || workers.length === 0 || timesheetsLoading || allTimesheets == null) return;
     workers.forEach((w) => {
       const agg = workerHoursById.get(w.id);
-      const totalWorkedHours = Number(agg?.totalHours || 0);
+      const totalWorkedHours = Number(agg?.workHours || 0);
+      const totalStandbyHours = Number(agg?.standbyHours || 0);
       const firstWorkedAt = agg?.firstWorkedAt ?? null;
       const lastWorkedAt = agg?.lastWorkedAt ?? null;
       const changed =
         Number(w.totalWorkedHours || 0) !== totalWorkedHours ||
+        Number(w.totalStandbyHours || 0) !== totalStandbyHours ||
         Number(w.firstWorkedAt ?? -1) !== Number(firstWorkedAt ?? -1) ||
         Number(w.lastWorkedAt ?? -1) !== Number(lastWorkedAt ?? -1);
       if (changed) {
         updateDocumentNonBlocking(doc(firestore, 'workers', w.id), {
           totalWorkedHours,
+          totalStandbyHours,
           firstWorkedAt,
           lastWorkedAt,
           updatedAt: Date.now(),
         });
       }
     });
-  }, [firestore, workers, workerHoursById]);
+  }, [firestore, workers, workerHoursById, timesheetsLoading, allTimesheets]);
 
   useEffect(() => {
     if (!firestore || !workers?.length || allMobilizations == null) return;
@@ -399,7 +387,8 @@ export default function WorkersPage() {
   const mapWorkerToPrintRow = useCallback(
     (worker: Worker): WorkerListPrintRow => {
       const position = positions?.find((p) => p.id === worker.currentPositionId);
-      const workedHours = Number(workerHoursById.get(worker.id)?.totalHours || worker.totalWorkedHours || 0);
+      const workedHours = workerAccumulatedWorkHours(worker, workerHoursById);
+      const standbyHours = workerAccumulatedStandbyHours(worker, workerHoursById);
       const displayJobStatus = displayWorkerRegistryJobStatus(worker, allMobilizations ?? []);
       const jobBadge = workerRegistryJobStatusBadgeProps(displayJobStatus);
       const onSiteAssignment =
@@ -434,6 +423,7 @@ export default function WorkersPage() {
         fullName: `${worker.firstName || ''} ${worker.lastName || ''}`.trim() || '—',
         nationalId: (worker.thaiNationalId || '').trim(),
         hoursLabel: `${workedHours.toLocaleString()} ชม.`,
+        standbyHoursLabel: `${standbyHours.toLocaleString()} ชม.`,
         positionLabel: position?.positionName || position?.positionNameTh || worker.currentPositionId || 'N/A',
         readinessLabel,
         jobStatusLabel: jobBadge.label,
@@ -883,8 +873,8 @@ export default function WorkersPage() {
                         )}
                       >
                         <span className="leading-tight flex flex-col items-center">
-                          <span>ชั่วโมงสะสม</span>
-                          <span className="text-[10px] font-semibold text-muted-foreground">Total Hours</span>
+                          <span>ชั่วโมงทำงานสะสม</span>
+                          <span className="text-[10px] font-semibold text-muted-foreground">Work Hours</span>
                         </span>
                         {workerSort.key === 'hours' ? (
                           workerSort.dir === 'desc' ? (
@@ -896,6 +886,12 @@ export default function WorkersPage() {
                           <ArrowUpDown className="h-4 w-4 shrink-0 text-muted-foreground opacity-60 mt-0.5" aria-hidden />
                         )}
                       </button>
+                    </TableHead>
+                    <TableHead className="py-2.5 text-center font-bold">
+                      <span className="leading-tight flex flex-col items-center">
+                        <span>ชั่วโมงสแตนบายสะสม</span>
+                        <span className="text-[10px] font-semibold text-muted-foreground">Standby Hours</span>
+                      </span>
                     </TableHead>
                     <TableHead className="py-2.5 text-center font-bold">
                       <span className="leading-tight flex flex-col items-center">
@@ -927,7 +923,8 @@ export default function WorkersPage() {
                   {(() => {
                     const renderWorkerRow = (worker: Worker) => {
                       const position = positions?.find((p) => p.id === worker.currentPositionId);
-                      const workedHours = Number(workerHoursById.get(worker.id)?.totalHours || worker.totalWorkedHours || 0);
+                      const workedHours = workerAccumulatedWorkHours(worker, workerHoursById);
+                      const standbyHours = workerAccumulatedStandbyHours(worker, workerHoursById);
                       const displayJobStatus = displayWorkerRegistryJobStatus(worker, allMobilizations ?? []);
                       const jobBadge = workerRegistryJobStatusBadgeProps(displayJobStatus);
                       const onSiteAssignment =
@@ -968,6 +965,9 @@ export default function WorkersPage() {
                           </TableCell>
                           <TableCell className="py-2.5 text-center">
                             <div className="font-black text-primary">{workedHours.toLocaleString()} ชม.</div>
+                          </TableCell>
+                          <TableCell className="py-2.5 text-center">
+                            <div className="font-semibold text-muted-foreground">{standbyHours.toLocaleString()} ชม.</div>
                           </TableCell>
                           <TableCell className="py-2.5 text-center">
                             <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20">
@@ -1043,7 +1043,7 @@ export default function WorkersPage() {
                       if (filteredWorkers.active.length > 0) {
                         rows.push(
                           <TableRow key="__not-ready-to-work-section__" className="bg-orange-50/80 hover:bg-orange-50/80">
-                            <TableCell colSpan={6} className="py-2.5 pl-6 text-xs font-bold uppercase tracking-wide text-orange-900">
+                            <TableCell colSpan={7} className="py-2.5 pl-6 text-xs font-bold uppercase tracking-wide text-orange-900">
                               ไม่พร้อมทำงาน (Not Ready to Work) — {filteredWorkers.notReadyToWork.length} คน
                             </TableCell>
                           </TableRow>,
@@ -1055,7 +1055,7 @@ export default function WorkersPage() {
                   })()}
                   {filteredWorkers.all.length === 0 && !isCollectionLoading && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-20 text-muted-foreground italic">
+                      <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
                         {(workers?.length ?? 0) === 0
                           ? 'ยังไม่มีข้อมูลคนงานในระบบ'
                           : workerSearchQuery.trim()

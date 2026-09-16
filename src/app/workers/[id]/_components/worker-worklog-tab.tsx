@@ -32,7 +32,12 @@ export function WorkerWorklogTab({ workLogRows, totalWorkedHours }: WorkerWorklo
           </CardTitle>
           <CardDescription>คำนวณจาก Timesheet ที่บันทึกไว้ทั้งหมด</CardDescription>
         </div>
-        <Badge className="bg-primary text-white">รวม {totalWorkedHours.toLocaleString()} ชั่วโมง</Badge>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Badge className="bg-primary text-white">ทำงาน {totalWorkedHours.toLocaleString()} ชม.</Badge>
+          <Badge variant="outline">
+            สแตนบาย {workLogRows.reduce((s, r) => s + Number(r.standbyHours || 0), 0).toLocaleString()} ชม.
+          </Badge>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         <Table className="w-full table-fixed">

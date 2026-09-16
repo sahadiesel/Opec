@@ -1,15 +1,15 @@
 'use client';
 
-import { useState, useEffect, useMemo, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Info, ArrowRight, Filter, Loader2, Pencil, CheckCircle2, Trash2 } from 'lucide-react';
+import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Info, ArrowRight, Loader2, Pencil, CheckCircle2, Trash2, Printer } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { PurchaseOrder, User, Customer, MainContract, Quotation, JobMode } from '@/lib/types';
+import { PurchaseOrder, Customer, MainContract, Quotation, JobMode } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { 
   Dialog, 
@@ -46,6 +46,21 @@ import {
 } from '@/lib/documents/own-created-list';
 import { canManageDocumentShare } from '@/lib/documents/document-share';
 import { DocumentShareListMarker } from '@/components/documents/document-share-controls';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  describeYearMonthScopeFilter,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import {
+  buildCustomerPoListPrintHtml,
+  capCustomerPoListPrintRows,
+  describeCustomerPoListPrintFilters,
+  type CustomerPoListPrintRow,
+} from '@/lib/documents/customer-po-list-print';
+import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 
 function computePoOperationalWindow(
   poType: 'contract' | 'quotation' | undefined,
@@ -70,6 +85,22 @@ function computePoOperationalWindow(
     };
   }
   return { startDate: issue, endDate: issue + 365 * 86400000 };
+}
+
+function isQuotationSourcedPo(po: PurchaseOrder): boolean {
+  if (po.poType === 'quotation') return true;
+  if (po.poType === 'contract') return false;
+  return !!(po.quotationId || '').trim() && !(po.contractId || '').trim();
+}
+
+function poListYm(po: PurchaseOrder): string {
+  const pick = (ms: number | undefined) => {
+    const n = Number(ms);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    const d = new Date(n);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+  return pick(po.customerPoIssueDate) || pick(po.createdAt) || pick(po.startDate);
 }
 
 function CustomerPOsPageContent() {
@@ -145,6 +176,138 @@ function CustomerPOsPageContent() {
     return collection(firestore, 'customers');
   }, [firestore, firebaseUser, isUserLoading, isAuthorized]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
+
+  const [searchTerm, setSearchTerm] = useState('');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
+  const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
+
+  const yearOptionsCe = useMemo(() => {
+    const set = new Set<string>();
+    for (const po of visiblePos) {
+      const ym = poListYm(po);
+      if (ym) set.add(ym);
+    }
+    return buildYearCeOptions(set);
+  }, [visiblePos]);
+
+  const filteredPos = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    return visiblePos.filter((po) => {
+      if (!ymMatchesYearMonthScope(poListYm(po), yearFilterCe, monthScope)) return false;
+      if (!term) return true;
+      const customer = customers?.find((c) => c.id === po.customerId);
+      const hay = [
+        po.poCode,
+        po.title,
+        po.projectName,
+        po.customerPONumber,
+        customer?.name,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return hay.includes(term);
+    });
+  }, [visiblePos, searchTerm, yearFilterCe, monthScope, customers]);
+
+  const contractPos = useMemo(
+    () => filteredPos.filter((po) => !isQuotationSourcedPo(po)),
+    [filteredPos],
+  );
+  const quotationPos = useMemo(
+    () => filteredPos.filter((po) => isQuotationSourcedPo(po)),
+    [filteredPos],
+  );
+
+  const toPrintRow = useCallback(
+    (po: PurchaseOrder): CustomerPoListPrintRow => {
+      const customer = customers?.find((c) => c.id === po.customerId);
+      return {
+        poCode: po.poCode || po.id,
+        customerName: customer?.name || 'N/A',
+        projectLabel: [po.title, po.projectName].filter(Boolean).join(' / ') || '—',
+        customerPoLabel: po.customerPONumber ? `Customer PO: ${po.customerPONumber}` : '',
+        periodLabel: formatDateRangeThaiBE(po.startDate, po.endDate),
+        creatorLabel: documentCreatorDisplayName(po),
+        statusLabel: (po.status || '').toUpperCase(),
+      };
+    },
+    [customers],
+  );
+
+  const runPoListPrint = useCallback(
+    async (scope: 'filtered' | 'all') => {
+      const source = scope === 'filtered' ? filteredPos : visiblePos;
+      if (source.length === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'ไม่มีรายการให้พิมพ์',
+          description:
+            scope === 'filtered'
+              ? 'ไม่พบข้อมูลตามตัวกรอง — ปรับเดือน/ค้นหา หรือเลือกพิมพ์ทั้งหมด'
+              : 'ยังไม่มีใบสั่งซื้อในระบบ',
+        });
+        return;
+      }
+      const contractSource = source.filter((po) => !isQuotationSourcedPo(po));
+      const quotationSource = source.filter((po) => isQuotationSourcedPo(po));
+      setPrintBusy(true);
+      try {
+        const cappedContract = capCustomerPoListPrintRows(contractSource.map(toPrintRow));
+        const cappedQuotation = capCustomerPoListPrintRows(quotationSource.map(toPrintRow));
+        const generatedAt = new Date().toLocaleString('th-TH', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+        const filterLines =
+          scope === 'filtered'
+            ? describeCustomerPoListPrintFilters({
+                searchTerm,
+                yearCe: yearFilterCe,
+                monthScope,
+              })
+            : [];
+        const ok = await openStandardPrintWindow({
+          windowTitle: 'Customer-PO-List',
+          suggestedFileName: `Customer-PO-List-${scope === 'filtered' ? 'Filtered' : 'All'}`,
+          bodyInnerHtml: buildCustomerPoListPrintHtml({
+            contractRows: cappedContract.rows,
+            quotationRows: cappedQuotation.rows,
+            scopeTitle:
+              scope === 'filtered' ? 'พิมพ์ตามตัวกรองปัจจุบัน' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)',
+            filterLines,
+            generatedAt,
+            printedBy: currentUser?.displayName,
+            truncated: cappedContract.truncated || cappedQuotation.truncated,
+          }),
+          htmlLang: 'th',
+        });
+        if (!ok) {
+          toast({
+            variant: 'destructive',
+            title: 'เปิดหน้าต่างพิมพ์ไม่ได้',
+            description: 'กรุณาอนุญาตป๊อปอัปสำหรับเว็บไซต์นี้',
+          });
+          return;
+        }
+        setPrintDialogOpen(false);
+      } finally {
+        setPrintBusy(false);
+      }
+    },
+    [
+      filteredPos,
+      visiblePos,
+      toPrintRow,
+      searchTerm,
+      yearFilterCe,
+      monthScope,
+      currentUser?.displayName,
+      toast,
+    ],
+  );
 
   const contractsQuery = useMemoFirebase(() => {
     if (!firestore || isUserLoading || !firebaseUser || !isAuthorized) return null;
@@ -309,6 +472,173 @@ function CustomerPOsPageContent() {
 
   if (isUserLoading || userLoading || !currentUser) return null;
 
+  const renderPoTable = (rows: PurchaseOrder[], emptyText: string) => (
+              <TooltipProvider delayDuration={400}>
+              <Table>
+                <TableHeader className="bg-muted/50">
+                  <TableRow>
+                    <TableHead className="font-bold py-4 pl-6">รหัส PO (Code)</TableHead>
+                    <TableHead className="font-bold">ลูกค้า (Client Name)</TableHead>
+                    <TableHead className="font-bold">โครงการ (Project Context)</TableHead>
+                    <TableHead className="font-bold">ระยะเวลาปฏิบัติงาน (Period)</TableHead>
+                    <TableHead className="font-bold">ผู้สร้าง</TableHead>
+                    {showShareColumn && (
+                      <TableHead className="font-bold w-12 text-center">แชร์</TableHead>
+                    )}
+                    <TableHead className="font-bold">สถานะ</TableHead>
+                    <TableHead className="text-right pr-6">จัดการ</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((po) => {
+                    const customer = customers?.find(c => c.id === po.customerId);
+                    return (
+                      <TableRow 
+                        key={po.id} 
+                        className="cursor-pointer hover:bg-muted/50 group transition-all"
+                        onClick={() => router.push(`/purchase-orders/${po.id}`)}
+                      >
+                        <TableCell className="py-4 pl-6 font-mono text-xs font-bold text-primary">{po.poCode}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2 text-sm text-primary font-bold">
+                            <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+                            {customer?.name || 'N/A'}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-medium text-sm text-primary">{po.title}</span>
+                            <span className="text-[10px] text-muted-foreground uppercase">{po.projectName || 'General Project'}</span>
+                            {po.customerPONumber && (
+                              <span className="text-[10px] text-slate-500">Customer PO: {po.customerPONumber}</span>
+                            )}
+                            {po.customerPoIssueDate != null && Number(po.customerPoIssueDate) > 0 && (
+                              <span className="text-[10px] text-slate-500">
+                                วันที่ออก PO ลูกค้า: {formatDateThaiBE(po.customerPoIssueDate)}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs font-medium text-muted-foreground">
+                          <div className="flex items-center gap-1">
+                            <Calendar className="h-3 w-3" />
+                            {formatDateRangeThaiBE(po.startDate, po.endDate)}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {documentCreatorDisplayName(po)}
+                        </TableCell>
+                        {showShareColumn && (
+                          <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                            <DocumentShareListMarker
+                              collectionName="purchase_orders"
+                              documentId={po.id}
+                              currentUser={currentUser}
+                              sharedWith={po.sharedWith}
+                              sharedWithUids={po.sharedWithUids}
+                            />
+                          </TableCell>
+                        )}
+                        <TableCell>
+                          <Badge variant={po.status === 'active' ? 'default' : 'secondary'} className={po.status === 'active' ? 'bg-green-600' : ''}>
+                            {po.status.toUpperCase()}
+                          </Badge>
+                        </TableCell>
+                        <TableCell
+                          className="text-right pr-6"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex flex-nowrap items-center justify-end gap-0.5">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" asChild>
+                                  <Link href={`/purchase-orders/${po.id}`}>
+                                    <Pencil className="h-4 w-4" />
+                                    <span className="sr-only">แก้ไข Customer PO</span>
+                                  </Link>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                <p>แก้ไข Customer PO</p>
+                              </TooltipContent>
+                            </Tooltip>
+                            {po.status === 'pending' && canApprovePO && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex shrink-0">
+                                    <Button
+                                      size="icon"
+                                      className="h-8 w-8 shrink-0 bg-emerald-600 hover:bg-emerald-700"
+                                      disabled={listActionId === po.id}
+                                      onClick={() => void approvePoFromList(po)}
+                                    >
+                                      {listActionId === po.id ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <CheckCircle2 className="h-4 w-4" />
+                                      )}
+                                      <span className="sr-only">อนุมัติ PO (Active)</span>
+                                    </Button>
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                  <p>
+                                    {po.poType === 'quotation'
+                                      ? 'อนุมัติ PO — Active (ออกใบวางบิล/ใบกำกับ — ไม่มี Wave)'
+                                      : 'อนุมัติ PO — Active (เข้าชุด PO Active / คิวเติมโควต้า → มอบหมาย)'}
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                            {po.status === 'pending' && isAdminUser && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex shrink-0">
+                                    <Button
+                                      variant="destructive"
+                                      size="icon"
+                                      className="h-8 w-8 shrink-0"
+                                      disabled={listActionId === po.id}
+                                      onClick={() => void deletePendingPoFromList(po)}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                      <span className="sr-only">ลบ PO ที่ยัง Pending</span>
+                                    </Button>
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                  <p>ลบ PO ที่ยัง Pending (เฉพาะแอดมิน)</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground" asChild>
+                                  <Link href={`/purchase-orders/${po.id}`}>
+                                    <ChevronRight className="h-4 w-4" />
+                                    <span className="sr-only">รายละเอียด PO</span>
+                                  </Link>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                <p>รายละเอียด PO</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                  {rows.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={showShareColumn ? 8 : 7} className="text-center py-16 text-muted-foreground italic">{emptyText}</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+              </TooltipProvider>
+  );
+
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 max-w-[1600px] mx-auto">
@@ -333,12 +663,27 @@ function CustomerPOsPageContent() {
 
         {/* 3. Action Bar */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex items-center gap-3 flex-1">
+          <div className="flex flex-wrap items-center gap-3 flex-1">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาเลขที่ PO หรือ ชื่อโครงการ..." className="pl-9 h-11" />
+              <Input
+                placeholder="ค้นหาเลขที่ PO หรือ ชื่อโครงการ..."
+                className="pl-9 h-11"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
             </div>
-            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
+            <YearMonthScopeSelects
+              idPrefix="customer-po"
+              yearCe={yearFilterCe}
+              monthScope={monthScope}
+              yearOptionsCe={yearOptionsCe}
+              onYearCeChange={setYearFilterCe}
+              onMonthScopeChange={setMonthScope}
+            />
+            <Button type="button" variant="outline" className="h-11 gap-2" onClick={() => setPrintDialogOpen(true)}>
+              <Printer className="h-4 w-4" /> พิมพ์รายการ
+            </Button>
           </div>
           
           <Dialog open={canCreatePO && isCreateOpen} onOpenChange={setIsCreateOpen}>
@@ -514,179 +859,85 @@ function CustomerPOsPageContent() {
           </Dialog>
         </div>
 
-        {/* 4. Data Content */}
-        <Card className="shadow-lg border-none overflow-hidden">
-          <CardContent className="p-0">
-            {isPOLoading ? (
-              <div className="py-20 text-center text-muted-foreground italic animate-pulse">กำลังโหลดข้อมูลใบสั่งซื้อ (Loading Customer POs)...</div>
-            ) : (
-              <TooltipProvider delayDuration={400}>
-              <Table>
-                <TableHeader className="bg-muted/50">
-                  <TableRow>
-                    <TableHead className="font-bold py-4 pl-6">รหัส PO (Code)</TableHead>
-                    <TableHead className="font-bold">ลูกค้า (Client Name)</TableHead>
-                    <TableHead className="font-bold">โครงการ (Project Context)</TableHead>
-                    <TableHead className="font-bold">ระยะเวลาปฏิบัติงาน (Period)</TableHead>
-                    <TableHead className="font-bold">ผู้สร้าง</TableHead>
-                    {showShareColumn && (
-                      <TableHead className="font-bold w-12 text-center">แชร์</TableHead>
-                    )}
-                    <TableHead className="font-bold">สถานะ</TableHead>
-                    <TableHead className="text-right pr-6">จัดการ</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visiblePos.map((po) => {
-                    const customer = customers?.find(c => c.id === po.customerId);
-                    return (
-                      <TableRow 
-                        key={po.id} 
-                        className="cursor-pointer hover:bg-muted/50 group transition-all"
-                        onClick={() => router.push(`/purchase-orders/${po.id}`)}
-                      >
-                        <TableCell className="py-4 pl-6 font-mono text-xs font-bold text-primary">{po.poCode}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2 text-sm text-primary font-bold">
-                            <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
-                            {customer?.name || 'N/A'}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium text-sm text-primary">{po.title}</span>
-                            <span className="text-[10px] text-muted-foreground uppercase">{po.projectName || 'General Project'}</span>
-                            {po.customerPONumber && (
-                              <span className="text-[10px] text-slate-500">Customer PO: {po.customerPONumber}</span>
-                            )}
-                            {po.customerPoIssueDate != null && Number(po.customerPoIssueDate) > 0 && (
-                              <span className="text-[10px] text-slate-500">
-                                วันที่ออก PO ลูกค้า: {formatDateThaiBE(po.customerPoIssueDate)}
-                              </span>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-xs font-medium text-muted-foreground">
-                          <div className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            {formatDateRangeThaiBE(po.startDate, po.endDate)}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm whitespace-nowrap">
-                          {documentCreatorDisplayName(po)}
-                        </TableCell>
-                        {showShareColumn && (
-                          <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
-                            <DocumentShareListMarker
-                              collectionName="purchase_orders"
-                              documentId={po.id}
-                              currentUser={currentUser}
-                              sharedWith={po.sharedWith}
-                              sharedWithUids={po.sharedWithUids}
-                            />
-                          </TableCell>
-                        )}
-                        <TableCell>
-                          <Badge variant={po.status === 'active' ? 'default' : 'secondary'} className={po.status === 'active' ? 'bg-green-600' : ''}>
-                            {po.status.toUpperCase()}
-                          </Badge>
-                        </TableCell>
-                        <TableCell
-                          className="text-right pr-6"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <div className="flex flex-nowrap items-center justify-end gap-0.5">
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button variant="outline" size="icon" className="h-8 w-8 shrink-0" asChild>
-                                  <Link href={`/purchase-orders/${po.id}`}>
-                                    <Pencil className="h-4 w-4" />
-                                    <span className="sr-only">แก้ไข Customer PO</span>
-                                  </Link>
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="top">
-                                <p>แก้ไข Customer PO</p>
-                              </TooltipContent>
-                            </Tooltip>
-                            {po.status === 'pending' && canApprovePO && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className="inline-flex shrink-0">
-                                    <Button
-                                      size="icon"
-                                      className="h-8 w-8 shrink-0 bg-emerald-600 hover:bg-emerald-700"
-                                      disabled={listActionId === po.id}
-                                      onClick={() => void approvePoFromList(po)}
-                                    >
-                                      {listActionId === po.id ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                      ) : (
-                                        <CheckCircle2 className="h-4 w-4" />
-                                      )}
-                                      <span className="sr-only">อนุมัติ PO (Active)</span>
-                                    </Button>
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent side="top">
-                                  <p>
-                                    {po.poType === 'quotation'
-                                      ? 'อนุมัติ PO — Active (ออกใบวางบิล/ใบกำกับ — ไม่มี Wave)'
-                                      : 'อนุมัติ PO — Active (เข้าชุด PO Active / คิวเติมโควต้า → มอบหมาย)'}
-                                  </p>
-                                </TooltipContent>
-                              </Tooltip>
-                            )}
-                            {po.status === 'pending' && isAdminUser && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className="inline-flex shrink-0">
-                                    <Button
-                                      variant="destructive"
-                                      size="icon"
-                                      className="h-8 w-8 shrink-0"
-                                      disabled={listActionId === po.id}
-                                      onClick={() => void deletePendingPoFromList(po)}
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                      <span className="sr-only">ลบ PO ที่ยัง Pending</span>
-                                    </Button>
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent side="top">
-                                  <p>ลบ PO ที่ยัง Pending (เฉพาะแอดมิน)</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            )}
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground" asChild>
-                                  <Link href={`/purchase-orders/${po.id}`}>
-                                    <ChevronRight className="h-4 w-4" />
-                                    <span className="sr-only">รายละเอียด PO</span>
-                                  </Link>
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent side="top">
-                                <p>รายละเอียด PO</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                  {!isPOLoading && visiblePos.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={showShareColumn ? 8 : 7} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลใบสั่งซื้อลูกค้าในระบบ</TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-              </TooltipProvider>
-            )}
-          </CardContent>
-        </Card>
+        {isPOLoading ? (
+          <Card className="shadow-lg border-none overflow-hidden">
+            <CardContent className="py-20 text-center text-muted-foreground italic animate-pulse">
+              กำลังโหลดข้อมูลใบสั่งซื้อ (Loading Customer POs)...
+            </CardContent>
+          </Card>
+        ) : (
+          <>
+            <Card className="shadow-lg border-none overflow-hidden">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-primary" />
+                  1. สร้างจากสัญญา
+                  <span className="text-sm font-normal text-muted-foreground">({contractPos.length})</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {renderPoTable(contractPos, 'ไม่พบ PO จากสัญญาในช่วงที่กรอง')}
+              </CardContent>
+            </Card>
+            <Card className="shadow-lg border-none overflow-hidden">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-primary" />
+                  2. สร้างจากใบเสนอราคา
+                  <span className="text-sm font-normal text-muted-foreground">({quotationPos.length})</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                {renderPoTable(quotationPos, 'ไม่พบ PO จากใบเสนอราคาในช่วงที่กรอง')}
+              </CardContent>
+            </Card>
+          </>
+        )}
+
+        <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>พิมพ์รายการใบสั่งซื้อลูกค้า</DialogTitle>
+              <DialogDescription>
+                เลือกพิมพ์ตามเดือนที่ตั้งไว้ หรือพิมพ์ทุกรายการในชุดข้อมูลล่าสุด (สูงสุด 500 รายการต่อส่วน)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div className="rounded-md border bg-muted/30 p-3 space-y-1">
+                <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
+                <ul className="list-disc list-inside text-xs text-muted-foreground">
+                  <li>{describeYearMonthScopeFilter(yearFilterCe, monthScope)}</li>
+                  {searchTerm.trim() ? <li>ค้นหา: {searchTerm.trim()}</li> : null}
+                </ul>
+                <p className="text-xs font-medium pt-1">
+                  จะพิมพ์ {filteredPos.length} รายการ (สัญญา {contractPos.length} · ใบเสนอราคา {quotationPos.length})
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground">ข้อมูลทั้งหมดในระบบ: {visiblePos.length} รายการ</p>
+            </div>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={printBusy}
+                onClick={() => void runPoListPrint('all')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                พิมพ์ทั้งหมด
+              </Button>
+              <Button
+                type="button"
+                className="w-full sm:w-auto"
+                disabled={printBusy}
+                onClick={() => void runPoListPrint('filtered')}
+              >
+                {printBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                พิมพ์ตามตัวกรอง
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* 5. Next-Step Guidance */}
         <Card className="bg-primary/5 border-primary/10 border-dashed">

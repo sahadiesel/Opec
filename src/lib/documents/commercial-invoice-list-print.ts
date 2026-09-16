@@ -13,6 +13,7 @@ export type CommercialInvoiceListPrintRow = {
 export type CommercialInvoiceListPrintFilterSummary = {
   yearCe: number;
   monthScope: string;
+  statusLabel?: string;
 };
 
 const PRINT_ROW_LIMIT = 500;
@@ -20,7 +21,9 @@ const PRINT_ROW_LIMIT = 500;
 export function describeCommercialInvoiceListPrintFilters(
   f: CommercialInvoiceListPrintFilterSummary,
 ): string[] {
-  return [`เดือนเอกสาร: ${describeYearMonthScopeFilter(f.yearCe, f.monthScope)}`];
+  const lines = [`เดือนเอกสาร: ${describeYearMonthScopeFilter(f.yearCe, f.monthScope)}`];
+  if (f.statusLabel) lines.push(`สถานะ: ${f.statusLabel}`);
+  return lines;
 }
 
 export function buildCommercialInvoiceListPrintHtml(params: {

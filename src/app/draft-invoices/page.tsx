@@ -98,32 +98,59 @@ import {
   poActiveBundleWorkModeShortLabel,
 } from '@/lib/ops/po-active-bundle-grouping';
 import { resolveBillingModeFromMaps } from '@/lib/commercial/resolve-billing-mode';
+import {
+  commercialInvoiceRevisionNoOf,
+  isCommercialInvoiceSuperseded,
+  parseCommercialInvoiceBaseNo,
+} from '@/lib/commercial/commercial-invoice-revision';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
-function statusBadge(inv: CommercialInvoice) {
+function invoiceShowsRevised(
+  inv: CommercialInvoice,
+  list: readonly CommercialInvoice[] = [],
+): boolean {
+  if (inv.status === 'REVISED' || isCommercialInvoiceSuperseded(inv)) return true;
+  const base = parseCommercialInvoiceBaseNo(inv.invoiceNo);
+  if (!base) return false;
+  const rev = commercialInvoiceRevisionNoOf(inv);
+  return list.some(
+    (other) =>
+      other.id !== inv.id &&
+      other.status !== 'VOID' &&
+      parseCommercialInvoiceBaseNo(other.invoiceNo) === base &&
+      commercialInvoiceRevisionNoOf(other) > rev,
+  );
+}
+
+function statusBadge(inv: CommercialInvoice, revised = false) {
   const status = inv.status;
+  if (revised || status === 'REVISED' || isCommercialInvoiceSuperseded(inv)) {
+    return <Badge className="h-5 bg-slate-600 px-1.5 text-[11px] leading-none">Revised</Badge>;
+  }
   if (status === 'PENDING_CUSTOMER' && inv.customerRevisionRequestedAt) {
-    return <Badge className="bg-orange-700">ร้องขอแก้ไข</Badge>;
+    return <Badge className="h-5 bg-orange-700 px-1.5 text-[11px] leading-none">ร้องขอแก้ไข</Badge>;
   }
   switch (status) {
     case 'DRAFT':
-      return <Badge variant="secondary">ตรวจภายใน</Badge>;
+      return <Badge variant="secondary" className="h-5 px-1.5 text-[11px] leading-none">ตรวจภายใน</Badge>;
     case 'PENDING_CUSTOMER':
-      return <Badge className="bg-amber-600">รอลูกค้า</Badge>;
+      return <Badge className="h-5 bg-amber-600 px-1.5 text-[11px] leading-none">รอลูกค้า</Badge>;
     case 'ISSUED':
-      return <Badge className="bg-green-600">ยืนยันแล้ว</Badge>;
+      return <Badge className="h-5 bg-green-600 px-1.5 text-[11px] leading-none">ยืนยันแล้ว</Badge>;
     case 'VOID':
-      return <Badge variant="outline">ยกเลิก</Badge>;
-    case 'REVISED':
-      return <Badge className="bg-slate-600">มีการแก้ไข</Badge>;
+      return <Badge variant="outline" className="h-5 px-1.5 text-[11px] leading-none">ยกเลิก</Badge>;
     default:
-      if (inv.supersededByInvoiceId) {
-        return <Badge className="bg-slate-600">มีการแก้ไข</Badge>;
-      }
-      return <Badge variant="outline">{status}</Badge>;
+      return <Badge variant="outline" className="h-5 px-1.5 text-[11px] leading-none">{status}</Badge>;
   }
 }
 
-function commercialStatusPrintLabel(inv: CommercialInvoice): string {
+function commercialStatusPrintLabel(inv: CommercialInvoice, revised = false): string {
+  if (revised || inv.status === 'REVISED' || isCommercialInvoiceSuperseded(inv)) return 'Revised';
   if (inv.status === 'PENDING_CUSTOMER' && inv.customerRevisionRequestedAt) return 'ร้องขอแก้ไข';
   switch (inv.status) {
     case 'DRAFT':
@@ -134,11 +161,40 @@ function commercialStatusPrintLabel(inv: CommercialInvoice): string {
       return 'ยืนยันแล้ว';
     case 'VOID':
       return 'ยกเลิก';
-    case 'REVISED':
-      return 'มีการแก้ไข';
     default:
-      return inv.supersededByInvoiceId ? 'มีการแก้ไข' : inv.status;
+      return inv.status;
   }
+}
+
+type InvoiceListStatusFilter =
+  | 'all'
+  | 'draft'
+  | 'revised'
+  | 'pending_customer'
+  | 'revision_requested'
+  | 'issued'
+  | 'void';
+
+const INVOICE_STATUS_FILTER_OPTIONS: { value: InvoiceListStatusFilter; label: string }[] = [
+  { value: 'all', label: 'ทุกสถานะ' },
+  { value: 'draft', label: 'ตรวจภายใน' },
+  { value: 'revised', label: 'Revised' },
+  { value: 'pending_customer', label: 'รอลูกค้า' },
+  { value: 'revision_requested', label: 'ร้องขอแก้ไข' },
+  { value: 'issued', label: 'ยืนยันแล้ว' },
+  { value: 'void', label: 'ยกเลิก' },
+];
+
+function invoiceListStatusKey(
+  inv: CommercialInvoice,
+  revised = false,
+): Exclude<InvoiceListStatusFilter, 'all'> {
+  if (revised || inv.status === 'REVISED' || isCommercialInvoiceSuperseded(inv)) return 'revised';
+  if (inv.status === 'PENDING_CUSTOMER' && inv.customerRevisionRequestedAt) return 'revision_requested';
+  if (inv.status === 'PENDING_CUSTOMER') return 'pending_customer';
+  if (inv.status === 'ISSUED') return 'issued';
+  if (inv.status === 'VOID') return 'void';
+  return 'draft';
 }
 
 function commercialWavePeriodLabel(inv: CommercialInvoice): string {
@@ -210,6 +266,7 @@ export default function DraftInvoicesPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [statusFilter, setStatusFilter] = useState<InvoiceListStatusFilter>('all');
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
 
@@ -348,11 +405,35 @@ export default function DraftInvoicesPage() {
     return buildYearCeOptions(set);
   }, [visibleInvoices]);
 
+  const revisedInvoiceIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const inv of visibleInvoices) {
+      if (invoiceShowsRevised(inv, visibleInvoices)) ids.add(inv.id);
+    }
+    return ids;
+  }, [visibleInvoices]);
+
+  const statusFilterLabel =
+    INVOICE_STATUS_FILTER_OPTIONS.find((o) => o.value === statusFilter)?.label ?? 'ทุกสถานะ';
+
+  const printFilterSummary = useMemo(
+    () => ({
+      yearCe: yearFilterCe,
+      monthScope,
+      statusLabel: statusFilter === 'all' ? 'ทุกสถานะ' : statusFilterLabel,
+    }),
+    [yearFilterCe, monthScope, statusFilter, statusFilterLabel],
+  );
+
   const filteredInvoices = useMemo(() => {
-    return visibleInvoices.filter((inv) =>
-      ymMatchesYearMonthScope((inv.issueDate || '').slice(0, 7), yearFilterCe, monthScope),
-    );
-  }, [visibleInvoices, yearFilterCe, monthScope]);
+    return visibleInvoices.filter((inv) => {
+      if (!ymMatchesYearMonthScope((inv.issueDate || '').slice(0, 7), yearFilterCe, monthScope)) {
+        return false;
+      }
+      if (statusFilter === 'all') return true;
+      return invoiceListStatusKey(inv, revisedInvoiceIds.has(inv.id)) === statusFilter;
+    });
+  }, [visibleInvoices, yearFilterCe, monthScope, statusFilter, revisedInvoiceIds]);
 
   const buildPrintRows = useCallback(
     (list: CommercialInvoice[]): CommercialInvoiceListPrintRow[] =>
@@ -362,9 +443,9 @@ export default function DraftInvoicesPage() {
         issueDateLabel: formatStoredDateThaiBE(inv.issueDate),
         wavePeriodLabel: commercialWavePeriodLabel(inv),
         totalLabel: `฿${(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`,
-        statusLabel: commercialStatusPrintLabel(inv),
+        statusLabel: commercialStatusPrintLabel(inv, revisedInvoiceIds.has(inv.id)),
       })),
-    [customerLabel],
+    [customerLabel, revisedInvoiceIds],
   );
 
   const runCommercialInvoiceListPrint = useCallback(
@@ -376,7 +457,7 @@ export default function DraftInvoicesPage() {
           title: 'ไม่มีรายการให้พิมพ์',
           description:
             scope === 'filtered'
-              ? 'ไม่พบข้อมูลตามเดือนที่เลือก — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
+              ? 'ไม่พบข้อมูลตามเดือนหรือสถานะที่เลือก — ปรับตัวกรองหรือเลือกพิมพ์ทั้งหมด'
               : 'ยังไม่มีใบแจ้งหนี้ในระบบ',
         });
         return;
@@ -391,10 +472,10 @@ export default function DraftInvoicesPage() {
         });
         const filterLines =
           scope === 'filtered'
-            ? describeCommercialInvoiceListPrintFilters({ yearCe: yearFilterCe, monthScope })
+            ? describeCommercialInvoiceListPrintFilters(printFilterSummary)
             : [];
         const scopeTitle =
-          scope === 'filtered' ? 'พิมพ์ตามเดือนที่เลือก' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
+          scope === 'filtered' ? 'พิมพ์ตามตัวกรองที่เลือก' : 'พิมพ์ทั้งหมด (ในชุดข้อมูลล่าสุด)';
 
         const body = buildCommercialInvoiceListPrintHtml({
           rows,
@@ -425,7 +506,7 @@ export default function DraftInvoicesPage() {
         setPrintBusy(false);
       }
     },
-    [filteredInvoices, visibleInvoices, buildPrintRows, yearFilterCe, monthScope, currentUser?.displayName, toast],
+    [filteredInvoices, visibleInvoices, buildPrintRows, printFilterSummary, currentUser?.displayName, toast],
   );
 
   const waveById = useMemo(() => {
@@ -728,27 +809,48 @@ export default function DraftInvoicesPage() {
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="space-y-6 p-4 md:p-6 max-w-6xl mx-auto">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-2xl font-bold tracking-tight text-primary flex items-center gap-2">
-            <FileText className="h-7 w-7" />
+      <div className="mx-auto w-full min-w-0 max-w-[1600px] space-y-6 p-4 md:p-6">
+        <div className="flex items-center gap-3 overflow-x-auto">
+          <h1 className="flex min-w-0 shrink items-center gap-2 text-xl font-bold tracking-tight text-primary whitespace-nowrap">
+            <FileText className="h-6 w-6 shrink-0" />
             ทำใบแจ้งหนี้แบบ Monthly
           </h1>
-          <div className="flex flex-wrap items-center gap-2">
-            <YearMonthScopeSelects
-              idPrefix="draft-inv"
-              yearCe={yearFilterCe}
-              monthScope={monthScope}
-              yearOptionsCe={yearOptionsCe}
-              onYearCeChange={setYearFilterCe}
-              onMonthScopeChange={setMonthScope}
-            />
-            <Button type="button" variant="outline" className="h-10 gap-2" onClick={() => setPrintDialogOpen(true)}>
+          <YearMonthScopeSelects
+            idPrefix="draft-inv"
+            yearCe={yearFilterCe}
+            monthScope={monthScope}
+            yearOptionsCe={yearOptionsCe}
+            onYearCeChange={setYearFilterCe}
+            onMonthScopeChange={setMonthScope}
+            yearTriggerClassName="w-[7.5rem]"
+            monthTriggerClassName="w-[9.5rem]"
+          />
+          <div className="ml-auto flex flex-nowrap items-center gap-2 whitespace-nowrap shrink-0">
+            <Select
+              value={statusFilter}
+              onValueChange={(v) => setStatusFilter(v as InvoiceListStatusFilter)}
+            >
+              <SelectTrigger
+                id="draft-inv-status"
+                className="h-10 w-[9.5rem] shrink-0 bg-background"
+                aria-label="กรองสถานะ"
+              >
+                <SelectValue placeholder="สถานะ" />
+              </SelectTrigger>
+              <SelectContent>
+                {INVOICE_STATUS_FILTER_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button type="button" variant="outline" className="h-10 shrink-0 gap-2 px-3" onClick={() => setPrintDialogOpen(true)}>
               <Printer className="h-4 w-4" /> พิมพ์รายการ
             </Button>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="h-10 gap-2" disabled={!canCreateDoc}>
+              <Button className="h-10 shrink-0 gap-2" disabled={!canCreateDoc}>
                 <Plus className="h-4 w-4" />
                 สร้างใบแจ้งหนี้
               </Button>
@@ -885,7 +987,7 @@ export default function DraftInvoicesPage() {
               <div className="rounded-md border bg-muted/30 p-3 space-y-1">
                 <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
                 <ul className="list-disc list-inside text-xs text-muted-foreground">
-                  {describeCommercialInvoiceListPrintFilters({ yearCe: yearFilterCe, monthScope }).map((line) => (
+                  {describeCommercialInvoiceListPrintFilters(printFilterSummary).map((line) => (
                     <li key={line}>{line}</li>
                   ))}
                 </ul>
@@ -1191,33 +1293,34 @@ export default function DraftInvoicesPage() {
             <CardTitle>รายการใบแจ้งหนี้</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
+            <TooltipProvider delayDuration={300}>
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead className="pl-6">เลขที่</TableHead>
-                  <TableHead>ลูกค้า</TableHead>
-                  <TableHead>Wave / งวด</TableHead>
-                  <TableHead className="text-right">ยอดรวม</TableHead>
-                  <TableHead>ผู้สร้าง</TableHead>
-                  {showShareColumn && <TableHead className="w-12 text-center">แชร์</TableHead>}
-                  <TableHead>สถานะ</TableHead>
-                  <TableHead className="text-right pr-6">จัดการ</TableHead>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="h-9 whitespace-nowrap px-2 py-1.5 pl-3">เลขที่</TableHead>
+                  <TableHead className="h-9 whitespace-nowrap px-2 py-1.5">ลูกค้า</TableHead>
+                  <TableHead className="h-9 whitespace-nowrap px-2 py-1.5">Wave / งวด</TableHead>
+                  <TableHead className="h-9 whitespace-nowrap px-2 py-1.5 text-right">ยอดรวม</TableHead>
+                  <TableHead className="h-9 whitespace-nowrap px-2 py-1.5">ผู้สร้าง</TableHead>
+                  {showShareColumn && <TableHead className="h-9 w-12 whitespace-nowrap px-2 py-1.5 text-center">แชร์</TableHead>}
+                  <TableHead className="h-9 whitespace-nowrap px-2 py-1.5">สถานะ</TableHead>
+                  <TableHead className="h-9 whitespace-nowrap px-2 py-1.5 pr-3 text-right">จัดการ</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {(filteredInvoices ?? []).map((inv) => {
                   const cust = customers?.find((c) => c.id === inv.customerId);
                   return (
-                    <TableRow key={inv.id}>
-                      <TableCell className="pl-6 font-mono font-semibold">{inv.invoiceNo}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Building2 className="h-4 w-4 text-muted-foreground" />
-                          {cust?.name ?? inv.customerId}
+                    <TableRow key={inv.id} className="h-10">
+                      <TableCell className="whitespace-nowrap px-2 py-1.5 pl-3 font-mono text-sm font-semibold">{inv.invoiceNo}</TableCell>
+                      <TableCell className="whitespace-nowrap px-2 py-1.5">
+                        <div className="flex items-center gap-2 text-sm">
+                          <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="max-w-[22rem] truncate">{cust?.name ?? inv.customerId}</span>
                         </div>
                       </TableCell>
-                      <TableCell className="text-xs font-mono">
-                        <div className="flex flex-wrap items-center gap-1.5">
+                      <TableCell className="whitespace-nowrap px-2 py-1.5 text-xs font-mono">
+                        <div className="flex flex-nowrap items-center gap-1.5">
                           {commercialWavePeriodLabel(inv)}
                           {isPartialPoMonthCommercialInvoice(inv) ? (
                             <Badge variant="outline" className="text-[10px] font-normal">
@@ -1226,14 +1329,14 @@ export default function DraftInvoicesPage() {
                           ) : null}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="whitespace-nowrap px-2 py-1.5 text-right text-sm tabular-nums">
                         ฿{(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
                       </TableCell>
-                      <TableCell className="text-sm whitespace-nowrap">
+                      <TableCell className="whitespace-nowrap px-2 py-1.5 text-sm">
                         {documentCreatorDisplayName(inv)}
                       </TableCell>
                       {showShareColumn && (
-                        <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-2 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
                           <DocumentShareListMarker
                             collectionName="commercial_invoices"
                             documentId={inv.id}
@@ -1243,47 +1346,67 @@ export default function DraftInvoicesPage() {
                           />
                         </TableCell>
                       )}
-                      <TableCell>{statusBadge(inv)}</TableCell>
-                      <TableCell className="text-right pr-6">
-                        <div className="flex flex-wrap items-center justify-end gap-1">
-                          <Button variant="ghost" size="sm" asChild>
-                            <Link href={`/draft-invoices/${inv.id}`}>
-                              เปิด <ChevronRight className="h-4 w-4 ml-1" />
-                            </Link>
-                          </Button>
+                      <TableCell className="whitespace-nowrap px-2 py-1.5">{statusBadge(inv, revisedInvoiceIds.has(inv.id))}</TableCell>
+                      <TableCell className="whitespace-nowrap px-2 py-1.5 pr-3 text-right">
+                        <div className="flex flex-nowrap items-center justify-end gap-0.5">
                           {canAdminVoidInvoice &&
                             (inv.status === 'DRAFT' ||
                               inv.status === 'PENDING_CUSTOMER' ||
-                              inv.status === 'ISSUED') && (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="text-destructive border-destructive/30 hover:bg-destructive/10"
-                                onClick={() => setVoidTarget(inv)}
-                                title={
-                                  inv.status === 'ISSUED'
-                                    ? 'ยกเลิก (VOID) — ถ้ายืนยันแล้วต้องยังไม่มีใบกำกับภาษีที่ใช้งาน หรือยกเลิกใบกำกับก่อน'
-                                    : 'ยกเลิกเอกสาร (VOID) — เฉพาะผู้ดูแลระบบ'
-                                }
-                              >
-                                <Ban className="h-3.5 w-3.5 mr-1 shrink-0" />
-                                ยกเลิก
-                              </Button>
+                              inv.status === 'ISSUED') &&
+                            !revisedInvoiceIds.has(inv.id) && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="icon"
+                                    className="h-8 w-8 shrink-0 text-destructive border-destructive/30 hover:bg-destructive/10"
+                                    onClick={() => setVoidTarget(inv)}
+                                  >
+                                    <Ban className="h-3.5 w-3.5" />
+                                    <span className="sr-only">ยกเลิก</span>
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                  <p>
+                                    {inv.status === 'ISSUED'
+                                      ? 'ยกเลิก (VOID) — ถ้ายืนยันแล้วต้องยังไม่มีใบกำกับภาษีที่ใช้งาน หรือยกเลิกใบกำกับก่อน'
+                                      : 'ยกเลิกเอกสาร (VOID) — เฉพาะผู้ดูแลระบบ'}
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
                             )}
                           {canHardDeleteInvoice && inv.status !== 'ISSUED' && (
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="text-destructive border-destructive/40 hover:bg-destructive/15"
-                              onClick={() => setDeleteTarget(inv)}
-                              title="ลบถาวร — เฉพาะผู้ดูแลระบบ (ห้ามลบใบที่ยืนยันแล้ว)"
-                            >
-                              <Trash2 className="h-3.5 w-3.5 mr-1 shrink-0" />
-                              ลบ
-                            </Button>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-8 w-8 shrink-0 text-destructive border-destructive/40 hover:bg-destructive/15"
+                                  onClick={() => setDeleteTarget(inv)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <span className="sr-only">ลบ</span>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top">
+                                <p>ลบถาวร — เฉพาะผู้ดูแลระบบ (ห้ามลบใบที่ยืนยันแล้ว)</p>
+                              </TooltipContent>
+                            </Tooltip>
                           )}
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground" asChild>
+                                <Link href={`/draft-invoices/${inv.id}`} aria-label="เปิดรายละเอียด">
+                                  <ChevronRight className="h-4 w-4" />
+                                </Link>
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top">
+                              <p>เปิดรายละเอียด</p>
+                            </TooltipContent>
+                          </Tooltip>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1299,12 +1422,13 @@ export default function DraftInvoicesPage() {
                 {visibleInvoices.length > 0 && filteredInvoices.length === 0 && !isLoading && (
                   <TableRow>
                     <TableCell colSpan={showShareColumn ? 8 : 7} className="text-center py-12 text-muted-foreground">
-                      ไม่พบรายการในเดือนที่เลือก
+                      ไม่พบรายการตามเดือนหรือสถานะที่เลือก
                     </TableCell>
                   </TableRow>
                 )}
               </TableBody>
             </Table>
+            </TooltipProvider>
           </CardContent>
         </Card>
 

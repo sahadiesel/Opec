@@ -5,6 +5,7 @@ export type WorkerListPrintRow = {
   fullName: string;
   nationalId: string;
   hoursLabel: string;
+  standbyHoursLabel: string;
   positionLabel: string;
   readinessLabel: string;
   jobStatusLabel: string;
@@ -54,7 +55,7 @@ export function buildWorkerListPrintHtml(params: {
 
   const tableRows =
     rows.length === 0
-      ? '<tr><td colspan="6" class="wl-empty">ไม่มีรายการ</td></tr>'
+      ? '<tr><td colspan="7" class="wl-empty">ไม่มีรายการ</td></tr>'
       : rows
           .map(
             (r) => `<tr>
@@ -65,6 +66,7 @@ export function buildWorkerListPrintHtml(params: {
                   : ''
               }</td>
               <td class="wl-center">${escapeHtmlDoc(r.hoursLabel)}</td>
+              <td class="wl-center">${escapeHtmlDoc(r.standbyHoursLabel)}</td>
               <td class="wl-center">${escapeHtmlDoc(r.positionLabel)}</td>
               <td>${escapeHtmlDoc(r.readinessLabel)}</td>
               <td>${escapeHtmlDoc(r.jobStatusLabel)}${
@@ -111,7 +113,8 @@ export function buildWorkerListPrintHtml(params: {
       <tr>
         <th>รหัส<span class="wl-th-en">Code</span></th>
         <th>ชื่อคนงาน<span class="wl-th-en">Worker Name</span></th>
-        <th class="wl-center">ชั่วโมงสะสม<span class="wl-th-en">Total Hours</span></th>
+        <th class="wl-center">ชั่วโมงทำงานสะสม<span class="wl-th-en">Work Hours</span></th>
+        <th class="wl-center">ชั่วโมงสแตนบายสะสม<span class="wl-th-en">Standby Hours</span></th>
         <th class="wl-center">ตำแหน่งหลัก<span class="wl-th-en">Position</span></th>
         <th>ความพร้อม<span class="wl-th-en">Readiness</span></th>
         <th>สถานะงาน<span class="wl-th-en">Job Status</span></th>

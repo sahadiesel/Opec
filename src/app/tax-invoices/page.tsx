@@ -101,16 +101,16 @@ const TAX_INV_LIST_TABLE =
 function TaxInvoiceListColgroup({ showShare }: { showShare: boolean }) {
   return (
     <colgroup>
-      <col style={{ width: '12%' }} />
-      <col style={{ width: showShare ? '14%' : '15%' }} />
+      <col style={{ width: '8.5%' }} />
+      <col style={{ width: showShare ? '17.5%' : '18.5%' }} />
       <col style={{ width: '7.5%' }} />
-      <col style={{ width: showShare ? '11%' : '12%' }} />
+      <col style={{ width: showShare ? '8%' : '8.5%' }} />
       <col style={{ width: '7%' }} />
       <col style={{ width: '6%' }} />
       <col style={{ width: '7%' }} />
       <col style={{ width: '7%' }} />
       <col style={{ width: '7%' }} />
-      <col style={{ width: showShare ? '8%' : '9%' }} />
+      <col style={{ width: showShare ? '11%' : '12.5%' }} />
       {showShare ? <col style={{ width: '3%' }} /> : null}
       <col style={{ width: '6%' }} />
       <col style={{ width: '4.5%' }} />

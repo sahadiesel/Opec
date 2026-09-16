@@ -66,6 +66,11 @@ import {
 } from '@/lib/drug-test-panel';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { effectiveWorkerJobStatus } from '@/lib/ops/worker-effective-job-status';
+import {
+  normalHoursCountedAsWork,
+  otHoursCountedForWaveMonth,
+  standbyHoursCountedForWaveMonth,
+} from '@/lib/timesheet/wave-month-utils';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -257,9 +262,9 @@ function WorkerDetailContent({ id }: { id: string }) {
     >();
     workerTimesheets.forEach((ts) => {
       const key = ts.assignmentId || ts.id;
-      const baseHours = Number(ts.normalHours || 0) + Number(ts.holidayHours || 0);
-      const otHours = Number(ts.ot15Hours || 0) + Number(ts.ot20Hours || 0) + Number(ts.ot30Hours || 0);
-      const isStandby = ts.eventType === 'standby_day' || ts.shiftType === 'STANDBY';
+      const workHours = normalHoursCountedAsWork(ts);
+      const otHours = otHoursCountedForWaveMonth(ts);
+      const standbyHours = standbyHoursCountedForWaveMonth(ts);
       const row = grouped.get(key) || {
         assignmentId: ts.assignmentId || '-',
         projectName: ts.remark || '-',
@@ -273,10 +278,10 @@ function WorkerDetailContent({ id }: { id: string }) {
       row.projectName = ts.remark || row.projectName || '-';
       row.startDate = row.startDate < ts.date ? row.startDate : ts.date;
       row.endDate = row.endDate > ts.date ? row.endDate : ts.date;
-      if (isStandby) row.standbyHours += baseHours;
-      else row.normalHours += baseHours;
+      row.normalHours += workHours;
       row.otHours += otHours;
-      row.totalHours += baseHours + otHours;
+      row.standbyHours += standbyHours;
+      row.totalHours += workHours + otHours;
       grouped.set(key, row);
     });
     return [...grouped.values()].sort((a, b) => b.totalHours - a.totalHours);

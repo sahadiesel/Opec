@@ -122,6 +122,8 @@ export interface Worker {
   /** ผลตรวจสารเสพติด valid สำหรับ mob (อัปเดตจากหน้ารายละเอียดคนงาน) */
   drugPanelMobValid?: boolean;
   totalWorkedHours?: number;
+  /** ชม.สแตนบายสะสม (SB / M1 / D1) — แยกจากชั่วโมงทำงาน */
+  totalStandbyHours?: number;
   firstWorkedAt?: number | null;
   lastWorkedAt?: number | null;
   bankName?: string;
