@@ -10,7 +10,6 @@ import {
 import type {
   MainContract,
   MobCycleBillingReview,
-  Position,
   PositionRate,
 } from '@/lib/types';
 import {
@@ -148,32 +147,9 @@ export async function resolveTripMobDemobLocationChoice(
   return { kind: 'prompt', options };
 }
 
-async function loadPositionLabels(
-  db: Firestore,
-  positionIds: string[],
-): Promise<Map<string, string>> {
-  const uniq = [...new Set(positionIds.filter(Boolean))];
-  const map = new Map<string, string>();
-  await Promise.all(
-    uniq.map(async (pid) => {
-      const snap = await getDoc(doc(db, 'positions', pid));
-      if (snap.exists()) {
-        const p = snap.data() as Position;
-        const label = String(
-          p.positionName || p.positionNameTh || p.positionNameEn || pid,
-        ).trim();
-        map.set(pid, label || pid);
-      } else {
-        map.set(pid, pid);
-      }
-    }),
-  );
-  return map;
-}
-
-/** บรรทัดค่า Mob/Demob ไป-กลับ — 1 คนต่อ 1 trip */
+/** บรรทัดค่า Mob/Demob ไป-กลับ — จุดเดียวกันรวมหนึ่งบรรทัด ไม่แจงชื่อหรือตำแหน่ง */
 export async function generateTripMobDemobBillingLines(
-  db: Firestore,
+  _db: Firestore,
   contract: Pick<MainContract, 'mobDemobLocations'>,
   members: TripMobDemobMember[],
   ratesByPosition: Map<string, PositionRate>,
@@ -184,17 +160,9 @@ export async function generateTripMobDemobBillingLines(
   const loc = locations.find((l) => l.key === mobLocationKey);
   const locLabel = loc?.label || mobLocationKey;
 
-  const positionLabels = await loadPositionLabels(
-    db,
-    members.map((m) => m.positionId),
-  );
-
   type Acc = {
-    positionId: string;
     unitPrice: number;
     workerIds: Set<string>;
-    workerNames: string[];
-    mobCycleIds: string[];
   };
   const accMap = new Map<string, Acc>();
 
@@ -208,36 +176,23 @@ export async function generateTripMobDemobBillingLines(
       continue;
     }
     const up = roundMoney(unitPrice);
-    const key = `${member.positionId}__${up}`;
+    const key = String(up);
     let acc = accMap.get(key);
     if (!acc) {
-      acc = {
-        positionId: member.positionId,
-        unitPrice: up,
-        workerIds: new Set(),
-        workerNames: [],
-        mobCycleIds: [],
-      };
+      acc = { unitPrice: up, workerIds: new Set() };
       accMap.set(key, acc);
     }
     acc.workerIds.add(member.workerId);
-    acc.workerNames.push(member.workerName);
-    acc.mobCycleIds.push(member.mobCycleId);
   }
 
   const lines: GeneratedBillingLine[] = [];
   for (const acc of accMap.values()) {
     const qty = acc.workerIds.size;
     const amount = roundMoney(acc.unitPrice * qty);
-    const title = positionLabels.get(acc.positionId) || acc.positionId;
-    const workerBit =
-      acc.workerNames.length <= 3
-        ? acc.workerNames.join(', ')
-        : `${acc.workerNames.slice(0, 2).join(', ')} และอีก ${acc.workerNames.length - 2} คน`;
     lines.push({
-      description: `${title} — ค่า Mob/Demob ไป-กลับ (${locLabel}) · ${qty} trip · ${workerBit}`,
+      description: `ค่า Mob/Demob ไป-กลับ (${locLabel})`,
       referenceType: 'TIMESHEET',
-      positionId: acc.positionId,
+      positionId: '',
       eventType: 'trip_mob_demob_round_trip',
       timesheetIds: [],
       quantity: qty,

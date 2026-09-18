@@ -26,6 +26,7 @@ import { sortPositionsByDisplayName } from '@/lib/position-display';
 import { resolveWorkerLaborBaseRate } from '@/lib/payroll/labor-cost-model';
 import { deriveOtHourlyRatesFromDailyPackage } from '@/lib/commercial/package-hourly-rate';
 import { useActiveBankNameCatalog, useActiveSsoHospitalCatalog } from '@/hooks/use-hrm-name-catalogs';
+import { NameTitleSelect, NameTitleEnSelect, type EnNameTitle } from '@/components/hr/name-title-select';
 import { displayWorkerRegistryJobStatus, workerRegistryJobStatusBadgeProps } from '@/lib/ops/worker-effective-job-status';
 import {
   WORKER_NOT_READY_REASON_OPTIONS,
@@ -322,24 +323,48 @@ export function WorkerInfoTab({
                 <Input disabled value={worker.workerCode || '(Auto-generated)'} className="bg-muted font-mono font-bold" />
               </div>
               <div className="space-y-2">
-                <Label className="font-bold">ชื่อจริง (First Name) *</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.firstName : worker.firstName) ?? ''} onChange={e => setEditedWorker({...editedWorker, firstName: e.target.value})} />
-              </div>
-              <div className="space-y-2">
-                <Label className="font-bold">นามสกุล (Last Name) *</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.lastName : worker.lastName) ?? ''} onChange={e => setEditedWorker({...editedWorker, lastName: e.target.value})} />
-              </div>
-              <div className="space-y-2">
-                <Label className="font-bold">ชื่อเล่น (Nickname)</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.nickname : worker.nickname) ?? ''} onChange={e => setEditedWorker({...editedWorker, nickname: e.target.value})} />
-              </div>
-              <div className="space-y-2">
                 <Label className="font-bold">เลขบัตรประชาชน (ID Card No.) *</Label>
                 <Input disabled={!isEditing} value={(isEditing ? editedWorker.thaiNationalId : worker.thaiNationalId) ?? ''} onChange={e => setEditedWorker({...editedWorker, thaiNationalId: e.target.value})} />
               </div>
               <div className="space-y-2">
                 <Label className="font-bold">เลขพาสปอร์ต (Passport No.)</Label>
                 <Input disabled={!isEditing} value={(isEditing ? editedWorker.passportNo : worker.passportNo) ?? ''} onChange={e => setEditedWorker({...editedWorker, passportNo: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold">คำนำหน้าชื่อ (ภาษาไทย)</Label>
+                <NameTitleSelect
+                  disabled={!isEditing}
+                  value={(isEditing ? editedWorker.nameTitle : worker.nameTitle) ?? ''}
+                  onChange={(nameTitle) => setEditedWorker({ ...editedWorker, nameTitle })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold">ชื่อ (ภาษาไทย)</Label>
+                <Input disabled={!isEditing} value={(isEditing ? editedWorker.firstNameTh : worker.firstNameTh) ?? ''} onChange={e => setEditedWorker({...editedWorker, firstNameTh: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold">นามสกุล (ภาษาไทย)</Label>
+                <Input disabled={!isEditing} value={(isEditing ? editedWorker.lastNameTh : worker.lastNameTh) ?? ''} onChange={e => setEditedWorker({...editedWorker, lastNameTh: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold">คำนำหน้าชื่อ (ภาษาอังกฤษ)</Label>
+                <NameTitleEnSelect
+                  disabled={!isEditing}
+                  value={(isEditing ? editedWorker.nameTitleEn : worker.nameTitleEn) ?? ''}
+                  onChange={(nameTitleEn: EnNameTitle | '') => setEditedWorker({ ...editedWorker, nameTitleEn })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold">ชื่อ (ภาษาอังกฤษ) *</Label>
+                <Input disabled={!isEditing} value={(isEditing ? editedWorker.firstName : worker.firstName) ?? ''} onChange={e => setEditedWorker({...editedWorker, firstName: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold">นามสกุล (ภาษาอังกฤษ) *</Label>
+                <Input disabled={!isEditing} value={(isEditing ? editedWorker.lastName : worker.lastName) ?? ''} onChange={e => setEditedWorker({...editedWorker, lastName: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold">ชื่อเล่น (Nickname)</Label>
+                <Input disabled={!isEditing} value={(isEditing ? editedWorker.nickname : worker.nickname) ?? ''} onChange={e => setEditedWorker({...editedWorker, nickname: e.target.value})} />
               </div>
               <div className="space-y-2">
                 <Label className="font-bold">สัญชาติ (Nationality)</Label>

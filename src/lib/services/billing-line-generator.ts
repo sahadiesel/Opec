@@ -79,6 +79,39 @@ export interface GenerateBillingLinesOptions {
   workerIds?: readonly string[] | null;
   /** PO+เดือน: ไม่รวมคนที่ออก invoice partial แล้ว (สร้างใบเต็มที่เหลือ) */
   excludeWorkerIds?: readonly string[] | null;
+  /** จำกัดเฉพาะวันที่อยู่ในช่วงที่ส่งออกบิลรอบนี้ (หลายช่วงได้) */
+  dateRanges?: ReadonlyArray<{ startYmd: string; endYmd: string }> | null;
+}
+
+/**
+ * วางบิลตามบรรทัด PO ที่บันทึกบนใบงานวันนั้น
+ * ไม่จับคู่ด้วยตำแหน่งทะเบียนที่แก้ทีหลัง — ถ้าใบงานไม่มี poLineId ค่อยถอยไปตำแหน่งบนใบงาน
+ */
+function resolvePoLineForBillingDay(
+  ts: Pick<DailyTimesheet, 'date' | 'positionId' | 'poLineId'>,
+  poLinesById: Map<string, POLine>,
+  poLinesByPosition: Map<string, POLine>,
+  warnings: string[],
+  mismatchWarned: Set<string>,
+): POLine | undefined {
+  const lineId = String(ts.poLineId || '').trim();
+  const tsPos = String(ts.positionId || '').trim();
+  if (lineId) {
+    const byId = poLinesById.get(lineId);
+    if (byId) {
+      if (tsPos && byId.positionId && tsPos !== byId.positionId) {
+        const key = `${lineId}|${tsPos}`;
+        if (!mismatchWarned.has(key)) {
+          mismatchWarned.add(key);
+          warnings.push(
+            `วัน ${ts.date} ตำแหน่งบนใบงานไม่ตรงบรรทัด PO — วางบิลตามบรรทัด PO ของวันนั้น ไม่ใช้ตำแหน่งที่แก้ในทะเบียนทีหลัง`,
+          );
+        }
+      }
+      return byId;
+    }
+  }
+  return tsPos ? poLinesByPosition.get(tsPos) : undefined;
 }
 
 interface LineAcc {
@@ -868,10 +901,13 @@ export async function generateBillingLines(
   const poLines = poLinesSnap.docs.map(
     (d) => ({ ...d.data(), id: d.id } as POLine),
   );
+  const poLinesById = new Map<string, POLine>();
   const poLinesByPosition = new Map<string, POLine>();
   for (const pl of poLines) {
-    poLinesByPosition.set(pl.positionId, pl);
+    poLinesById.set(pl.id, pl);
+    if (!poLinesByPosition.has(pl.positionId)) poLinesByPosition.set(pl.positionId, pl);
   }
+  const billingLineMismatchWarned = new Set<string>();
 
   if (mobCycleFilter.length > 0) {
     warnings.push(
@@ -925,6 +961,21 @@ export async function generateBillingLines(
     const dropped = before - timesheets.length;
     if (dropped > 0) {
       warnings.push(`ไม่รวม ${excludeWorkers.size} คนที่ออก invoice partial แล้ว — ตัด ${dropped} แถว timesheet`);
+    }
+  }
+
+  const dateRanges = (options?.dateRanges ?? []).filter(
+    (r) => r.startYmd && r.endYmd && r.startYmd <= r.endYmd,
+  );
+  if (dateRanges.length > 0) {
+    const before = timesheets.length;
+    timesheets = timesheets.filter((ts) => {
+      const ymd = String(ts.date || '').slice(0, 10);
+      return dateRanges.some((r) => ymd >= r.startYmd && ymd <= r.endYmd);
+    });
+    const dropped = before - timesheets.length;
+    if (dropped > 0) {
+      warnings.push(`จำกัดวันที่ตามช่วงที่ส่งออกบิล — ตัด ${dropped} แถว`);
     }
   }
 
@@ -986,7 +1037,7 @@ export async function generateBillingLines(
   const accMap = new Map<string, LineAcc>();
 
   for (const ts of timesheets) {
-    const poLine = poLinesByPosition.get(ts.positionId);
+    const poLine = resolvePoLineForBillingDay(ts, poLinesById, poLinesByPosition, warnings, billingLineMismatchWarned);
     const workMode = resolveEffectivePayrollJobMode(ts, poWorkModeMap);
     const contractRate = contractRatesByPosition.get(ts.positionId);
 

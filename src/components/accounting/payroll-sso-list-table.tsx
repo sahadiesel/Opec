@@ -19,6 +19,8 @@ export type PayrollSsoTableRow = {
   rowKey: string;
   batchLabel: string;
   batchSubLabel?: string;
+  personKind?: 'worker' | 'office' | 'executive';
+  personId?: string;
   earnerName: string;
   earnerId: string;
   paymentYmd: string;

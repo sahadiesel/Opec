@@ -10,7 +10,7 @@ import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
 import { amountToEnglishBahtText } from '@/lib/documents/english-baht-text';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
-import { translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
+import { stripCommercialLinePoPrefix, translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import {
   type CompanyProfilePrint,
@@ -41,7 +41,7 @@ function buildCommercialLinesTableRowsForPrint(
   return sorted
     .map((line, idx) => {
       const sub = line.workerName ? ` (${line.workerName})` : '';
-      const rawDesc = (line.description || '—') + sub;
+      const rawDesc = stripCommercialLinePoPrefix(line.description || '—') + sub;
       const descText = L === 'en' ? translateCommercialLineDescriptionToEn(rawDesc) : rawDesc;
       const desc = escapeHtmlDoc(descText);
       const qty = Number(line.quantity).toLocaleString(loc);

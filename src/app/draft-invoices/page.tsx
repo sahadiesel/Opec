@@ -41,8 +41,8 @@ import {
   documentCreatorDisplayName,
   filterToOwnCreatedDocuments,
 } from '@/lib/documents/own-created-list';
-import { canManageDocumentShare } from '@/lib/documents/document-share';
-import { DocumentShareListMarker } from '@/components/documents/document-share-controls';
+import { canManageDocumentShare, documentIsShared } from '@/lib/documents/document-share';
+import { DocumentShareButton } from '@/components/documents/document-share-controls';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { collection, query, orderBy, where } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
@@ -69,8 +69,11 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getPreviewPattern } from '@/lib/services/numbering-service';
 import {
-  createCommercialDraftInvoice,
-  createCommercialDraftFromQuotationPoLines,
+  createCommercialInvoiceForQuotationPos,
+  createCommercialInvoiceForReadyWorkers,
+  listWorkersReadyForInvoice,
+  nextTripMobLocationPrompt,
+  type InvoiceReadyWorker,
   ensureCommercialDraftInvoiceAfterMonthApproval,
   ensureCommercialDraftInvoiceAfterPoMonthApproval,
   filterWaveMonthReviewsMissingCommercialDraft,
@@ -80,6 +83,7 @@ import {
   ensureCommercialDraftInvoiceForWorkerSet,
   QUOTATION_PO_WAVE_PLACEHOLDER,
   PO_MONTH_WAVE_PLACEHOLDER,
+  TRIP_BILLING_WAVE_PLACEHOLDER,
 } from '@/lib/services/commercial-invoice-service';
 import { EQUIPMENT_RENTAL_WAVE_PLACEHOLDER } from '@/lib/services/equipment-rental-contract-service';
 import {
@@ -197,6 +201,17 @@ function invoiceListStatusKey(
   return 'draft';
 }
 
+function commercialBillingKindLabel(inv: CommercialInvoice): string {
+  if (inv.waveId === QUOTATION_PO_WAVE_PLACEHOLDER) return 'ใบเสนอราคา';
+  const trip =
+    inv.billingMode === 'TRIP' ||
+    inv.waveId === TRIP_BILLING_WAVE_PLACEHOLDER ||
+    Boolean(inv.sourceTripBillingBatchId) ||
+    (inv.memberMobCycleIds?.length ?? 0) > 0;
+  if (trip) return 'Trip';
+  return 'Monthly';
+}
+
 function commercialWavePeriodLabel(inv: CommercialInvoice): string {
   if (inv.waveId === EQUIPMENT_RENTAL_WAVE_PLACEHOLDER || inv.equipmentRentalContractId) {
     return inv.equipmentRentalPeriodMonth
@@ -251,12 +266,27 @@ export default function DraftInvoicesPage() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [tripMobPrompt, setTripMobPrompt] = useState<{
+    batchId: string;
+    label: string;
+    options: Array<{ key: string; label: string }>;
+    selectedKey: string;
+    workers: InvoiceReadyWorker[];
+    keys: Record<string, string>;
+    decided: string[];
+  } | null>(null);
   const [customerId, setCustomerId] = useState<string>('');
   const [poId, setPoId] = useState<string>('');
   const [waveId, setWaveId] = useState<string>('');
   const [periodStartMs, setPeriodStartMs] = useState(() => Date.now());
   const [periodEndMs, setPeriodEndMs] = useState(() => Date.now());
   const [issueDateMs, setIssueDateMs] = useState(() => Date.now());
+  const [createSource, setCreateSource] = useState<'timesheet' | 'quotation'>('timesheet');
+  const [createYm, setCreateYm] = useState(() => `${currentYearCe()}-${currentMonthMm()}`);
+  const [invoiceWorkers, setInvoiceWorkers] = useState<InvoiceReadyWorker[]>([]);
+  const [invoiceWorkersLoading, setInvoiceWorkersLoading] = useState(false);
+  const [selectedWorkerKeys, setSelectedWorkerKeys] = useState<Set<string>>(() => new Set());
+  const [selectedQuotationPoIds, setSelectedQuotationPoIds] = useState<Set<string>>(() => new Set());
   const [syncRowId, setSyncRowId] = useState<string | null>(null);
   const [partialSyncId, setPartialSyncId] = useState<string | null>(null);
   const [syncingBulk, setSyncingBulk] = useState(false);
@@ -440,6 +470,7 @@ export default function DraftInvoicesPage() {
       list.map((inv) => ({
         invoiceNo: inv.invoiceNo || '—',
         customerName: customerLabel(inv.customerId),
+        billingKindLabel: commercialBillingKindLabel(inv),
         issueDateLabel: formatStoredDateThaiBE(inv.issueDate),
         wavePeriodLabel: commercialWavePeriodLabel(inv),
         totalLabel: `฿${(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`,
@@ -544,7 +575,32 @@ export default function DraftInvoicesPage() {
     [pos, contractsById],
   );
 
-  const isQuotationPo = (selectedPo?.poType || 'contract') === 'quotation';
+  const quotationPosForCreate = useMemo(
+    () => (pos ?? []).filter((p) => p.status === 'active' && (p.poType || 'contract') === 'quotation'),
+    [pos],
+  );
+
+  useEffect(() => {
+    if (!dialogOpen || createSource !== 'timesheet' || !firestore || !customerId || !/^\d{4}-\d{2}$/.test(createYm)) {
+      setInvoiceWorkers([]);
+      return;
+    }
+    let cancelled = false;
+    setInvoiceWorkersLoading(true);
+    void listWorkersReadyForInvoice(firestore, customerId, createYm)
+      .then((rows) => {
+        if (!cancelled) setInvoiceWorkers(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setInvoiceWorkers([]);
+      })
+      .finally(() => {
+        if (!cancelled) setInvoiceWorkersLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dialogOpen, createSource, firestore, customerId, createYm]);
 
   const resetForm = () => {
     setCustomerId('');
@@ -556,57 +612,71 @@ export default function DraftInvoicesPage() {
     setIssueDateMs(n);
   };
 
+  const createTimesheetInvoice = async (
+    picked: InvoiceReadyWorker[],
+    keys: Record<string, string>,
+    decided: string[],
+  ) => {
+    if (!firestore || !currentUser) return;
+    const step = await nextTripMobLocationPrompt(firestore, picked, decided, keys);
+    if (!step.done) {
+      setTripMobPrompt({
+        batchId: step.batchId,
+        label: step.label,
+        options: step.options,
+        selectedKey: step.options[0]?.key ?? '',
+        workers: picked,
+        keys: step.keys,
+        decided,
+      });
+      return;
+    }
+    const { id, invoiceNo } = await createCommercialInvoiceForReadyWorkers(firestore, {
+      customerId,
+      workers: picked,
+      issueDate: timestampToHtmlDateValue(issueDateMs),
+      actor: currentUser,
+      tripMobDemobByBatch: step.keys,
+    });
+    toast({
+      title: 'สร้างใบแจ้งหนี้แล้ว',
+      description: `เลขที่ ${invoiceNo} — รวม ${picked.length} คนในใบเดียว`,
+    });
+    setDialogOpen(false);
+    setTripMobPrompt(null);
+    resetForm();
+    router.push(`/draft-invoices/${id}`);
+  };
+
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
-    if (!poId) {
-      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือก PO' });
-      return;
-    }
-    if (selectedPo && selectedPo.status !== 'active') {
-      toast({
-        variant: 'destructive',
-        title: 'PO ยังไม่ Active',
-        description: 'ใบสั่งซื้อสถานะ Pending ยังออกใบแจ้งหนี้ไม่ได้ — อนุมัติเป็น Active ก่อน',
-      });
-      return;
-    }
-    if (selectedPo && resolveBillingModeFromMaps(selectedPo, contractsById) === 'TRIP') {
-      toast({
-        variant: 'destructive',
-        title: 'PO โหมด Trip',
-        description: 'ออกใบแจ้งหนี้ที่เมนู «ทำใบแจ้งหนี้แบบ Trip» เท่านั้น',
-      });
-      return;
-    }
-    if (!isQuotationPo && !waveId) {
-      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือก PO และ Wave' });
+    if (!customerId) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือกลูกค้า' });
       return;
     }
     setCreating(true);
     try {
-      const { id, invoiceNo } = isQuotationPo
-        ? await createCommercialDraftFromQuotationPoLines(firestore, {
-            poId,
-            periodStart: timestampToHtmlDateValue(periodStartMs),
-            periodEnd: timestampToHtmlDateValue(periodEndMs),
-            issueDate: timestampToHtmlDateValue(issueDateMs),
-            actor: currentUser,
-          })
-        : await createCommercialDraftInvoice(firestore, {
-            poId,
-            waveId: waveId!,
-            periodStart: timestampToHtmlDateValue(periodStartMs),
-            periodEnd: timestampToHtmlDateValue(periodEndMs),
-            issueDate: timestampToHtmlDateValue(issueDateMs),
-            actor: currentUser,
-          });
-      toast({
-        title: 'สร้างใบแจ้งหนี้แล้ว',
-        description: `เลขที่ ${invoiceNo} — เอกสารเรียกเก็บ (ยังไม่ใช่ใบกำกับภาษี)`,
-      });
-      setDialogOpen(false);
-      resetForm();
-      router.push(`/draft-invoices/${id}`);
+      if (createSource === 'quotation') {
+        if (selectedQuotationPoIds.size === 0) {
+          throw new Error('เลือก PO จากใบเสนอราคาอย่างน้อย 1 ใบ');
+        }
+        const { id, invoiceNo } = await createCommercialInvoiceForQuotationPos(firestore, {
+          customerId,
+          poIds: [...selectedQuotationPoIds],
+          periodStart: timestampToHtmlDateValue(periodStartMs),
+          periodEnd: timestampToHtmlDateValue(periodEndMs),
+          issueDate: timestampToHtmlDateValue(issueDateMs),
+          actor: currentUser,
+        });
+        toast({ title: 'สร้างใบแจ้งหนี้แล้ว', description: `เลขที่ ${invoiceNo}` });
+        setDialogOpen(false);
+        resetForm();
+        router.push(`/draft-invoices/${id}`);
+        return;
+      }
+      const picked = invoiceWorkers.filter((w) => selectedWorkerKeys.has(w.key));
+      if (picked.length === 0) throw new Error('เลือกคนงานที่ส่งรอออกบิลแล้ว');
+      await createTimesheetInvoice(picked, {}, []);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'สร้างไม่สำเร็จ';
       toast({ variant: 'destructive', title: 'ไม่สามารถสร้างได้', description: msg });
@@ -813,7 +883,7 @@ export default function DraftInvoicesPage() {
         <div className="flex items-center gap-3 overflow-x-auto">
           <h1 className="flex min-w-0 shrink items-center gap-2 text-xl font-bold tracking-tight text-primary whitespace-nowrap">
             <FileText className="h-6 w-6 shrink-0" />
-            ทำใบแจ้งหนี้แบบ Monthly
+            การออกใบแจ้งหนี้ (Invoice)
           </h1>
           <YearMonthScopeSelects
             idPrefix="draft-inv"
@@ -859,21 +929,30 @@ export default function DraftInvoicesPage() {
               <DialogHeader>
                 <DialogTitle>สร้างใบแจ้งหนี้</DialogTitle>
                 <DialogDescription>
-                  {isQuotationPo ? (
-                    <>
-                      PO จากใบเสนอราคา — ดึงยอดจาก PO Line ถ้ามี ไม่เช่นนั้นจากใบเสนอราคาที่ PO อ้างอิง (ไม่ใช้ Wave / timesheet) ระบุช่วงวันที่และวันที่เอกสาร
-                    </>
-                  ) : (
-                    <>
-                      เลือกลูกค้า → PO → Wave และช่วงวันที่ — ระบบดึง timesheet ที่{' '}
-                      <code className="text-xs">readyForBilling</code> ตามช่วงที่เลือก
-                    </>
-                  )}
+                  เลือกที่มาของบิล แล้วเลือกคนงานหรือ PO ของลูกค้ารายเดียวกัน — รวมในใบแจ้งหนี้เดียว ไม่แยกตาม PO line
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-2">
                 <div className="rounded-md bg-muted/50 px-3 py-2 text-xs font-mono text-muted-foreground">
                   เลขที่คาดการณ์: {getPreviewPattern('commercial_invoice')}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={createSource === 'timesheet' ? 'default' : 'outline'}
+                    onClick={() => setCreateSource('timesheet')}
+                  >
+                    จาก Timesheet
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={createSource === 'quotation' ? 'default' : 'outline'}
+                    onClick={() => setCreateSource('quotation')}
+                  >
+                    จาก PO ใบเสนอราคา
+                  </Button>
                 </div>
                 <div className="space-y-2">
                   <Label>ลูกค้า</Label>
@@ -881,8 +960,8 @@ export default function DraftInvoicesPage() {
                     value={customerId || '__none__'}
                     onValueChange={(v) => {
                       setCustomerId(v === '__none__' ? '' : v);
-                      setPoId('');
-                      setWaveId('');
+                      setSelectedWorkerKeys(new Set());
+                      setSelectedQuotationPoIds(new Set());
                     }}
                   >
                     <SelectTrigger>
@@ -898,64 +977,112 @@ export default function DraftInvoicesPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                    <Label>ใบสั่งซื้อ (PO ที่ Active)</Label>
-                  <Select
-                    value={poId || '__none__'}
-                    onValueChange={(v) => {
-                      setPoId(v === '__none__' ? '' : v);
-                      setWaveId('');
-                    }}
-                    disabled={!customerId}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="เลือก PO" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">— เลือก —</SelectItem>
-                      {(monthlyPosForCreate ?? []).map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.poCode || p.id}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-[11px] text-muted-foreground">
-                    แสดงเฉพาะ PO ที่ Active — ใบ Pending ต้องอนุมัติก่อนจึงออกใบแจ้งหนี้ได้
-                  </p>
-                </div>
-                {!isQuotationPo && (
+                {createSource === 'timesheet' ? (
+                  <>
+                    <div className="space-y-2">
+                      <Label>เดือน</Label>
+                      <Input
+                        type="month"
+                        value={createYm}
+                        onChange={(e) => {
+                          setCreateYm(e.target.value);
+                          setSelectedWorkerKeys(new Set());
+                        }}
+                        className="h-10"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label>คนที่ส่งรอออกบิล ({selectedWorkerKeys.size}/{invoiceWorkers.length})</Label>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7"
+                          onClick={() => setSelectedWorkerKeys(new Set(invoiceWorkers.map((w) => w.key)))}
+                        >
+                          เลือกทั้งหมด
+                        </Button>
+                      </div>
+                      <div className="max-h-52 overflow-y-auto rounded-md border">
+                        {invoiceWorkersLoading ? (
+                          <p className="p-3 text-sm text-muted-foreground">กำลังโหลดรายชื่อ…</p>
+                        ) : invoiceWorkers.length === 0 ? (
+                          <p className="p-3 text-sm text-muted-foreground">
+                            ยังไม่มีคนที่ส่งจากหน้า timesheet ในเดือนนี้
+                          </p>
+                        ) : (
+                          invoiceWorkers.map((w) => (
+                            <label key={w.key} className="flex cursor-pointer items-start gap-2 border-b px-3 py-2 last:border-b-0">
+                              <input
+                                type="checkbox"
+                                className="mt-1"
+                                checked={selectedWorkerKeys.has(w.key)}
+                                onChange={(e) => {
+                                  setSelectedWorkerKeys((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.add(w.key);
+                                    else next.delete(w.key);
+                                    return next;
+                                  });
+                                }}
+                              />
+                              <span className="min-w-0 text-sm">
+                                <span className="font-medium">{w.workerName}</span>
+                                <span className="text-muted-foreground">
+                                  {' '}
+                                  · {w.poCode} · {w.detail}
+                                  {w.kind === 'trip' ? ' · Trip' : ''}
+                                </span>
+                              </span>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        เลือกกี่คนก็รวมในใบเดียว แม้คนละ PO — ต้องเป็นลูกค้าคนเดียวกัน
+                        {' · '}งานสัญญา Trip คำนวณแบบ Trip และถามจุด Mob/Demob ถ้าสัญญากำหนดค่า MOB
+                      </p>
+                    </div>
+                  </>
+                ) : (
                   <div className="space-y-2">
-                    <Label>Wave</Label>
-                    <Select
-                      value={waveId || '__none__'}
-                      onValueChange={(v) => setWaveId(v === '__none__' ? '' : v)}
-                      disabled={!poId}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="เลือก Wave" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">— เลือก —</SelectItem>
-                        {(waves ?? []).map((w) => (
-                          <SelectItem key={w.id} value={w.id}>
-                            {w.waveCode} — {w.projectName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Label>PO จากใบเสนอราคา ({selectedQuotationPoIds.size})</Label>
+                    <div className="max-h-52 overflow-y-auto rounded-md border">
+                      {quotationPosForCreate.length === 0 ? (
+                        <p className="p-3 text-sm text-muted-foreground">ไม่มี PO ใบเสนอราคาที่ Active ของลูกค้านี้</p>
+                      ) : (
+                        quotationPosForCreate.map((p) => (
+                          <label key={p.id} className="flex cursor-pointer items-center gap-2 border-b px-3 py-2 last:border-b-0">
+                            <input
+                              type="checkbox"
+                              checked={selectedQuotationPoIds.has(p.id)}
+                              onChange={(e) => {
+                                setSelectedQuotationPoIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(p.id);
+                                  else next.delete(p.id);
+                                  return next;
+                                });
+                              }}
+                            />
+                            <span className="text-sm font-medium">{p.poCode || p.id}</span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label>ตั้งแต่วันที่</Label>
+                        <DatePickerThaiBE value={periodStartMs} onChange={setPeriodStartMs} />
+                      </div>
+                      <div>
+                        <Label>ถึงวันที่</Label>
+                        <DatePickerThaiBE value={periodEndMs} onChange={setPeriodEndMs} />
+                      </div>
+                    </div>
                   </div>
                 )}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <Label>ตั้งแต่วันที่</Label>
-                    <DatePickerThaiBE value={periodStartMs} onChange={setPeriodStartMs} />
-                  </div>
-                  <div>
-                    <Label>ถึงวันที่</Label>
-                    <DatePickerThaiBE value={periodEndMs} onChange={setPeriodEndMs} />
-                  </div>
-                </div>
                 <div>
                   <Label>วันที่เอกสาร</Label>
                   <DatePickerThaiBE value={issueDateMs} onChange={setIssueDateMs} />
@@ -1018,6 +1145,73 @@ export default function DraftInvoicesPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <AlertDialog
+          open={tripMobPrompt != null}
+          onOpenChange={(open) => {
+            if (!open) setTripMobPrompt(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>เลือกจุด Mob/Demob สำหรับค่า MOB</AlertDialogTitle>
+              <AlertDialogDescription>
+                สัญญา Trip กำหนดให้คิดค่า Mob/Demob ไป-กลับต่อคน — เลือกจุดที่ตรงกับการเดินทาง
+                {tripMobPrompt?.label ? ` (${tripMobPrompt.label})` : ''}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {tripMobPrompt ? (
+              <div className="space-y-2 py-2">
+                <Label htmlFor="invoice-trip-mob-location">จุด Mob/Demob</Label>
+                <Select
+                  value={tripMobPrompt.selectedKey}
+                  onValueChange={(key) =>
+                    setTripMobPrompt((prev) => (prev ? { ...prev, selectedKey: key } : null))
+                  }
+                >
+                  <SelectTrigger id="invoice-trip-mob-location">
+                    <SelectValue placeholder="เลือกจุด" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {tripMobPrompt.options.map((opt) => (
+                      <SelectItem key={opt.key} value={opt.key}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={creating}>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={!tripMobPrompt?.selectedKey || creating}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (!tripMobPrompt?.selectedKey) return;
+                  const prompt = tripMobPrompt;
+                  setTripMobPrompt(null);
+                  setCreating(true);
+                  void createTimesheetInvoice(
+                    prompt.workers,
+                    { ...prompt.keys, [prompt.batchId]: prompt.selectedKey },
+                    [...prompt.decided, prompt.batchId],
+                  )
+                    .catch((err: unknown) => {
+                      toast({
+                        variant: 'destructive',
+                        title: 'ไม่สามารถสร้างได้',
+                        description: err instanceof Error ? err.message : String(err),
+                      });
+                    })
+                    .finally(() => setCreating(false));
+                }}
+              >
+                สร้างใบแจ้งหนี้
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {totalMissingInvoiceCount > 0 && (
           <Card className="border-primary/30 bg-primary/5">
@@ -1299,10 +1493,11 @@ export default function DraftInvoicesPage() {
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="h-9 whitespace-nowrap px-2 py-1.5 pl-3">เลขที่</TableHead>
                   <TableHead className="h-9 whitespace-nowrap px-2 py-1.5">ลูกค้า</TableHead>
+                  <TableHead className="h-9 whitespace-nowrap px-2 py-1.5">ลักษณะบิล</TableHead>
                   <TableHead className="h-9 whitespace-nowrap px-2 py-1.5">Wave / งวด</TableHead>
                   <TableHead className="h-9 whitespace-nowrap px-2 py-1.5 text-right">ยอดรวม</TableHead>
                   <TableHead className="h-9 whitespace-nowrap px-2 py-1.5">ผู้สร้าง</TableHead>
-                  {showShareColumn && <TableHead className="h-9 w-12 whitespace-nowrap px-2 py-1.5 text-center">แชร์</TableHead>}
+                  <TableHead className="h-9 whitespace-nowrap px-2 py-1.5">การแชร์</TableHead>
                   <TableHead className="h-9 whitespace-nowrap px-2 py-1.5">สถานะ</TableHead>
                   <TableHead className="h-9 whitespace-nowrap px-2 py-1.5 pr-3 text-right">จัดการ</TableHead>
                 </TableRow>
@@ -1318,6 +1513,11 @@ export default function DraftInvoicesPage() {
                           <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                           <span className="max-w-[22rem] truncate">{cust?.name ?? inv.customerId}</span>
                         </div>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap px-2 py-1.5 text-xs">
+                        <Badge variant="outline" className="font-normal">
+                          {commercialBillingKindLabel(inv)}
+                        </Badge>
                       </TableCell>
                       <TableCell className="whitespace-nowrap px-2 py-1.5 text-xs font-mono">
                         <div className="flex flex-nowrap items-center gap-1.5">
@@ -1335,17 +1535,23 @@ export default function DraftInvoicesPage() {
                       <TableCell className="whitespace-nowrap px-2 py-1.5 text-sm">
                         {documentCreatorDisplayName(inv)}
                       </TableCell>
-                      {showShareColumn && (
-                        <TableCell className="px-2 py-1.5 text-center" onClick={(e) => e.stopPropagation()}>
-                          <DocumentShareListMarker
+                      <TableCell className="whitespace-nowrap px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+                        {showShareColumn ? (
+                          <DocumentShareButton
                             collectionName="commercial_invoices"
                             documentId={inv.id}
                             currentUser={currentUser}
                             sharedWith={inv.sharedWith}
                             sharedWithUids={inv.sharedWithUids}
+                            size="sm"
+                            className="h-7 px-2"
                           />
-                        </TableCell>
-                      )}
+                        ) : documentIsShared(inv) ? (
+                          <span className="text-xs text-sky-800">แชร์แล้ว</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
                       <TableCell className="whitespace-nowrap px-2 py-1.5">{statusBadge(inv, revisedInvoiceIds.has(inv.id))}</TableCell>
                       <TableCell className="whitespace-nowrap px-2 py-1.5 pr-3 text-right">
                         <div className="flex flex-nowrap items-center justify-end gap-0.5">

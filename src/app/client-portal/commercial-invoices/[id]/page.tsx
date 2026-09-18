@@ -28,7 +28,8 @@ import { uploadCommercialPaymentProof } from '@/lib/storage/commercial-payment-p
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { DisputeService } from '@/lib/services/dispute-service';
 import { buildCommercialInvoicePrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
-import { translateCommercialLineDescriptionToEn, translateCommercialWaveCodeToEn } from '@/lib/documents/commercial-line-description-en';
+import { collapseSameLocationMobDemobLines } from '@/lib/commercial/mob-demob-invoice-lines';
+import { stripCommercialLinePoPrefix, translateCommercialLineDescriptionToEn, translateCommercialWaveCodeToEn } from '@/lib/documents/commercial-line-description-en';
 import { Separator } from '@/components/ui/separator';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
@@ -119,7 +120,7 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
 
   const lineDescription = useMemo(() => {
     return (raw: string, workerName: string | undefined) => {
-      const base = (raw || '—') + (workerName ? ` (${workerName})` : '');
+      const base = stripCommercialLinePoPrefix(raw || '—') + (workerName ? ` (${workerName})` : '');
       if (printLocale === 'en') return translateCommercialLineDescriptionToEn(base);
       return base;
     };
@@ -355,7 +356,7 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(invoice.lines ?? []).map((line) => (
+              {collapseSameLocationMobDemobLines(invoice.lines ?? []).map((line) => (
                 <TableRow key={line.id}>
                   <TableCell className="max-w-md">
                     <div className="font-medium text-sm">

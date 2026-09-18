@@ -240,6 +240,19 @@ export function ContractEditRateDialog({
     !rate ||
     (!canEditSellSide && !canEditCostSide) ||
     (canEditSellSide && !hasSellPricing(form));
+  const [confirmingRateSave, setConfirmingRateSave] = useState(false);
+  useEffect(() => {
+    if (!open) setConfirmingRateSave(false);
+  }, [open]);
+
+  const requestSave = () => {
+    if (!confirmingRateSave) {
+      setConfirmingRateSave(true);
+      return;
+    }
+    handleSave();
+    setConfirmingRateSave(false);
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -268,13 +281,31 @@ export function ContractEditRateDialog({
           />
         )}
 
-        <DialogFooter className="sticky bottom-0 bg-background pt-3 border-t">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            ยกเลิก
-          </Button>
-          <Button onClick={handleSave} disabled={saveDisabled}>
-            บันทึกการแก้ไข
-          </Button>
+        <DialogFooter className="sticky bottom-0 bg-background pt-3 border-t flex-col items-stretch gap-2 sm:flex-col">
+          {confirmingRateSave ? (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-left text-xs leading-relaxed text-amber-950">
+              <p className="font-semibold text-foreground">ยืนยันแก้เรทวางบิล / ต้นทุน</p>
+              <ul className="mt-1 list-disc space-y-1 pl-4">
+                <li>ใบแจ้งหนี้ที่ออกไปแล้วไม่ถูกคำนวณใหม่</li>
+                <li>วันที่ยังไม่ออกบิลจะใช้เรทนี้ตอนสร้างใบครั้งถัดไป</li>
+                <li>ค่าแรงลูกจ้างไม่ตามเรทขายนี้ — แพ็กค่าแรงอยู่ที่ทะเบียนคนงาน และถูกล็อกตอนจบงาน</li>
+              </ul>
+            </div>
+          ) : null}
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setConfirmingRateSave(false);
+                onOpenChange(false);
+              }}
+            >
+              ยกเลิก
+            </Button>
+            <Button onClick={requestSave} disabled={saveDisabled}>
+              {confirmingRateSave ? 'ยืนยันและบันทึก' : 'บันทึกการแก้ไข'}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

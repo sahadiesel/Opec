@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Separator } from '@/components/ui/separator';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
+import { NameTitleSelect } from '@/components/hr/name-title-select';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { Label } from '@/components/ui/label';
 import { 
@@ -144,6 +145,9 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
   const [formData, setFormData] = useState<Partial<OfficeStaff>>({
     staffCode: isNew ? getPreviewPattern('office_staff') : '',
     fullName: '',
+    nameTitle: '',
+    firstName: '',
+    lastName: '',
     nickname: '',
     phone: '',
     department: '',
@@ -499,6 +503,27 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                   <div className="md:col-span-8 space-y-2">
                     <Label className="font-bold">ชื่อ-นามสกุล (Full Name) *</Label>
                     <Input value={formData.fullName} onChange={(e) => setFormData({ ...formData, fullName: e.target.value })} />
+                  </div>
+                  <div className="md:col-span-4 space-y-2">
+                    <Label className="font-bold">คำนำหน้าชื่อ (ประกันสังคม)</Label>
+                    <NameTitleSelect
+                      value={formData.nameTitle ?? ''}
+                      onChange={(nameTitle) => setFormData({ ...formData, nameTitle })}
+                    />
+                  </div>
+                  <div className="md:col-span-4 space-y-2">
+                    <Label className="font-bold">ชื่อ</Label>
+                    <Input
+                      value={formData.firstName ?? ''}
+                      onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
+                    />
+                  </div>
+                  <div className="md:col-span-4 space-y-2">
+                    <Label className="font-bold">นามสกุล</Label>
+                    <Input
+                      value={formData.lastName ?? ''}
+                      onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
+                    />
                   </div>
                   <div className="md:col-span-4 space-y-2">
                     <Label className="font-bold flex items-center gap-2">

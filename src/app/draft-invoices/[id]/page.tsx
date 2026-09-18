@@ -72,6 +72,7 @@ import {
   QUOTATION_PO_WAVE_PLACEHOLDER,
   PO_MONTH_WAVE_PLACEHOLDER,
 } from '@/lib/services/commercial-invoice-service';
+import { collapseSameLocationMobDemobLines } from '@/lib/commercial/mob-demob-invoice-lines';
 import { isCommercialInvoiceLatestEditable } from '@/lib/commercial/commercial-invoice-revision';
 import {
   COMMERCIAL_INVOICE_ATTACHMENT_MIME_ACCEPT,
@@ -85,7 +86,7 @@ import {
   buildCommercialInvoicePrintHtml,
   openStandardPrintWindow,
 } from '@/lib/documents/standard-document-print';
-import { translateCommercialLineDescriptionToEn, translateCommercialWaveCodeToEn } from '@/lib/documents/commercial-line-description-en';
+import { stripCommercialLinePoPrefix, translateCommercialLineDescriptionToEn, translateCommercialWaveCodeToEn } from '@/lib/documents/commercial-line-description-en';
 import { printT, type PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
@@ -216,7 +217,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
   useEffect(() => {
     if (!invoice) return;
-    setDraftLines((invoice.lines ?? []).map((l) => ({ ...l })));
+    setDraftLines(collapseSameLocationMobDemobLines((invoice.lines ?? []).map((l) => ({ ...l }))));
     setNotesDraft(invoice.notes ?? '');
     setLinesEditing(false);
   }, [invoice?.id, invoice?.updatedAt]);
@@ -311,7 +312,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
   const lineDescription = useMemo(() => {
     return (raw: string, workerName?: string) => {
-      const base = (raw || '—') + (workerName ? ` (${workerName})` : '');
+      const base = stripCommercialLinePoPrefix(raw || '—') + (workerName ? ` (${workerName})` : '');
       if (printLocale === 'en') return translateCommercialLineDescriptionToEn(base);
       return base;
     };
@@ -347,7 +348,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       purchaseOrder: purchaseOrder ?? undefined,
       mainContract: mainContract ?? undefined,
       quotation: quotation ?? undefined,
-      lines: draftLines,
+      lines: collapseSameLocationMobDemobLines(draftLines),
       amountBeforeTax: previewTotals.before,
       vatAmount: previewTotals.vat,
       totalAmount: previewTotals.total,
@@ -592,7 +593,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
   const cancelLinesEditing = () => {
     if (!invoice) return;
-    setDraftLines((invoice.lines ?? []).map((l) => ({ ...l })));
+    setDraftLines(collapseSameLocationMobDemobLines((invoice.lines ?? []).map((l) => ({ ...l }))));
     setNotesDraft(invoice.notes ?? '');
     setLinesEditing(false);
   };
@@ -622,13 +623,15 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   };
 
   const handleVoid = async () => {
-    if (!firestore || !currentUser || !canAdminVoid || !invoice) return;
+    if (!firestore || !currentUser || !invoice) return;
+    const draftLike = invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER';
+    if (!canAdminVoid && !(canAct && draftLike)) return;
     setVoidBusy(true);
     try {
       await voidCommercialInvoice(firestore, invoice.id, currentUser);
       toast({
         title: 'ยกเลิกแล้ว',
-        description: 'สถานะ VOID — สร้างใบใหม่จากงวด / PO ได้ตามเดิม',
+        description: 'ยกเลิกแล้ว — คนในใบนี้กลับไปเลือกสร้างใบใหม่ได้',
       });
     } catch (e: unknown) {
       toast({
@@ -1157,21 +1160,20 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                     : 'ส่งให้ลูกค้าตรวจสอบ (Portal)'}
                 </Button>
               )}
-              {canAdminVoid && (
+              {canAct && (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button type="button" variant="destructive" className="gap-2 shrink-0" disabled={voidBusy}>
                       {voidBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
-                      ยกเลิกใบนี้ (VOID)
+                      ยกเลิกใบนี้
                     </Button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
                       <AlertDialogTitle>ยกเลิกใบแจ้งหนี้นี้?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        เฉพาะผู้ดูแลระบบ — ใช้เมื่อรายการหรือการคำนวณไม่ถูกต้อง สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO
-                        ได้อีกครั้ง (ไม่ลบประวัติเอกสาร) · ใบที่ยืนยันแล้ว (ISSUED) ยกเลิกได้ถ้ายังไม่มีใบกำกับภาษีที่ใช้งาน
-                        หรือยกเลิกใบกำกับภาษีก่อน
+                        ใช้เมื่อเลือกคนไม่ตรงที่ต้องการ เช่น เลือก 3 คนแต่จะออกบิลแค่ 2 คนก่อน
+                        สถานะจะเป็น VOID และคนในใบนี้กลับไปเลือกสร้างใบใหม่ได้ (ไม่ลบประวัติเอกสาร)
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
@@ -1279,21 +1281,19 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                       ยืนยันยอดเรียกเก็บ (ฝั่ง OPEC)
                     </Button>
                   )}
-                  {canAdminVoid && (
+                  {canAct && (
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
                         <Button type="button" variant="destructive" className="gap-2 shrink-0" disabled={voidBusy}>
                           {voidBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
-                          ยกเลิกใบนี้ (VOID)
+                          ยกเลิกใบนี้
                         </Button>
                       </AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader>
                           <AlertDialogTitle>ยกเลิกใบแจ้งหนี้นี้?</AlertDialogTitle>
                           <AlertDialogDescription>
-                            เฉพาะผู้ดูแลระบบ — ใช้เมื่อรายการหรือการคำนวณไม่ถูกต้อง สถานะจะเป็น VOID และสามารถสร้างใบใหม่จากงวด / PO
-                            ได้อีกครั้ง (ไม่ลบประวัติเอกสาร) · ใบที่ยืนยันแล้ว (ISSUED) ยกเลิกได้ถ้ายังไม่มีใบกำกับภาษีที่ใช้งาน
-                            หรือยกเลิกใบกำกับภาษีก่อน
+                            สถานะจะเป็น VOID และคนในใบนี้กลับไปเลือกสร้างใบใหม่ได้ (ไม่ลบประวัติเอกสาร)
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
@@ -1384,7 +1384,9 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
           <CardHeader>
             <CardTitle>
               {docEn ? 'Line items' : 'รายการ'} (
-              {invoice.status === 'DRAFT' && canAct ? draftLines.length : (invoice.lines?.length ?? 0)}{' '}
+              {collapseSameLocationMobDemobLines(
+                invoice.status === 'DRAFT' && canAct ? draftLines : (invoice.lines ?? []),
+              ).length}{' '}
               {docEn ? 'rows' : 'แถว'})
             </CardTitle>
             <CardDescription>
@@ -1420,7 +1422,12 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(invoice.status === 'DRAFT' && canAct ? draftLines : invoice.lines ?? []).map((line) => {
+                {(linesEditing
+                  ? draftLines
+                  : collapseSameLocationMobDemobLines(
+                      invoice.status === 'DRAFT' && canAct ? draftLines : (invoice.lines ?? []),
+                    )
+                ).map((line) => {
                   const isManualLine = line.lineSource === 'manual';
                   const displayDesc = lineDescription(line.description || '—', line.workerName);
                   return (

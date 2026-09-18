@@ -5,6 +5,7 @@ import {
   getDocs,
   query,
   setDoc,
+  updateDoc,
   deleteField,
   where,
   writeBatch,
@@ -23,6 +24,7 @@ import {
   workerPayrollPeriodIdForYearMonth,
 } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { aggregatePoMonthReviewStatusFromWorkerClosures } from '@/lib/timesheet/po-month-review-status';
+import { rangesOverlap, type YmdRange } from '@/lib/timesheet/ymd-ranges';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 
@@ -308,10 +310,16 @@ export async function partialCloseWorkersForPoMonth(
     workers: Array<{ workerId: string; workerName?: string }>;
     actor: User;
     periodBounds?: { periodStartDate: string; periodEndDate: string };
+    /** ช่วงวันที่ของรอบปิดนี้ — วันที่นอกช่วงยังปิดรอบถัดไปได้ */
+    dateRanges?: YmdRange[];
   },
 ): Promise<{ closed: number }> {
   const { poId, yearMonth, workers, actor } = params;
   if (workers.length === 0) throw new Error('ไม่ได้เลือกคนงาน');
+  const incoming = (params.dateRanges ?? []).filter(
+    (r) => /^\d{4}-\d{2}-\d{2}$/.test(r.startYmd) && /^\d{4}-\d{2}-\d{2}$/.test(r.endYmd) && r.startYmd <= r.endYmd,
+  );
+  if (incoming.length === 0) throw new Error('ระบุช่วงวันที่ที่จะปิดงวด');
 
   const now = Date.now();
   let closed = 0;
@@ -327,18 +335,30 @@ export async function partialCloseWorkersForPoMonth(
     if (cur?.status === 'deferred') {
       throw new Error(`${w.workerName ?? w.workerId}: อยู่ในสถานะรอ timesheet — ข้ามไม่ได้`);
     }
-    if (cur && isWorkerMonthClosureGridLocked(cur.status)) {
-      continue;
+    const prevRanges = cur?.closedDateRanges ?? [];
+    const legacyFullMonth = !!cur && isWorkerMonthClosureGridLocked(cur.status) && prevRanges.length === 0;
+    if (legacyFullMonth) continue;
+    const overlapped = incoming.find((r) => prevRanges.some((p) => rangesOverlap(r, p)));
+    if (overlapped) {
+      throw new Error(
+        `${w.workerName ?? w.workerId}: ช่วง ${overlapped.startYmd}–${overlapped.endYmd} ทับงวดที่ปิดไว้แล้ว`,
+      );
     }
+    const nextRanges = [
+      ...prevRanges,
+      ...incoming.map((r) => ({ startYmd: r.startYmd, endYmd: r.endYmd, billingReleased: false })),
+    ];
+    const keepApproved = cur?.status === 'approved' && nextRanges.every((r) => r.billingReleased);
     await upsertWorkerClosure(db, {
       poId,
       yearMonth,
       workerId: w.workerId,
       workerName: w.workerName,
-      status: 'entry_locked',
+      status: keepApproved ? 'approved' : 'entry_locked',
       actor,
       patch: {
         closureBatchNo: batchNo,
+        closedDateRanges: nextRanges,
         entryLockedAt: now,
         entryLockedByUserId: actor.id,
         entryLockedByName: actor.displayName || actor.email || actor.id,
@@ -348,9 +368,9 @@ export async function partialCloseWorkersForPoMonth(
     closedWorkerIds.push(w.workerId);
   }
 
-  if (closed === 0) throw new Error('ไม่มีคนงานที่ปิดงวดได้ (อาจปิดแล้วทั้งหมด)');
+  if (closed === 0) throw new Error('ไม่มีคนงานที่ปิดงวดได้ (ช่วงนี้ปิดไว้แล้วทั้งหมด)');
 
-  await markTimesheetsReadyForPoMonthWorkerIds(db, poId, yearMonth, closedWorkerIds);
+  await markTimesheetsReadyForPoMonthWorkerIds(db, poId, yearMonth, closedWorkerIds, incoming);
   await syncPoMonthReviewFromClosures(db, poId, yearMonth, actor, params.periodBounds);
   return { closed };
 }
@@ -665,6 +685,153 @@ export async function sendEntryLockedWorkersForManagerReview(
 
   await syncPoMonthReviewFromClosures(db, params.poId, params.yearMonth, params.actor, params.periodBounds);
   return { sent: toSend.length };
+}
+
+/** ส่งออกบิลทันที — ไม่เข้าคิวผู้จัดการ */
+export async function releaseWorkersForBilling(
+  db: Firestore,
+  params: {
+    poId: string;
+    yearMonth: string;
+    workerIds: string[];
+    actor: User;
+  },
+): Promise<{ released: number }> {
+  const allow = new Set(params.workerIds.map((id) => id.trim()).filter(Boolean));
+  if (allow.size === 0) throw new Error('ไม่ได้เลือกคนงาน');
+  const closures = await fetchWorkerClosuresForPoMonth(db, params.poId, params.yearMonth);
+  const now = Date.now();
+  let released = 0;
+  for (const c of closures) {
+    if (!allow.has(c.workerId)) continue;
+    if (c.status === 'deferred' || c.status === 'open' || c.status === 'rejected') continue;
+    const ranges = (c.closedDateRanges ?? []).map((r) => ({ ...r, billingReleased: true }));
+    if (ranges.length === 0 && c.status === 'approved') continue;
+    await upsertWorkerClosure(db, {
+      poId: params.poId,
+      yearMonth: params.yearMonth,
+      workerId: c.workerId,
+      workerName: c.workerName,
+      status: 'approved',
+      actor: params.actor,
+      patch: {
+        closedDateRanges: ranges.length > 0 ? ranges : c.closedDateRanges,
+        submittedAt: now,
+        submittedByUserId: params.actor.id,
+        submittedByName: params.actor.displayName || params.actor.email || params.actor.id,
+        reviewedAt: now,
+        reviewedByUserId: params.actor.id,
+        reviewedByName: params.actor.displayName || params.actor.email || params.actor.id,
+        reviewNote: 'ส่งออกบิลจากตารางรายเดือน — ไม่รอผู้จัดการ',
+      },
+    });
+    released++;
+    const unreleased = (c.closedDateRanges ?? []).filter((r) => !r.billingReleased);
+    await markTimesheetsReadyForPoMonthWorkerIds(
+      db,
+      params.poId,
+      params.yearMonth,
+      [c.workerId],
+      unreleased.length > 0 ? unreleased : undefined,
+    );
+  }
+  if (released === 0) throw new Error('ไม่มีคนที่ปิดงวดแล้วรอออกบิล');
+  await syncPoMonthReviewFromClosures(db, params.poId, params.yearMonth, params.actor);
+  return { released };
+}
+
+/** ยกเลิกใบแจ้งหนี้แล้ว — ปล่อยช่วงที่ผูกใบนั้น เพื่อเลือกสร้างใบใหม่ได้ */
+export async function releaseClosureRangesBilledByInvoice(
+  db: Firestore,
+  params: {
+    poIds: string[];
+    yearMonths: string[];
+    workerIds?: string[];
+    invoiceId: string;
+    actor: User;
+  },
+): Promise<void> {
+  const invoiceId = params.invoiceId.trim();
+  if (!invoiceId) return;
+  const allow = new Set((params.workerIds ?? []).map((id) => id.trim()).filter(Boolean));
+  for (const poId of params.poIds) {
+    for (const yearMonth of params.yearMonths) {
+      if (!/^\d{4}-\d{2}$/.test(yearMonth)) continue;
+      const closures = await fetchWorkerClosuresForPoMonth(db, poId, yearMonth);
+      for (const c of closures) {
+        if (allow.size > 0 && !allow.has(c.workerId)) continue;
+        const ranges = c.closedDateRanges ?? [];
+        if (!ranges.some((r) => r.billedInvoiceId === invoiceId)) continue;
+        const next = ranges.map((r) => {
+          if (r.billedInvoiceId !== invoiceId) return r;
+          const { billedInvoiceId: _drop, ...rest } = r;
+          return rest;
+        });
+        await updateDoc(doc(db, 'worker_month_timesheet_closures', c.id), {
+          closedDateRanges: next,
+          updatedAt: Date.now(),
+        });
+      }
+    }
+  }
+}
+
+/** ใบที่ยกเลิก/ถูกแทนที่แล้ว — เอา billedInvoiceId ออก เพื่อเลือกสร้างใบใหม่ได้ */
+export async function stripBilledInvoiceIds(
+  db: Firestore,
+  closures: WorkerMonthTimesheetClosure[],
+  invoiceIds: ReadonlySet<string>,
+): Promise<void> {
+  if (invoiceIds.size === 0) return;
+  const now = Date.now();
+  for (const c of closures) {
+    const ranges = c.closedDateRanges ?? [];
+    if (!ranges.some((r) => r.billedInvoiceId && invoiceIds.has(r.billedInvoiceId))) continue;
+    const next = ranges.map((r) => {
+      if (!r.billedInvoiceId || !invoiceIds.has(r.billedInvoiceId)) return r;
+      const { billedInvoiceId: _drop, ...rest } = r;
+      return rest;
+    });
+    const id = c.id || workerMonthClosureDocId(c.poId, c.yearMonth, c.workerId);
+    await updateDoc(doc(db, 'worker_month_timesheet_closures', id), {
+      closedDateRanges: next,
+      updatedAt: now,
+    });
+  }
+}
+
+/** ทำเครื่องหมายช่วงที่ส่งออกบิลแล้วว่าอยู่ในใบแจ้งหนี้แล้ว */
+export async function markClosureRangesBilled(
+  db: Firestore,
+  params: {
+    poId: string;
+    yearMonth: string;
+    workerIds: string[];
+    invoiceId: string;
+    actor: User;
+  },
+): Promise<void> {
+  const allow = new Set(params.workerIds.map((id) => id.trim()).filter(Boolean));
+  if (allow.size === 0 || !params.invoiceId) return;
+  const closures = await fetchWorkerClosuresForPoMonth(db, params.poId, params.yearMonth);
+  for (const c of closures) {
+    if (!allow.has(c.workerId)) continue;
+    const ranges = c.closedDateRanges ?? [];
+    if (ranges.length === 0) continue;
+    const next = ranges.map((r) =>
+      r.billingReleased && !r.billedInvoiceId ? { ...r, billedInvoiceId: params.invoiceId } : r,
+    );
+    if (next.every((r, i) => r.billedInvoiceId === ranges[i]?.billedInvoiceId)) continue;
+    await upsertWorkerClosure(db, {
+      poId: params.poId,
+      yearMonth: params.yearMonth,
+      workerId: c.workerId,
+      workerName: c.workerName,
+      status: c.status,
+      actor: params.actor,
+      patch: { closedDateRanges: next },
+    });
+  }
 }
 
 export async function approveWorkerMonthClosure(

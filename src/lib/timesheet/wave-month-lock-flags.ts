@@ -6,6 +6,7 @@ import type {
 } from '@/lib/types';
 import { isPoMonthFullGridLock } from '@/lib/timesheet/po-month-review-status';
 import { isWorkerMonthClosureGridLocked } from '@/lib/timesheet/worker-month-closure';
+import { ymdInRanges } from '@/lib/timesheet/ymd-ranges';
 
 export function isWaveMonthReviewLocked(r: WaveMonthTimesheetReview | undefined): boolean {
   return (
@@ -19,6 +20,7 @@ export function isMonthTimesheetRowLocked(
   poReview: PoMonthTimesheetReview | undefined,
   waveReview: WaveMonthTimesheetReview | undefined,
   workerClosure: WorkerMonthTimesheetClosure | undefined,
+  ymd?: string,
 ): boolean {
   if (workerClosure) {
     if (
@@ -28,7 +30,13 @@ export function isMonthTimesheetRowLocked(
     ) {
       return false;
     }
-    return isWorkerMonthClosureGridLocked(workerClosure.status);
+    if (!isWorkerMonthClosureGridLocked(workerClosure.status)) return false;
+    const ranges = workerClosure.closedDateRanges;
+    if (ranges && ranges.length > 0) {
+      if (!ymd) return false;
+      return ymdInRanges(ymd, ranges);
+    }
+    return true;
   }
   if (isPoMonthFullGridLock(poReview)) return true;
   return isWaveMonthReviewLocked(waveReview);

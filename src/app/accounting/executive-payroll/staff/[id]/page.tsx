@@ -34,6 +34,7 @@ import { useToast } from '@/hooks/use-toast';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { formatDateTimeThaiBE } from '@/lib/date-thai';
 import { buildUserAccessSummaryLines } from '@/lib/hr/user-access-display';
+import { NameTitleSelect } from '@/components/hr/name-title-select';
 
 type ExecStaffFormState = Omit<ExecutivePayrollStaff, 'id' | 'createdAt' | 'updatedAt'> & {
   staffCode: string;
@@ -43,6 +44,9 @@ function emptyForm(): ExecStaffFormState {
   return {
     staffCode: getPreviewPattern('executive_payroll_staff'),
     fullName: '',
+    nameTitle: '',
+    firstName: '',
+    lastName: '',
     department: '',
     positionTitle: '',
     monthlySalary: 0,
@@ -125,6 +129,9 @@ export default function ExecutivePayrollStaffEditorPage({
     setForm({
       staffCode: existing.staffCode,
       fullName: existing.fullName,
+      nameTitle: existing.nameTitle ?? '',
+      firstName: existing.firstName ?? '',
+      lastName: existing.lastName ?? '',
       department: existing.department,
       positionTitle: existing.positionTitle,
       monthlySalary: existing.monthlySalary ?? 0,
@@ -252,6 +259,9 @@ export default function ExecutivePayrollStaffEditorPage({
           id: newRef.id,
           staffCode: code,
           fullName: form.fullName.trim(),
+          nameTitle: form.nameTitle?.trim() || undefined,
+          firstName: form.firstName?.trim() || undefined,
+          lastName: form.lastName?.trim() || undefined,
           department: form.department.trim(),
           positionTitle: form.positionTitle.trim(),
           monthlySalary: Number(form.monthlySalary) || 0,
@@ -290,6 +300,9 @@ export default function ExecutivePayrollStaffEditorPage({
           doc(firestore, 'executive_payroll_staff', id),
           sanitizeFirestorePayload({
             fullName: form.fullName.trim(),
+            nameTitle: form.nameTitle?.trim() || deleteField(),
+            firstName: form.firstName?.trim() || deleteField(),
+            lastName: form.lastName?.trim() || deleteField(),
             department: form.department.trim(),
             positionTitle: form.positionTitle.trim(),
             monthlySalary: Number(form.monthlySalary) || 0,
@@ -426,6 +439,21 @@ export default function ExecutivePayrollStaffEditorPage({
                       onChange={(e) => setForm({ ...form, fullName: e.target.value })}
                       placeholder="ชื่อผู้บริหาร"
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>คำนำหน้าชื่อ (ประกันสังคม)</Label>
+                    <NameTitleSelect
+                      value={form.nameTitle ?? ''}
+                      onChange={(nameTitle) => setForm({ ...form, nameTitle })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>ชื่อ</Label>
+                    <Input value={form.firstName ?? ''} onChange={(e) => setForm({ ...form, firstName: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>นามสกุล</Label>
+                    <Input value={form.lastName ?? ''} onChange={(e) => setForm({ ...form, lastName: e.target.value })} />
                   </div>
                   <div className="space-y-2">
                     <Label>แผนก</Label>

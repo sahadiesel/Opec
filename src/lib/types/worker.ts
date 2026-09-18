@@ -84,6 +84,14 @@ export interface SsoHospitalCatalogItem {
 export interface Worker {
   id: string;
   workerCode: string;
+  /** คำนำหน้าภาษาไทย สำหรับนำส่งประกันสังคม — นาย / นาง / นางสาว */
+  nameTitle?: string;
+  /** ชื่อ-นามสกุลภาษาไทย — ใช้กับประกันสังคม ถ้ายังว่างให้ใช้ firstName/lastName */
+  firstNameTh?: string;
+  lastNameTh?: string;
+  /** คำนำหน้าภาษาอังกฤษ — Mr. / Mrs. / Ms. / Miss */
+  nameTitleEn?: string;
+  /** ชื่อ-นามสกุลภาษาอังกฤษที่แสดงในระบบ (รายการ / หัวหน้า) */
   firstName: string;
   lastName: string;
   nickname?: string;

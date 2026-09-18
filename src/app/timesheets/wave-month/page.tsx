@@ -22,7 +22,6 @@ import {
   Trash2,
   Unlock,
   Waves,
-  RefreshCw,
   Sparkles,
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
@@ -153,8 +152,8 @@ import {
   clearWorkerMonthDeferred,
   fetchWorkerClosuresForPoIdsAndMonth,
   partialCloseWorkersForPoMonth,
+  releaseWorkersForBilling,
   reopenWorkerMonthClosureForEdit,
-  sendEntryLockedWorkersForManagerReview,
   setWorkerMonthDeferred,
   workerClosureByPoWorkerKey,
 } from '@/lib/timesheet/worker-month-closure';
@@ -165,7 +164,8 @@ import {
 } from '@/lib/commercial/partial-po-month-billing';
 import { isPoMonthFullGridLock } from '@/lib/timesheet/po-month-review-status';
 import { isWorkerMonthClosureGridLocked } from '@/lib/timesheet/worker-month-closure';
-import { ensureWorkerMonthlyPayrollPeriodForYearMonth, syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews, workerPayrollPeriodIdForYearMonth } from '@/lib/timesheet/po-month-timesheet-bridge';
+import { ensureWorkerMonthlyPayrollPeriodForYearMonth, workerPayrollPeriodIdForYearMonth } from '@/lib/timesheet/po-month-timesheet-bridge';
+import { suggestContiguousYmdRanges, ymdInRanges, type YmdRange } from '@/lib/timesheet/ymd-ranges';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { normalizePoActiveBundleId, resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import {
@@ -270,6 +270,15 @@ type RetroEditContext = {
   approvedOtHours: number;
   /** อัตรา OT ของรายการรอจ่าย / บนใบงาน — ใช้เป็นค่าเริ่มต้นในฟอร์ม */
   pendingOtTier: TimesheetOtTier;
+};
+
+type WaveMonthClosePick = {
+  key: string;
+  poId: string;
+  workerId: string;
+  name: string;
+  poCode: string;
+  openDates: string[];
 };
 
 export default function WaveMonthTimesheetSummaryPage() {
@@ -822,6 +831,13 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [workerClosureLoading, setWorkerClosureLoading] = useState(false);
   const [selectedPartialKeys, setSelectedPartialKeys] = useState<Set<string>>(() => new Set());
   const [partialWorkflowBusy, setPartialWorkflowBusy] = useState(false);
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+  const [closePicks, setClosePicks] = useState<WaveMonthClosePick[]>([]);
+  const [closeSelected, setCloseSelected] = useState<Set<string>>(() => new Set());
+  const [closeRanges, setCloseRanges] = useState<YmdRange[]>([]);
+  const [billingDialogOpen, setBillingDialogOpen] = useState(false);
+  const [billingPicks, setBillingPicks] = useState<WaveMonthClosePick[]>([]);
+  const [billingSelected, setBillingSelected] = useState<Set<string>>(() => new Set());
 
   const refreshWorkerClosures = useCallback(async () => {
     if (!firestore || !monthYm || scopedPoIdsList.length === 0) {
@@ -1517,35 +1533,18 @@ export default function WaveMonthTimesheetSummaryPage() {
       po: PurchaseOrder | undefined,
       monthReview: WaveMonthTimesheetReview | undefined,
       workerId: string,
+      ymd?: string,
     ) => {
       const closure = po?.id ? workerClosureByKey.get(`${po.id}|${workerId}`) : undefined;
       return isMonthTimesheetRowLocked(
         po?.id ? poMonthByPoId.get(po.id) : undefined,
         monthReview,
         closure,
+        ymd,
       );
     },
     [workerClosureByKey, poMonthByPoId],
   );
-
-  const partialCloseStats = useMemo(() => {
-    const entryLocked = workerClosureRows.filter((c) => c.status === 'entry_locked').length;
-    const payrollSyncEligible = workerClosureRows.filter(
-      (c) =>
-        c.status === 'entry_locked' ||
-        c.status === 'pending_manager_review' ||
-        c.status === 'approved',
-    ).length;
-    const selectable = dedupedTableRows.filter((tr) => {
-      const po = tr.po;
-      if (!po?.id) return false;
-      const closure = workerClosureByKey.get(`${po.id}|${tr.rw.workerId}`);
-      if (closure?.status === 'deferred') return false;
-      if (closure && isWorkerMonthClosureGridLocked(closure.status)) return false;
-      return true;
-    }).length;
-    return { entryLocked, payrollSyncEligible, selectable, selected: selectedPartialKeys.size };
-  }, [workerClosureRows, dedupedTableRows, workerClosureByKey, selectedPartialKeys.size]);
 
   const overdueDeferredClosures = useMemo(() => {
     return workerClosureRows
@@ -1553,20 +1552,101 @@ export default function WaveMonthTimesheetSummaryPage() {
       .sort((a, b) => deferredClosureAgeDays(b) - deferredClosureAgeDays(a));
   }, [workerClosureRows, monthYm]);
 
-  const handlePartialCloseSelected = useCallback(async () => {
-    if (!firestore || !currentUser || !canEditTs) return;
-    const byPo = new Map<string, Array<{ workerId: string; workerName?: string }>>();
+  const collectOpenClosePicks = useCallback((): WaveMonthClosePick[] => {
+    const seen = new Set<string>();
+    const out: WaveMonthClosePick[] = [];
     for (const tr of dedupedTableRows) {
       const po = tr.po;
       if (!po?.id) continue;
       const key = `${po.id}|${tr.rw.workerId}`;
-      if (!selectedPartialKeys.has(key)) continue;
-      const list = byPo.get(po.id) ?? [];
-      list.push({ workerId: tr.rw.workerId, workerName: tr.rw.name });
-      byPo.set(po.id, list);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const closure = workerClosureByKey.get(key);
+      if (closure?.status === 'deferred') continue;
+      const closed = closure?.closedDateRanges ?? [];
+      const legacyFullMonth = !!closure && isWorkerMonthClosureGridLocked(closure.status) && closed.length === 0;
+      if (legacyFullMonth) continue;
+      const dates = monthSheetsForOpenPos
+        .filter((t) => t.workerId === tr.rw.workerId && t.purchaseOrderId === po.id)
+        .map((t) => String(t.date || '').slice(0, 10))
+        .filter((ymd) => ymd.startsWith(`${monthYm}-`) && !ymdInRanges(ymd, closed));
+      const openDates = [...new Set(dates)].sort();
+      if (openDates.length === 0) continue;
+      out.push({
+        key,
+        poId: po.id,
+        workerId: tr.rw.workerId,
+        name: tr.rw.name,
+        poCode: po.poCode || po.id,
+        openDates,
+      });
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name, 'th', { sensitivity: 'base' }));
+    return out;
+  }, [dedupedTableRows, workerClosureByKey, monthSheetsForOpenPos, monthYm]);
+
+  const collectBillingPicks = useCallback((): WaveMonthClosePick[] => {
+    const nameByKey = new Map<string, { name: string; poCode: string }>();
+    for (const tr of dedupedTableRows) {
+      if (!tr.po?.id) continue;
+      nameByKey.set(`${tr.po.id}|${tr.rw.workerId}`, { name: tr.rw.name, poCode: tr.po.poCode || tr.po.id });
+    }
+    const out: WaveMonthClosePick[] = [];
+    for (const c of workerClosureRows) {
+      if (c.yearMonth !== monthYm) continue;
+      if (c.status === 'deferred' || c.status === 'open' || c.status === 'rejected') continue;
+      const ranges = c.closedDateRanges ?? [];
+      const pending =
+        ranges.length === 0
+          ? c.status === 'entry_locked' || c.status === 'pending_manager_review'
+          : ranges.some((r) => !r.billingReleased);
+      if (!pending) continue;
+      const key = `${c.poId}|${c.workerId}`;
+      const meta = nameByKey.get(key);
+      out.push({
+        key,
+        poId: c.poId,
+        workerId: c.workerId,
+        name: meta?.name || c.workerName || c.workerId,
+        poCode: meta?.poCode || c.poId,
+        openDates: ranges.filter((r) => !r.billingReleased).flatMap((r) => [r.startYmd, r.endYmd]),
+      });
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name, 'th', { sensitivity: 'base' }));
+    return out;
+  }, [workerClosureRows, dedupedTableRows, monthYm]);
+
+  const openCloseDialog = useCallback(() => {
+    const picks = collectOpenClosePicks();
+    setClosePicks(picks);
+    setCloseSelected(new Set());
+    setCloseRanges(suggestContiguousYmdRanges(picks.flatMap((p) => p.openDates)));
+    setCloseDialogOpen(true);
+  }, [collectOpenClosePicks]);
+
+  const openBillingDialog = useCallback(() => {
+    const picks = collectBillingPicks();
+    setBillingPicks(picks);
+    setBillingSelected(new Set());
+    setBillingDialogOpen(true);
+  }, [collectBillingPicks]);
+
+  const handlePartialCloseSelected = useCallback(async () => {
+    if (!firestore || !currentUser || !canEditTs) return;
+    const ranges = closeRanges.filter((r) => r.startYmd && r.endYmd && r.startYmd <= r.endYmd);
+    if (ranges.length === 0) {
+      toast({ variant: 'destructive', title: 'ระบุช่วงวันที่', description: 'ใส่วันเริ่มและวันสิ้นสุดของงวดที่จะปิด' });
+      return;
+    }
+    const byPo = new Map<string, Array<{ workerId: string; workerName?: string }>>();
+    for (const pick of closePicks) {
+      if (!closeSelected.has(pick.key)) continue;
+      const list = byPo.get(pick.poId) ?? [];
+      list.push({ workerId: pick.workerId, workerName: pick.name });
+      byPo.set(pick.poId, list);
     }
     if (byPo.size === 0) {
-      toast({ variant: 'destructive', title: 'ไม่ได้เลือกคนงาน', description: 'ติ๊กเลือกคนที่พร้อมปิดงวดในตาราง' });
+      toast({ variant: 'destructive', title: 'ไม่ได้เลือกคนงาน' });
       return;
     }
     setPartialWorkflowBusy(true);
@@ -1578,22 +1658,22 @@ export default function WaveMonthTimesheetSummaryPage() {
           yearMonth: monthYm,
           workers,
           actor: currentUser as User,
+          dateRanges: ranges,
         });
         total += res.closed;
       }
       await refreshWorkerClosures();
-      setSelectedPartialKeys(new Set());
+      setCloseDialogOpen(false);
       const actorName = currentUser.displayName || currentUser.email || currentUser.id;
       await ensureWorkerMonthlyPayrollPeriodForYearMonth(firestore, monthYm, actorName);
       toast({
-        title: `ปิดงวดบางส่วน ${total} คน`,
-        description:
-          'แก้ไขไม่ได้สำหรับคนที่ปิดแล้ว · ระบบตั้ง readyForPayroll แล้ว — ไป Payroll Batch ตรวจสอบได้ · ส่งผู้จัดการอนุมัติเมื่อพร้อม',
+        title: `ปิดงวด ${total} คน`,
+        description: 'วันที่ในช่วงที่ปิดจ่าย Payroll ได้แล้ว · วันที่นอกช่วงยังลงงานและปิดงวดรอบถัดไปได้',
       });
     } catch (e: unknown) {
       toast({
         variant: 'destructive',
-        title: 'ปิดงวดบางส่วนไม่สำเร็จ',
+        title: 'ปิดงวดไม่สำเร็จ',
         description: e instanceof Error ? e.message : String(e),
       });
     } finally {
@@ -1603,73 +1683,55 @@ export default function WaveMonthTimesheetSummaryPage() {
     firestore,
     currentUser,
     canEditTs,
-    dedupedTableRows,
-    selectedPartialKeys,
+    closeRanges,
+    closePicks,
+    closeSelected,
     monthYm,
     refreshWorkerClosures,
     toast,
   ]);
 
-  const handleSyncPayrollReadyFlags = useCallback(async () => {
-    if (!firestore || !monthYm) return;
-    setPartialWorkflowBusy(true);
-    try {
-      const sync = await syncReadyPayrollFlagsForYearMonthFromAllGatedPoMonthReviews(firestore, monthYm);
-      toast({
-        title: 'ซิงก์พร้อมจ่าย Payroll แล้ว',
-        description:
-          sync.updated > 0
-            ? `ตั้ง/ปลดล็อกพร้อมจ่าย ${sync.updated} ใบงาน (${sync.syncedPoCount} PO) — กลับไปสร้าง Batch ได้เลย`
-            : 'ไม่พบใบงานที่อัปเดตได้ — ถ้ายังสร้าง Batch ได้ 0 คน ตรวจว่าใบงานยังถูก LOCKED ในชุดที่จ่ายแล้วหรือยังไม่ปิดงวด',
-      });
-    } catch (e: unknown) {
-      toast({
-        variant: 'destructive',
-        title: 'ซิงก์ไม่สำเร็จ',
-        description: e instanceof Error ? e.message : String(e),
-      });
-    } finally {
-      setPartialWorkflowBusy(false);
-    }
-  }, [firestore, monthYm, toast]);
-
   const handleSendPartialForReview = useCallback(async () => {
     if (!firestore || !currentUser || !canEditTs) return;
-    const poIds = [...new Set(workerClosureRows.filter((c) => c.status === 'entry_locked').map((c) => c.poId))];
-    if (poIds.length === 0) {
-      toast({
-        variant: 'destructive',
-        title: 'ดำเนินการไม่ได้',
-        description: 'ไม่มีคนงานที่ปิดงวดแล้วรอส่งอนุมัติ',
-      });
+    const byPo = new Map<string, string[]>();
+    for (const pick of billingPicks) {
+      if (!billingSelected.has(pick.key)) continue;
+      const list = byPo.get(pick.poId) ?? [];
+      list.push(pick.workerId);
+      byPo.set(pick.poId, list);
+    }
+    if (byPo.size === 0) {
+      toast({ variant: 'destructive', title: 'ไม่ได้เลือกคนงาน' });
       return;
     }
     setPartialWorkflowBusy(true);
     try {
-      let sent = 0;
-      for (const poId of poIds) {
-        const res = await sendEntryLockedWorkersForManagerReview(firestore, {
+      let released = 0;
+      for (const [poId, workerIds] of byPo) {
+        const res = await releaseWorkersForBilling(firestore, {
           poId,
           yearMonth: monthYm,
+          workerIds,
           actor: currentUser as User,
         });
-        sent += res.sent;
+        released += res.released;
       }
       await refreshWorkerClosures();
+      setBillingDialogOpen(false);
       toast({
-        title: `ส่งอนุมัติเพื่อออกใบวางบิล ${sent} คน`,
-        description: 'ผู้จัดการอนุมัติรายคนที่เมนู อนุมัติ → Timesheet รอบเดือน (คิว Invoice — ไม่ใช่จ่ายค่าจ้าง)',
+        title: `ส่งรอออกบิล ${released} คน`,
+        description: 'ไม่ต้องรอผู้จัดการ — ไปสร้างใบแจ้งหนี้จากรายชื่อที่ส่งมาได้เลย',
       });
     } catch (e: unknown) {
       toast({
         variant: 'destructive',
-        title: 'ส่งอนุมัติไม่สำเร็จ',
+        title: 'ส่งออกบิลไม่สำเร็จ',
         description: e instanceof Error ? e.message : String(e),
       });
     } finally {
       setPartialWorkflowBusy(false);
     }
-  }, [firestore, currentUser, canEditTs, workerClosureRows, monthYm, refreshWorkerClosures, toast]);
+  }, [firestore, currentUser, canEditTs, billingPicks, billingSelected, monthYm, refreshWorkerClosures, toast]);
 
   const handleMarkWorkerDeferred = useCallback(
     async (poId: string, workerId: string, workerName: string) => {
@@ -1882,7 +1944,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       const forceRetro =
         tsLocked ||
         retroOnlyPayrollMonth ||
-        isRowLockedForWorker(po, monthReview, rw.workerId);
+        isRowLockedForWorker(po, monthReview, rw.workerId, cellDate);
 
       if (forceRetro) {
         const assignment = ts
@@ -1973,7 +2035,7 @@ export default function WaveMonthTimesheetSummaryPage() {
         });
         return;
       }
-      if (isRowLockedForWorker(po, monthReview, rw.workerId)) {
+      if (isRowLockedForWorker(po, monthReview, rw.workerId, cellDate)) {
         toast({
           variant: 'destructive',
           title: 'งวดนี้แก้ไขไม่ได้',
@@ -2033,7 +2095,7 @@ export default function WaveMonthTimesheetSummaryPage() {
         });
         return;
       }
-      if (!canEditTs || isRowLockedForWorker(po, monthReview, workerId)) {
+      if (!canEditTs || isRowLockedForWorker(po, monthReview, workerId, editDate)) {
         toast({
           variant: 'destructive',
           title: 'ล้างช่องไม่ได้',
@@ -2118,7 +2180,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       });
       return;
     }
-    if (!canEditTs || (isRowLockedForWorker(po, monthReview, workerId) && !closedPeriodCorrection)) {
+    if (!canEditTs || (isRowLockedForWorker(po, monthReview, workerId, editDate) && !closedPeriodCorrection)) {
       toast({
         variant: 'destructive',
         title: 'บันทึกไม่ได้',
@@ -2743,22 +2805,6 @@ export default function WaveMonthTimesheetSummaryPage() {
                                 ปลดล็อก (Admin)
                               </Button>
                             ) : null}
-                            {!snap.payrollSyncHidden ? (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="gap-1 border-emerald-600/40 text-emerald-800 dark:text-emerald-200"
-                                disabled={snap.payrollSyncDisabled}
-                                onClick={() => poMonthPanelRef.current?.syncPayrollReadyForPo(snap.poId)}
-                              >
-                                {snap.payrollSyncBusy ? (
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                  <RefreshCw className="h-3.5 w-3.5" />
-                                )}
-                                ซิงก์พร้อมจ่าย
-                              </Button>
-                            ) : null}
                           </div>
                         </div>
                         <div className="rounded-lg border-2 border-orange-400/80 bg-orange-50/50 dark:bg-orange-950/25 dark:border-orange-700/70 px-3 py-3 space-y-3">
@@ -2958,37 +3004,23 @@ export default function WaveMonthTimesheetSummaryPage() {
                               size="sm"
                               variant="secondary"
                               className="h-8 gap-1"
-                              disabled={partialWorkflowBusy || selectedPartialKeys.size === 0}
-                              onClick={() => void handlePartialCloseSelected()}
+                              disabled={partialWorkflowBusy}
+                              onClick={openCloseDialog}
                             >
                               <Lock className="h-3.5 w-3.5" />
-                              ปิดงวดคนที่เลือก ({selectedPartialKeys.size})
+                              ปิดงวดจ่าย Payroll
                             </Button>
                             <Button
                               type="button"
                               size="sm"
                               className="h-8 gap-1"
-                              disabled={partialWorkflowBusy || partialCloseStats.entryLocked === 0}
-                              onClick={() => void handleSendPartialForReview()}
-                              title="ส่งผู้จัดการตรวจ timesheet เพื่อออกใบวางบิล/Invoice — ไม่ใช่คิวอนุมัติจ่ายค่าจ้าง"
+                              disabled={partialWorkflowBusy}
+                              onClick={openBillingDialog}
+                              title="เลือกคนที่ปิดงวดแล้ว ส่งไปรอออกใบแจ้งหนี้ทันที — ไม่รอผู้จัดการ"
                             >
                               <Send className="h-3.5 w-3.5" />
-                              ส่งอนุมัติเพื่อออกใบวางบิล ({partialCloseStats.entryLocked})
+                              ส่งรอออกบิล
                             </Button>
-                            {partialCloseStats.payrollSyncEligible > 0 ? (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="h-8 gap-1"
-                                disabled={partialWorkflowBusy}
-                                onClick={() => void handleSyncPayrollReadyFlags()}
-                                title="ตั้ง readyForPayroll ให้ไปสร้าง Payroll Batch ได้ — ใช้หลังลบ Batch หรือเมื่อสร้างใหม่ได้ 0 คน"
-                              >
-                                <RefreshCw className="h-3.5 w-3.5" />
-                                ซิงก์พร้อมจ่าย Payroll
-                              </Button>
-                            ) : null}
                             {hasPayrollBatchForMonth && existingPayrollBatchId ? (
                               <Button type="button" size="sm" variant="outline" className="h-8 gap-1" asChild>
                                 <Link href={`/payroll/batches/${existingPayrollBatchId}`}>
@@ -2998,11 +3030,9 @@ export default function WaveMonthTimesheetSummaryPage() {
                             ) : null}
                           </div>
                           <p className="text-[10px] text-muted-foreground">
-                            ติ๊กเลือกคนที่ timesheet ครบ → ปิดงวด → ไป Payroll Batch ได้ทันที
-                            {' · กดซิงก์พร้อมจ่ายถ้าสร้าง Batch ได้ 0 คน (เช่น หลังลบ Batch)'}
+                            ปิดงวดจ่าย Payroll = เลือกรายชื่อและช่วงวันที่ (แก้ได้ เช่น 1–10 แทน 1–12) · วันนอกช่วงยังลงงานและปิดงวดรอบถัดไปได้
                             {' · '}
-                            <strong className="text-foreground">ส่งอนุมัติเพื่อออกใบวางบิล</strong> = คิวผู้จัดการตรวจ timesheet → Invoice (ไม่ใช่อนุมัติจ่ายค่าจ้าง)
-                            {' · '}คนที่ปิดแล้ว: เมนูสถานะ → «ยกเลิกปิดงวด — กลับมาแก้ไข»
+                            <strong className="text-foreground">ส่งรอออกบิล</strong> = เลือกรายชื่อที่ปิดงวดแล้ว ไปรอสร้างใบแจ้งหนี้ทันที ไม่รอผู้จัดการ
                           </p>
                           {overdueDeferredClosures.length > 0 ? (
                             <Alert variant="destructive" className="py-2">
@@ -3253,7 +3283,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                                 const cellLabel = timesheetWaveMonthCellDisplayWithRetro(ts, retroForCell);
                                 const hasRetro = hasActiveRetroAdjustments(retroForCell);
                                 const tsLocked = isTimesheetPayrollLocked(ts);
-                                const rowClosed = isRowLockedForWorker(po, monthReview, rw.workerId);
+                                const rowClosed = isRowLockedForWorker(po, monthReview, rw.workerId, d);
                                 const cellClickable =
                                   canEditTs &&
                                   (tsLocked || retroOnlyPayrollMonth || rowClosed || editableGrid);
@@ -3933,6 +3963,229 @@ export default function WaveMonthTimesheetSummaryPage() {
             >
               {retroSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               {retroEvent === WAVE_MONTH_EVENT_CLEAR ? 'ยืนยันล้างช่อง' : 'บันทึกแก้ไขย้อนหลัง'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={closeDialogOpen} onOpenChange={setCloseDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>ปิดงวดจ่าย Payroll</DialogTitle>
+            <DialogDescription>
+              เลือกคนงานและช่วงวันที่ที่จะปิดงวดนี้ ระบบเสนอจากวันที่มีใบงานที่ยังไม่ปิด — แก้เป็นช่วงสั้นกว่าได้ เช่น 1–10
+              แล้ว 11–12 ไปปิดรอบถัดไป
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium">
+                เลือกคนงาน ({closeSelected.size}/{closePicks.length} คน)
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7"
+                  onClick={() => setCloseSelected(new Set(closePicks.map((p) => p.key)))}
+                >
+                  เลือกทั้งหมด
+                </Button>
+                <Button type="button" size="sm" variant="ghost" className="h-7" onClick={() => setCloseSelected(new Set())}>
+                  ไม่เลือก
+                </Button>
+              </div>
+            </div>
+            <div className="max-h-52 overflow-y-auto rounded-md border">
+              {closePicks.length === 0 ? (
+                <p className="p-3 text-sm text-muted-foreground">ไม่มีวันทำงานที่ยังไม่ปิดงวดในเดือนนี้</p>
+              ) : (
+                closePicks.map((p) => (
+                  <label key={p.key} className="flex cursor-pointer items-start gap-2 border-b px-3 py-2 last:border-b-0">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={closeSelected.has(p.key)}
+                      onChange={(e) => {
+                        setCloseSelected((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(p.key);
+                          else next.delete(p.key);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span className="min-w-0 text-sm">
+                      <span className="font-medium">{p.name}</span>
+                      <span className="text-muted-foreground">
+                        {' '}
+                        ({p.openDates.length} วัน · {p.poCode})
+                      </span>
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium">ช่วงวันที่ปิดงวด</p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7"
+                  onClick={() => {
+                    const source =
+                      closeSelected.size > 0 ? closePicks.filter((p) => closeSelected.has(p.key)) : closePicks;
+                    setCloseRanges(suggestContiguousYmdRanges(source.flatMap((p) => p.openDates)));
+                  }}
+                >
+                  ใช้ช่วงที่ระบบเสนอ
+                </Button>
+              </div>
+              {closeRanges.length === 0 ? (
+                <p className="text-xs text-muted-foreground">ยังไม่มีช่วง — กดใช้ช่วงที่ระบบเสนอ หรือเพิ่มช่วง</p>
+              ) : (
+                closeRanges.map((r, i) => (
+                  <div key={`${r.startYmd}-${r.endYmd}-${i}`} className="flex items-center gap-2">
+                    <Input
+                      type="date"
+                      value={r.startYmd}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setCloseRanges((prev) => prev.map((row, idx) => (idx === i ? { ...row, startYmd: v } : row)));
+                      }}
+                      className="h-9"
+                    />
+                    <span className="text-muted-foreground">–</span>
+                    <Input
+                      type="date"
+                      value={r.endYmd}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setCloseRanges((prev) => prev.map((row, idx) => (idx === i ? { ...row, endYmd: v } : row)));
+                      }}
+                      className="h-9"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-9 px-2"
+                      onClick={() => setCloseRanges((prev) => prev.filter((_, idx) => idx !== i))}
+                    >
+                      ลบ
+                    </Button>
+                  </div>
+                ))
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8"
+                onClick={() => setCloseRanges((prev) => [...prev, { startYmd: '', endYmd: '' }])}
+              >
+                เพิ่มช่วง
+              </Button>
+              <p className="text-[11px] text-muted-foreground">
+                ถัดไปถ้ามีงานวันที่เว้นว่าง ระบบจะแยกช่วงให้ เช่น 11–12 และ 18–30 ไม่รวมวันที่ไม่มีงาน
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setCloseDialogOpen(false)}>
+              ยกเลิก
+            </Button>
+            <Button
+              type="button"
+              disabled={partialWorkflowBusy || closeSelected.size === 0}
+              onClick={() => void handlePartialCloseSelected()}
+            >
+              {partialWorkflowBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {closeSelected.size === 0 ? 'เลือกคนงานก่อน' : `ปิดงวด ${closeSelected.size} คน`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={billingDialogOpen} onOpenChange={setBillingDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>ส่งรอออกบิล</DialogTitle>
+            <DialogDescription>
+              เลือกคนที่ปิดงวดแล้ว ระบบส่งไปรอสร้างใบแจ้งหนี้ทันที ไม่เข้าคิวผู้จัดการ
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium">
+                เลือกคนงาน ({billingSelected.size}/{billingPicks.length} คน)
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7"
+                  onClick={() => setBillingSelected(new Set(billingPicks.map((p) => p.key)))}
+                >
+                  เลือกทั้งหมด
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7"
+                  onClick={() => setBillingSelected(new Set())}
+                >
+                  ไม่เลือก
+                </Button>
+              </div>
+            </div>
+            <div className="max-h-64 overflow-y-auto rounded-md border">
+              {billingPicks.length === 0 ? (
+                <p className="p-3 text-sm text-muted-foreground">
+                  ยังไม่มีคนที่ปิดงวดแล้วรอออกบิล — คนที่ส่งไปแล้วให้สร้างใบแจ้งหนี้ที่เมนูการออกใบแจ้งหนี้
+                  ถ้ายกเลิกใบแล้ว รายชื่อจะกลับไปให้เลือกที่นั่น ไม่ต้องส่งซ้ำ
+                </p>
+              ) : (
+                billingPicks.map((p) => (
+                  <label key={p.key} className="flex cursor-pointer items-start gap-2 border-b px-3 py-2 last:border-b-0">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={billingSelected.has(p.key)}
+                      onChange={(e) => {
+                        setBillingSelected((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(p.key);
+                          else next.delete(p.key);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span className="min-w-0 text-sm">
+                      <span className="font-medium">{p.name}</span>
+                      <span className="text-muted-foreground"> · {p.poCode}</span>
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setBillingDialogOpen(false)}>
+              ยกเลิก
+            </Button>
+            <Button
+              type="button"
+              disabled={partialWorkflowBusy || billingSelected.size === 0}
+              onClick={() => void handleSendPartialForReview()}
+            >
+              {partialWorkflowBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {billingSelected.size === 0 ? 'เลือกคนงานก่อน' : `ส่งรอออกบิล ${billingSelected.size} คน`}
             </Button>
           </DialogFooter>
         </DialogContent>

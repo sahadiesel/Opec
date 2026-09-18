@@ -338,8 +338,7 @@ export default function AccountingDashboardPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 space-y-2">
-                <ShortcutItem href="/draft-invoices" label="ทำใบแจ้งหนี้แบบ Monthly" sub="ปิด PO+เดือน · Guangzhou" icon={FileText} />
-                <ShortcutItem href="/accounting/trip-billing" label="ทำใบแจ้งหนี้แบบ Trip" sub="M1→D1 · หลายคนต่อ invoice" icon={FileText} />
+                <ShortcutItem href="/draft-invoices" label="การออกใบแจ้งหนี้ (Invoice)" sub="Timesheet หรือ PO ใบเสนอราคา" icon={FileText} />
                 <ShortcutItem
                   href="/tax-invoices"
                   label="ใบกำกับภาษีขาย"

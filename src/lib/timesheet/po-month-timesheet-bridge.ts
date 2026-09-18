@@ -481,6 +481,7 @@ export async function markTimesheetsReadyForPoMonthWorkerIds(
   poId: string,
   yearMonth: string,
   workerIds: string[],
+  dateRanges?: ReadonlyArray<{ startYmd: string; endYmd: string }>,
 ): Promise<{ updated: number }> {
   const ym = yearMonth.trim();
   const pid = poId.trim();
@@ -493,11 +494,22 @@ export async function markTimesheetsReadyForPoMonthWorkerIds(
     billingMode = await resolveBillingMode(db, { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder);
   }
 
-  const orphanLocked = await gatherLockedOrphanDailyTimesheetRefsForPoCalendarMonth(db, pid, ym, allow);
+  const orphanLocked = dateRanges?.length
+    ? []
+    : await gatherLockedOrphanDailyTimesheetRefsForPoCalendarMonth(db, pid, ym, allow);
   const unlocked = await unlockOrphanLockedTimesheetsForPayroll(db, orphanLocked, billingMode);
 
   const allRefs = await gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(db, pid, ym);
-  const refs = await filterTimesheetRefsByWorkerIds(db, allRefs, allow);
+  let refs = await filterTimesheetRefsByWorkerIds(db, allRefs, allow);
+  if (dateRanges && dateRanges.length > 0) {
+    const ranged: typeof refs = [];
+    for (const ref of refs) {
+      const snap = await getDoc(ref);
+      const ymd = String((snap.data() as { date?: string } | undefined)?.date || '').slice(0, 10);
+      if (dateRanges.some((r) => ymd >= r.startYmd && ymd <= r.endYmd)) ranged.push(ref);
+    }
+    refs = ranged;
+  }
   if (refs.length === 0) return { updated: unlocked };
 
   const { updated } = await applyPoMonthPayrollReadyFlags(db, refs, billingMode);

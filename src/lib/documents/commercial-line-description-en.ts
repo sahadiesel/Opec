@@ -36,8 +36,13 @@ export function translateCommercialNotesToEn(text: string): string {
   return s;
 }
 
+/** เลข PO อยู่ที่หัวเอกสาร — ไม่ใส่ซ้ำหน้าบรรทัด */
+export function stripCommercialLinePoPrefix(text: string): string {
+  return String(text || '').replace(/^PO-\d{4}-\d+\s*[·•\-\u2013\u2014]\s*/i, '');
+}
+
 export function translateCommercialLineDescriptionToEn(text: string): string {
-  let s = text;
+  let s = stripCommercialLinePoPrefix(text);
   if (!s) return s;
 
   const sep = String.raw`[\s·\-\u2013\u2014]*`; // middle dot, hyphen, en/em dash

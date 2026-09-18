@@ -503,6 +503,8 @@ export interface CommercialInvoice {
   customerId: string;
   contractId?: string;
   poId: string;
+  /** หลาย PO ในใบเดียวกัน (ลูกค้ารายเดียวกัน) — poId คือ PO หลัก */
+  sourcePoIds?: string[];
   waveId: string;
   /** อ้างสัญญาเช่าอุปกรณ์ที่ OPEC เป็นผู้ให้เช่า */
   equipmentRentalContractId?: string;

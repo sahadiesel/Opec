@@ -24,6 +24,7 @@ import type {
   PurchaseOrder,
   Quotation,
   QuotationLine,
+  MobCycleBillingReview,
   TripBillingBatch,
   User,
   WaveMonthTimesheetReview,
@@ -51,7 +52,7 @@ import {
   poMonthTimesheetReviewDocId,
   resolvePoMonthPeriodBounds,
 } from '@/lib/timesheet/po-month-timesheet-bridge';
-import { fetchWorkerClosuresForPoMonth } from '@/lib/timesheet/worker-month-closure';
+import { fetchWorkerClosuresForPoMonth, markClosureRangesBilled, releaseClosureRangesBilledByInvoice, stripBilledInvoiceIds } from '@/lib/timesheet/worker-month-closure';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import {
   generateBillingLines,
@@ -60,10 +61,16 @@ import {
 } from '@/lib/services/billing-line-generator';
 import {
   approveTripBillingBatch,
+  isStandbyOnlyClosedTripBatch,
   markTripBatchInvoiced,
   releaseTripBillingBatchAfterInvoiceRemoved,
 } from '@/lib/services/trip-billing-service';
-import { resolveTripMobDemobLocationChoice } from '@/lib/services/trip-mob-demob-billing';
+import {
+  loadTripMobDemobMembers,
+  resolveTripMobDemobLocationChoice,
+  type TripMobDemobLocationOption,
+} from '@/lib/services/trip-mob-demob-billing';
+import { collapseSameLocationMobDemobLines } from '@/lib/commercial/mob-demob-invoice-lines';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 
@@ -111,7 +118,7 @@ function computeCommercialInvoiceVatTotals(
 function mapGeneratedBillingLinesToInvoiceLines(
   lines: GeneratedBillingLine[],
 ): CommercialInvoiceLine[] {
-  return lines.map((l, idx) => ({
+  return collapseSameLocationMobDemobLines(lines).map((l, idx) => ({
     id: newLineId(),
     displayOrder: idx,
     description: l.description,
@@ -574,6 +581,604 @@ export async function createCommercialDraftFromQuotationPoLines(
     auditLinkedIds: linkedIds,
     auditAfterSummary: (invoiceNo) =>
       `สร้างใบแจ้งหนี้ (เรียกเก็บ) ${invoiceNo} จาก ${auditLineSource}`,
+  });
+}
+
+export type InvoiceReadyWorker = {
+  key: string;
+  kind: 'monthly' | 'trip';
+  poId: string;
+  poCode: string;
+  workerId: string;
+  workerName: string;
+  yearMonth: string;
+  tripBatchId?: string;
+  detail: string;
+};
+
+async function detachRangesBilledByInactiveInvoices(
+  db: Firestore,
+  closures: WorkerMonthTimesheetClosure[],
+): Promise<WorkerMonthTimesheetClosure[]> {
+  const ids = new Set<string>();
+  for (const c of closures) {
+    for (const r of c.closedDateRanges ?? []) {
+      const id = String(r.billedInvoiceId || '').trim();
+      if (id) ids.add(id);
+    }
+  }
+  if (ids.size === 0) return closures;
+  const dead = new Set<string>();
+  await Promise.all(
+    [...ids].map(async (id) => {
+      const snap = await getDoc(doc(db, 'commercial_invoices', id));
+      const status = snap.exists() ? String((snap.data() as CommercialInvoice).status || '') : 'MISSING';
+      if (!snap.exists() || status === 'VOID' || status === 'REVISED') dead.add(id);
+    }),
+  );
+  if (dead.size === 0) return closures;
+  try {
+    await stripBilledInvoiceIds(db, closures, dead);
+  } catch {
+    /* ถ้าเขียนกลับไม่ได้ ยังแสดงรายชื่อจากหน่วยความจำ */
+  }
+  return closures.map((c) => ({
+    ...c,
+    closedDateRanges: (c.closedDateRanges ?? []).map((r) => {
+      if (!r.billedInvoiceId || !dead.has(r.billedInvoiceId)) return r;
+      const { billedInvoiceId: _drop, ...rest } = r;
+      return rest;
+    }),
+  }));
+}
+
+function reviewOverlapsYearMonth(review: MobCycleBillingReview, ym: string): boolean {
+  if ((review.spansYearMonths ?? []).includes(ym)) return true;
+  const start = String(review.tripStartDate || review.tripAnchorStartDate || '').slice(0, 7);
+  const end = String(review.tripEndDate || review.tripStartDate || review.tripAnchorStartDate || '').slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(start)) return false;
+  const endYm = /^\d{4}-\d{2}$/.test(end) ? end : start;
+  return start <= ym && endYm >= ym;
+}
+
+async function loadMobReviewsForPo(db: Firestore, poId: string): Promise<MobCycleBillingReview[]> {
+  const snap = await getDocs(query(collection(db, 'mob_cycle_billing_reviews'), where('poId', '==', poId)));
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) } as MobCycleBillingReview));
+}
+
+/** สัญญา/PO แบบ Trip — จับคนที่ส่งรอออกบิลเข้าชุด M1→D1 ไม่สร้างใบแบบรายเดือน */
+async function tripWorkersFromReviews(
+  db: Firestore,
+  po: PurchaseOrder,
+  yearMonth: string,
+  people: Array<{ workerId: string; workerName: string }>,
+): Promise<InvoiceReadyWorker[]> {
+  let reviews = await loadMobReviewsForPo(db, po.id);
+  const ids = new Set(people.map((p) => p.workerId));
+  const hasBatch = reviews.some(
+    (r) => ids.has(r.workerId) && r.status !== 'void' && !!r.tripBillingBatchId && reviewOverlapsYearMonth(r, yearMonth),
+  );
+  if (!hasBatch) {
+    try {
+      const { syncMobCycleBillingReviewsForPo } = await import('@/lib/services/mob-cycle-billing-sync');
+      await syncMobCycleBillingReviewsForPo(db, po);
+      reviews = await loadMobReviewsForPo(db, po.id);
+    } catch {
+      /* ถ้าซิงก์ไม่ได้ ใช้รีวิวที่มีอยู่ */
+    }
+  }
+  const out: InvoiceReadyWorker[] = [];
+  const seen = new Set<string>();
+  for (const person of people) {
+    const rows = reviews.filter(
+      (r) =>
+        r.workerId === person.workerId &&
+        r.status !== 'void' &&
+        r.status !== 'invoiced' &&
+        !!r.tripBillingBatchId &&
+        reviewOverlapsYearMonth(r, yearMonth),
+    );
+    for (const r of rows) {
+      const batchId = r.tripBillingBatchId!;
+      const key = `t|${batchId}|${person.workerId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const start = String(r.tripStartDate || '').slice(0, 10);
+      const end = String(r.tripEndDate || '').slice(0, 10);
+      const detail = start && end ? `Trip ${start.slice(8)}–${end.slice(8)}` : 'Trip';
+      out.push({
+        key,
+        kind: 'trip',
+        poId: po.id,
+        poCode: po.poCode || po.id,
+        workerId: person.workerId,
+        workerName: person.workerName || r.workerNameSnapshot || person.workerId,
+        yearMonth,
+        tripBatchId: batchId,
+        detail,
+      });
+    }
+  }
+  return out;
+}
+
+/** คนที่ส่งรอออกบิลแล้ว และยังไม่มีใบแจ้งหนี้ครอบช่วงนั้น */
+export async function listWorkersReadyForInvoice(
+  db: Firestore,
+  customerId: string,
+  yearMonth: string,
+): Promise<InvoiceReadyWorker[]> {
+  const cid = customerId.trim();
+  const ym = yearMonth.trim();
+  if (!cid || !/^\d{4}-\d{2}$/.test(ym)) return [];
+
+  const poSnap = await getDocs(query(collection(db, 'purchase_orders'), where('customerId', '==', cid)));
+  const pos = poSnap.docs.map((d) => ({ id: d.id, ...(d.data() as object) } as PurchaseOrder));
+  const out: InvoiceReadyWorker[] = [];
+  const modeByPoId = new Map<string, 'TRIP' | 'MONTHLY'>();
+
+  for (const po of pos) {
+    if ((po.poType || 'contract') === 'quotation') continue;
+    const billingMode = await resolveBillingMode(db, po);
+    modeByPoId.set(po.id, billingMode);
+    const closures = await detachRangesBilledByInactiveInvoices(
+      db,
+      await fetchWorkerClosuresForPoMonth(db, po.id, ym),
+    );
+    const readyClosures: WorkerMonthTimesheetClosure[] = [];
+    for (const c of closures) {
+      if (c.status !== 'approved') continue;
+      const ranges = c.closedDateRanges ?? [];
+      const unbilled = ranges.filter((r) => r.billingReleased && !r.billedInvoiceId);
+      if (ranges.length > 0 && unbilled.length === 0) continue;
+      if (ranges.length === 0) {
+        const existing = await listPoMonthCommercialInvoicesForPeriod(db, po.id, `${ym}-01`, `${ym}-31`);
+        if (existing.some((inv) => commercialInvoiceCoversAnyWorker(inv, c.workerId))) continue;
+      }
+      readyClosures.push(c);
+    }
+    if (billingMode === 'TRIP') {
+      if (readyClosures.length > 0) {
+        const tripRows = await tripWorkersFromReviews(
+          db,
+          po,
+          ym,
+          readyClosures.map((c) => ({ workerId: c.workerId, workerName: c.workerName || c.workerId })),
+        );
+        for (const row of tripRows) {
+          if (!out.some((w) => w.key === row.key)) out.push(row);
+        }
+      }
+      continue;
+    }
+    for (const c of readyClosures) {
+      const ranges = c.closedDateRanges ?? [];
+      const unbilled = ranges.filter((r) => r.billingReleased && !r.billedInvoiceId);
+      const detail =
+        unbilled.length > 0
+          ? unbilled.map((r) => (r.startYmd === r.endYmd ? r.startYmd.slice(8) : `${r.startYmd.slice(8)}–${r.endYmd.slice(8)}`)).join(', ')
+          : 'ทั้งเดือน';
+      out.push({
+        key: `m|${po.id}|${c.workerId}|${ym}`,
+        kind: 'monthly',
+        poId: po.id,
+        poCode: po.poCode || po.id,
+        workerId: c.workerId,
+        workerName: c.workerName || c.workerId,
+        yearMonth: ym,
+        detail,
+      });
+    }
+  }
+
+  try {
+    const tripSnap = await getDocs(
+      query(collection(db, 'trip_billing_batches'), where('customerId', '==', cid), where('status', '==', 'approved')),
+    );
+    for (const d of tripSnap.docs) {
+      const batch = { id: d.id, ...(d.data() as object) } as TripBillingBatch;
+      if (batch.sourceCommercialInvoiceId) continue;
+      const start = String(batch.periodStart || '').slice(0, 7);
+      const end = String(batch.periodEnd || batch.periodStart || '').slice(0, 7);
+      if (start !== ym && end !== ym) continue;
+      const po = pos.find((p) => p.id === batch.poId);
+      if (modeByPoId.get(batch.poId) !== 'TRIP') continue;
+      const ids = batch.memberWorkerIds ?? [];
+      const names = batch.memberWorkerNames ?? [];
+      ids.forEach((workerId, i) => {
+        const key = `t|${batch.id}|${workerId}`;
+        if (out.some((w) => w.key === key)) return;
+        out.push({
+          key,
+          kind: 'trip',
+          poId: batch.poId,
+          poCode: po?.poCode || batch.poId,
+          workerId,
+          workerName: names[i] || workerId,
+          yearMonth: ym,
+          tripBatchId: batch.id,
+          detail: 'Trip',
+        });
+      });
+    }
+  } catch {
+    /* index อาจยังไม่มี — ราย monthly ยังใช้ได้ */
+  }
+
+  const billedTripWorkers = new Set<string>();
+  try {
+    const invSnap = await getDocs(query(collection(db, 'commercial_invoices'), where('customerId', '==', cid)));
+    for (const d of invSnap.docs) {
+      const inv = d.data() as CommercialInvoice;
+      if (inv.status === 'VOID' || inv.status === 'REVISED') continue;
+      const ps = String(inv.periodStart || '').slice(0, 7);
+      const pe = String(inv.periodEnd || '').slice(0, 7);
+      if (ps > ym || pe < ym) continue;
+      for (const wid of inv.coveredWorkerIds ?? []) billedTripWorkers.add(String(wid));
+    }
+  } catch {
+    /* ถ้าอ่านใบเก่าไม่ได้ ยังแสดงรายชื่อ trip */
+  }
+
+  const visible = out.filter((w) => w.kind !== 'trip' || !billedTripWorkers.has(w.workerId));
+  visible.sort((a, b) => a.workerName.localeCompare(b.workerName, 'th', { sensitivity: 'base' }));
+  return visible;
+}
+
+export async function nextTripMobLocationPrompt(
+  db: Firestore,
+  workers: InvoiceReadyWorker[],
+  decidedBatchIds: readonly string[],
+  keys: Record<string, string>,
+): Promise<
+  | { done: true; keys: Record<string, string> }
+  | {
+      done: false;
+      batchId: string;
+      label: string;
+      options: TripMobDemobLocationOption[];
+      keys: Record<string, string>;
+    }
+> {
+  const decided = new Set(decidedBatchIds);
+  const nextKeys = { ...keys };
+  const trip = workers.filter((w) => w.kind === 'trip' && w.tripBatchId);
+  const batchIds = [...new Set(trip.map((w) => w.tripBatchId!))];
+  for (const batchId of batchIds) {
+    if (decided.has(batchId)) continue;
+    const snap = await getDoc(doc(db, 'trip_billing_batches', batchId));
+    if (!snap.exists()) throw new Error('ไม่พบชุดวางบิล Trip');
+    const batch = { id: snap.id, ...(snap.data() as object) } as TripBillingBatch;
+    const selected = new Set(trip.filter((w) => w.tripBatchId === batchId).map((w) => w.workerId));
+    const members = await loadTripMobDemobMembers(db, batch.memberMobCycleIds);
+    const cycleIds = members.filter((m) => selected.has(m.workerId)).map((m) => m.mobCycleId);
+    const ids = cycleIds.length > 0 ? cycleIds : batch.memberMobCycleIds;
+    if (await isStandbyOnlyClosedTripBatch(db, ids)) {
+      decided.add(batchId);
+      continue;
+    }
+    const poSnap = await getDoc(doc(db, 'purchase_orders', batch.poId));
+    const contractId = poSnap.exists() ? String((poSnap.data() as PurchaseOrder).contractId || '') : '';
+    if (!contractId) {
+      decided.add(batchId);
+      continue;
+    }
+    const choice = await resolveTripMobDemobLocationChoice(db, contractId, ids);
+    if (choice.kind === 'error') throw new Error(choice.message);
+    if (choice.kind === 'auto') nextKeys[batchId] = choice.mobLocationKey;
+    if (choice.kind === 'prompt') {
+      const poCode = poSnap.exists() ? String((poSnap.data() as PurchaseOrder).poCode || batch.poId) : batch.poId;
+      return {
+        done: false,
+        batchId,
+        label: `${poCode} · ${batch.tripAnchorStartDate || batch.periodStart}`,
+        options: choice.options,
+        keys: nextKeys,
+      };
+    }
+    decided.add(batchId);
+  }
+  return { done: true, keys: nextKeys };
+}
+
+export async function createCommercialInvoiceForReadyWorkers(
+  db: Firestore,
+  params: {
+    customerId: string;
+    workers: InvoiceReadyWorker[];
+    issueDate: string;
+    actor: User;
+    /** จุด Mob/Demob ต่อชุด Trip — ใช้เมื่อสัญญาคิดค่า MOB ไป-กลับ */
+    tripMobDemobByBatch?: Record<string, string>;
+  },
+): Promise<{ id: string; invoiceNo: string }> {
+  const workersInput = params.workers;
+  if (workersInput.length === 0) throw new Error('เลือกคนงานอย่างน้อย 1 คน');
+  const poIds = [...new Set(workersInput.map((w) => w.poId))];
+  const poById = new Map<string, PurchaseOrder>();
+  for (const poId of poIds) {
+    const snap = await getDoc(doc(db, 'purchase_orders', poId));
+    if (!snap.exists()) throw new Error('ไม่พบ PO');
+    const po = { id: snap.id, ...(snap.data() as object) } as PurchaseOrder;
+    if (po.customerId !== params.customerId) {
+      throw new Error('รวมในใบแจ้งหนี้เดียวกันได้เฉพาะลูกค้ารายเดียวกัน');
+    }
+    assertPurchaseOrderActiveForInvoice(po);
+    poById.set(poId, po);
+  }
+
+  const modeByPo = new Map<string, 'TRIP' | 'MONTHLY'>();
+  for (const po of poById.values()) {
+    modeByPo.set(po.id, await resolveBillingMode(db, po));
+  }
+  if (new Set(modeByPo.values()).size > 1) {
+    throw new Error('รวมในใบเดียวกันไม่ได้ — มีทั้ง PO ที่วางบิลแบบ Trip และแบบรายเดือน');
+  }
+  const contractMode = modeByPo.values().next().value ?? 'MONTHLY';
+  let workers = workersInput;
+  if (contractMode === 'TRIP') {
+    const normalized: InvoiceReadyWorker[] = [];
+    const seen = new Set<string>();
+    for (const w of workersInput) {
+      if (w.kind === 'trip' && w.tripBatchId) {
+        if (!seen.has(w.key)) {
+          seen.add(w.key);
+          normalized.push(w);
+        }
+        continue;
+      }
+      const po = poById.get(w.poId)!;
+      const rows = await tripWorkersFromReviews(db, po, w.yearMonth, [
+        { workerId: w.workerId, workerName: w.workerName },
+      ]);
+      if (rows.length === 0) {
+        throw new Error(
+          `${po.poCode || po.id} วางบิลแบบ Trip — ไม่พบรอบเดินทางของ ${w.workerName} จึงสร้างแบบรายเดือนไม่ได้`,
+        );
+      }
+      for (const row of rows) {
+        if (seen.has(row.key)) continue;
+        seen.add(row.key);
+        normalized.push(row);
+      }
+    }
+    workers = normalized;
+  }
+
+  const lines: GeneratedBillingLine[] = [];
+  const warnings: string[] = [];
+  let timesheetCount = 0;
+  let periodStart = '9999-99-99';
+  let periodEnd = '0000-00-00';
+  const monthlyMarks: Array<{ poId: string; yearMonth: string; workerIds: string[] }> = [];
+
+  const monthly = workers.filter((w) => w.kind === 'monthly');
+  const byPoMonth = new Map<string, InvoiceReadyWorker[]>();
+  for (const w of monthly) {
+    const k = `${w.poId}|${w.yearMonth}`;
+    const list = byPoMonth.get(k) ?? [];
+    list.push(w);
+    byPoMonth.set(k, list);
+  }
+  for (const [k, group] of byPoMonth) {
+    const [poId, ym] = k.split('|');
+    const closures = await detachRangesBilledByInactiveInvoices(
+      db,
+      await fetchWorkerClosuresForPoMonth(db, poId!, ym!),
+    );
+    const ranges = closures
+      .filter((c) => group.some((g) => g.workerId === c.workerId))
+      .flatMap((c) => (c.closedDateRanges ?? []).filter((r) => r.billingReleased && !r.billedInvoiceId));
+    const start = ranges.length > 0 ? ranges.reduce((m, r) => (r.startYmd < m ? r.startYmd : m), ranges[0]!.startYmd) : `${ym}-01`;
+    const end = ranges.length > 0 ? ranges.reduce((m, r) => (r.endYmd > m ? r.endYmd : m), ranges[0]!.endYmd) : `${ym}-31`;
+    if (start < periodStart) periodStart = start;
+    if (end > periodEnd) periodEnd = end;
+    const gen = await generateBillingLines(db, poId!, start, end, undefined, {
+      workerIds: group.map((g) => g.workerId),
+      dateRanges: ranges.length > 0 ? ranges : undefined,
+    });
+    for (const line of gen.lines) lines.push(line);
+    warnings.push(...gen.warnings);
+    timesheetCount += gen.timesheetCount;
+    monthlyMarks.push({ poId: poId!, yearMonth: ym!, workerIds: group.map((g) => g.workerId) });
+  }
+
+  const trip = workers.filter((w) => w.kind === 'trip' && w.tripBatchId);
+  const byBatch = new Map<string, InvoiceReadyWorker[]>();
+  for (const w of trip) {
+    const list = byBatch.get(w.tripBatchId!) ?? [];
+    list.push(w);
+    byBatch.set(w.tripBatchId!, list);
+  }
+  const tripCycleIds: string[] = [];
+  let tripLocationKey: string | undefined;
+  let singleTripBatchId: string | undefined;
+  for (const [batchId, group] of byBatch) {
+    const snap = await getDoc(doc(db, 'trip_billing_batches', batchId));
+    if (!snap.exists()) throw new Error('ไม่พบชุดวางบิล Trip');
+    const batch = { id: snap.id, ...(snap.data() as object) } as TripBillingBatch;
+    const start = batch.periodStart;
+    const end = batch.periodEnd || batch.periodStart;
+    if (start < periodStart) periodStart = start;
+    if (end > periodEnd) periodEnd = end;
+    const selected = new Set(group.map((g) => g.workerId));
+    const members = await loadTripMobDemobMembers(db, batch.memberMobCycleIds);
+    const cycleIds = members.filter((m) => selected.has(m.workerId)).map((m) => m.mobCycleId);
+    const ids = cycleIds.length > 0 ? cycleIds : batch.memberMobCycleIds;
+    let locationKey = (params.tripMobDemobByBatch?.[batchId] || '').trim();
+    const standbyOnly = await isStandbyOnlyClosedTripBatch(db, ids);
+    if (!standbyOnly) {
+      const contractId = poById.get(batch.poId)?.contractId || '';
+      if (contractId && !locationKey) {
+        const choice = await resolveTripMobDemobLocationChoice(db, contractId, ids);
+        if (choice.kind === 'error') throw new Error(choice.message);
+        if (choice.kind === 'prompt') throw new Error('ต้องเลือกจุด Mob/Demob ก่อนสร้างใบแจ้งหนี้');
+        if (choice.kind === 'auto') locationKey = choice.mobLocationKey;
+      }
+    }
+    const gen = await generateBillingLinesForMobCycles(
+      db,
+      batch.poId,
+      ids,
+      start,
+      end,
+      locationKey ? { tripMobDemobLocationKey: locationKey } : undefined,
+    );
+    if (gen.lines.length === 0 && gen.warnings.some((w) => w.includes('Mob/Demob') || w.includes('ค่า MOB'))) {
+      throw new Error(gen.warnings.find((w) => w.includes('MOB') || w.includes('Mob')) || 'สร้างบรรทัด Trip ไม่ได้');
+    }
+    for (const line of gen.lines) {
+      lines.push(line);
+    }
+    warnings.push(...gen.warnings);
+    timesheetCount += gen.timesheetCount;
+    tripCycleIds.push(...ids);
+    if (locationKey) tripLocationKey = tripLocationKey && tripLocationKey !== locationKey ? undefined : locationKey;
+    singleTripBatchId = singleTripBatchId === undefined ? batchId : '';
+  }
+
+  if (lines.length === 0) {
+    throw new Error('ไม่มีรายการจาก timesheet ของคนที่เลือก — ตรวจว่าส่งรอออกบิลแล้วและมี readyForBilling');
+  }
+
+  const primary = poById.get(poIds[0]!)!;
+  const vatPercent = await resolveVatPercent(db, primary.customerId, primary.contractId);
+  const amountBeforeTax = roundMoney(lines.reduce((s, l) => s + l.amount, 0));
+  const totals = computeCommercialInvoiceVatTotals(amountBeforeTax, vatPercent);
+  const names = [...new Set(workers.map((w) => w.workerName))].join(', ');
+
+  return writeCommercialDraftInvoiceCore(db, params.actor, {
+    fields: {
+      customerId: params.customerId,
+      contractId: primary.contractId || undefined,
+      poId: primary.id,
+      sourcePoIds: poIds,
+      waveId: contractMode === 'TRIP' ? TRIP_BILLING_WAVE_PLACEHOLDER : PO_MONTH_WAVE_PLACEHOLDER,
+      waveCode: poIds.map((id) => poById.get(id)?.poCode || id).join(', '),
+      periodStart,
+      periodEnd,
+      issueDate: params.issueDate,
+      currency: 'THB',
+      vatPercent,
+      ...totals,
+      withholdingTaxAmount: 0,
+      lines: mapGeneratedBillingLinesToInvoiceLines(lines),
+      generationWarnings: [...new Set(warnings)],
+      timesheetCount,
+      billingMode: contractMode,
+      coveredWorkerIds: normalizeWorkerIdSet(workers.map((w) => w.workerId)),
+      ...(tripCycleIds.length > 0 ? { memberMobCycleIds: [...new Set(tripCycleIds)] } : {}),
+      ...(trip.length > 0 ? { memberWorkerNames: [...new Set(trip.map((w) => w.workerName))] } : {}),
+      ...(trip.length > 0 && monthly.length === 0 && singleTripBatchId
+        ? { sourceTripBillingBatchId: singleTripBatchId }
+        : {}),
+      ...(tripLocationKey ? { tripMobDemobLocationKey: tripLocationKey } : {}),
+      notes: names,
+    },
+    auditEntityLabel: (invoiceNo) => `${invoiceNo} (${workers.length} คน)`,
+    auditLinkedIds: [params.customerId, ...poIds],
+    auditAfterSummary: (invoiceNo) => `สร้างใบแจ้งหนี้ ${invoiceNo} จาก timesheet ${workers.length} คน`,
+    afterPersist: async ({ id }) => {
+      for (const mark of monthlyMarks) {
+        await markClosureRangesBilled(db, { ...mark, invoiceId: id, actor: params.actor });
+      }
+      for (const batchId of byBatch.keys()) {
+        const group = byBatch.get(batchId) ?? [];
+        const snap = await getDoc(doc(db, 'trip_billing_batches', batchId));
+        if (!snap.exists()) continue;
+        const batch = { id: snap.id, ...(snap.data() as object) } as TripBillingBatch;
+        const selected = new Set(group.map((g) => g.workerId));
+        const all = (batch.memberWorkerIds ?? []).every((wid) => selected.has(wid));
+        if (all) await markTripBatchInvoiced(db, batchId, id);
+      }
+    },
+  });
+}
+
+export async function createCommercialInvoiceForQuotationPos(
+  db: Firestore,
+  params: {
+    customerId: string;
+    poIds: string[];
+    periodStart: string;
+    periodEnd: string;
+    issueDate: string;
+    actor: User;
+  },
+): Promise<{ id: string; invoiceNo: string }> {
+  const poIds = [...new Set(params.poIds.map((id) => id.trim()).filter(Boolean))];
+  if (poIds.length === 0) throw new Error('เลือก PO อย่างน้อย 1 ใบ');
+  const lines: CommercialInvoiceLine[] = [];
+  const warnings: string[] = ['สร้างจาก PO ใบเสนอราคา — ไม่ใช้ timesheet'];
+  let customerId = '';
+  let contractId: string | undefined;
+  const codes: string[] = [];
+
+  for (const poId of poIds) {
+    const poSnap = await getDoc(doc(db, 'purchase_orders', poId));
+    if (!poSnap.exists()) throw new Error('ไม่พบ PO');
+    const po = { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder;
+    if ((po.poType || 'contract') !== 'quotation') {
+      throw new Error(`${po.poCode || poId} ไม่ใช่ PO จากใบเสนอราคา`);
+    }
+    if (!customerId) customerId = po.customerId;
+    if (po.customerId !== customerId || po.customerId !== params.customerId) {
+      throw new Error('รวมในใบแจ้งหนี้เดียวกันได้เฉพาะ PO ของลูกค้ารายเดียวกัน');
+    }
+    assertPurchaseOrderActiveForInvoice(po);
+    contractId = contractId || po.contractId || undefined;
+    codes.push(po.poCode || poId);
+    const linesSnap = await getDocs(collection(db, 'purchase_orders', poId, 'po_lines'));
+    const poLines = linesSnap.docs
+      .map((d) => ({ ...(d.data() as Omit<POLine, 'id'>), id: d.id }))
+      .filter((l) => l.status !== 'cancelled');
+    if (poLines.length === 0) throw new Error(`${po.poCode || poId} ไม่มีรายการ PO Line`);
+    for (const line of poLines) {
+      const qty = Math.max(0, Number(line.quantity) || 0);
+      const unit = roundMoney(sellSnapshotForWorkMode(line, po.poWorkMode ?? 'OFFSHORE'));
+      const amount = roundMoney(qty * unit);
+      const loc = (line.workLocation || '').trim() || 'PO Line';
+      const prefix = poIds.length > 1 ? `${po.poCode || poId} · ` : '';
+      lines.push({
+        id: newLineId(),
+        displayOrder: lines.length,
+        description: `${prefix}${loc}`,
+        positionId: line.positionId,
+        quantity: qty,
+        unitPrice: unit,
+        amount,
+        lineSource: 'po_line',
+      });
+    }
+  }
+
+  const amountBeforeTax = roundMoney(lines.reduce((s, l) => s + l.amount, 0));
+  if (amountBeforeTax <= 0) throw new Error('ยอดรวมเป็น 0 — ตรวจราคา/จำนวนใน PO Line');
+  const vatPercent = await resolveVatPercent(db, customerId, contractId);
+  const totals = computeCommercialInvoiceVatTotals(amountBeforeTax, vatPercent);
+
+  return writeCommercialDraftInvoiceCore(db, params.actor, {
+    fields: {
+      customerId,
+      contractId,
+      poId: poIds[0]!,
+      sourcePoIds: poIds,
+      waveId: QUOTATION_PO_WAVE_PLACEHOLDER,
+      waveCode: codes.join(', '),
+      periodStart: params.periodStart,
+      periodEnd: params.periodEnd,
+      issueDate: params.issueDate,
+      currency: 'THB',
+      vatPercent,
+      ...totals,
+      withholdingTaxAmount: 0,
+      lines,
+      generationWarnings: warnings,
+      timesheetCount: 0,
+    },
+    auditEntityLabel: (invoiceNo) => `${invoiceNo} (PO ใบเสนอราคา ${poIds.length} ใบ)`,
+    auditLinkedIds: [customerId, ...poIds],
+    auditAfterSummary: (invoiceNo) => `สร้างใบแจ้งหนี้ ${invoiceNo} จาก PO ใบเสนอราคา ${codes.join(', ')}`,
   });
 }
 
@@ -1566,6 +2171,27 @@ function normalizeDraftLines(lines: CommercialInvoiceLine[]): CommercialInvoiceL
   });
 }
 
+function yearMonthsCovering(periodStart?: string | null, periodEnd?: string | null): string[] {
+  const start = String(periodStart || '').slice(0, 7);
+  const end = String(periodEnd || periodStart || '').slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(start)) return [];
+  if (!/^\d{4}-\d{2}$/.test(end) || start === end) return [start];
+  const out: string[] = [];
+  let y = Number(start.slice(0, 4));
+  let m = Number(start.slice(5, 7));
+  for (let i = 0; i < 36; i++) {
+    const key = `${y}-${String(m).padStart(2, '0')}`;
+    out.push(key);
+    if (key === end) break;
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  return out;
+}
+
 /** ยกเลิกใบแจ้งหนี้เมื่อคำนวณผิดหรือต้องสร้างใหม่ — ไม่ลบเอกสาร (VOID) */
 export async function voidCommercialInvoice(
   db: Firestore,
@@ -1576,9 +2202,9 @@ export async function voidCommercialInvoice(
   const snap = await getDoc(ref);
   if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
   const cur = snap.data() as CommercialInvoice;
-  if (cur.status === 'VOID') return;
+  const alreadyVoid = cur.status === 'VOID';
 
-  const taxId = String(cur.linkedTaxInvoiceId || '').trim();
+  const taxId = alreadyVoid ? '' : String(cur.linkedTaxInvoiceId || '').trim();
   if (taxId) {
     const taxSnap = await getDoc(doc(db, 'tax_invoices', taxId));
     if (taxSnap.exists()) {
@@ -1592,33 +2218,57 @@ export async function voidCommercialInvoice(
     }
   }
 
-  const now = Date.now();
-  await updateDoc(
-    ref,
-    sanitizeFirestorePayload({
-      status: 'VOID' as const,
-      linkedTaxInvoiceId: deleteField(),
-      updatedAt: now,
-      updatedByUid: actor.id,
-      updatedByName: actor.displayName || actor.email || actor.id,
-    }),
-  );
+  if (!alreadyVoid) {
+    const now = Date.now();
+    await updateDoc(
+      ref,
+      sanitizeFirestorePayload({
+        status: 'VOID' as const,
+        linkedTaxInvoiceId: deleteField(),
+        updatedAt: now,
+        updatedByUid: actor.id,
+        updatedByName: actor.displayName || actor.email || actor.id,
+      }),
+    );
 
-  await writeAuditLog(db, actor, {
-    actionType: 'UPDATE',
-    entityType: 'CommercialInvoice',
-    entityId: invoiceId,
-    entityLabel: `${cur.invoiceNo} → ยกเลิก`,
-    sourceModule: 'commercial_invoices',
-    linkedIds: [cur.customerId, cur.poId, cur.waveId],
-    afterSummary:
-      cur.status === 'ISSUED'
-        ? 'ยกเลิกใบแจ้งหนี้ที่ยืนยันแล้ว (ยังไม่มีใบกำกับภาษีที่ใช้งาน / ยกเลิกใบกำกับแล้ว)'
-        : 'ยกเลิกใบแจ้งหนี้ (รอสร้างใหม่จากงวด / PO)',
-  });
+    await writeAuditLog(db, actor, {
+      actionType: 'UPDATE',
+      entityType: 'CommercialInvoice',
+      entityId: invoiceId,
+      entityLabel: `${cur.invoiceNo} → ยกเลิก`,
+      sourceModule: 'commercial_invoices',
+      linkedIds: [cur.customerId, cur.poId, cur.waveId],
+      afterSummary:
+        cur.status === 'ISSUED'
+          ? 'ยกเลิกใบแจ้งหนี้ที่ยืนยันแล้ว (ยังไม่มีใบกำกับภาษีที่ใช้งาน / ยกเลิกใบกำกับแล้ว)'
+          : 'ยกเลิกใบแจ้งหนี้ (รอสร้างใหม่จากงวด / PO)',
+    });
+  }
 
   if (cur.sourceTripBillingBatchId) {
     await releaseTripBillingBatchAfterInvoiceRemoved(db, cur.sourceTripBillingBatchId);
+  }
+
+  const poIds = [...new Set([...(cur.sourcePoIds ?? []), cur.poId].map((id) => String(id || '').trim()).filter(Boolean))];
+  const yearMonths = yearMonthsCovering(cur.periodStart, cur.periodEnd);
+  if (poIds.length > 0 && yearMonths.length > 0) {
+    await releaseClosureRangesBilledByInvoice(db, {
+      poIds,
+      yearMonths,
+      workerIds: cur.coveredWorkerIds,
+      invoiceId,
+      actor,
+    });
+  }
+
+  const scanMonths =
+    yearMonths.length > 0 ? yearMonths : yearMonthsCovering(String(cur.issueDate || ''), String(cur.issueDate || ''));
+  for (const ym of scanMonths) {
+    const snap = await getDocs(
+      query(collection(db, 'worker_month_timesheet_closures'), where('yearMonth', '==', ym)),
+    );
+    const found = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as WorkerMonthTimesheetClosure);
+    await stripBilledInvoiceIds(db, found, new Set([invoiceId]));
   }
 }
 
@@ -1744,7 +2394,7 @@ export async function regenerateCommercialDraftInvoiceFromTimesheets(
   }
 
   const manualLines = (cur.lines ?? []).filter((l) => l.lineSource === 'manual');
-  const timesheetLines: CommercialInvoiceLine[] = gen.lines.map((l, idx) => ({
+  const timesheetLines: CommercialInvoiceLine[] = collapseSameLocationMobDemobLines(gen.lines).map((l, idx) => ({
     id: newLineId(),
     displayOrder: idx,
     description: l.description,

@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { Input } from '@/components/ui/input';
+import { NameTitleSelect } from '@/components/hr/name-title-select';
 import { Worker, ReadinessStatus, User, Position, DailyTimesheet, Assignment, WorkerStatus, Customer } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { 
@@ -169,6 +170,7 @@ function getInitialNewWorker(): Partial<Worker> {
     workerCode: getPreviewPattern('worker') ?? '',
     firstName: '',
     lastName: '',
+    nameTitle: '',
     thaiNationalId: '',
     currentPositionId: '',
     workerStatus: 'AVAILABLE',
@@ -785,6 +787,13 @@ export default function WorkersPage() {
                       <Label>รหัสคนงาน (Worker Code)</Label>
                       <Input value={newWorker.workerCode ?? ''} disabled className="bg-muted font-mono font-bold text-primary" />
                       <p className="text-[10px] text-muted-foreground italic">* ระบบจะออกรหัสจริงให้อัตโนมัติเมื่อกดบันทึก</p>
+                    </div>
+                    <div className="grid gap-2">
+                      <Label>คำนำหน้าชื่อ</Label>
+                      <NameTitleSelect
+                        value={newWorker.nameTitle ?? ''}
+                        onChange={(nameTitle) => setNewWorker({ ...newWorker, nameTitle })}
+                      />
                     </div>
                     <div className="grid gap-2">
                       <Label>ชื่อ (First Name)</Label>

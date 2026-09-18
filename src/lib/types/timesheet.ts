@@ -192,6 +192,18 @@ export interface WorkerMonthTimesheetClosure {
   deferredNote?: string;
   deferredAt?: number;
   closureBatchNo?: number;
+  /**
+   * ช่วงวันที่ปิดงวดจ่ายแล้วในเดือนนี้ — ปิดได้หลายรอบ
+   * วันที่อยู่นอกช่วงยังแก้และปิดงวดรอบถัดไปได้
+   * ไม่มีฟิลด์ = ข้อมูลเก่า ล็อกทั้งเดือน
+   */
+  closedDateRanges?: Array<{
+    startYmd: string;
+    endYmd: string;
+    billingReleased?: boolean;
+    /** ออกใบแจ้งหนี้แล้ว — ช่วงที่ยังไม่มีค่านี้ส่งออกบิลรอบถัดไปได้ */
+    billedInvoiceId?: string;
+  }>;
   entryLockedAt?: number;
   entryLockedByUserId?: string;
   entryLockedByName?: string;

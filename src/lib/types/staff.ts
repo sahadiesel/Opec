@@ -12,6 +12,12 @@ export interface OfficeStaff {
   id: string;
   staffCode: string;
   fullName: string;
+  /** คำนำหน้าสำหรับนำส่งประกันสังคม — นาย / นาง / นางสาว */
+  nameTitle?: string;
+  /** ชื่อ สำหรับไฟล์นำส่ง สปส. — แยกจาก fullName */
+  firstName?: string;
+  /** นามสกุล สำหรับไฟล์นำส่ง สปส. */
+  lastName?: string;
   nickname?: string;
   /** เบอร์ติดต่อ */
   phone?: string;
@@ -80,6 +86,10 @@ export interface ExecutivePayrollStaff {
   id: string;
   staffCode: string;
   fullName: string;
+  /** คำนำหน้าสำหรับนำส่งประกันสังคม — นาย / นาง / นางสาว */
+  nameTitle?: string;
+  firstName?: string;
+  lastName?: string;
   department: string;
   positionTitle: string;
   monthlySalary: number;

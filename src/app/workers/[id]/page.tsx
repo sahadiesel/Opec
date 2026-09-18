@@ -4,8 +4,17 @@ import { useState, use, useEffect, useMemo, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Save,
   ArrowLeft,
@@ -33,6 +42,7 @@ import { sanitizeFirestorePayload } from '@/lib/utils';
 import { isStoredExpiryPast } from '@/lib/date-thai';
 import type { WorkerNotReadyReasonCode } from '@/lib/hr/worker-not-ready-reason';
 import { formatWorkerNotReadyReasonDisplay } from '@/lib/hr/worker-not-ready-reason';
+import { describeWorkerRateEdit } from '@/lib/hr/worker-rate-edit-guard';
 import {
   Worker,
   WorkerCertificate,
@@ -238,6 +248,8 @@ function WorkerDetailContent({ id }: { id: string }) {
 
   // --- UI state ---
   const [isEditing, setIsEditing] = useState(false);
+  const [rateEditNotice, setRateEditNotice] = useState<ReturnType<typeof describeWorkerRateEdit>>(null);
+  const [rateEditSaving, setRateEditSaving] = useState(false);
   const [editedWorker, setEditedWorker] = useState<Partial<Worker>>({});
   const [activateLoginBusy, setActivateLoginBusy] = useState(false);
 
@@ -374,15 +386,7 @@ function WorkerDetailContent({ id }: { id: string }) {
     }
   };
 
-  const handleSaveMaster = () => {
-    if (!canEditWorker) {
-      toast({
-        variant: 'destructive',
-        title: 'ไม่มีสิทธิ์แก้ไข',
-        description: 'ทะเบียนคนงานแก้ได้เฉพาะ HR Manager / Admin ตามนโยบายสิทธิ์',
-      });
-      return;
-    }
+  const persistWorkerMaster = () => {
     if (!workerRef) return;
     const base: Partial<Worker> & { updatedAt: number } = { ...editedWorker, updatedAt: Date.now() };
     if (!canViewLaborCost) {
@@ -396,9 +400,11 @@ function WorkerDetailContent({ id }: { id: string }) {
       delete base.bankAccountNumber;
     }
     const payload = sanitizeFirestorePayload(base);
+    setRateEditSaving(true);
     updateDoc(workerRef, payload)
       .then(() => {
         setIsEditing(false);
+        setRateEditNotice(null);
         calculateAndStoreReadiness();
         toast({ title: 'บันทึกสำเร็จ', description: 'ข้อมูลประวัติคนงานถูกอัปเดตแล้ว' });
       })
@@ -411,7 +417,34 @@ function WorkerDetailContent({ id }: { id: string }) {
             ? 'สิทธิ์ไม่เพียงพอ (Firestore) — ต้องใช้บัญชี HR/Operations ที่อนุญาตแก้ไขทะเบียนคนงาน'
             : msg,
         });
+      })
+      .finally(() => setRateEditSaving(false));
+  };
+
+  const handleSaveMaster = () => {
+    if (!canEditWorker) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีสิทธิ์แก้ไข',
+        description: 'ทะเบียนคนงานแก้ได้เฉพาะ HR Manager / Admin ตามนโยบายสิทธิ์',
       });
+      return;
+    }
+    if (!workerRef || !worker) return;
+    const openAssignmentCount = (workerMobilizations ?? []).filter((a) => {
+      const s = a.deploymentStatus;
+      return s !== 'DEMOBILIZED' && s !== 'CLOSED';
+    }).length;
+    const notice = describeWorkerRateEdit({
+      before: worker,
+      after: editedWorker,
+      openAssignmentCount,
+    });
+    if (notice) {
+      setRateEditNotice(notice);
+      return;
+    }
+    persistWorkerMaster();
   };
 
   const handleReadinessManualHoldChange = (
@@ -905,6 +938,29 @@ function WorkerDetailContent({ id }: { id: string }) {
             />
           </TabsContent>
         </Tabs>
+        <AlertDialog open={rateEditNotice !== null} onOpenChange={(open) => !open && !rateEditSaving && setRateEditNotice(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{rateEditNotice?.title}</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-2 text-sm text-muted-foreground">
+                  <p>การแก้นี้ไม่เขียนทับวันที่ลงไว้แล้ว ตรวจให้ครบก่อนยืนยัน</p>
+                  <ul className="list-disc space-y-1 pl-4">
+                    {(rateEditNotice?.bullets ?? []).map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={rateEditSaving}>ยกเลิก</AlertDialogCancel>
+              <Button type="button" disabled={rateEditSaving} onClick={() => persistWorkerMaster()}>
+                ยืนยันและบันทึก
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppShell>
   );

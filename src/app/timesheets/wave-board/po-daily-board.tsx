@@ -2533,6 +2533,14 @@ export function PoDailyBoardCard({
                       </>
                     )}
                   </p>
+                  <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs leading-relaxed text-amber-950 dark:text-amber-100">
+                    <p className="font-semibold text-foreground">ผลต่อค่าแรงและบิล</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-4">
+                      <li>วันถึงวันที่จบ ระบบถ่ายแพ็กค่าแรงไว้ — แก้ตำแหน่งหรือค่าแรงในทะเบียนทีหลังไม่ทับวันเหล่านี้</li>
+                      <li>บิลยังคิดตามบรรทัด PO ของแต่ละวัน ไม่เปลี่ยนเพราะจบงาน</li>
+                      <li>ถ้าครึ่งเดือนหลังคนละตำแหน่งหรือคนละบริษัท ต้อง remob หรือมอบหมายใหม่ก่อนลงวันถัดไป อย่าแก้แค่ทะเบียน</li>
+                    </ul>
+                  </div>
                 </div>
               </div>
             </AlertDialogDescription>

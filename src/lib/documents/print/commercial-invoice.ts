@@ -16,7 +16,9 @@ import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
 import { amountToEnglishBahtText } from '@/lib/documents/english-baht-text';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
+import { collapseSameLocationMobDemobLines } from '@/lib/commercial/mob-demob-invoice-lines';
 import {
+  stripCommercialLinePoPrefix,
   translateCommercialLineDescriptionToEn,
   translateCommercialNotesToEn,
   translateCommercialWaveCodeToEn,
@@ -205,11 +207,13 @@ export function buildCommercialInvoicePrintHtml(params: {
     detailLines: customerPartyDetailLines(customer, L),
   });
 
-  const sortedCommercialForPrint = sortCommercialInvoiceLinesForDisplay(lines);
+  const sortedCommercialForPrint = sortCommercialInvoiceLinesForDisplay(
+    collapseSameLocationMobDemobLines(lines),
+  );
   const lineRows = sortedCommercialForPrint
     .map((line, idx) => {
       const sub = line.workerName ? ` (${line.workerName})` : '';
-      const rawDesc = (line.description || '—') + sub;
+      const rawDesc = stripCommercialLinePoPrefix(line.description || '—') + sub;
       const descText = L === 'en' ? translateCommercialLineDescriptionToEn(rawDesc) : rawDesc;
       const desc = escapeHtmlDoc(descText);
       const qty = Number(line.quantity).toLocaleString(L === 'en' ? 'en-GB' : 'th-TH');
@@ -306,7 +310,9 @@ export function buildCommercialInvoicePrintHtml(params: {
   ${totalsHtml}
   ${statusNote}`;
   const rightSignName =
-    invoice.status === 'ISSUED' && invoice.customerApprovedByName?.trim()
+    invoice.status === 'ISSUED' &&
+    invoice.customerApprovalSource === 'CLIENT_PORTAL' &&
+    invoice.customerApprovedByName?.trim()
       ? invoice.customerApprovedByName.trim()
       : '—';
   const confirmLine =
@@ -318,6 +324,12 @@ export function buildCommercialInvoicePrintHtml(params: {
     right: { roleLine: printT(L, 'signCustomerConfirm'), name: rightSignName },
     belowHtml: confirmLine,
   });
+  const isDraftPrint = invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER';
+  const watermarkHtml = isDraftPrint
+    ? `<div class="sd-status-watermark" aria-hidden="true"><span class="sd-status-watermark-text">${escapeHtmlDoc(printT(L, 'docDraft'))}</span></div>`
+    : invoice.status === 'VOID'
+      ? `<div class="sd-status-watermark sd-status-watermark--cancel" aria-hidden="true"><span class="sd-status-watermark-text">${escapeHtmlDoc(printT(L, 'docCancelled'))}</span></div>`
+      : '';
   return assembleStandardPrintPageHtml({
     printedAtMs,
     headerHtml,
@@ -325,5 +337,6 @@ export function buildCommercialInvoicePrintHtml(params: {
     footerHtml,
     locale: L,
     pageVariant: 'commercial',
+    watermarkHtml,
   });
 }

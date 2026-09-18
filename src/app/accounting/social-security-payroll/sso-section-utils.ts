@@ -131,6 +131,8 @@ export function workerRowsToSsoTable(
     const payable = a.isGroupLeader && allWagePaid && !allSsoPaid && shared > 0.005;
     return {
       rowKey: a.rowKey,
+      personKind: 'worker',
+      personId: a.personId,
       batchLabel: a.batchLabel,
       earnerName: a.earnerName,
       earnerId: a.earnerId,
@@ -195,6 +197,8 @@ export function officeRowsToSsoTable(
     const payable = a.isGroupLeader && allWagePaid && !allSsoPaid && shared > 0.005;
     return {
       rowKey: a.rowKey,
+      personKind: 'office' as const,
+      personId: a.personId,
       batchLabel: a.batchLabel,
       batchSubLabel: a.batchSubLabel,
       earnerName: a.earnerName,
@@ -259,6 +263,8 @@ export function executiveRowsToSsoTableFixed(
     const payable = a.isGroupLeader && allWagePaid && !allSsoPaid && shared > 0.005;
     return {
       rowKey: a.rowKey,
+      personKind: 'executive' as const,
+      personId: a.personId,
       batchLabel: a.batchLabel,
       batchSubLabel: a.batchSubLabel,
       earnerName: a.earnerName,

@@ -4,6 +4,7 @@ import { describeYearMonthScopeFilter } from '@/lib/date/year-month-scope-filter
 export type CommercialInvoiceListPrintRow = {
   invoiceNo: string;
   customerName: string;
+  billingKindLabel: string;
   issueDateLabel: string;
   wavePeriodLabel: string;
   totalLabel: string;
@@ -43,12 +44,13 @@ export function buildCommercialInvoiceListPrintHtml(params: {
 
   const tableRows =
     rows.length === 0
-      ? '<tr><td colspan="6" class="cil-empty">ไม่มีรายการ</td></tr>'
+      ? '<tr><td colspan="7" class="cil-empty">ไม่มีรายการ</td></tr>'
       : rows
           .map(
             (r) => `<tr>
               <td class="cil-mono">${escapeHtmlDoc(r.invoiceNo)}</td>
               <td>${escapeHtmlDoc(r.customerName)}</td>
+              <td>${escapeHtmlDoc(r.billingKindLabel)}</td>
               <td>${escapeHtmlDoc(r.wavePeriodLabel)}</td>
               <td>${escapeHtmlDoc(r.issueDateLabel)}</td>
               <td class="cil-num">${escapeHtmlDoc(r.totalLabel)}</td>
@@ -87,6 +89,7 @@ export function buildCommercialInvoiceListPrintHtml(params: {
       <tr>
         <th>เลขที่</th>
         <th>ลูกค้า</th>
+        <th>ลักษณะบิล</th>
         <th>Wave / งวด</th>
         <th>วันที่เอกสาร</th>
         <th>ยอดรวม</th>

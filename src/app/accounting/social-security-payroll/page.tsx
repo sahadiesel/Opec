@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { PayrollSsoSectionCard } from '@/components/accounting/payroll-sso-section-card';
 import { PayrollSsoCombinedPayButton } from '@/components/accounting/payroll-sso-combined-pay';
+import { SsoFilingExportDialog } from '@/components/accounting/sso-filing-export-dialog';
 import {
   fmtSsoBaht,
   type PayrollSsoTableRow,
@@ -29,7 +30,7 @@ import {
 } from '@/components/accounting/accounting-filter-toolbar';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { Users, Loader2, Search, Building2, Briefcase, ShieldCheck, Printer } from 'lucide-react';
+import { Users, Loader2, Search, Building2, Briefcase, ShieldCheck, Printer, FileSpreadsheet } from 'lucide-react';
 import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import {
   buildYearCeOptions,
@@ -57,6 +58,8 @@ import {
 } from '@/lib/documents/social-security-payroll-list-print';
 import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import { roundSocialSecurityBahtUp } from '@/lib/payroll/d8/deductions-from-policy';
+import { buildSsoFilingRows } from '@/lib/payroll/sso-filing-excel';
+import { ssoFilingNameKey, type SsoFilingStoredName } from '@/lib/payroll/sso-filing-name';
 import {
   type WorkerSsoRow,
   type OfficeSsoRow,
@@ -191,6 +194,7 @@ export default function AccountingSocialSecurityPayrollHubPage() {
   const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
   const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
   const [workerRows, setWorkerRows] = useState<WorkerSsoRow[]>([]);
   const [officeRows, setOfficeRows] = useState<OfficeSsoRow[]>([]);
@@ -544,6 +548,38 @@ export default function AccountingSocialSecurityPayrollHubPage() {
         .reduce((sum, r) => sum + ssoCombinedRemitAmount(r.sso), 0),
     [executiveTableRows],
   );
+  const ssoFilingNames = useMemo(() => {
+    const map = new Map<string, SsoFilingStoredName>();
+    for (const worker of workerRegistry ?? []) {
+      map.set(ssoFilingNameKey('worker', worker.id), {
+        nameTitle: worker.nameTitle,
+        firstName: worker.firstNameTh?.trim() || worker.firstName,
+        lastName: worker.lastNameTh?.trim() || worker.lastName,
+      });
+    }
+    for (const staff of officeStaffRegistry ?? []) {
+      map.set(ssoFilingNameKey('office', staff.id), {
+        nameTitle: staff.nameTitle,
+        firstName: staff.firstName,
+        lastName: staff.lastName,
+        fullName: staff.fullName,
+      });
+    }
+    for (const staff of executiveStaffRegistry ?? []) {
+      map.set(ssoFilingNameKey('executive', staff.id), {
+        nameTitle: staff.nameTitle,
+        firstName: staff.firstName,
+        lastName: staff.lastName,
+        fullName: staff.fullName,
+      });
+    }
+    return map;
+  }, [workerRegistry, officeStaffRegistry, executiveStaffRegistry]);
+
+  const ssoFilingRows = useMemo(
+    () => buildSsoFilingRows([...workerTableRows, ...officeTableRows, ...executiveTableRows], ssoFilingNames),
+    [workerTableRows, officeTableRows, executiveTableRows, ssoFilingNames],
+  );
   /** รวมตามตัวกรอง — รวม ปกส.+สมทบ ต่อคนต่อเดือน (ไม่บวกซ้ำหลายชุดจ่าย) */
   const grandTotalRemit = workerTotalSso + officeTotalSso + executiveTotalSso;
 
@@ -739,6 +775,36 @@ export default function AccountingSocialSecurityPayrollHubPage() {
                       พิมพ์รายการ
                     </Button>
                   </AccountingFilterToolbarAction>
+                  <AccountingFilterToolbarAction>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 shrink-0 gap-2 whitespace-nowrap"
+                      disabled={ssoDataLoading}
+                      onClick={() => {
+                        if (!/^\d{2}$/.test(monthScope)) {
+                          toast({
+                            variant: 'destructive',
+                            title: 'เลือกเดือนเดียว',
+                            description: 'ไฟล์นำส่งประกันสังคมต้องเป็นเดือนเดียว — เลือกเดือนในตัวกรองก่อน',
+                          });
+                          return;
+                        }
+                        if (ssoFilingRows.length === 0) {
+                          toast({
+                            variant: 'destructive',
+                            title: 'ไม่มีรายการ',
+                            description: 'ไม่พบคนที่มีเงินสมทบในเดือนที่เลือก',
+                          });
+                          return;
+                        }
+                        setExportOpen(true);
+                      }}
+                    >
+                      <FileSpreadsheet className="h-4 w-4 shrink-0" />
+                      Export to XLSX
+                    </Button>
+                  </AccountingFilterToolbarAction>
                   {canPaySso && !ssoDataLoading ? (
                     <AccountingFilterToolbarAction>
                       <PayrollSsoCombinedPayButton
@@ -774,6 +840,15 @@ export default function AccountingSocialSecurityPayrollHubPage() {
             />
           </CardContent>
         </Card>
+
+        <SsoFilingExportDialog
+          open={exportOpen}
+          onOpenChange={setExportOpen}
+          firestore={firestore}
+          yearCe={yearFilterCe}
+          monthMm={monthScope}
+          rows={ssoFilingRows}
+        />
 
         <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
           <DialogContent className="max-w-md">

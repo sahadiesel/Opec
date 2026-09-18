@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import type { BillingNoteLine, CommercialInvoiceLine } from '@/lib/types';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
-import { translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
+import { stripCommercialLinePoPrefix, translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
 import {
   invoiceLineSequenceNumberFromDisplayOrder,
   sortBillingNoteLinesForDisplay,
@@ -47,7 +47,7 @@ export function TaxInvoiceLinesTable({
     if (useCommercial) {
       return sortedCommercial.map((line, idx) => {
         const sub = line.workerName ? ` (${line.workerName})` : '';
-        const rawDesc = (line.description || '—') + sub;
+        const rawDesc = stripCommercialLinePoPrefix(line.description || '—') + sub;
         const desc =
           documentLocale === 'en' ? translateCommercialLineDescriptionToEn(rawDesc) : rawDesc;
         return {
