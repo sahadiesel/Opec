@@ -1,6 +1,7 @@
 import type { PayrollBatch, PayrollBatchLine, PaymentMethod, Position, Worker } from '@/lib/types';
 import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
 import { buildWorkerPayslipDeductionLines, buildWorkerPayslipIncomeLines } from '@/lib/payroll/payslip-model';
+import { buildWorkerGroupWhtDocumentNo } from '@/lib/wht/wht-document-no';
 import type {
   CompanyDocumentProfileForPayrollWht,
   PayrollWorkerWhtPrintVm,
@@ -46,10 +47,18 @@ export function resolvePayrollWorkerWhtPaymentDateYmd(
   return timestampMsToBangkokYmd(pick);
 }
 
-export function buildPayrollWorkerWhtDocumentNo(batchId: string, workerCode: string, issueYear: number): string {
-  const safeBatch = (batchId || 'BATCH').replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-');
-  const safeCode = (workerCode || 'WRK').replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-');
-  return `WHT-PAY-${issueYear}-${safeBatch}-${safeCode}`;
+export function buildPayrollWorkerWhtDocumentNo(
+  batch: Pick<PayrollBatch, 'id' | 'batchType' | 'payrollPeriodId'>,
+  workerCode: string,
+  issueYmd: string,
+): string {
+  return buildWorkerGroupWhtDocumentNo({
+    issueYmd,
+    workerCode,
+    batchId: batch.id,
+    batchType: batch.batchType,
+    payrollPeriodId: batch.payrollPeriodId,
+  });
 }
 
 export function maskBankAccountLast4(raw?: string | null): string | undefined {
@@ -131,8 +140,7 @@ export function buildPayrollWorkerWhtPrintVm(input: {
 }): PayrollWorkerWhtPrintVm {
   const { batch, line, worker, position, company, periodLabel, issueDateYmd, paymentDateYmd } = input;
 
-  const issueYear = Number(issueDateYmd.slice(0, 4)) || new Date().getFullYear();
-  const documentNo = buildPayrollWorkerWhtDocumentNo(batch.id, worker.workerCode, issueYear);
+  const documentNo = buildPayrollWorkerWhtDocumentNo(batch, worker.workerCode, issueDateYmd);
 
   const grossAmount = round2(
     line.d8Snapshot?.gross != null && Number.isFinite(line.d8Snapshot.gross)

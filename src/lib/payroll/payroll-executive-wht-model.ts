@@ -1,5 +1,6 @@
 import type { ExecutivePayrollStaff, OfficeStaff } from '@/lib/types';
 import type { PayrollWorkerWhtPrintVm } from '@/lib/payroll/payroll-worker-wht-types';
+import { buildOfficeGroupWhtDocumentNo } from '@/lib/wht/wht-document-no';
 import {
   buildPayrollOfficeWhtPrintVm,
   officePayrollLineTaxAmount,
@@ -9,10 +10,17 @@ import {
 export { officePayrollLineTaxAmount as executivePayrollLineTaxAmount };
 export { resolveOfficePayrollWhtPaymentDateYmd as resolveExecutivePayrollWhtPaymentDateYmd };
 
-export function buildPayrollExecutiveWhtDocumentNo(runId: string, staffCode: string, issueYear: number): string {
-  const safeRun = (runId || 'RUN').replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-');
-  const safeCode = (staffCode || 'STF').replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-');
-  return `WHT-EPR-${issueYear}-${safeRun}-${safeCode}`;
+export function buildPayrollExecutiveWhtDocumentNo(
+  payrollRunNo: string,
+  staffCode: string,
+  issueYmd: string,
+): string {
+  return buildOfficeGroupWhtDocumentNo({
+    issueYmd,
+    payrollRunNo,
+    staffCode,
+    executive: true,
+  });
 }
 
 /**
@@ -78,7 +86,6 @@ const EXEC_PAYSLIP_LABEL = 'ผู้บริหาร / Executive Payroll (ร
 export function buildPayrollExecutiveWhtPrintVm(
   input: Parameters<typeof buildPayrollOfficeWhtPrintVm>[0],
 ): PayrollWorkerWhtPrintVm {
-  const issueYear = Number(input.issueDateYmd.slice(0, 4)) || new Date().getFullYear();
   const pitMode = input.line.hrLineAdjustments?.pitMode ?? 'SYSTEM';
   const manualIncomeType = input.line.hrLineAdjustments?.pitManualIncomeType ?? null;
   const manualIncomeLabel = (input.line.hrLineAdjustments?.pitManualIncomeLabel || '').trim();
@@ -90,7 +97,11 @@ export function buildPayrollExecutiveWhtPrintVm(
   });
   return {
     ...vm,
-    documentNo: buildPayrollExecutiveWhtDocumentNo(input.run.id, input.staff.staffCode, issueYear),
+    documentNo: buildPayrollExecutiveWhtDocumentNo(
+      input.run.payrollRunNo,
+      input.staff.staffCode,
+      input.issueDateYmd,
+    ),
     subtitleTh:
       manualIncomeType === 'MEETING_ALLOWANCE'
         ? 'สำหรับเบี้ยประชุมประจำเดือน ตามมาตรา 40(2)'

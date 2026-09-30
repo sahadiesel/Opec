@@ -48,18 +48,65 @@ export function ssoFilingNameKey(kind: SsoFilingPersonKind, personId: string): s
   return `${kind}::${personId}`;
 }
 
+export function composeStaffDisplayName(parts: {
+  nameTitle?: string;
+  firstName?: string;
+  lastName?: string;
+}): string {
+  return [parts.nameTitle, parts.firstName, parts.lastName]
+    .map((s) => String(s || '').trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
+function peelNameTitlePrefix(raw: string): { nameTitle: SsoNameTitle | ''; rest: string } {
+  const full = String(raw || '').trim();
+  const titles = [...SSO_NAME_TITLES].sort((a, b) => b.length - a.length);
+  for (const title of titles) {
+    if (!full.startsWith(title)) continue;
+    const rest = full.slice(title.length);
+    if (!rest || rest.startsWith(' ') || /^[ก-๙A-Za-z]/.test(rest)) {
+      return { nameTitle: title, rest: rest.trim() };
+    }
+  }
+  return { nameTitle: '', rest: full };
+}
+
+/** ทะเบียนผู้บริหาร/ออฟฟิศ: ใช้ first/last ถ้ามี ไม่งั้นดึงจาก fullName เดิมมาช่องชื่อ */
+export function seedStaffNameFields(stored: SsoFilingStoredName | undefined): {
+  nameTitle: SsoNameTitle | '';
+  firstName: string;
+  lastName: string;
+} {
+  let nameTitle = normalizeSsoNameTitle(stored?.nameTitle);
+  let firstName = String(stored?.firstName || '').trim();
+  let lastName = String(stored?.lastName || '').trim();
+  if (firstName || lastName) {
+    if (!firstName && stored?.fullName) {
+      const peeled = peelNameTitlePrefix(stored.fullName);
+      if (!nameTitle) nameTitle = peeled.nameTitle;
+      let rest = peeled.rest;
+      if (lastName && rest.endsWith(lastName)) rest = rest.slice(0, rest.length - lastName.length).trim();
+      firstName = rest;
+    }
+    return { nameTitle, firstName, lastName };
+  }
+  const peeled = peelNameTitlePrefix(String(stored?.fullName || '').trim());
+  if (!nameTitle) nameTitle = peeled.nameTitle;
+  return { nameTitle, firstName: peeled.rest === '—' ? '' : peeled.rest, lastName: '' };
+}
+
 /** เติมจากทะเบียน ถ้ายังไม่เคยแยกชื่อ ให้ใส่ชื่อเต็มไว้ช่องชื่อเพื่อให้ผู้ใช้ตัดเอง */
 export function resolveSsoFilingName(
   stored: SsoFilingStoredName | undefined,
   fallbackName: string,
 ): { nameTitle: SsoNameTitle | ''; firstName: string; lastName: string } {
-  const nameTitle = normalizeSsoNameTitle(stored?.nameTitle);
-  const firstName = String(stored?.firstName || '').trim();
-  const lastName = String(stored?.lastName || '').trim();
-  if (nameTitle || firstName || lastName) {
-    return { nameTitle, firstName, lastName };
-  }
-  const full = String(stored?.fullName || fallbackName || '').trim();
+  const seeded = seedStaffNameFields({
+    ...stored,
+    fullName: stored?.fullName || fallbackName,
+  });
+  if (seeded.nameTitle || seeded.firstName || seeded.lastName) return seeded;
+  const full = String(fallbackName || '').trim();
   return { nameTitle: '', firstName: full === '—' ? '' : full, lastName: '' };
 }
 

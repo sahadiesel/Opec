@@ -2,6 +2,7 @@ import type { OfficePayrollLine, OfficePayrollRun, OfficeStaff, PaymentMethod } 
 import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
 import { buildPayslipFromOfficeLine } from '@/lib/payroll/payslip-model';
 import { timestampMsToBangkokYmd } from '@/lib/payroll/payroll-worker-wht-model';
+import { buildOfficeGroupWhtDocumentNo } from '@/lib/wht/wht-document-no';
 import type {
   CompanyDocumentProfileForPayrollWht,
   PayrollWorkerWhtPrintVm,
@@ -34,10 +35,12 @@ export function resolveOfficePayrollWhtPaymentDateYmd(run: OfficePayrollRun): st
   return timestampMsToBangkokYmd(pick);
 }
 
-export function buildPayrollOfficeWhtDocumentNo(runId: string, staffCode: string, issueYear: number): string {
-  const safeRun = (runId || 'RUN').replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-');
-  const safeCode = (staffCode || 'STF').replace(/[^a-zA-Z0-9-]/g, '-').replace(/-+/g, '-');
-  return `WHT-OPR-${issueYear}-${safeRun}-${safeCode}`;
+export function buildPayrollOfficeWhtDocumentNo(
+  payrollRunNo: string,
+  staffCode: string,
+  issueYmd: string,
+): string {
+  return buildOfficeGroupWhtDocumentNo({ issueYmd, payrollRunNo, staffCode });
 }
 
 function inferOfficePaymentMethod(staff: OfficeStaff): PaymentMethod {
@@ -85,8 +88,7 @@ export function buildPayrollOfficeWhtPrintVm(input: {
 }): PayrollWorkerWhtPrintVm {
   const { run, line, staff, company, periodLabel, issueDateYmd, paymentDateYmd } = input;
 
-  const issueYear = Number(issueDateYmd.slice(0, 4)) || new Date().getFullYear();
-  const documentNo = buildPayrollOfficeWhtDocumentNo(run.id, staff.staffCode, issueYear);
+  const documentNo = buildPayrollOfficeWhtDocumentNo(run.payrollRunNo, staff.staffCode, issueDateYmd);
 
   const slip = buildPayslipFromOfficeLine(line, run, company ?? undefined, input.payslipPayrollTypeLabelOverride);
   const grossAmount = round2(slip.grossTotal);

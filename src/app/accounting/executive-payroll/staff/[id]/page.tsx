@@ -35,6 +35,7 @@ import { sanitizeFirestorePayload } from '@/lib/utils';
 import { formatDateTimeThaiBE } from '@/lib/date-thai';
 import { buildUserAccessSummaryLines } from '@/lib/hr/user-access-display';
 import { NameTitleSelect } from '@/components/hr/name-title-select';
+import { composeStaffDisplayName, seedStaffNameFields } from '@/lib/payroll/sso-filing-name';
 
 type ExecStaffFormState = Omit<ExecutivePayrollStaff, 'id' | 'createdAt' | 'updatedAt'> & {
   staffCode: string;
@@ -129,9 +130,15 @@ export default function ExecutivePayrollStaffEditorPage({
     setForm({
       staffCode: existing.staffCode,
       fullName: existing.fullName,
-      nameTitle: existing.nameTitle ?? '',
-      firstName: existing.firstName ?? '',
-      lastName: existing.lastName ?? '',
+      ...(() => {
+        const seeded = seedStaffNameFields({
+          nameTitle: existing.nameTitle,
+          firstName: existing.firstName,
+          lastName: existing.lastName,
+          fullName: existing.fullName,
+        });
+        return { nameTitle: seeded.nameTitle, firstName: seeded.firstName, lastName: seeded.lastName };
+      })(),
       department: existing.department,
       positionTitle: existing.positionTitle,
       monthlySalary: existing.monthlySalary ?? 0,
@@ -218,7 +225,11 @@ export default function ExecutivePayrollStaffEditorPage({
 
   const handleSave = async () => {
     if (!firestore || !currentUser) return;
-    if (!form.fullName.trim() || !form.department.trim() || !form.positionTitle.trim()) {
+    const firstName = String(form.firstName || '').trim();
+    const lastName = String(form.lastName || '').trim();
+    const nameTitle = form.nameTitle?.trim() || '';
+    const displayName = composeStaffDisplayName({ nameTitle, firstName, lastName }) || firstName;
+    if (!firstName || !form.department.trim() || !form.positionTitle.trim()) {
       toast({
         variant: 'destructive',
         title: 'ข้อมูลไม่ครบ',
@@ -258,10 +269,10 @@ export default function ExecutivePayrollStaffEditorPage({
         const basePayload: Record<string, unknown> = {
           id: newRef.id,
           staffCode: code,
-          fullName: form.fullName.trim(),
-          nameTitle: form.nameTitle?.trim() || undefined,
-          firstName: form.firstName?.trim() || undefined,
-          lastName: form.lastName?.trim() || undefined,
+          fullName: displayName,
+          nameTitle: nameTitle || undefined,
+          firstName: firstName || undefined,
+          lastName: lastName || undefined,
           department: form.department.trim(),
           positionTitle: form.positionTitle.trim(),
           monthlySalary: Number(form.monthlySalary) || 0,
@@ -299,10 +310,10 @@ export default function ExecutivePayrollStaffEditorPage({
         await updateDoc(
           doc(firestore, 'executive_payroll_staff', id),
           sanitizeFirestorePayload({
-            fullName: form.fullName.trim(),
-            nameTitle: form.nameTitle?.trim() || deleteField(),
-            firstName: form.firstName?.trim() || deleteField(),
-            lastName: form.lastName?.trim() || deleteField(),
+            fullName: displayName,
+            nameTitle: nameTitle || deleteField(),
+            firstName: firstName || deleteField(),
+            lastName: lastName || deleteField(),
             department: form.department.trim(),
             positionTitle: form.positionTitle.trim(),
             monthlySalary: Number(form.monthlySalary) || 0,
@@ -393,7 +404,7 @@ export default function ExecutivePayrollStaffEditorPage({
             </Button>
             <div>
               <h1 className="text-2xl font-bold text-primary">
-                {isNew ? 'เพิ่มผู้บริหาร' : `แก้ไข: ${existing?.fullName}`}
+                {isNew ? 'เพิ่มผู้บริหาร' : `แก้ไข: ${composeStaffDisplayName(form) || existing?.fullName}`}
               </h1>
               <p className="text-sm text-muted-foreground">
                 ข้อมูลนี้ใช้สำหรับงวดเงินเดือนผู้บริหาร — หักภาษี/ประกันสังคมตามนโยบาย HR (office)
@@ -431,29 +442,29 @@ export default function ExecutivePayrollStaffEditorPage({
                     <Input value={form.staffCode} disabled className="font-mono" />
                   </div>
                 )}
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label>ชื่อ-นามสกุล</Label>
-                    <Input
-                      value={form.fullName}
-                      onChange={(e) => setForm({ ...form, fullName: e.target.value })}
-                      placeholder="ชื่อผู้บริหาร"
-                    />
-                  </div>
+                <div className="grid gap-4 sm:grid-cols-3">
                   <div className="space-y-2">
-                    <Label>คำนำหน้าชื่อ (ประกันสังคม)</Label>
+                    <Label>คำนำหน้าชื่อ</Label>
                     <NameTitleSelect
                       value={form.nameTitle ?? ''}
                       onChange={(nameTitle) => setForm({ ...form, nameTitle })}
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>ชื่อ</Label>
-                    <Input value={form.firstName ?? ''} onChange={(e) => setForm({ ...form, firstName: e.target.value })} />
+                    <Label>ชื่อ *</Label>
+                    <Input
+                      value={form.firstName ?? ''}
+                      onChange={(e) => setForm({ ...form, firstName: e.target.value })}
+                      placeholder="ชื่อ"
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>นามสกุล</Label>
-                    <Input value={form.lastName ?? ''} onChange={(e) => setForm({ ...form, lastName: e.target.value })} />
+                    <Input
+                      value={form.lastName ?? ''}
+                      onChange={(e) => setForm({ ...form, lastName: e.target.value })}
+                      placeholder="นามสกุล"
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>แผนก</Label>

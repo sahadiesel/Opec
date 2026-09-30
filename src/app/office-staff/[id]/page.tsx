@@ -9,6 +9,7 @@ import { Separator } from '@/components/ui/separator';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { NameTitleSelect } from '@/components/hr/name-title-select';
+import { composeStaffDisplayName, seedStaffNameFields } from '@/lib/payroll/sso-filing-name';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { Label } from '@/components/ui/label';
 import { 
@@ -23,7 +24,6 @@ import {
   Info,
   UserCircle,
   Receipt,
-  Phone,
   MapPin,
   UsersRound,
   IdCard,
@@ -229,9 +229,19 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
     STANDARD_OFFICE_DEPARTMENTS.find((x) => x.value === value)?.label ?? value;
 
   useEffect(() => {
-    if (staffData) {
-      setFormData(staffData);
-    }
+    if (!staffData) return;
+    const seeded = seedStaffNameFields({
+      nameTitle: staffData.nameTitle,
+      firstName: staffData.firstName,
+      lastName: staffData.lastName,
+      fullName: staffData.fullName,
+    });
+    setFormData({
+      ...staffData,
+      nameTitle: seeded.nameTitle,
+      firstName: seeded.firstName,
+      lastName: seeded.lastName,
+    });
   }, [staffData]);
 
   const handleSave = async () => {
@@ -240,7 +250,11 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
       return;
     }
     if (!firestore || !currentUser) return;
-    if (!formData.fullName?.trim() || !formData.department?.trim()) {
+    const firstName = String(formData.firstName || '').trim();
+    const lastName = String(formData.lastName || '').trim();
+    const nameTitle = String(formData.nameTitle || '').trim();
+    const displayName = composeStaffDisplayName({ nameTitle, firstName, lastName }) || firstName;
+    if (!firstName || !formData.department?.trim()) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อ และแผนก" });
       return;
     }
@@ -376,6 +390,10 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
             ...userLinkPatch,
             staffCode: finalCode,
             id: newRef.id,
+            fullName: displayName,
+            nameTitle: nameTitle || undefined,
+            firstName,
+            lastName: lastName || undefined,
             positionId: resolvedPositionId,
             positionTitle: resolvedPositionTitle,
             createdAt: now,
@@ -392,6 +410,10 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
           sanitizeFirestorePayload({
             ...formBody,
             staffCode: staffData!.staffCode,
+            fullName: displayName,
+            nameTitle: nameTitle || deleteField(),
+            firstName,
+            lastName: lastName || deleteField(),
             ...compensationPatch,
             ...attendanceBasisPatch,
             ...userLinkPatch,
@@ -440,7 +462,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
             <div className="space-y-2">
               <PayrollScopeTag scope="office" showHint={false} />
               <h1 className="text-2xl font-bold tracking-tight text-primary">
-                {isNew ? 'ลงทะเบียนพนักงานออฟฟิศใหม่ (New Staff)' : `แก้ไขข้อมูลพนักงาน: ${formData.fullName}`}
+                {isNew ? 'ลงทะเบียนพนักงานออฟฟิศใหม่ (New Staff)' : `แก้ไขข้อมูลพนักงาน: ${composeStaffDisplayName(formData) || formData.fullName}`}
               </h1>
               <p className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
                 <Info className="h-4 w-4" /> <strong>Office Payroll</strong> — ฐานเงินเดือนรายเดือน ไม่ใช้ timesheet รายวัน
@@ -458,19 +480,25 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
         </div>
 
         <Tabs defaultValue="basic" className="w-full">
-          <TabsList className="flex flex-wrap w-full md:w-fit h-auto p-1 bg-muted/50 gap-1">
-            <TabsTrigger value="basic" className="gap-2 py-2 px-8"><Briefcase className="h-4 w-4" /> ข้อมูลทั่วไป (Profile)</TabsTrigger>
-            <TabsTrigger value="financial" className="gap-2 py-2 px-8"><CreditCard className="h-4 w-4" /> ข้อมูลการเงิน (Finance)</TabsTrigger>
-            <TabsTrigger value="admin" className="gap-2 py-2 px-8"><ShieldCheck className="h-4 w-4" /> การเชื่อมโยง (System)</TabsTrigger>
+          <TabsList className="flex h-auto w-full flex-nowrap items-stretch gap-1 overflow-x-auto p-1 bg-muted/50">
+            <TabsTrigger value="basic" className="shrink-0 flex-1 gap-2 whitespace-nowrap py-2 px-3 sm:px-4">
+              <Briefcase className="h-4 w-4" /> ข้อมูลทั่วไป (Profile)
+            </TabsTrigger>
+            <TabsTrigger value="financial" className="shrink-0 flex-1 gap-2 whitespace-nowrap py-2 px-3 sm:px-4">
+              <CreditCard className="h-4 w-4" /> ข้อมูลการเงิน (Finance)
+            </TabsTrigger>
+            <TabsTrigger value="admin" className="shrink-0 flex-1 gap-2 whitespace-nowrap py-2 px-3 sm:px-4">
+              <ShieldCheck className="h-4 w-4" /> การเชื่อมโยง (System)
+            </TabsTrigger>
             <TabsTrigger
               value="payslips"
-              className="gap-2 py-2 px-8"
+              className="shrink-0 flex-1 gap-2 whitespace-nowrap py-2 px-3 sm:px-4"
               disabled={isNew || !canOpenPayslipTab}
               title={isNew ? undefined : !canOpenPayslipTab ? 'คุณไม่มีสิทธ์ในการทำรายการ' : undefined}
             >
               <Receipt className="h-4 w-4" /> สลิปเงินเดือน
             </TabsTrigger>
-            <TabsTrigger value="attendance" className="gap-2 py-2 px-8" disabled={isNew}>
+            <TabsTrigger value="attendance" className="shrink-0 flex-1 gap-2 whitespace-nowrap py-2 px-3 sm:px-4" disabled={isNew}>
               <Clock className="h-4 w-4" /> ประวัติลงเวลา (Kiosk)
             </TabsTrigger>
           </TabsList>
@@ -484,63 +512,67 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                 <CardDescription>รหัสพนักงานและรหัสตำแหน่งจากระบบ — ชื่อ แผนก และตำแหน่งงานจากทะเบียน</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6 pt-6">
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 md:gap-6">
-                  <div className="md:col-span-4 space-y-2">
-                    <Label className="font-bold">รหัสพนักงาน (Staff Code) *</Label>
-                    <Input
-                      value={formData.staffCode ?? ''}
-                      readOnly
-                      aria-readonly="true"
-                      autoComplete="off"
-                      className="bg-muted font-mono font-bold text-primary cursor-not-allowed"
-                    />
-                    <p className="text-[10px] text-muted-foreground">
-                      {isNew
-                        ? 'ระบบออกรหัสเมื่อบันทึก — แก้เองไม่ได้'
-                        : 'ออกโดยระบบ — แก้ไม่ได้'}
-                    </p>
-                  </div>
-                  <div className="md:col-span-8 space-y-2">
-                    <Label className="font-bold">ชื่อ-นามสกุล (Full Name) *</Label>
-                    <Input value={formData.fullName} onChange={(e) => setFormData({ ...formData, fullName: e.target.value })} />
-                  </div>
-                  <div className="md:col-span-4 space-y-2">
-                    <Label className="font-bold">คำนำหน้าชื่อ (ประกันสังคม)</Label>
+                <div className="space-y-2">
+                  <Label className="font-bold">รหัสพนักงาน (Staff Code) *</Label>
+                  <Input
+                    value={formData.staffCode ?? ''}
+                    readOnly
+                    aria-readonly="true"
+                    autoComplete="off"
+                    className="h-10 max-w-md bg-muted font-mono font-bold text-primary cursor-not-allowed"
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    {isNew
+                      ? 'ระบบออกรหัสเมื่อบันทึก — แก้เองไม่ได้'
+                      : 'ออกโดยระบบ — แก้ไม่ได้'}
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 items-end">
+                  <div className="space-y-2">
+                    <Label className="font-bold">คำนำหน้าชื่อ</Label>
                     <NameTitleSelect
+                      className="h-10"
                       value={formData.nameTitle ?? ''}
                       onChange={(nameTitle) => setFormData({ ...formData, nameTitle })}
                     />
                   </div>
-                  <div className="md:col-span-4 space-y-2">
-                    <Label className="font-bold">ชื่อ</Label>
+                  <div className="space-y-2">
+                    <Label className="font-bold">ชื่อ *</Label>
                     <Input
+                      className="h-10"
                       value={formData.firstName ?? ''}
                       onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
                     />
                   </div>
-                  <div className="md:col-span-4 space-y-2">
+                  <div className="space-y-2">
                     <Label className="font-bold">นามสกุล</Label>
                     <Input
+                      className="h-10"
                       value={formData.lastName ?? ''}
                       onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
                     />
                   </div>
-                  <div className="md:col-span-4 space-y-2">
-                    <Label className="font-bold flex items-center gap-2">
-                      <Phone className="h-3.5 w-3.5" /> เบอร์โทร
-                    </Label>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 items-end">
+                  <div className="space-y-2">
+                    <Label className="font-bold">เบอร์โทร</Label>
                     <Input
+                      className="h-10"
                       value={formData.phone ?? ''}
                       onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                       placeholder="0xx-xxx-xxxx"
                       inputMode="tel"
                     />
                   </div>
-                  <div className="md:col-span-4 space-y-2">
+                  <div className="space-y-2">
                     <Label className="font-bold">ชื่อเล่น (Nickname)</Label>
-                    <Input value={formData.nickname ?? ''} onChange={(e) => setFormData({ ...formData, nickname: e.target.value })} />
+                    <Input
+                      className="h-10"
+                      value={formData.nickname ?? ''}
+                      onChange={(e) => setFormData({ ...formData, nickname: e.target.value })}
+                    />
                   </div>
-                  <div className="md:col-span-4 space-y-2">
+                  <div className="space-y-2">
                     <Label className="font-bold">แผนก (Department) *</Label>
                     <Select
                       value={formData.department?.trim() ? formData.department : undefined}
@@ -558,68 +590,64 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="md:col-span-8 space-y-2">
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 items-end">
+                  <div className="space-y-2">
                     <Label className="font-bold">ตำแหน่งงาน (จากทะเบียน) *</Label>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <Select
-                        value={
-                          formData.positionId ||
-                          officeCategoryPositions.find(
-                            (p: Position) =>
-                              (p.positionName || p.positionNameTh) === formData.positionTitle ||
-                              (p.positionName || p.positionNameEn) === formData.positionTitle
-                          )?.id ||
-                          undefined
-                        }
-                        onValueChange={(pid) => {
-                          const p = officeCategoryPositions.find((x: Position) => x.id === pid);
-                          setFormData({
-                            ...formData,
-                            positionId: pid,
-                            positionTitle: p ? (p.positionName || p.positionNameTh) : formData.positionTitle,
-                          });
-                        }}
-                      >
-                        <SelectTrigger className="h-10 flex-1">
-                          <SelectValue
-                            placeholder={
-                              officeCategoryPositions.length
-                                ? 'เลือกตำแหน่ง'
-                                : 'ยังไม่มีตำแหน่งที่เข้าเงื่อนไข — ตรวจที่เมนูตำแหน่งงาน'
-                            }
-                          />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-72">
-                          {formData.positionId &&
-                          !officeCategoryPositions.some((p: Position) => p.id === formData.positionId) ? (
-                            <SelectItem value={formData.positionId}>
-                              {formData.positionTitle || formData.positionId}{' '}
-                              <span className="text-muted-foreground text-xs">(ไม่อยู่ในรายการที่เลือกได้ตอนนี้)</span>
-                            </SelectItem>
-                          ) : null}
-                          {officeCategoryPositions.map((p: Position) => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {`${p.positionCode} — ${p.positionName || p.positionNameTh}`}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Input
-                        readOnly
-                        value={selectedPosition?.positionCode ?? '—'}
-                        className="h-10 w-full sm:w-36 shrink-0 bg-muted font-mono text-sm font-bold text-primary cursor-not-allowed"
-                        title="รหัสตำแหน่ง (Position Code)"
-                      />
-                    </div>
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      ทะเบียน{' '}
-                      <Link href="/positions" className="text-primary underline font-medium">
-                        ตำแหน่งงาน
-                      </Link>{' '}
-                      — Office หรือสายสนามจ่ายรายเดือน
-                    </p>
+                    <Select
+                      value={
+                        formData.positionId ||
+                        officeCategoryPositions.find(
+                          (p: Position) =>
+                            (p.positionName || p.positionNameTh) === formData.positionTitle ||
+                            (p.positionName || p.positionNameEn) === formData.positionTitle
+                        )?.id ||
+                        undefined
+                      }
+                      onValueChange={(pid) => {
+                        const p = officeCategoryPositions.find((x: Position) => x.id === pid);
+                        setFormData({
+                          ...formData,
+                          positionId: pid,
+                          positionTitle: p ? (p.positionName || p.positionNameTh) : formData.positionTitle,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="h-10">
+                        <SelectValue
+                          placeholder={
+                            officeCategoryPositions.length
+                              ? 'เลือกตำแหน่ง'
+                              : 'ยังไม่มีตำแหน่งที่เข้าเงื่อนไข — ตรวจที่เมนูตำแหน่งงาน'
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-72">
+                        {formData.positionId &&
+                        !officeCategoryPositions.some((p: Position) => p.id === formData.positionId) ? (
+                          <SelectItem value={formData.positionId}>
+                            {formData.positionTitle || formData.positionId}{' '}
+                            <span className="text-muted-foreground text-xs">(ไม่อยู่ในรายการที่เลือกได้ตอนนี้)</span>
+                          </SelectItem>
+                        ) : null}
+                        {officeCategoryPositions.map((p: Position) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {`${p.positionCode} — ${p.positionName || p.positionNameTh}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <div className="md:col-span-4 space-y-2">
+                  <div className="space-y-2">
+                    <Label className="font-bold">รหัสตำแหน่ง</Label>
+                    <Input
+                      readOnly
+                      value={selectedPosition?.positionCode ?? '—'}
+                      className="h-10 bg-muted font-mono text-sm font-bold text-primary cursor-not-allowed"
+                      title="รหัสตำแหน่ง (Position Code)"
+                    />
+                  </div>
+                  <div className="space-y-2">
                     <Label className="font-bold">ประเภทการจ้าง</Label>
                     <Select
                       onValueChange={(v: EmploymentType) => setFormData({ ...formData, employmentType: v })}
@@ -635,7 +663,9 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="md:col-span-4 space-y-2">
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 items-end">
+                  <div className="space-y-2">
                     <Label className="font-bold">วันที่เริ่มงาน</Label>
                     <DatePickerThaiBE
                       className="h-10"
@@ -643,8 +673,9 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                       onChange={(ms) => setFormData({ ...formData, startDate: timestampToHtmlDateValue(ms) })}
                     />
                   </div>
-                  <div className="md:col-span-4 space-y-2">
+                  <div className="space-y-2">
                     <Label className="font-bold">วันที่สิ้นสุดการจ้าง</Label>
+                    <p className="text-[10px] text-muted-foreground leading-none">เว้นว่างได้ถ้ายังไม่มีวันสิ้นสุด</p>
                     <DatePickerThaiBE
                       className="h-10"
                       placeholder="ยังไม่ระบุ"
@@ -662,9 +693,8 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                         })
                       }
                     />
-                    <p className="text-[10px] text-muted-foreground">เว้นว่างได้ถ้ายังไม่มีวันสิ้นสุด</p>
                   </div>
-                  <div className="md:col-span-4 space-y-2">
+                  <div className="space-y-2">
                     <Label className="font-bold">สถานะ (Status)</Label>
                     <Select onValueChange={(v: StaffStatus) => setFormData({ ...formData, status: v })} value={formData.status}>
                       <SelectTrigger className="h-10">

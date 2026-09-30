@@ -188,11 +188,11 @@ export const SEQUENCE_REGISTRY: Record<string, SequenceConfig> = {
     collectionName: 'customer_month_timesheet_documents',
     fieldName: 'timesheetNo',
   },
-  /** หนังสือรับรองการหักภาษี ณ ที่จ่าย (ม.50 ทวิ) — ปรับ prefix ได้ที่ Admin เลขที่เอกสาร */
+  /** หนังสือรับรองการหักภาษี ณ ที่จ่าย คู่ค้า (ม.50 ทวิ) */
   wht_certificate_50: {
-    label: 'หนังสือรับรองหัก ณ ที่จ่าย (ม.50 ทวิ)',
-    prefix: 'WHT50-',
-    padding: 5,
+    label: 'หัก ณ ที่จ่าย คู่ค้า (WHT-VND-)',
+    prefix: 'WHT-VND-',
+    padding: 4,
     dept: 'accounting',
     resetPolicy: 'monthly',
     collectionName: 'withholding_certificate_documents',

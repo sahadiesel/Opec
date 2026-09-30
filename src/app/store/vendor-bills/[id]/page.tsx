@@ -2898,7 +2898,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                   {showWhtAssignNumberPanel ? (
                     <div className="rounded-md border border-amber-200 bg-amber-50/70 p-3 space-y-2">
                       <p className="text-xs text-amber-950 leading-snug">
-                        เอกสารนี้ยังไม่มีเลขที่ในระบบ — กดด้านล่างเพื่อรันเลขถัดไป (ชุด WHT50-) แล้วใช้พิมพ์แบบมีเลขที่จริง
+                        เอกสารนี้ยังไม่มีเลขที่ในระบบ — กดด้านล่างเพื่อรันเลขถัดไป (ชุด WHT-VND-) แล้วใช้พิมพ์แบบมีเลขที่จริง
                       </p>
                       <Button
                         type="button"
