@@ -55,7 +55,12 @@ export {
   openStandardPrintWindow,
 } from './print/standard-html-primitives';
 
-export { buildCommercialInvoicePrintHtml } from './print/commercial-invoice';
+export {
+  buildCommercialInvoicePrintHtml,
+  COMMERCIAL_INVOICE_PRINT_MODES,
+  commercialInvoicePrintModeLabel,
+  type CommercialInvoicePrintMode,
+} from './print/commercial-invoice';
 
 export type { TaxInvoicePrintSheet } from './print/tax-invoice';
 export {

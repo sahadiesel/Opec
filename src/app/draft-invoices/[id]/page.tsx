@@ -49,6 +49,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -84,7 +85,10 @@ import {
 } from '@/lib/storage/commercial-invoice-attachments';
 import {
   buildCommercialInvoicePrintHtml,
+  COMMERCIAL_INVOICE_PRINT_MODES,
+  commercialInvoicePrintModeLabel,
   openStandardPrintWindow,
+  type CommercialInvoicePrintMode,
 } from '@/lib/documents/standard-document-print';
 import { stripCommercialLinePoPrefix, translateCommercialLineDescriptionToEn, translateCommercialWaveCodeToEn } from '@/lib/documents/commercial-line-description-en';
 import { printT, type PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
@@ -280,6 +284,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const { data: quotation } = useDoc<Quotation>(quotationRef as any);
 
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
+  const [printMode, setPrintMode] = useState<CommercialInvoicePrintMode>('invoice');
 
   /** โหมด ENG ขณะแก้ไข — คงข้อความบรรทัดเป็นอังกฤษ (ไม่ต้องสลับไทย) */
   useEffect(() => {
@@ -354,6 +359,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       totalAmount: previewTotals.total,
       printedAtMs: Date.now(),
       locale: printLocale,
+      printMode,
     });
     if (
       !(await openStandardPrintWindow({
@@ -759,12 +765,25 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               {printT(docL, 'commercialNotTaxInvoice')}
             </p>
           </div>
-          <div className="print:hidden flex flex-wrap items-center gap-2 shrink-0">
+          <div className="print:hidden flex flex-col items-end gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
             <DocumentPrintLocaleToggle
               printLocale={printLocale}
               setPrintLocale={setPrintLocale}
               showLabel
             />
+            <Select value={printMode} onValueChange={(v) => setPrintMode(v as CommercialInvoicePrintMode)}>
+              <SelectTrigger className="h-9 w-[13rem] text-xs" aria-label="รูปแบบเอกสารพิมพ์">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {COMMERCIAL_INVOICE_PRINT_MODES.map((mode) => (
+                  <SelectItem key={mode} value={mode} className="text-xs">
+                    {commercialInvoicePrintModeLabel(mode, docL)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
               variant="outline"
               size="sm"
@@ -783,6 +802,31 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               sharedWithUids={invoice.sharedWithUids}
               size="sm"
             />
+          </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground underline-offset-4 hover:underline"
+              >
+                <Info className="h-4 w-4" />
+                ขั้นตอนการเรียกเก็บ
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-80 space-y-2 text-sm">
+              <p>
+                <strong>ตรวจภายใน (DRAFT)</strong> — ตรวจยอดและรายการให้ถูกต้อง จากนั้นกด{' '}
+                <strong>ส่งให้ลูกค้าตรวจสอบ</strong> เพื่อแสดงใน Client Portal
+              </p>
+              <p>
+                <strong>รอลูกค้าตรวจ</strong> — ลูกค้า (Approver) หรือผู้จัดการฝั่ง OPEC สามารถกดยืนยันยอดได้
+              </p>
+              <p className="text-xs text-muted-foreground">
+                หลังยืนยันเรียกเก็บแล้ว — ฝ่ายบัญชีสร้าง <strong>ใบกำกับภาษี (กับใบวางบิล)</strong> ส่งลูกค้า — แยกจาก{' '}
+                <strong>ใบเสร็จรับเงิน</strong> ที่ออกหลังลูกค้าโอนแล้วบัญชีตรวจสอบและยืนยันรับเงิน (ยังไม่ e-Tax)
+              </p>
+            </PopoverContent>
+          </Popover>
           </div>
         </div>
 
@@ -931,6 +975,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 สร้าง <strong>ใบวางบิล + ใบกำกับภาษี (ตัวจริง)</strong> จากใบนี้เพื่อส่งลูกค้า — <strong>ใบเสร็จรับเงิน</strong> ออก
                 หลังลูกค้าโอนและบัญชียืนยันรับเงิน (พิมพ์/ e-Tax ตามนโยบายบริษัท)
               </p>
+              <div className="flex flex-wrap items-center gap-2">
               {invoice.linkedTaxInvoiceId ? (
                 <Button variant="default" className="gap-2 w-fit" asChild>
                   <Link href={`/tax-invoices/${invoice.linkedTaxInvoiceId}`}>
@@ -954,7 +999,6 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 </p>
               )}
               {canAdminVoid && (
-                <div className="pt-2">
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
                       <Button type="button" variant="destructive" className="gap-2" disabled={voidBusy}>
@@ -983,13 +1027,19 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                       </AlertDialogFooter>
                     </AlertDialogContent>
                   </AlertDialog>
-                </div>
               )}
+              </div>
             </AlertDescription>
           </Alert>
         )}
 
-        <div className="grid gap-4 items-start lg:grid-cols-[minmax(0,1fr)_minmax(17rem,22rem)]">
+        <div
+          className={
+            visibleGenerationWarnings.length > 0
+              ? 'grid gap-4 items-start lg:grid-cols-[minmax(0,1fr)_minmax(17rem,22rem)]'
+              : 'grid gap-4 items-start'
+          }
+        >
           <div className="min-w-0 space-y-4">
         <Card>
           <CardContent className="grid gap-3 pt-6 sm:grid-cols-2 text-sm">
@@ -1346,26 +1396,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
           </div>
 
-          <aside className="print:hidden space-y-4 lg:sticky lg:top-4">
-            <Alert>
-              <Info className="h-4 w-4" />
-              <AlertTitle>ขั้นตอนการเรียกเก็บ</AlertTitle>
-              <AlertDescription className="space-y-2 text-sm">
-                <p>
-                  <strong>ตรวจภายใน (DRAFT)</strong> — ตรวจยอดและรายการให้ถูกต้อง จากนั้นกด{' '}
-                  <strong>ส่งให้ลูกค้าตรวจสอบ</strong> เพื่อแสดงใน Client Portal
-                </p>
-                <p>
-                  <strong>รอลูกค้าตรวจ</strong> — ลูกค้า (Approver) หรือผู้จัดการฝั่ง OPEC สามารถกดยืนยันยอดได้
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  หลังยืนยันเรียกเก็บแล้ว — ฝ่ายบัญชีสร้าง <strong>ใบกำกับภาษี (กับใบวางบิล)</strong> ส่งลูกค้า — แยกจาก{' '}
-                  <strong>ใบเสร็จรับเงิน</strong> ที่ออกหลังลูกค้าโอนแล้วบัญชีตรวจสอบและยืนยันรับเงิน (ยังไม่ e-Tax)
-                </p>
-              </AlertDescription>
-            </Alert>
-
-            {visibleGenerationWarnings.length > 0 ? (
+          {visibleGenerationWarnings.length > 0 ? (
+            <aside className="print:hidden space-y-4 lg:sticky lg:top-4">
               <Alert className="border-amber-200 bg-amber-50/80">
                 <AlertTitle>คำเตือนตอนคำนวณ</AlertTitle>
                 <AlertDescription>
@@ -1376,8 +1408,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   </ul>
                 </AlertDescription>
               </Alert>
-            ) : null}
-          </aside>
+            </aside>
+          ) : null}
         </div>
 
         <Card>

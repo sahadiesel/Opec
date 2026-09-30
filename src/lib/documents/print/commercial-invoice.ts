@@ -39,9 +39,77 @@ import {
   sortCommercialInvoiceLinesForDisplay,
 } from './standard-html-primitives';
 
+/**
+ * - `invoice` — ใบแจ้งหนี้ (รูปแบบเดิม)
+ * - `delivery_invoice` — ใบส่งของ/ใบแจ้งหนี้ (มียอดเงิน + ลายเซ็นผู้ส่ง/ผู้รับสินค้า)
+ * - `delivery_order` — ใบส่งของ (รายการ/จำนวน/หน่วย เท่านั้น ไม่มีราคา)
+ */
+export type CommercialInvoicePrintMode = 'invoice' | 'delivery_invoice' | 'delivery_order';
+
+export const COMMERCIAL_INVOICE_PRINT_MODES: CommercialInvoicePrintMode[] = [
+  'invoice',
+  'delivery_invoice',
+  'delivery_order',
+];
+
 /** Portal print: single title — status is shown in the app table, not in the document header */
-function commercialInvoiceDocTitles(): { th: string; en: string } {
+function commercialInvoiceDocTitles(mode: CommercialInvoicePrintMode): { th: string; en: string } {
+  if (mode === 'delivery_invoice') return { th: 'ใบส่งของ/ใบแจ้งหนี้', en: 'Delivery Order / Invoice' };
+  if (mode === 'delivery_order') return { th: 'ใบส่งของ', en: 'Delivery Order' };
   return { th: 'ใบแจ้งหนี้', en: 'Invoice' };
+}
+
+export function commercialInvoicePrintModeLabel(mode: CommercialInvoicePrintMode, locale: PrintDocumentLocale): string {
+  const t = commercialInvoiceDocTitles(mode);
+  return locale === 'en' ? t.en : t.th;
+}
+
+/** หน่วยจากรายการ PO/ใบเสนอราคา ถูกเก็บท้ายคำอธิบายเป็น `ชื่อ (หน่วย)` หรือ `ชื่อ (หน่วย) — หมายเหตุ` */
+function splitLineUnitFromDescription(line: CommercialInvoiceLine, description: string): { description: string; unit: string } {
+  if (line.lineSource !== 'quotation_line' && line.lineSource !== 'po_line') {
+    return { description, unit: DOC_REF_EMPTY };
+  }
+  const m = /^(.*\S)\s+\(([^()]+)\)(\s+—\s+.*)?$/.exec(description);
+  if (!m) return { description, unit: DOC_REF_EMPTY };
+  return { description: `${m[1]}${m[3] ?? ''}`, unit: m[2].trim() };
+}
+
+function buildDeliverySignFooterHtml(L: PrintDocumentLocale): string {
+  const t =
+    L === 'en'
+      ? {
+          deliveredBy: 'Delivered by',
+          receivedBy: 'Received by',
+          sign: 'Signature',
+          date: 'Date',
+          name: 'Full name (print)',
+          received: 'Date received',
+        }
+      : {
+          deliveredBy: 'ผู้จัดส่งสินค้า',
+          receivedBy: 'ผู้รับสินค้า',
+          sign: 'ลงชื่อ',
+          date: 'วันที่',
+          name: 'ชื่อ-นามสกุล (ตัวบรรจง)',
+          received: 'วันที่ตรวจรับสินค้า',
+        };
+  const field = (label: string) =>
+    `<div class="sd-deliv-field"><span class="sd-deliv-lbl">${escapeHtmlDoc(label)}</span><span class="sd-deliv-line"></span></div>`;
+  return `<footer class="sd-sign-footer sd-deliv-footer">
+  <div class="sd-signatures">
+    <div class="sd-deliv-block">
+      <p class="sd-deliv-title">${escapeHtmlDoc(t.deliveredBy)}</p>
+      ${field(t.sign)}
+      ${field(t.date)}
+    </div>
+    <div class="sd-deliv-block">
+      <p class="sd-deliv-title">${escapeHtmlDoc(t.receivedBy)}</p>
+      ${field(t.sign)}
+      ${field(t.name)}
+      ${field(t.received)}
+    </div>
+  </div>
+  </footer>`;
 }
 
 const DOC_REF_EMPTY = '—';
@@ -170,6 +238,8 @@ export function buildCommercialInvoicePrintHtml(params: {
   printedAtMs?: number;
   /** ภาษาของข้อความบนเอกสารพิมพ์ (ค่าเริ่มต้น ไทย) */
   locale?: PrintDocumentLocale;
+  /** รูปแบบเอกสาร (ค่าเริ่มต้น `invoice`) */
+  printMode?: CommercialInvoicePrintMode;
 }): string {
   const {
     company,
@@ -185,7 +255,10 @@ export function buildCommercialInvoicePrintHtml(params: {
   } = params;
   const locale = params.locale ?? 'th';
   const L = locale;
-  const titles = commercialInvoiceDocTitles();
+  const printMode = params.printMode ?? 'invoice';
+  const isDelivery = printMode !== 'invoice';
+  const showPrices = printMode !== 'delivery_order';
+  const titles = commercialInvoiceDocTitles(printMode);
   const issueStr = formatIssueDateYmdForPrint(invoice.issueDate, L);
   const docRef = resolveCommercialPrintDocumentRef(
     invoice,
@@ -215,19 +288,25 @@ export function buildCommercialInvoicePrintHtml(params: {
       const sub = line.workerName ? ` (${line.workerName})` : '';
       const rawDesc = stripCommercialLinePoPrefix(line.description || '—') + sub;
       const descText = L === 'en' ? translateCommercialLineDescriptionToEn(rawDesc) : rawDesc;
-      const desc = escapeHtmlDoc(descText);
+      const split = isDelivery ? splitLineUnitFromDescription(line, descText) : { description: descText, unit: '' };
+      const desc = escapeHtmlDoc(split.description);
       const qty = Number(line.quantity).toLocaleString(L === 'en' ? 'en-GB' : 'th-TH');
       const up = Number(line.unitPrice).toLocaleString(L === 'en' ? 'en-GB' : 'th-TH', { minimumFractionDigits: 2 });
       const amt = Number(line.amount ?? line.quantity * line.unitPrice).toLocaleString(L === 'en' ? 'en-GB' : 'th-TH', {
         minimumFractionDigits: 2,
       });
       const seq = invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx);
+      const unitCell = isDelivery ? `<td class="sd-center">${escapeHtmlDoc(split.unit)}</td>` : '';
+      const priceCells = showPrices
+        ? `<td class="sd-right">${up}</td>
+        <td class="sd-right">${amt}</td>`
+        : '';
       return `<tr>
         <td class="sd-num">${seq}</td>
         <td>${desc}</td>
         <td class="sd-right">${qty}</td>
-        <td class="sd-right">${up}</td>
-        <td class="sd-right">${amt}</td>
+        ${unitCell}
+        ${priceCells}
       </tr>`;
     })
     .join('');
@@ -274,36 +353,49 @@ export function buildCommercialInvoicePrintHtml(params: {
     locale: L,
   });
   const emptyLines = printT(L, 'noLines');
+  const colCount = 3 + (isDelivery ? 1 : 0) + (showPrices ? 2 : 0);
   const tableHtml = `<table class="sd-table sd-table--commercial-lines">
     <thead>
       <tr>
         <th class="sd-num">${escapeHtmlDoc(printT(L, 'colNo'))}</th>
         <th>${escapeHtmlDoc(printT(L, 'description'))}</th>
         <th class="sd-right">${escapeHtmlDoc(printT(L, 'qty'))}</th>
-        <th class="sd-right">${escapeHtmlDoc(printT(L, 'unitPrice'))}</th>
-        <th class="sd-right">${escapeHtmlDoc(printT(L, 'amount'))}</th>
+        ${isDelivery ? `<th class="sd-center">${escapeHtmlDoc(printT(L, 'unit'))}</th>` : ''}
+        ${
+          showPrices
+            ? `<th class="sd-right">${escapeHtmlDoc(printT(L, 'unitPrice'))}</th>
+        <th class="sd-right">${escapeHtmlDoc(printT(L, 'amount'))}</th>`
+            : ''
+        }
       </tr>
     </thead>
     <tbody>
-      ${lineRows || `<tr><td colspan="5" style="text-align:center;color:#737373">${escapeHtmlDoc(emptyLines)}</td></tr>`}
+      ${lineRows || `<tr><td colspan="${colCount}" style="text-align:center;color:#737373">${escapeHtmlDoc(emptyLines)}</td></tr>`}
     </tbody>
   </table>`;
   const notesForPrint =
     L === 'en' && invoice.notes?.trim()
       ? translateCommercialNotesToEn(invoice.notes)
       : invoice.notes;
-  const totalsHtml = buildStandardTotalsWithNotesRowHtml({
-    totalsParams: {
-      rows: totalRows,
-      amountInWords: totalWords,
-    },
-    notes: notesForPrint,
-    notesTitle: printT(L, 'termsNotes'),
-  });
+  const notesTitle = printT(L, 'termsNotes');
+  const totalsHtml = showPrices
+    ? buildStandardTotalsWithNotesRowHtml({
+        totalsParams: {
+          rows: totalRows,
+          amountInWords: totalWords,
+        },
+        notes: notesForPrint,
+        notesTitle,
+      })
+    : notesForPrint?.trim()
+      ? `<p class="sd-notes"><strong>${escapeHtmlDoc(notesTitle)}:</strong> ${escapeHtmlDoc(notesForPrint.trim())}</p>`
+      : '';
   const statusNote =
     invoice.status === 'VOID'
       ? `<p class="sd-notes"><strong>${escapeHtmlDoc(printT(L, 'status'))}:</strong> ${escapeHtmlDoc(printT(L, 'voidedDoc'))}</p>`
-      : `<p class="sd-notes" style="font-size:9pt">${escapeHtmlDoc(printT(L, 'commercialNotTaxInvoice'))}</p>`;
+      : isDelivery
+        ? ''
+        : `<p class="sd-notes" style="font-size:9pt">${escapeHtmlDoc(printT(L, 'commercialNotTaxInvoice'))}</p>`;
   const mainHtml = `${partyHtml}
   ${docRefHtml}
   ${tableHtml}
@@ -319,11 +411,13 @@ export function buildCommercialInvoicePrintHtml(params: {
     invoice.status === 'ISSUED' && invoice.customerApprovedAt
       ? `<p class="sd-approval-notice">${escapeHtmlDoc(printT(L, 'confirmedTotals'))} ${escapeHtmlDoc(L === 'en' ? formatDateTimeGregorian(invoice.customerApprovedAt) : formatDateTimeThaiBE(invoice.customerApprovedAt))}</p>`
       : '';
-  const footerHtml = buildStandardSignFooterHtml({
-    left: { roleLine: printT(L, 'signPreparedBy'), name: invoice.createdByName || '—' },
-    right: { roleLine: printT(L, 'signCustomerConfirm'), name: rightSignName },
-    belowHtml: confirmLine,
-  });
+  const footerHtml = isDelivery
+    ? buildDeliverySignFooterHtml(L)
+    : buildStandardSignFooterHtml({
+        left: { roleLine: printT(L, 'signPreparedBy'), name: invoice.createdByName || '—' },
+        right: { roleLine: printT(L, 'signCustomerConfirm'), name: rightSignName },
+        belowHtml: confirmLine,
+      });
   const isDraftPrint = invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER';
   const watermarkHtml = isDraftPrint
     ? `<div class="sd-status-watermark" aria-hidden="true"><span class="sd-status-watermark-text">${escapeHtmlDoc(printT(L, 'docDraft'))}</span></div>`

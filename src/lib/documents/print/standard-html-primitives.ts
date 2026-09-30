@@ -381,6 +381,7 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
   }
   .sd-table th.sd-num, .sd-table td.sd-num { text-align: center; width: 28px; }
   .sd-table th.sd-right, .sd-table td.sd-right { text-align: right; }
+  .sd-table th.sd-center, .sd-table td.sd-center { text-align: center; }
   .sd-table td {
     border: 1px solid #e4e4e7;
     padding: 4px 5px;
@@ -522,6 +523,14 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
   }
   .sd-sign-role { font-size: 9pt; color: #525252; margin: 0; }
   .sd-sign-name { font-size: 10.5pt; font-weight: 700; margin: 4px 0 0 0; }
+  /** ใบส่งของ — ผู้จัดส่ง / ผู้รับสินค้า */
+  .sd-deliv-footer .sd-signatures { gap: 36px; }
+  .sd-deliv-block { text-align: left; }
+  .sd-deliv-title { font-size: 10pt; font-weight: 700; margin: 0 0 14px 0; text-align: center; }
+  .sd-deliv-field { display: flex; align-items: flex-end; gap: 6px; margin-top: 20px; font-size: 9pt; color: #404040; }
+  .sd-deliv-lbl { white-space: nowrap; }
+  .sd-deliv-line { flex: 1; border-bottom: 1px dotted #737373; height: 0; min-width: 40px; }
+  @media print { .sd-deliv-field { margin-top: 16px; } }
   .sd-approval-notice {
     margin-top: 12px;
     font-size: 9pt;

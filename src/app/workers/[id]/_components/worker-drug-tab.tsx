@@ -19,7 +19,7 @@ import {
 } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Plus, Trash2, Pencil, AlertCircle, Camera, Loader2, X, FileText, Eye } from 'lucide-react';
+import { Plus, Trash2, Pencil, AlertCircle, Camera, Loader2, X, FileText, Eye, ImagePlus } from 'lucide-react';
 import { addDoc, doc, deleteField, type Firestore, type CollectionReference } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
@@ -96,6 +96,7 @@ export function WorkerDrugTab({
   const { toast } = useToast();
   const firebaseApp = useFirebaseApp();
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const [drugDialogOpen, setDrugDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState<'edit' | 'view'>('edit');
@@ -143,6 +144,7 @@ export function WorkerDrugTab({
     setPendingFiles([]);
     setPendingPreviewUrls([]);
     if (photoInputRef.current) photoInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
 
   const resetDrugForm = () => {
@@ -274,6 +276,7 @@ export function WorkerDrugTab({
     setPendingFiles((prev) => [...prev, ...take]);
     setPendingPreviewUrls((prev) => [...prev, ...urls]);
     if (photoInputRef.current) photoInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
 
   const removePendingFile = (index: number) => {
@@ -810,16 +813,41 @@ export function WorkerDrugTab({
                   JPEG/PNG/WebP บีบอัดอัตโนมัติไม่เกิน 500 KB ต่อรูป · PDF สูงสุด 10 MB · คงเหลือ {Math.max(0, attachmentSlotsLeft)} ไฟล์
                 </p>
                 {!formReadOnly ? (
-                  <Input
-                    ref={photoInputRef}
-                    type="file"
-                    accept="image/*,application/pdf,.pdf"
-                    capture="environment"
-                    multiple
-                    className="max-w-[18rem] text-xs"
-                    disabled={attachmentSlotsLeft <= 0}
-                    onChange={(e) => onAttachmentsPick(e.target.files)}
-                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      ref={cameraInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={(e) => onAttachmentsPick(e.target.files)}
+                    />
+                    <input
+                      ref={photoInputRef}
+                      type="file"
+                      accept="image/*,application/pdf,.pdf"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => onAttachmentsPick(e.target.files)}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={attachmentSlotsLeft <= 0}
+                      onClick={() => cameraInputRef.current?.click()}
+                    >
+                      <Camera className="mr-1.5 h-4 w-4" /> ถ่ายรูป
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={attachmentSlotsLeft <= 0}
+                      onClick={() => photoInputRef.current?.click()}
+                    >
+                      <ImagePlus className="mr-1.5 h-4 w-4" /> เลือกไฟล์ / คลังรูป
+                    </Button>
+                  </div>
                 ) : null}
                 {(keptExistingAttachments.length > 0 || pendingFiles.length > 0) && (
                   <div className="flex flex-wrap gap-2 pt-1">
