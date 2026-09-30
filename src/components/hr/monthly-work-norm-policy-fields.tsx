@@ -1,14 +1,20 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { Clock, Info, Scale } from 'lucide-react';
+import { Clock, Info, Plus, Scale, Trash2 } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import {
   absenceLatePayrollRates,
   computeShiftWindowsLabels,
   computeWorkDayEndDisplay,
+  DEFAULT_OFFICE_LATE_PENALTY_BANDS,
+  hmmAddMinutes,
+  latePenaltyMinutesFromMinutesAfterStart,
+  minutesAfterWorkStartFromHmm,
   type MonthlyWorkNormPolicyConfig,
+  type OfficeLatePenaltyBand,
 } from '@/lib/hr/monthly-work-norm-policy';
 
 export type MonthlyWorkNormPolicyFieldsProps = {
@@ -25,6 +31,8 @@ export type MonthlyWorkNormPolicyFieldsProps = {
   onBreakStartTime: (v: string) => void;
   lateGraceMinutes: number;
   onLateGraceMinutes: (v: number) => void;
+  latePenaltyBands: OfficeLatePenaltyBand[];
+  onLatePenaltyBands: (v: OfficeLatePenaltyBand[]) => void;
   officeHolidayNormalWorkMultiplier: number;
   onOfficeHolidayNormalWorkMultiplier: (v: number) => void;
   officeWeekdayOvertimeMultiplier: number;
@@ -55,6 +63,8 @@ export function MonthlyWorkNormPolicyFields({
   onBreakStartTime,
   lateGraceMinutes,
   onLateGraceMinutes,
+  latePenaltyBands,
+  onLatePenaltyBands,
   officeHolidayNormalWorkMultiplier,
   onOfficeHolidayNormalWorkMultiplier,
   officeWeekdayOvertimeMultiplier,
@@ -74,6 +84,7 @@ export function MonthlyWorkNormPolicyFields({
     workStartTime,
     breakStartTime,
     lateGraceMinutes,
+    latePenaltyBands,
     officeHolidayNormalWorkMultiplier,
     officeWeekdayOvertimeMultiplier,
     officeHolidayOvertimeMultiplier,
@@ -101,8 +112,8 @@ export function MonthlyWorkNormPolicyFields({
               (หลังจบช่วงที่ 2) → <strong className="text-foreground">ขาดทั้งวัน</strong>
             </li>
             <li>
-              ถ้าอยู่ในช่วงเช้าหรือบ่ายแต่<strong className="text-foreground">สายเกินนาทีผ่อนผัน</strong> → หักเป็นนาทีตาม (
-              เงินเดือน ÷ วันทำงานที่กำหนด ÷ นาทีทำงานต่อวัน )
+              ถ้าอยู่ในช่วงเช้าหรือบ่ายแต่<strong className="text-foreground">สายเกินนาทีผ่อนผัน</strong> → หักตามตารางช่วงสายด้านล่าง
+              (นาทีที่หัก × เงินเดือนจริง ÷ วันทำงาน ÷ นาทีทำงานต่อวัน)
             </li>
             <li>
               มี<strong className="text-foreground">การอนุมัติแก้ไขเวลา</strong>แล้ว → ใช้เวลาตามที่แก้ในการคำนวณ
@@ -190,6 +201,143 @@ export function MonthlyWorkNormPolicyFields({
             value={breakHoursPerDay}
             onChange={(e) => onBreakHoursPerDay(Number(e.target.value))}
             className="font-mono max-w-[120px]"
+          />
+        </div>
+        <div className="rounded-md border bg-background px-3 py-3 space-y-3 sm:col-span-2">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold text-foreground">ตารางหักสายตามประกาศบริษัท</p>
+              <p className="text-[11px] text-muted-foreground leading-snug mt-0.5">
+                ตั้งช่วงเวลาเข้างานและนาทีที่หัก — ยอดเงินหักใช้เงินเดือนจริงของแต่ละคน (เงินเดือน ÷ {workDaysPerMonth} วัน ÷{' '}
+                {Math.round(normalWorkHoursPerDay * 60)} นาที)
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={disabled}
+                onClick={() => onLatePenaltyBands(DEFAULT_OFFICE_LATE_PENALTY_BANDS.map((b) => ({ ...b })))}
+              >
+                ตามประกาศ HR
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={disabled}
+                onClick={() => {
+                  const last = latePenaltyBands[latePenaltyBands.length - 1];
+                  const fromAfterStartMinutes = last ? last.toAfterStartMinutes + 1 : 1;
+                  onLatePenaltyBands([
+                    ...latePenaltyBands,
+                    {
+                      fromAfterStartMinutes,
+                      toAfterStartMinutes: fromAfterStartMinutes + 4,
+                      deductMinutes: last ? last.deductMinutes + 10 : 10,
+                    },
+                  ]);
+                }}
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                เพิ่มช่วง
+              </Button>
+            </div>
+          </div>
+
+          {latePenaltyBands.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground">
+              ไม่มีช่วง — ระบบจะหักตามนาทีที่สายจริงหลังผ่อนผัน
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <div className="hidden sm:grid grid-cols-[1fr_1fr_7rem_auto] gap-2 text-[11px] font-medium text-muted-foreground px-0.5">
+                <span>ตั้งแต่</span>
+                <span>ถึง</span>
+                <span>นาทีที่หัก</span>
+                <span />
+              </div>
+              {latePenaltyBands.map((band, idx) => (
+                <div
+                  key={`${band.fromAfterStartMinutes}-${idx}`}
+                  className="grid gap-2 sm:grid-cols-[1fr_1fr_7rem_auto] items-end"
+                >
+                  <div className="grid gap-1">
+                    <Label className="sm:sr-only text-[11px] text-muted-foreground">ตั้งแต่</Label>
+                    <Input
+                      type="time"
+                      disabled={disabled}
+                      value={hmmAddMinutes(workStartTime, band.fromAfterStartMinutes)}
+                      onChange={(e) => {
+                        const mins = minutesAfterWorkStartFromHmm(workStartTime, e.target.value);
+                        if (mins == null) return;
+                        onLatePenaltyBands(
+                          latePenaltyBands.map((b, i) =>
+                            i === idx ? { ...b, fromAfterStartMinutes: mins } : b,
+                          ),
+                        );
+                      }}
+                      className="font-mono"
+                    />
+                  </div>
+                  <div className="grid gap-1">
+                    <Label className="sm:sr-only text-[11px] text-muted-foreground">ถึง</Label>
+                    <Input
+                      type="time"
+                      disabled={disabled}
+                      value={hmmAddMinutes(workStartTime, band.toAfterStartMinutes)}
+                      onChange={(e) => {
+                        const mins = minutesAfterWorkStartFromHmm(workStartTime, e.target.value);
+                        if (mins == null) return;
+                        onLatePenaltyBands(
+                          latePenaltyBands.map((b, i) =>
+                            i === idx ? { ...b, toAfterStartMinutes: mins } : b,
+                          ),
+                        );
+                      }}
+                      className="font-mono"
+                    />
+                  </div>
+                  <div className="grid gap-1">
+                    <Label className="sm:sr-only text-[11px] text-muted-foreground">นาทีที่หัก</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={480}
+                      step={1}
+                      disabled={disabled}
+                      value={band.deductMinutes}
+                      onChange={(e) => {
+                        const n = Math.max(1, Math.round(Number(e.target.value) || 0));
+                        onLatePenaltyBands(
+                          latePenaltyBands.map((b, i) => (i === idx ? { ...b, deductMinutes: n } : b)),
+                        );
+                      }}
+                      className="font-mono"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    disabled={disabled}
+                    className="h-9 w-9 text-muted-foreground"
+                    onClick={() => onLatePenaltyBands(latePenaltyBands.filter((_, i) => i !== idx))}
+                    aria-label="ลบช่วง"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <LatePenaltyExample
+            workStartTime={workStartTime}
+            lateGraceMinutes={lateGraceMinutes}
+            latePenaltyBands={latePenaltyBands}
+            perMinute={absenceDemoRates.perMinute}
           />
         </div>
         <div className="grid gap-3 sm:col-span-2 rounded-md border border-dashed bg-muted/40 px-3 py-3 sm:grid-cols-3">
@@ -304,6 +452,35 @@ export function MonthlyWorkNormPolicyFields({
   );
 }
 
+function LatePenaltyExample({
+  workStartTime,
+  lateGraceMinutes,
+  latePenaltyBands,
+  perMinute,
+}: {
+  workStartTime: string;
+  lateGraceMinutes: number;
+  latePenaltyBands: OfficeLatePenaltyBand[];
+  perMinute: number;
+}) {
+  const exampleClock = hmmAddMinutes(workStartTime, 3);
+  const afterStart = minutesAfterWorkStartFromHmm(workStartTime, exampleClock) ?? 3;
+  const penaltyMin = latePenaltyMinutesFromMinutesAfterStart(afterStart, {
+    lateGraceMinutes,
+    latePenaltyBands,
+  });
+  const amount = Math.round(penaltyMin * perMinute * 100) / 100;
+  return (
+    <p className="text-[11px] text-muted-foreground leading-snug rounded-md bg-muted/50 px-2 py-1.5">
+      ตัวอย่าง: เข้า {exampleClock} น. (สาย {afterStart} นาที) → หัก {penaltyMin} นาที ={' '}
+      <span className="font-mono font-semibold text-foreground">
+        {amount.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท
+      </span>{' '}
+      จากฐานเงินเดือนในกล่องตัวอย่างด้านขวา — พนักงานแต่ละคนใช้เงินเดือนของตนเอง
+    </p>
+  );
+}
+
 export function MonthlyWorkNormAbsenceDemo({
   disabled,
   workDaysPerMonth,
@@ -368,8 +545,8 @@ export function MonthlyWorkNormAbsenceDemo({
         </div>
       </div>
       <p className="text-[11px] text-muted-foreground leading-snug">
-        ขาดงาน / ลาไม่จ่าย → หัก <span className="font-mono">รายวัน × จำนวนวัน</span> · สายในกรอบช่วง → หัก{' '}
-        <span className="font-mono">รายนาที × นาทีที่สาย</span>
+        ขาดงาน / ลาไม่จ่าย → หัก <span className="font-mono">รายวัน × จำนวนวัน</span> · สายตามตารางช่วง → หัก{' '}
+        <span className="font-mono">รายนาที × นาทีที่หักตามช่วง</span> จากเงินเดือนจริงของคนนั้น
       </p>
     </div>
   );

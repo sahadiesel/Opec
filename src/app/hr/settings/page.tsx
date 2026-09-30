@@ -59,10 +59,12 @@ import { CalendarHolidayEditor } from '@/app/main-contracts/[id]/_components/cal
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   DEFAULT_MONTHLY_WORK_NORM,
+  DEFAULT_OFFICE_LATE_PENALTY_BANDS,
   absenceLatePayrollRates,
   monthlyWorkNormFromUnknownConfig,
   validateMonthlyWorkNormForSave,
   type MonthlyWorkNormPolicyConfig,
+  type OfficeLatePenaltyBand,
 } from '@/lib/hr/monthly-work-norm-policy';
 import {
   MonthlyWorkNormAbsenceDemo,
@@ -224,6 +226,9 @@ export default function HrSettingsPage() {
   const [lateGraceMinutes, setLateGraceMinutes] = useState(
     DEFAULT_MONTHLY_WORK_NORM.lateGraceMinutes ?? 0,
   );
+  const [latePenaltyBands, setLatePenaltyBands] = useState<OfficeLatePenaltyBand[]>(() =>
+    DEFAULT_OFFICE_LATE_PENALTY_BANDS.map((b) => ({ ...b })),
+  );
   const [officeHolidayNormalWorkMultiplier, setOfficeHolidayNormalWorkMultiplier] = useState(
     DEFAULT_MONTHLY_WORK_NORM.officeHolidayNormalWorkMultiplier ?? 1.0,
   );
@@ -290,6 +295,9 @@ export default function HrSettingsPage() {
         setWorkStartTime(cfg.workStartTime);
         setBreakStartTime(cfg.breakStartTime ?? '12:00');
         setLateGraceMinutes(cfg.lateGraceMinutes ?? 0);
+        setLatePenaltyBands(
+          (cfg.latePenaltyBands ?? DEFAULT_OFFICE_LATE_PENALTY_BANDS).map((b) => ({ ...b })),
+        );
         setOfficeHolidayNormalWorkMultiplier(cfg.officeHolidayNormalWorkMultiplier ?? 1.0);
         setOfficeWeekdayOvertimeMultiplier(cfg.officeWeekdayOvertimeMultiplier ?? 1.5);
         setOfficeHolidayOvertimeMultiplier(cfg.officeHolidayOvertimeMultiplier ?? 1.5);
@@ -429,6 +437,7 @@ export default function HrSettingsPage() {
       workStartTime: workStartTime.trim(),
       breakStartTime: breakStartTime?.trim() || undefined,
       lateGraceMinutes: Math.max(0, Math.round(Number(lateGraceMinutes) || 0)),
+      latePenaltyBands,
       officeHolidayNormalWorkMultiplier: Math.max(
         0.5,
         Math.min(10, Number(officeHolidayNormalWorkMultiplier) || 1),
@@ -535,6 +544,7 @@ export default function HrSettingsPage() {
           workStartTime: monthlyWorkCfg.workStartTime,
           breakStartTime: monthlyWorkCfg.breakStartTime ?? '12:00',
           lateGraceMinutes: monthlyWorkCfg.lateGraceMinutes ?? 0,
+          latePenaltyBands: monthlyWorkCfg.latePenaltyBands ?? [],
           officeHolidayNormalWorkMultiplier: monthlyWorkCfg.officeHolidayNormalWorkMultiplier ?? 1,
           officeWeekdayOvertimeMultiplier: monthlyWorkCfg.officeWeekdayOvertimeMultiplier ?? 1.5,
           officeHolidayOvertimeMultiplier: monthlyWorkCfg.officeHolidayOvertimeMultiplier ?? 1.5,
@@ -751,6 +761,8 @@ export default function HrSettingsPage() {
                   onBreakStartTime={setBreakStartTime}
                   lateGraceMinutes={lateGraceMinutes}
                   onLateGraceMinutes={setLateGraceMinutes}
+                  latePenaltyBands={latePenaltyBands}
+                  onLatePenaltyBands={setLatePenaltyBands}
                   officeHolidayNormalWorkMultiplier={officeHolidayNormalWorkMultiplier}
                   onOfficeHolidayNormalWorkMultiplier={setOfficeHolidayNormalWorkMultiplier}
                   officeWeekdayOvertimeMultiplier={officeWeekdayOvertimeMultiplier}
@@ -769,61 +781,6 @@ export default function HrSettingsPage() {
                     </>
                   }
                 />
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="border-b bg-muted/20">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <ClipboardList className="h-5 w-5 text-primary" />
-                  การตั้งค่าสิทธิ์วันลา (พนักงานออฟฟิศ)
-                </CardTitle>
-                <CardDescription>
-                  จำนวนวันต่อปีสำหรับลากิจ ลาป่วย และลาพักร้อน — ใช้เป็นฐานเมื่อเปิดเมนูจัดการวันลา
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-4">
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-2 min-w-0">
-                    <Label>วันลากิจ / ปี</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={1}
-                      disabled={loading || !canEdit}
-                      value={officeLeavePersonal}
-                      onChange={(e) => setOfficeLeavePersonal(Math.max(0, Math.round(Number(e.target.value) || 0)))}
-                    />
-                  </div>
-                  <div className="space-y-2 min-w-0">
-                    <Label>วันลาป่วย / ปี</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={1}
-                      disabled={loading || !canEdit}
-                      value={officeLeaveSick}
-                      onChange={(e) => setOfficeLeaveSick(Math.max(0, Math.round(Number(e.target.value) || 0)))}
-                    />
-                  </div>
-                  <div className="space-y-2 min-w-0">
-                    <Label>วันลาพักร้อน / ปี</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={1}
-                      disabled={loading || !canEdit}
-                      value={officeLeaveAnnual}
-                      onChange={(e) => setOfficeLeaveAnnual(Math.max(0, Math.round(Number(e.target.value) || 0)))}
-                    />
-                  </div>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  เก็บใน Firestore ที่{' '}
-                  <span className="font-mono">
-                    {HR_CONFIGURATION_COLLECTION}/{HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID}
-                  </span>
-                </p>
               </CardContent>
             </Card>
           </div>
@@ -931,11 +888,67 @@ export default function HrSettingsPage() {
                 workStartTime,
                 breakStartTime,
                 lateGraceMinutes,
+                latePenaltyBands,
                 officeHolidayNormalWorkMultiplier,
                 officeWeekdayOvertimeMultiplier,
                 officeHolidayOvertimeMultiplier,
               })}
             />
+
+            <Card>
+              <CardHeader className="border-b bg-muted/20">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <ClipboardList className="h-5 w-5 text-primary" />
+                  การตั้งค่าสิทธิ์วันลา (พนักงานออฟฟิศ)
+                </CardTitle>
+                <CardDescription>
+                  จำนวนวันต่อปีสำหรับลากิจ ลาป่วย และลาพักร้อน — ใช้เป็นฐานเมื่อเปิดเมนูจัดการวันลา
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-4">
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-2 min-w-0">
+                    <Label>วันลากิจ / ปี</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      disabled={loading || !canEdit}
+                      value={officeLeavePersonal}
+                      onChange={(e) => setOfficeLeavePersonal(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                    />
+                  </div>
+                  <div className="space-y-2 min-w-0">
+                    <Label>วันลาป่วย / ปี</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      disabled={loading || !canEdit}
+                      value={officeLeaveSick}
+                      onChange={(e) => setOfficeLeaveSick(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                    />
+                  </div>
+                  <div className="space-y-2 min-w-0">
+                    <Label>วันลาพักร้อน / ปี</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      disabled={loading || !canEdit}
+                      value={officeLeaveAnnual}
+                      onChange={(e) => setOfficeLeaveAnnual(Math.max(0, Math.round(Number(e.target.value) || 0)))}
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  เก็บใน Firestore ที่{' '}
+                  <span className="font-mono">
+                    {HR_CONFIGURATION_COLLECTION}/{HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID}
+                  </span>
+                </p>
+              </CardContent>
+            </Card>
           </div>
         </div>
 

@@ -2,6 +2,20 @@
 
 import { otHoursFromHmRange } from '@/lib/attendance/overtime-time';
 
+/** ช่วงหักสายตามประกาศ — นาทีหลังเวลาเริ่มกะ (เช้าเทียบ workStart, บ่ายเทียบ เริ่มบ่าย) */
+export type OfficeLatePenaltyBand = {
+  fromAfterStartMinutes: number;
+  toAfterStartMinutes: number;
+  deductMinutes: number;
+};
+
+/** ค่าเริ่มต้นตามประกาศ HR (08:01–05 หัก 10 / 06–10 หัก 20 / 11–15 หัก 30) */
+export const DEFAULT_OFFICE_LATE_PENALTY_BANDS: OfficeLatePenaltyBand[] = [
+  { fromAfterStartMinutes: 1, toAfterStartMinutes: 5, deductMinutes: 10 },
+  { fromAfterStartMinutes: 6, toAfterStartMinutes: 10, deductMinutes: 20 },
+  { fromAfterStartMinutes: 11, toAfterStartMinutes: 15, deductMinutes: 30 },
+];
+
 export type MonthlyWorkNormPolicyConfig = {
   /** จำนวนวันทำงานมาตรฐานต่อเดือน (หารเงินเดือนเมื่อขาดงาน / ไม่ครบวัน) */
   standardWorkingDaysPerMonth: number;
@@ -15,6 +29,12 @@ export type MonthlyWorkNormPolicyConfig = {
   breakStartTime?: string;
   /** จำนวนนาทีผ่อนผันก่อนถูกนับว่าสาย (เช่น 5 = หลัง 08:05 จึงเริ่มคิด) */
   lateGraceMinutes?: number;
+  /**
+   * ช่วงสายตามประกาศบริษัท — นับนาทีหลังเวลาเริ่มกะ (เช่น เริ่ม 08:00 → 1–5 = 08:01–08:05)
+   * หักเป็น `deductMinutes` จากฐานเงินเดือนจริงของคนนั้น (เงินเดือน ÷ วัน ÷ นาทีทำงาน)
+   * อาร์เรย์ว่าง = หักตามนาทีที่สายจริงหลังผ่อนผัน
+   */
+  latePenaltyBands?: OfficeLatePenaltyBand[];
   /** A — ตัวคูณทำงานในวันหยุดนักขัตฤกษ์/วันอาทิตย์ (เวลาทำงานปกติ) */
   officeHolidayNormalWorkMultiplier?: number;
   /** B — ตัวคูณ OT วันทำงานปกติ (ก่อน/หลังเวลางาน) */
@@ -34,6 +54,7 @@ export const DEFAULT_MONTHLY_WORK_NORM: MonthlyWorkNormPolicyConfig = {
   workStartTime: '08:00',
   breakStartTime: '12:00',
   lateGraceMinutes: 0,
+  latePenaltyBands: DEFAULT_OFFICE_LATE_PENALTY_BANDS,
   officeHolidayNormalWorkMultiplier: 1.0,
   officeWeekdayOvertimeMultiplier: 1.5,
   officeHolidayOvertimeMultiplier: 1.5,
@@ -78,6 +99,10 @@ export function monthlyWorkNormFromUnknownConfig(raw: Record<string, unknown> | 
   const lateRaw = Number(raw.lateGraceMinutes);
   const lateGrace =
     Number.isFinite(lateRaw) && lateRaw >= 0 ? Math.min(120, Math.round(lateRaw)) : 0;
+  const latePenaltyBands = normalizeOfficeLatePenaltyBands(
+    raw.latePenaltyBands,
+    !Object.prototype.hasOwnProperty.call(raw, 'latePenaltyBands'),
+  );
   const clampMult = (v: unknown, fallback: number) => {
     const n = Number(v);
     return Number.isFinite(n) && n > 0 ? Math.min(10, Math.round(n * 100) / 100) : fallback;
@@ -101,6 +126,7 @@ export function monthlyWorkNormFromUnknownConfig(raw: Record<string, unknown> | 
     workStartTime: start,
     breakStartTime: breakStart,
     lateGraceMinutes: lateGrace,
+    latePenaltyBands,
     officeHolidayNormalWorkMultiplier,
     officeWeekdayOvertimeMultiplier,
     officeHolidayOvertimeMultiplier,
@@ -172,6 +198,22 @@ export function validateMonthlyWorkNormForSave(cfg: MonthlyWorkNormPolicyConfig)
       return 'เวลาผ่อนผันสาย (นาที) ต้องอยู่ระหว่าง 0–120';
     }
   }
+  const bands = normalizeOfficeLatePenaltyBands(cfg.latePenaltyBands, false);
+  if (cfg.latePenaltyBands !== undefined && Array.isArray(cfg.latePenaltyBands) && bands.length !== cfg.latePenaltyBands.length) {
+    return 'ช่วงหักสายไม่ถูกต้อง — ตรวจสอบเวลาเริ่ม–สิ้นสุดและนาทีที่หัก';
+  }
+  for (let i = 0; i < bands.length; i++) {
+    const b = bands[i];
+    if (b.toAfterStartMinutes < b.fromAfterStartMinutes) {
+      return 'ช่วงหักสาย: เวลาสิ้นสุดต้องไม่ก่อนเวลาเริ่ม';
+    }
+    if (b.deductMinutes < 1) {
+      return 'นาทีที่หักในแต่ละช่วงต้องอย่างน้อย 1';
+    }
+    if (i > 0 && b.fromAfterStartMinutes <= bands[i - 1].toAfterStartMinutes) {
+      return 'ช่วงหักสายซ้อนกัน — จัดช่วงไม่ให้ทับกัน';
+    }
+  }
   return null;
 }
 
@@ -194,6 +236,71 @@ function fmtHmm(totalMin: number): string {
   const pad = (x: number) => String(x).padStart(2, '0');
   const time = `${pad(h)}:${pad(mi)}`;
   return wraps > 0 ? `${time} (+${wraps} วัน)` : time;
+}
+
+function clampBandInt(n: unknown, min: number, max: number): number | null {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v) || v < min || v > max) return null;
+  return v;
+}
+
+/** อ่านช่วงหักสาย — ถ้าไม่มีฟิลด์ใน config ใช้ค่าตามประกาศ; อาร์เรย์ว่าง = ไม่ใช้ช่วง */
+export function normalizeOfficeLatePenaltyBands(
+  raw: unknown,
+  missingMeansDefault = true,
+): OfficeLatePenaltyBand[] {
+  if (raw === undefined || raw === null) {
+    return missingMeansDefault ? DEFAULT_OFFICE_LATE_PENALTY_BANDS.map((b) => ({ ...b })) : [];
+  }
+  if (!Array.isArray(raw)) {
+    return missingMeansDefault ? DEFAULT_OFFICE_LATE_PENALTY_BANDS.map((b) => ({ ...b })) : [];
+  }
+  const out: OfficeLatePenaltyBand[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue;
+    const r = row as Record<string, unknown>;
+    const fromAfterStartMinutes = clampBandInt(r.fromAfterStartMinutes, 0, 12 * 60);
+    const toAfterStartMinutes = clampBandInt(r.toAfterStartMinutes, 0, 12 * 60);
+    const deductMinutes = clampBandInt(r.deductMinutes, 1, 8 * 60);
+    if (fromAfterStartMinutes === null || toAfterStartMinutes === null || deductMinutes === null) continue;
+    if (toAfterStartMinutes < fromAfterStartMinutes) continue;
+    out.push({ fromAfterStartMinutes, toAfterStartMinutes, deductMinutes });
+  }
+  return out.sort((a, b) => a.fromAfterStartMinutes - b.fromAfterStartMinutes);
+}
+
+/** นาทีหักสายจากนาทีหลังเริ่มกะ — ช่วงประกาศทับนาทีจริง; นอกช่วงสุดท้ายใช้นาทีที่สายจริง */
+export function latePenaltyMinutesFromMinutesAfterStart(
+  minutesAfterShiftStart: number,
+  cfg: Pick<MonthlyWorkNormPolicyConfig, 'lateGraceMinutes' | 'latePenaltyBands'>,
+): number {
+  const m = Math.max(0, Math.round(Number(minutesAfterShiftStart) || 0));
+  const grace = Math.max(0, Math.round(cfg.lateGraceMinutes ?? 0));
+  if (m <= grace) return 0;
+  const bands = normalizeOfficeLatePenaltyBands(cfg.latePenaltyBands, false);
+  if (!bands.length) return Math.max(0, m - grace);
+  const hit = bands.find((b) => m >= b.fromAfterStartMinutes && m <= b.toAfterStartMinutes);
+  if (hit) return hit.deductMinutes;
+  return m;
+}
+
+export function hmmAddMinutes(hmm: string, addMinutes: number): string {
+  const start = parseHmm(hmm);
+  if (start === null) return '—';
+  const total = start + Math.round(addMinutes);
+  const rem = ((total % (24 * 60)) + 24 * 60) % (24 * 60);
+  const h = Math.floor(rem / 60);
+  const mi = rem % 60;
+  return `${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}`;
+}
+
+export function minutesAfterWorkStartFromHmm(workStartHmm: string, clockHmm: string): number | null {
+  const start = parseHmm(workStartHmm);
+  const clock = parseHmm(clockHmm);
+  if (start === null || clock === null) return null;
+  let d = clock - start;
+  if (d < 0) d += 24 * 60;
+  return d;
 }
 
 /** จุดเวลาเป็นหน่วยนาทีจากเที่ยงคืน — ใช้คำนวณ payroll / สาย / ขาดงาน */
@@ -274,25 +381,33 @@ export function evaluateOfficeScanInForPayrollHalf(
   if (workingHalf === 'AFTERNOON') {
     if (t > b.afternoonEndMin) return { absenceDayFraction: 0.5, lateMinutes: 0 };
     if (t < b.afternoonStartMin) return { absenceDayFraction: 0, lateMinutes: 0 };
-    const lateAfternoon = Math.max(0, t - b.afternoonLateCutoffMin);
-    return { absenceDayFraction: 0, lateMinutes: lateAfternoon };
+    return {
+      absenceDayFraction: 0,
+      lateMinutes: latePenaltyMinutesFromMinutesAfterStart(t - b.afternoonStartMin, cfg),
+    };
   }
 
   if (workingHalf === 'MORNING') {
     if (t > b.morningEndMin) return { absenceDayFraction: 0.5, lateMinutes: 0 };
-    const lateMorning = Math.max(0, t - b.morningLateCutoffMin);
-    return { absenceDayFraction: 0, lateMinutes: lateMorning };
+    return {
+      absenceDayFraction: 0,
+      lateMinutes: latePenaltyMinutesFromMinutesAfterStart(t - b.workStartMin, cfg),
+    };
   }
 
   if (t > b.afternoonEndMin) {
     return { absenceDayFraction: 1, lateMinutes: 0 };
   }
   if (t > b.morningEndMin) {
-    const lateAfternoon = Math.max(0, t - b.afternoonLateCutoffMin);
-    return { absenceDayFraction: 0.5, lateMinutes: lateAfternoon };
+    return {
+      absenceDayFraction: 0.5,
+      lateMinutes: latePenaltyMinutesFromMinutesAfterStart(t - b.afternoonStartMin, cfg),
+    };
   }
-  const lateMorning = Math.max(0, t - b.morningLateCutoffMin);
-  return { absenceDayFraction: 0, lateMinutes: lateMorning };
+  return {
+    absenceDayFraction: 0,
+    lateMinutes: latePenaltyMinutesFromMinutesAfterStart(t - b.workStartMin, cfg),
+  };
 }
 
 /**
