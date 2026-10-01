@@ -70,13 +70,13 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
     localStorage.removeItem('opsflow_user');
 
     if (user && firestore) {
-      try {
-        await updateDoc(doc(firestore, 'users', user.id), {
-          lastLogoutAt: Date.now(),
-        });
-      } catch {
+      // updateDoc resolves only on server ack — on slow mobile networks that can stall sign-out indefinitely.
+      const write = updateDoc(doc(firestore, 'users', user.id), {
+        lastLogoutAt: Date.now(),
+      }).catch(() => {
         /* ignore during logout */
-      }
+      });
+      await Promise.race([write, new Promise((resolve) => setTimeout(resolve, 1500))]);
     }
 
     router.push('/');

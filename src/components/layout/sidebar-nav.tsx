@@ -1,6 +1,6 @@
 'use client';
 
-import type { ComponentType } from 'react';
+import { useEffect, type ComponentType } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -46,6 +46,7 @@ import {
   QrCode,
   ExternalLink,
   Wrench,
+  X,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -61,6 +62,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  useSidebar,
 } from '@/components/ui/sidebar';
 import { User, PermissionProfile } from '@/lib/types';
 import {
@@ -515,6 +517,10 @@ export function SidebarNav({
   profiles?: PermissionProfile[] | null;
 }) {
   const pathname = usePathname();
+  const { isMobile, setOpenMobile } = useSidebar();
+  useEffect(() => {
+    setOpenMobile(false);
+  }, [pathname, setOpenMobile]);
   const admin = isSystemAdmin(user);
   const fullMenuAccess = admin || isExecutiveViewer(user);
   const profile = profiles?.[0] ?? null;
@@ -559,6 +565,17 @@ export function SidebarNav({
             <span className="text-base tracking-tight truncate leading-tight">OPEC OpsFlow</span>
             <span className="text-[8px] opacity-60 uppercase tracking-widest font-black truncate">Platform v2.0</span>
           </div>
+          {isMobile ? (
+            <button
+              type="button"
+              onClick={() => setOpenMobile(false)}
+              className="ml-auto rounded-md p-2 text-primary-foreground/80 hover:bg-white/10 hover:text-primary-foreground"
+              aria-label="ปิดเมนู"
+              title="ปิดเมนู"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          ) : null}
         </div>
       </SidebarHeader>
 
