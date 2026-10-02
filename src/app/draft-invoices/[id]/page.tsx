@@ -95,7 +95,10 @@ import { printT, type PrintDocumentLocale } from '@/lib/documents/document-print
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { DocumentShareButton } from '@/components/documents/document-share-controls';
-import { createTaxInvoiceDraftFromIssuedCommercial } from '@/lib/services/tax-invoice-from-commercial-service';
+import {
+  createTaxInvoiceDraftFromIssuedCommercial,
+  updateLinkedInvoiceTermNotes,
+} from '@/lib/services/tax-invoice-from-commercial-service';
 import { verifyOpecCustomerPaymentForCommercial } from '@/lib/services/commercial-payment-flow-service';
 import {
   Select,
@@ -156,6 +159,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const firebaseApp = useFirebaseApp();
   const { toast } = useToast();
   const attachInputRef = useRef<HTMLInputElement>(null);
+  const notesCardRef = useRef<HTMLDivElement>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [voidBusy, setVoidBusy] = useState(false);
@@ -166,6 +170,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const [notesDraft, setNotesDraft] = useState('');
   /** ต้องกด「แก้ไข/เพิ่มรายการ」ก่อน จึงแก้จำนวน/ราคา/หมายเหตุได้ */
   const [linesEditing, setLinesEditing] = useState(false);
+  /** ใบที่ออกใบกำกับภาษีแล้ว — แก้ได้เฉพาะ Term & Note */
+  const [notesOnlyEditing, setNotesOnlyEditing] = useState(false);
   const [verifyPayBusy, setVerifyPayBusy] = useState(false);
   const [verifyBankId, setVerifyBankId] = useState<string>('');
   const [verifyEntryDate, setVerifyEntryDate] = useState('');
@@ -224,6 +230,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     setDraftLines(collapseSameLocationMobDemobLines((invoice.lines ?? []).map((l) => ({ ...l }))));
     setNotesDraft(invoice.notes ?? '');
     setLinesEditing(false);
+    setNotesOnlyEditing(false);
   }, [invoice?.id, invoice?.updatedAt]);
 
   useEffect(() => {
@@ -604,6 +611,29 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     setLinesEditing(false);
   };
 
+  const handleSaveIssuedTermNotes = async () => {
+    if (!firestore || !currentUser || !invoice?.linkedTaxInvoiceId || invoice.status !== 'ISSUED') return;
+    setSaveBusy(true);
+    try {
+      const saved = await updateLinkedInvoiceTermNotes(firestore, invoice, notesDraft, currentUser);
+      setNotesOnlyEditing(false);
+      toast({
+        title: 'บันทึก Term & Note แล้ว',
+        description: saved.taxInvoiceNo
+          ? `อัปเดตใบเรียกเก็บและใบกำกับภาษี ${saved.taxInvoiceNo} แล้ว — รายการ เลขที่ และวันที่ยังเหมือนเดิม`
+          : 'อัปเดตใบเรียกเก็บและใบกำกับภาษีแล้ว — รายการ เลขที่ และวันที่ยังเหมือนเดิม',
+      });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setSaveBusy(false);
+    }
+  };
+
   const handleRegenerateFromTimesheets = async () => {
     if (!firestore || !currentUser || !canAct || !invoice || !canRegenerateFromTimesheets) return;
     setRegenerateBusy(true);
@@ -743,6 +773,13 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
   const canEditDraftLines = Boolean(
     invoice && invoice.status === 'DRAFT' && canAct && linesEditing && isLatestRevision,
+  );
+  const canEditIssuedTermNotes = Boolean(
+    invoice &&
+      invoice.status === 'ISSUED' &&
+      invoice.linkedTaxInvoiceId &&
+      isLatestRevision &&
+      (canAct || canCreateTax),
   );
 
   return (
@@ -1028,6 +1065,23 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                     </AlertDialogContent>
                   </AlertDialog>
               )}
+              {canEditIssuedTermNotes && !notesOnlyEditing ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2 bg-white"
+                  onClick={() => {
+                    setNotesDraft(invoice.notes ?? '');
+                    setNotesOnlyEditing(true);
+                    window.setTimeout(() => {
+                      notesCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }, 50);
+                  }}
+                >
+                  <Pencil className="h-4 w-4" />
+                  แก้ไข
+                </Button>
+              ) : null}
               </div>
             </AlertDescription>
           </Alert>
@@ -1538,20 +1592,51 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
           </CardContent>
         </Card>
 
-        <Card className="border-none shadow-sm bg-white">
+        <Card ref={notesCardRef} className="border-none shadow-sm bg-white">
           <CardContent className="pt-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
               <div className="space-y-2 order-2 lg:order-1">
                 <Label className="text-xs font-black uppercase text-muted-foreground tracking-widest flex items-center gap-2">
                   <Info className="h-3 w-3" /> Term &amp; Note (เงื่อนไขและหมายเหตุ)
                 </Label>
+                {canEditIssuedTermNotes ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    ออกใบกำกับภาษีแล้ว — กดแก้ไขเพื่อแก้ได้เฉพาะช่องนี้ เมื่อบันทึก ใบกำกับภาษีจะเปลี่ยนตาม
+                    ส่วนรายการ เลขที่ และวันที่คงเดิม
+                  </p>
+                ) : null}
                 <Textarea
-                  className="text-sm min-h-[120px] resize-y"
+                  className={`text-sm min-h-[120px] resize-y${notesOnlyEditing ? ' border-primary ring-1 ring-primary' : ''}`}
                   placeholder="ระบุเงื่อนไขการเรียกเก็บหรือหมายเหตุที่ต้องการแสดงในเอกสารพิมพ์..."
                   value={notesDraft}
                   onChange={(e) => setNotesDraft(e.target.value)}
-                  disabled={!canEditDraftLines}
+                  disabled={!canEditDraftLines && !notesOnlyEditing}
                 />
+                {notesOnlyEditing ? (
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={saveBusy}
+                      onClick={() => void handleSaveIssuedTermNotes()}
+                    >
+                      {saveBusy ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : null}
+                      บันทึก
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={saveBusy}
+                      onClick={() => {
+                        setNotesDraft(invoice.notes ?? '');
+                        setNotesOnlyEditing(false);
+                      }}
+                    >
+                      ยกเลิก
+                    </Button>
+                  </div>
+                ) : null}
               </div>
               <div className="flex flex-col sm:flex-row sm:justify-end text-sm order-1 lg:order-2">
                 <div className="text-right space-y-1 w-full">

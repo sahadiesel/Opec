@@ -216,3 +216,73 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
 
   return { taxInvoiceId: taxRef.id, billingNoteId: bnRef.id, taxInvoiceNo: '' };
 }
+
+/**
+ * After a tax invoice exists, Term & Note can still change.
+ * Writes the same text onto the commercial invoice, the tax invoice, and its billing note.
+ * Line items, document numbers, dates, and amounts are not touched.
+ */
+export async function updateLinkedInvoiceTermNotes(
+  db: Firestore,
+  commercial: CommercialInvoice,
+  notesRaw: string,
+  actor: User,
+): Promise<{ taxInvoiceNo: string }> {
+  const taxId = commercial.linkedTaxInvoiceId?.trim();
+  if (!taxId) throw new Error('ยังไม่มีใบกำกับภาษีผูกกับใบนี้');
+  if (commercial.status !== 'ISSUED') {
+    throw new Error('แก้ Term & Note แบบนี้ได้เฉพาะใบที่ออกแล้วและมีใบกำกับภาษี');
+  }
+
+  const taxRef = doc(db, 'tax_invoices', taxId);
+  const taxSnap = await getDoc(taxRef);
+  if (!taxSnap.exists()) throw new Error('ไม่พบใบกำกับภาษี');
+  const tax = { ...taxSnap.data(), id: taxSnap.id } as TaxInvoice;
+  if (tax.status === 'CANCELLED') {
+    throw new Error('ใบกำกับภาษีถูกยกเลิกแล้ว — แก้หมายเหตุไม่ได้');
+  }
+  if (tax.sourceCommercialInvoiceId && tax.sourceCommercialInvoiceId !== commercial.id) {
+    throw new Error('ใบกำกับภาษีไม่ได้ผูกกับใบเรียกเก็บนี้');
+  }
+
+  const notes = notesRaw.trim();
+  const now = Date.now();
+  const actorName = (actor.displayName || actor.email || actor.id).trim();
+  const batch = writeBatch(db);
+
+  batch.update(doc(db, 'commercial_invoices', commercial.id), {
+    notes,
+    updatedAt: now,
+    updatedByUid: actor.id,
+    updatedByName: actorName,
+  });
+  batch.update(taxRef, {
+    notes,
+    updatedAt: now,
+  });
+
+  const billingNoteId = String(tax.billingNoteId || '').trim();
+  if (billingNoteId) {
+    batch.update(doc(db, 'billing_notes', billingNoteId), {
+      notes,
+      updatedAt: now,
+      updatedBy: actorName,
+    });
+  }
+
+  await batch.commit();
+
+  await writeAuditLog(db, actor, {
+    actionType: 'UPDATE',
+    entityType: 'TaxInvoice',
+    entityId: taxId,
+    entityLabel: tax.taxInvoiceNo || commercial.invoiceNo,
+    sourceModule: 'tax_invoices',
+    linkedIds: [commercial.id, commercial.customerId, billingNoteId].filter(Boolean),
+    taxInvoiceId: taxId,
+    ...(billingNoteId ? { billingNoteId } : {}),
+    afterSummary: `แก้ Term & Note ของ ${commercial.invoiceNo} และใบกำกับภาษี${tax.taxInvoiceNo ? ` ${tax.taxInvoiceNo}` : ''} — ไม่แก้รายการ เลขที่ หรือวันที่`,
+  });
+
+  return { taxInvoiceNo: tax.taxInvoiceNo || '' };
+}
