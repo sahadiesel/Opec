@@ -123,6 +123,12 @@ export interface TimesheetRetroAdjustment {
   addedD1Trips?: number;
   /** ประเภทวันที่แก้ (เมื่อไม่มีใบงานต้นทาง — แสดงบนตาราง) */
   retroEventType?: RateConditionEventType;
+  /**
+   * hours = แก้ OT/SB/M1/D1 แบบเดิม
+   * work_day_add = เพิ่มวันทำงานหลังปิด payroll (จ่ายในงวดตกเบิก)
+   * work_day_reversal = หักวันทำงานที่จ่ายไปแล้ว (หักในสลิปปกติของงวด apply)
+   */
+  adjustmentKind?: 'hours' | 'work_day_add' | 'work_day_reversal';
   reason: string;
   status: TimesheetRetroAdjustmentStatus;
   /** ยอดจ่ายที่คำนวณจากสูตร payroll ณ เวลาบันทึก (บาท) */

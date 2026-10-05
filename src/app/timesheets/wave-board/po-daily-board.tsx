@@ -74,6 +74,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Switch } from '@/components/ui/switch';
 import { pickRosterLinePerWorker } from '@/lib/ops/assignment-roster';
+import { defaultApplyPayrollYmAfter } from '@/lib/timesheet/wave-month-retro-helpers';
+import { createLockedWorkDayReversalsAfterFinish } from '@/lib/services/timesheet-retro-adjustment-service';
 import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
 import {
   formatThaiYearMonthLabel,
@@ -1406,6 +1408,14 @@ export function PoDailyBoardCard({
       }
 
       const purge = await deleteTimesheetsAfterMobFinishDate(firestore, asgn, finishYmd);
+      const reversal = await createLockedWorkDayReversalsAfterFinish(
+        firestore,
+        currentUser,
+        asgn.id,
+        finishYmd,
+        defaultApplyPayrollYmAfter(finishYmd.slice(0, 7)),
+        `จบงานวันที่ ${finishYmd} หลังปิด payroll — วันหลังวันนี้จ่ายไปแล้ว`,
+      );
       const finishYm = finishYmd.slice(0, 7);
       await purgeStalePoActiveAutoDailyForCalendarMonth(firestore, asgn.id, finishYm);
       const targetYm = targetDate.slice(0, 7);
@@ -1427,22 +1437,30 @@ export function PoDailyBoardCard({
       setFinishPurgeConfirm(null);
       await loadRoster();
 
+      const reversalNote =
+        reversal.created > 0
+          ? ` · หักคืน ${reversal.created} วันที่จ่ายแล้ว ในสลิปปกติเดือน ${defaultApplyPayrollYmAfter(finishYmd.slice(0, 7))}`
+          : '';
+      const missingNote =
+        reversal.missingAmountDates.length > 0
+          ? ` · วันที่ ${reversal.missingAmountDates.join(', ')} ไม่มียอดล็อก จึงยังไม่สร้างรายการหัก`
+          : '';
       const purgeNote =
         purge.deleted > 0
           ? ` · ลบลงเวลาหลังวันจบ ${purge.deleted} รายการ`
           : purge.skipped > 0
-            ? ` · ข้ามลบ ${purge.skipped} แถวที่ล็อก`
+            ? ` · คง ${purge.skipped} วันที่ล็อกบัญชีไว้บนตาราง`
             : '';
 
       if (mode === 'revise') {
         toast({
           title: 'แก้ไขวันสิ้นสุดงานแล้ว',
-          description: `บันทึกวันสิ้นสุด ณ ${formatYmdLocalThaiBE(finishYmd)}${purgeNote}`,
+          description: `บันทึกวันสิ้นสุด ณ ${formatYmdLocalThaiBE(finishYmd)}${purgeNote}${reversalNote}${missingNote}`,
         });
       } else {
         toast({
           title: 'จบงานแล้ว — Waiting MOB',
-          description: `บันทึกจบงาน ณ ${formatYmdLocalThaiBE(finishYmd)} · ลงเวลาอัตโนมัติหยุดหลังวันนี้จน remob${purgeNote}`,
+          description: `บันทึกจบงาน ณ ${formatYmdLocalThaiBE(finishYmd)} · ลงเวลาอัตโนมัติหยุดหลังวันนี้จน remob${purgeNote}${reversalNote}${missingNote}`,
         });
       }
     } catch (e: unknown) {
@@ -2629,9 +2647,24 @@ export function PoDailyBoardCard({
                   <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-xs leading-relaxed text-amber-950 dark:text-amber-100">
                     <p className="font-semibold text-foreground">ผลต่อค่าแรงและบิล</p>
                     <ul className="mt-1 list-disc space-y-1 pl-4">
+                      <li>
+                        วันที่เลือกคือวันทำงานวันสุดท้าย เช่น ต้องจบวันที่ 27 ให้เลือก 27 ไม่ใช่วันสุดท้ายที่มี W ค้างอยู่
+                      </li>
+                      <li>วันหลังวันนี้ที่ยังไม่ล็อกบัญชี จะถูกลบ และระบบหยุดลง W อัตโนมัติ</li>
+                      <li>
+                        วันที่ payroll จ่ายไปแล้วจะไม่ถูกลบ และสลิปเดือนนั้นไม่ถูกคำนวณใหม่
+                        {finishAfterCounts && finishAfterCounts.locked > 0 ? (
+                          <>
+                            {' '}
+                            ตอนนี้มี <strong>{finishAfterCounts.locked}</strong> วันแบบนี้ — ระบบจะสร้างรายการหักคืนแต่ละวัน
+                            ในสลิปเงินเดือนปกติของเดือนถัดไป ยอดเท่าที่จ่ายไปแล้ว ไม่เข้าก้อนตกเบิก OT
+                          </>
+                        ) : (
+                          <> ถ้ามีวันแบบนี้ ระบบจะหักคืนในสลิปปกติของเดือนถัดไป</>
+                        )}
+                      </li>
                       <li>วันถึงวันที่จบ ระบบถ่ายแพ็กค่าแรงไว้ — แก้ตำแหน่งหรือค่าแรงในทะเบียนทีหลังไม่ทับวันเหล่านี้</li>
-                      <li>บิลยังคิดตามบรรทัด PO ของแต่ละวัน ไม่เปลี่ยนเพราะจบงาน</li>
-                      <li>ถ้าครึ่งเดือนหลังคนละตำแหน่งหรือคนละบริษัท ต้อง remob หรือมอบหมายใหม่ก่อนลงวันถัดไป อย่าแก้แค่ทะเบียน</li>
+                      <li>บิลลูกค้าที่ออกใบแล้วไม่ถูกแก้จากปุ่มนี้ — วันหักคืนต้องทำใบลดหนี้แยก</li>
                     </ul>
                   </div>
                 </div>
@@ -2672,8 +2705,9 @@ export function PoDailyBoardCard({
                   — จะถูกลบทั้งหมดจนกว่าจะ remob และเริ่มรอบใหม่
                 </p>
                 {(finishPurgeConfirm?.locked ?? 0) > 0 ? (
-                  <p className="text-xs">
-                    แถวที่ล็อกบัญชีแล้ว {finishPurgeConfirm?.locked} รายการจะไม่ถูกลบ
+                  <p className="text-xs leading-relaxed">
+                    แถวที่ล็อกบัญชีแล้ว {finishPurgeConfirm?.locked} รายการจะไม่ถูกลบ และสลิปเดือนนั้นไม่ถูกคำนวณใหม่
+                    แต่ละวันจะกลายเป็นรายการหักในสลิปเงินเดือนปกติของเดือนถัดไป ยอดเท่าที่จ่ายไปแล้ว ไม่เข้าก้อนตกเบิก OT
                   </p>
                 ) : null}
               </div>

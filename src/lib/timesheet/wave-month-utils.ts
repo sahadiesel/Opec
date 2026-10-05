@@ -336,13 +336,17 @@ export function timesheetWaveMonthCellDisplayWithRetro(
     addedD1Trips?: number;
     status?: string;
     retroEventType?: string;
+    adjustmentKind?: string;
   }[] = [],
 ): string {
   const activeRetro = retroAdjustments.filter((a) => a.status !== 'void');
+  const workDayReversal = activeRetro.some((a) => a.adjustmentKind === 'work_day_reversal');
+  const workDayAdd = activeRetro.some((a) => a.adjustmentKind === 'work_day_add');
   const retroEventOverride = [...activeRetro]
     .reverse()
     .find((a) => a.retroEventType)?.retroEventType as DailyTimesheet['eventType'] | undefined;
   if (!ts) {
+    if (workDayAdd) return 'W†';
     const displayEv = retroEventOverride;
     const m1 = retroAddedM1Trips(activeRetro);
     const d1 = retroAddedD1Trips(activeRetro);
@@ -393,7 +397,8 @@ export function timesheetWaveMonthCellDisplayWithRetro(
   } else {
     label = abbr;
   }
-  return hasRetro ? `${label}†` : label;
+  const marked = hasRetro ? `${label}†` : label;
+  return workDayReversal ? `${marked}−` : marked;
 }
 
 export function timesheetRetroCellRingClasses(hasRetro: boolean): string {

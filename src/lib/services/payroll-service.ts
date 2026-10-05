@@ -152,6 +152,7 @@ import {
   retroAdjustmentsToPriorPeriodItemsWithPay,
   revertRetroAdjustmentsForPayrollBatch,
   loadApprovedRetrosForSupplementalPayrollYm,
+  loadApprovedWorkDayReversalsForPayrollYm,
 } from './timesheet-retro-adjustment-service';
 
 function round2Payroll(n: number): number {
@@ -836,6 +837,17 @@ export class PayrollService {
 
     const batchId = `PAY-${Date.now().toString().slice(-8)}`;
     const batchRef = doc(this.getBatchCollection(), batchId);
+    const payrollYmForReversal = calendarYearMonthFromPeriodStart(period.startDate);
+    const workDayReversals = payrollYmForReversal
+      ? await loadApprovedWorkDayReversalsForPayrollYm(this.db, payrollYmForReversal)
+      : [];
+    const workDayReversalsByWorker = new Map<string, import('@/lib/types').TimesheetRetroAdjustment[]>();
+    for (const r of workDayReversals) {
+      const list = workDayReversalsByWorker.get(r.workerId) ?? [];
+      list.push(r);
+      workDayReversalsByWorker.set(r.workerId, list);
+    }
+    const workDayReversalIdsByLine = new Map<string, string[]>();
     const lines: PayrollBatchLine[] = [];
     /** stub สำหรับหา prior paid ในงวดเดียวกัน */
     const batchChronologyStub = {
@@ -1090,6 +1102,44 @@ export class PayrollService {
             }),
       };
 
+      const payrollYm = calendarYearMonthFromPeriodStart(period.startDate);
+      const reversalsForWorker = payrollYm
+        ? (workDayReversalsByWorker.get(workerId) ?? [])
+        : [];
+      const reversalDeductions = reversalsForWorker
+        .map((r) => ({
+          id: r.id,
+          label: `หักคืนค่าแรง ${r.workDateYmd} (งวด ${r.sourceYearMonth}) — ${r.reason}`.slice(0, 180),
+          amount: Math.round(Math.max(0, Number(r.computedPayAmountBaht) || 0) * 100) / 100,
+        }))
+        .filter((x) => x.amount > 0);
+      let reversalTaken = 0;
+      const reversalIdsApplied: string[] = [];
+      let netRoom = Math.max(0, lineNetAmount);
+      const deductionItems: Array<{ label: string; amount: number }> = [];
+      for (const item of reversalDeductions) {
+        if (item.amount > netRoom + 0.005) continue;
+        deductionItems.push({ label: item.label, amount: item.amount });
+        deductionsBreakdown[`manual_ded_${deductionItems.length - 1}`] = item.amount;
+        netRoom = round2Payroll(netRoom - item.amount);
+        reversalTaken = round2Payroll(reversalTaken + item.amount);
+        reversalIdsApplied.push(item.id);
+      }
+      if (reversalTaken > 0) {
+        lineNetAmount = netRoom;
+        batchDeductions += reversalTaken;
+        batchNet -= reversalTaken;
+        line.hrLineAdjustments = {
+          allowanceItems: [],
+          deductionItems,
+          priorPeriodAllowanceItems: [],
+          pitWithholdingOverride: null,
+        };
+        line.deductionsBreakdown = deductionsBreakdown;
+        line.netAmount = lineNetAmount;
+        workDayReversalIdsByLine.set(line.id, reversalIdsApplied);
+      }
+
       lines.push(line);
       batchGross += workerGross;
     }
@@ -1126,6 +1176,11 @@ export class PayrollService {
     }
     await headerWb.commit();
     await payrollSleep(PAYROLL_FS_COMMIT_GAP_MS);
+
+    for (const [lineId, reversalIds] of workDayReversalIdsByLine) {
+      if (reversalIds.length === 0) continue;
+      await markRetroAdjustmentsApplied(this.db, user, reversalIds, batchId, lineId);
+    }
 
     const lockGrossById: Record<string, number> = {};
     for (const line of lines) {

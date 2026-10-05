@@ -12,7 +12,13 @@ import {
   deleteField,
   type Firestore,
 } from 'firebase/firestore';
-import type { DailyTimesheet, PriorPeriodAllowanceItem, RateConditionEventType, TimesheetRetroAdjustment, User } from '@/lib/types';
+import type { Assignment, DailyTimesheet, PriorPeriodAllowanceItem, RateConditionEventType, TimesheetRetroAdjustment, User } from '@/lib/types';
+import { applyLaborCostEpochToWorkerForDate } from '@/lib/payroll/remob-position-for-payroll';
+import {
+  buildSingleTimesheetGrossContext,
+  computeSingleTimesheetGrossLikeBatch,
+} from '@/lib/payroll/single-timesheet-gross';
+import { defaultPackageHoursForWorkMode } from '@/lib/ops/mob-day-charge';
 import {
   computeRetroAdjustmentPayFromFirestore,
   retroHoursDeltaFromAdjustment,
@@ -67,7 +73,7 @@ export async function loadApprovedRetrosForSupplementalPayrollYm(
     byId.set(d.id, r);
   }
 
-  return [...byId.values()];
+  return [...byId.values()].filter((r) => r.adjustmentKind !== 'work_day_reversal');
 }
 
 export async function createTimesheetRetroAdjustment(
@@ -164,6 +170,115 @@ export async function createTimesheetRetroAdjustment(
   return ref.id;
 }
 
+function roundRetroMoney(n: number): number {
+  return Math.round(Math.max(0, n) * 100) / 100;
+}
+
+export function isWorkDayAddRetro(r: Pick<TimesheetRetroAdjustment, 'adjustmentKind'>): boolean {
+  return r.adjustmentKind === 'work_day_add';
+}
+
+export function isWorkDayReversalRetro(r: Pick<TimesheetRetroAdjustment, 'adjustmentKind'>): boolean {
+  return r.adjustmentKind === 'work_day_reversal';
+}
+
+/** ยอดที่ล็อกในสลิปของใบงาน — ใช้หักคืน ไม่คำนวณเรทใหม่ */
+export function lockedTimesheetPayBaht(ts: Pick<DailyTimesheet, 'payrollLockedGrossBaht'>): number {
+  const n = Number(ts.payrollLockedGrossBaht);
+  return Number.isFinite(n) && n > 0.005 ? roundRetroMoney(n) : 0;
+}
+
+async function voidApprovedWorkDayRetrosOfKind(
+  db: Firestore,
+  user: User,
+  sourceTimesheetId: string,
+  kind: 'work_day_add' | 'work_day_reversal',
+  reason: string,
+): Promise<void> {
+  const snap = await getDocs(
+    query(collection(db, COLLECTION), where('sourceTimesheetId', '==', sourceTimesheetId)),
+  );
+  const now = Date.now();
+  for (const d of snap.docs) {
+    const row = { id: d.id, ...(d.data() as object) } as TimesheetRetroAdjustment;
+    if (row.status !== 'approved' || row.adjustmentKind !== kind) continue;
+    await updateDoc(doc(db, COLLECTION, d.id), {
+      status: 'void',
+      updatedAt: now,
+      voidReason: reason,
+      voidedByUserId: user.id,
+      voidedAt: now,
+    });
+  }
+}
+
+/**
+ * เพิ่มหรือหักวันทำงานหลังปิด payroll
+ * ไม่แก้ใบงานต้นทาง และไม่ไปปนรายการ OT
+ */
+export async function createWorkDayPayrollAdjustment(
+  db: Firestore,
+  user: User,
+  input: {
+    sourceTimesheet: DailyTimesheet;
+    sourceYearMonth: string;
+    applyPayrollYearMonth: string;
+    direction: 'add' | 'reversal';
+    amountBaht: number;
+    reason: string;
+  },
+): Promise<string> {
+  if (!canManageRetro(user)) throw new Error('ไม่มีสิทธิ์บันทึกแก้ไขย้อนหลัง timesheet');
+  const reason = String(input.reason || '').trim();
+  if (!reason) throw new Error('กรุณาระบุเหตุผลการแก้ไข');
+  if (!/^\d{4}-\d{2}$/.test(input.sourceYearMonth) || !/^\d{4}-\d{2}$/.test(input.applyPayrollYearMonth)) {
+    throw new Error('รูปแบบงวด YYYY-MM ไม่ถูกต้อง');
+  }
+  const amount = roundRetroMoney(input.amountBaht);
+  if (amount <= 0) throw new Error('ยอดวันทำงานต้องมากกว่า 0');
+  const ts = input.sourceTimesheet;
+  const sourceId = String(ts.id || '').trim();
+  if (!sourceId) throw new Error('ไม่พบรหัสใบงานต้นทาง');
+  const kind = input.direction === 'reversal' ? 'work_day_reversal' : 'work_day_add';
+  await voidApprovedWorkDayRetrosOfKind(db, user, sourceId, kind, 'แทนที่ด้วยรายการวันทำงานล่าสุด');
+
+  const now = Date.now();
+  const payload = sanitizeFirestorePayload({
+    sourceTimesheetId: sourceId,
+    workerId: ts.workerId,
+    workerNameSnapshot: ts.workerNameSnapshot || ts.workerId,
+    assignmentId: ts.assignmentId,
+    purchaseOrderId: ts.purchaseOrderId,
+    waveId: ts.waveId,
+    workDateYmd: String(ts.date || '').slice(0, 10),
+    sourceYearMonth: input.sourceYearMonth,
+    applyPayrollYearMonth: input.applyPayrollYearMonth,
+    adjustmentKind: kind,
+    retroEventType: 'work_day' as const,
+    reason,
+    computedPayAmountBaht: amount,
+    computedPaySnapshotAt: now,
+    status: 'approved' as const,
+    requestedByUserId: user.id,
+    requestedByName: user.displayName || user.email || user.id,
+    requestedAt: now,
+    updatedAt: now,
+  });
+  const ref = await addDoc(collection(db, COLLECTION), payload);
+  await writeAuditLog(db, user, {
+    actionType: 'CREATE',
+    entityType: 'TimesheetRetroAdjustment',
+    entityId: ref.id,
+    timesheetId: sourceId,
+    sourceModule: 'operations',
+    afterSummary:
+      kind === 'work_day_add'
+        ? `Work-day add ${ts.date}: ฿${amount} → supplemental ${input.applyPayrollYearMonth}`
+        : `Work-day reversal ${ts.date}: ฿${amount} → deduct on normal slip ${input.applyPayrollYearMonth}`,
+  });
+  return ref.id;
+}
+
 function sumRetroOtHours(r: TimesheetRetroAdjustment): number {
   return (
     Math.max(0, Number(r.addedOt15Hours) || 0) +
@@ -206,6 +321,8 @@ export async function voidApprovedRetroAdjustmentsForTimesheet(
   for (const d of snap.docs) {
     const row = { id: d.id, ...(d.data() as object) } as TimesheetRetroAdjustment;
     if (row.status !== 'approved') continue;
+    /** วันทำงานเพิ่ม/หักคืน คนละรายการกับ OT — อย่าให้การแทนที่ยอด OT ไปยกเลิก */
+    if (row.adjustmentKind === 'work_day_add' || row.adjustmentKind === 'work_day_reversal') continue;
     await updateDoc(doc(db, COLLECTION, d.id), {
       status: 'void',
       updatedAt: now,
@@ -431,6 +548,11 @@ export async function resolveRetroAdjustmentPayBaht(
   adjustment: TimesheetRetroAdjustment,
   sourceTimesheet?: DailyTimesheet | null,
 ): Promise<number> {
+  if (isWorkDayReversalRetro(adjustment)) return 0;
+  if (isWorkDayAddRetro(adjustment)) {
+    const stored = Number(adjustment.computedPayAmountBaht);
+    return Number.isFinite(stored) && stored > 0 ? roundRetroMoney(stored) : 0;
+  }
   let ts = sourceTimesheet ?? null;
   if (!ts) {
     const { getDoc } = await import('firebase/firestore');
@@ -523,7 +645,10 @@ export function retroAdjustmentsToPriorPeriodLabels(
 export function formatRetroAdjustmentSummaryLabel(r: TimesheetRetroAdjustment): string {
   const parts: string[] = [];
   const dt = `(${r.workDateYmd.slice(8, 10)}/${r.workDateYmd.slice(5, 7)})`;
-  
+  if (isWorkDayAddRetro(r)) {
+    parts.push(`ค่าแรงตกเบิก 1 วัน ${dt}`);
+  }
+
   if ((r.addedOt15Hours || 0) > 0) parts.push(`OT1.5 +${r.addedOt15Hours} ชม. ${dt}`);
   if ((r.addedOt20Hours || 0) > 0) parts.push(`OT2.0 +${r.addedOt20Hours} ชม. ${dt}`);
   if ((r.addedOt30Hours || 0) > 0) parts.push(`OT3.0 +${r.addedOt30Hours} ชม. ${dt}`);
@@ -651,4 +776,109 @@ export async function revertRetroAdjustmentsForPayrollBatch(
     sourceModule: 'hr',
     afterSummary: `Reverted ${snap.size} retro adjustment(s) to approved because payroll batch was deleted`,
   });
+}
+
+/** ค่าแรงหนึ่งวันทำงาน ณ วันที่นั้น (รวม epoch ก่อนจบไซต์) — ใช้ตอนเพิ่มวันหลังปิด payroll */
+export async function computeWorkDayAddAmountBaht(db: Firestore, ts: DailyTimesheet): Promise<number> {
+  const pkg = defaultPackageHoursForWorkMode(ts.workMode);
+  const payTs: DailyTimesheet = {
+    ...ts,
+    eventType: 'work_day',
+    normalHours: pkg,
+    ot15Hours: 0,
+    ot20Hours: 0,
+    ot30Hours: 0,
+  };
+  const ctx = await buildSingleTimesheetGrossContext(db, [payTs]);
+  if (!ctx) throw new Error('คำนวณค่าแรงวันนี้ไม่ได้ — ข้อมูลพนักงานหรือสัญญาไม่ครบ');
+  const aid = String(ts.assignmentId || '').trim();
+  if (aid) {
+    const asgnSnap = await getDoc(doc(db, 'mobilizations', aid));
+    if (asgnSnap.exists()) {
+      const asgn = { id: asgnSnap.id, ...(asgnSnap.data() as object) } as Assignment;
+      const wk = ctx.workerById.get(ts.workerId);
+      const dated = applyLaborCostEpochToWorkerForDate(wk, asgn, String(ts.date || '').slice(0, 10));
+      if (dated) ctx.workerById.set(ts.workerId, dated);
+    }
+  }
+  const gross = computeSingleTimesheetGrossLikeBatch(payTs, ctx);
+  if (gross == null || gross <= 0) {
+    throw new Error('คำนวณค่าแรงวันนี้ไม่ได้ — ตรวจฐานค่าแรงในสัญญาหรือทะเบียนลูกจ้าง');
+  }
+  return roundRetroMoney(gross);
+}
+
+function timesheetFinanciallyImmutable(status: string | undefined): boolean {
+  return ['CLIENT_APPROVED', 'VERIFIED_PAPER', 'LOCKED'].includes(status || '');
+}
+
+/**
+ * หลังแก้วันจบงาน — วันที่จ่ายไปแล้วหลังวันจบใหม่ สร้างรายการหักคืนในสลิปปกติเดือนถัดไป
+ * ไม่ลบใบงานที่ล็อก และไม่คำนวณสลิปเดือนที่จ่ายแล้วใหม่
+ */
+export async function createLockedWorkDayReversalsAfterFinish(
+  db: Firestore,
+  user: User,
+  assignmentId: string,
+  finishYmd: string,
+  applyPayrollYearMonth: string,
+  reason: string,
+): Promise<{ created: number; skippedExisting: number; missingAmountDates: string[] }> {
+  const finish = finishYmd.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(finish)) {
+    return { created: 0, skippedExisting: 0, missingAmountDates: [] };
+  }
+  const snap = await getDocs(
+    query(
+      collection(db, 'daily_timesheets'),
+      where('assignmentId', '==', assignmentId.trim()),
+      where('date', '>', finish),
+    ),
+  );
+  let created = 0;
+  let skippedExisting = 0;
+  const missingAmountDates: string[] = [];
+  for (const d of snap.docs) {
+    const ts = { id: d.id, ...(d.data() as object) } as DailyTimesheet;
+    if (!timesheetFinanciallyImmutable(ts.status)) continue;
+    if (ts.eventType !== 'work_day') continue;
+    const sourceYm = /^\d{4}-\d{2}-\d{2}$/.test(String(ts.date || '').slice(0, 10))
+      ? String(ts.date).slice(0, 7)
+      : finish.slice(0, 7);
+    const existing = await loadTimesheetRetroAdjustmentsForTimesheet(db, ts.id);
+    if (existing.some((r) => isWorkDayReversalRetro(r))) {
+      skippedExisting += 1;
+      continue;
+    }
+    const amount = lockedTimesheetPayBaht(ts);
+    if (amount <= 0) {
+      missingAmountDates.push(String(ts.date || '').slice(0, 10));
+      continue;
+    }
+    await createWorkDayPayrollAdjustment(db, user, {
+      sourceTimesheet: ts,
+      sourceYearMonth: sourceYm,
+      applyPayrollYearMonth,
+      direction: 'reversal',
+      amountBaht: amount,
+      reason,
+    });
+    created += 1;
+  }
+  return { created, skippedExisting, missingAmountDates };
+}
+
+/** รายการหักคืนวันทำงานที่ยังรอหัก ในงวดสลิปปกติ */
+export async function loadApprovedWorkDayReversalsForPayrollYm(
+  db: Firestore,
+  payrollYearMonth: string,
+): Promise<TimesheetRetroAdjustment[]> {
+  const P = String(payrollYearMonth || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(P)) return [];
+  const snap = await getDocs(
+    query(collection(db, COLLECTION), where('applyPayrollYearMonth', '==', P)),
+  );
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as object) } as TimesheetRetroAdjustment))
+    .filter((r) => r.status === 'approved' && isWorkDayReversalRetro(r));
 }

@@ -109,7 +109,10 @@ import {
   isRetroOnlyPayrollMonth,
 } from '@/lib/timesheet/wave-month-utils';
 import {
+  computeWorkDayAddAmountBaht,
   createTimesheetRetroAdjustment,
+  createWorkDayPayrollAdjustment,
+  lockedTimesheetPayBaht,
   setAbsoluteWorkDayRetroOt,
   voidApprovedRetroAdjustmentsForTimesheet,
 } from '@/lib/services/timesheet-retro-adjustment-service';
@@ -318,6 +321,8 @@ export default function WaveMonthTimesheetSummaryPage() {
   const [retroPayMissing, setRetroPayMissing] = useState<RetroMissingRateInfo[]>([]);
   const [retroPayContractId, setRetroPayContractId] = useState('');
   const [retroPayRateSource, setRetroPayRateSource] = useState<'worker_custom' | 'contract_matrix' | null>(null);
+  /** ot = แก้ OT/SB/M1/D1 เดิม · add = เพิ่มวัน · reverse = หักวันที่จ่ายไปแล้ว */
+  const [workDayRetroMode, setWorkDayRetroMode] = useState<'ot' | 'add' | 'reverse'>('ot');
   const [editDate, setEditDate] = useState('');
   const [editEvent, setEditEvent] = useState<WaveMonthEventSelectValue>('work_day');
   const [editHours, setEditHours] = useState(12);
@@ -472,7 +477,7 @@ export default function WaveMonthTimesheetSummaryPage() {
   }, [retroEdit, retroEvent, retroAddedOt]);
 
   useEffect(() => {
-    if (!firestore || !retroEdit || retroEvent === WAVE_MONTH_EVENT_CLEAR) {
+    if (!firestore || !retroEdit || retroEvent === WAVE_MONTH_EVENT_CLEAR || workDayRetroMode !== 'ot') {
       setRetroPayPreview(null);
       setRetroPayPreviewLoading(false);
       setRetroPayMissing([]);
@@ -542,7 +547,33 @@ export default function WaveMonthTimesheetSummaryPage() {
     retroAddedStandby,
     retroAddedM1Trips,
     retroAddedD1Trips,
+    workDayRetroMode,
   ]);
+
+  useEffect(() => {
+    if (!firestore || !retroEdit || workDayRetroMode === 'ot') return;
+    let cancelled = false;
+    setRetroPayPreviewLoading(true);
+    setRetroPayMissing([]);
+    void (async () => {
+      try {
+        if (workDayRetroMode === 'reverse') {
+          const lockedAmt = lockedTimesheetPayBaht(retroEdit.timesheet);
+          if (!cancelled) setRetroPayPreview(lockedAmt > 0 ? lockedAmt : null);
+          return;
+        }
+        const amount = await computeWorkDayAddAmountBaht(firestore, retroEdit.timesheet);
+        if (!cancelled) setRetroPayPreview(amount);
+      } catch {
+        if (!cancelled) setRetroPayPreview(null);
+      } finally {
+        if (!cancelled) setRetroPayPreviewLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, retroEdit, workDayRetroMode]);
 
   useEffect(() => {
     if (editEvent !== 'work_day') setEditOtHours(0);
@@ -1996,6 +2027,7 @@ export default function WaveMonthTimesheetSummaryPage() {
         const appliedOtHours = sumAdjustmentOtHours(retroRows, 'applied');
         const approvedOtHours = sumAdjustmentOtHours(retroRows, 'approved');
         const displayOtHours = baseOt + sumAdjustmentOtHours(retroRows);
+        setWorkDayRetroMode(ts ? 'ot' : 'add');
         setRetroEdit({
           timesheet: retroTs,
           workerName: rw.name,
@@ -2412,6 +2444,39 @@ export default function WaveMonthTimesheetSummaryPage() {
       const reason = retroReason.trim();
       if (!reason) throw new Error('กรุณาระบุเหตุผลการแก้ไข');
 
+      if (workDayRetroMode === 'add' || workDayRetroMode === 'reverse') {
+        const applyYm = retroApplyYm.trim();
+        if (!/^\d{4}-\d{2}$/.test(applyYm)) throw new Error('เลือกงวดที่จะจ่ายหรือหักให้ครบ');
+        const amount =
+          workDayRetroMode === 'reverse'
+            ? lockedTimesheetPayBaht(retroEdit.timesheet)
+            : await computeWorkDayAddAmountBaht(firestore, retroEdit.timesheet);
+        if (amount <= 0) {
+          throw new Error(
+            workDayRetroMode === 'reverse'
+              ? 'ไม่พบยอดที่ล็อกในสลิปของวันนี้ จึงหักคืนไม่ได้'
+              : 'คำนวณค่าแรงวันนี้ไม่ได้',
+          );
+        }
+        await createWorkDayPayrollAdjustment(firestore, currentUser as User, {
+          sourceTimesheet: retroEdit.timesheet,
+          sourceYearMonth: monthYm,
+          applyPayrollYearMonth: applyYm,
+          direction: workDayRetroMode === 'reverse' ? 'reversal' : 'add',
+          amountBaht: amount,
+          reason,
+        });
+        toast({
+          title: workDayRetroMode === 'reverse' ? 'บันทึกหักคืนวันทำงานแล้ว' : 'บันทึกเพิ่มวันทำงานแล้ว',
+          description:
+            workDayRetroMode === 'reverse'
+              ? `หัก ฿${amount.toLocaleString()} ในสลิปปกติงวด ${formatPayrollYearMonthThaiBE(applyYm)} — สลิปเดือนนี้ไม่เปลี่ยน ช่องนี้แสดง W†−`
+              : `ตกเบิก ฿${amount.toLocaleString()} ในงวด ${formatPayrollYearMonthThaiBE(applyYm)} — ไม่ปนกับ OT ช่องนี้แสดง W†`,
+        });
+        setRetroEdit(null);
+        return;
+      }
+
       if (retroEvent === WAVE_MONTH_EVENT_CLEAR) {
         const ts = retroEdit.timesheet;
         const locked = isTimesheetPayrollLocked(ts);
@@ -2645,6 +2710,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     monthYm,
     retroApplyYm,
     retroEvent,
+    workDayRetroMode,
     retroAddedOt,
     retroOtTier,
     retroAddedStandby,
@@ -3325,11 +3391,13 @@ export default function WaveMonthTimesheetSummaryPage() {
                                             ? ` · ${formatTimesheetOtHoursHint(ts)}`
                                             : '') +
                                           (hasRetro
-                                            ? ` · แก้ไขย้อนหลัง (+OT ${retroAddedOtHours(retroForCell)} ชม.` +
-                                              (sumRetroAddedM1Trips(retroForCell) > 0
-                                                ? ` · M1 +${sumRetroAddedM1Trips(retroForCell)} trip`
-                                                : '') +
-                                              ')'
+                                            ? retroForCell.some((r) => r.adjustmentKind === 'work_day_reversal')
+                                              ? ' · หักคืนวันที่จ่ายแล้ว (W†−) — สลิปเดือนนี้ไม่เปลี่ยน'
+                                              : ` · แก้ไขย้อนหลัง (+OT ${retroAddedOtHours(retroForCell)} ชม.` +
+                                                (sumRetroAddedM1Trips(retroForCell) > 0
+                                                  ? ` · M1 +${sumRetroAddedM1Trips(retroForCell)} trip`
+                                                  : '') +
+                                                ')'
                                             : '') +
                                           (!inMobWindow
                                             ? ' · วันนี้อยู่นอกหน้าต่าง mobilization บนเอกสาร — แสดงตามใบงานที่มีจริง'
@@ -3352,7 +3420,9 @@ export default function WaveMonthTimesheetSummaryPage() {
                                         type="button"
                                         title={
                                           retroOnlyPayrollMonth || rowClosed
-                                            ? `เพิ่มแก้ไขย้อนหลัง · ${d}`
+                                            ? hasRetro
+                                              ? `เพิ่มวันทำงานหลังปิด payroll · ${d} · ${cellLabel}`
+                                              : `คลิกเพื่อเพิ่มวันทำงานหลังปิด payroll · ${d}`
                                             : editableGrid
                                               ? `เพิ่มรายการ · ${d}`
                                               : undefined
@@ -3370,6 +3440,8 @@ export default function WaveMonthTimesheetSummaryPage() {
                                             'cursor-pointer hover:bg-muted/60 text-muted-foreground/80',
                                           !(retroOnlyPayrollMonth || rowClosed || editableGrid) &&
                                             'cursor-default opacity-45 text-muted-foreground/40',
+                                          hasRetro && 'text-foreground',
+                                          timesheetRetroCellRingClasses(hasRetro),
                                         )}
                                       >
                                         {hasRetro ? cellLabel : ' - '}
@@ -3407,7 +3479,8 @@ export default function WaveMonthTimesheetSummaryPage() {
                         <strong>คีย์:</strong> ตัวอักษร = ประเภทวัน (W ทำงาน, SB สแตนด์บาย …) · <strong>W+5</strong> = ทำงาน + OT 5 ชม. ·{' '}
                         <strong>M1 / D1 / SB</strong> = ไม่ติดชม.บนเซลล์ (คลิกดูรายละเอียด — บิล/จ่ายอาจคนละชม.) ·{' '}
                         ฐานแพ็กสัญญา OFF 12 / ON 8 ·{' '}
-                        <strong>†</strong> = มีแก้ไขย้อนหลัง (วงแหวนแดง) · เซลล์ «-» = ยังไม่มีบันทึก —{' '}
+                        <strong>†</strong> = มีแก้ไขย้อนหลัง (วงแหวนแดง) · <strong>W†</strong> = เพิ่มวันทำงานหลังปิด payroll (ชั่วโมงรวมของงวดเดิมไม่เปลี่ยน) ·{' '}
+                        <strong>W†−</strong> = หักคืนวันที่จ่ายแล้ว ในสลิปปกติงวดถัดไป · เซลล์ «-» = ยังไม่มีบันทึก —{' '}
                         <strong className="text-emerald-700">เขียว</strong>=ทำงาน{' '}
                         <strong className="text-sky-700">ฟ้า</strong>=สแตนด์บาย{' '}
                         <strong className="text-violet-700">ม่วง</strong>=เดินทาง{' '}
@@ -3415,7 +3488,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                         {retroOnlyPayrollMonth ? (
                           <>
                             {' '}
-                            · <strong className="text-red-700">งวด payroll ปิดแล้ว</strong> — คลิกเซลล์เพื่อ «แก้ไขย้อนหลัง» (จ่ายงวดถัดไป)
+                            · <strong className="text-red-700">งวด payroll ปิดแล้ว</strong> — คลิกช่องว่างเพื่อเพิ่มวันทำงาน หรือคลิกวันที่จ่ายแล้วเพื่อหักคืน / แก้ OT (สลิปเดือนนี้ไม่ถูกคำนวณใหม่)
                           </>
                         ) : null}
                       </p>
@@ -3631,10 +3704,19 @@ export default function WaveMonthTimesheetSummaryPage() {
       <Dialog open={!!retroEdit} onOpenChange={(open) => !open && setRetroEdit(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>แก้ไขย้อนหลัง (งวดปิด / ใบงานล็อค)</DialogTitle>
+            <DialogTitle>
+              {workDayRetroMode === 'add'
+                ? 'เพิ่มวันทำงานหลังปิด payroll'
+                : workDayRetroMode === 'reverse'
+                  ? 'หักคืนวันทำงานที่จ่ายไปแล้ว'
+                  : 'แก้ไขย้อนหลัง (งวดปิด / ใบงานล็อค)'}
+            </DialogTitle>
             <DialogDescription>
-              เปลี่ยนประเภทวันได้เหมือนหน้าลงรายวัน — ใส่ OT / M1 / D1 / standby ที่ต้องการให้แสดง (ยอดรวม)
-              แสดงบนตารางพร้อมเครื่องหมาย † และจ่ายในงวดที่เลือก
+              {workDayRetroMode === 'add'
+                ? 'ใบงานเดือนนี้ไม่ถูกแก้ สลิปที่จ่ายแล้วไม่ถูกคำนวณใหม่ วันทำงานนี้ไปจ่ายในงวดตกเบิกที่เลือก เป็นบรรทัดคนละรายการกับ OT'
+                : workDayRetroMode === 'reverse'
+                  ? 'ใบงานและสลิปเดือนนี้คงเดิม ยอดหักเท่ากับที่ล็อกไว้ในสลิปวันนั้น และไปหักในสลิปเงินเดือนปกติของงวดที่เลือก ไม่เข้าก้อนตกเบิก OT'
+                  : 'แก้ OT / M1 / D1 / standby แบบเดิม — แสดงบนตารางพร้อม † และจ่ายในงวดตกเบิกที่เลือก'}
             </DialogDescription>
           </DialogHeader>
           {retroEdit ? (
@@ -3647,13 +3729,59 @@ export default function WaveMonthTimesheetSummaryPage() {
                 <p>
                   <span className="text-muted-foreground">วันที่:</span>{' '}
                   <strong>{retroEdit.timesheet.date}</strong>
-                  {isTimesheetPayrollLocked(retroEdit.timesheet) ? (
+                  {retroEdit.persisted && isTimesheetPayrollLocked(retroEdit.timesheet) ? (
                     <> · <span className="text-amber-800">LOCKED</span></>
+                  ) : !retroEdit.persisted ? (
+                    <> · <span className="text-red-800">payroll ปิดแล้ว · ยังไม่มีใบงานวันนี้</span></>
                   ) : retroOnlyPayrollMonth ? (
                     <> · <span className="text-red-800">payroll ปิดแล้ว</span></>
                   ) : null}
                 </p>
               </div>
+              {retroEdit.persisted &&
+              (isTimesheetPayrollLocked(retroEdit.timesheet) || retroOnlyPayrollMonth) &&
+              retroEdit.timesheet.eventType === 'work_day' ? (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={workDayRetroMode === 'ot' ? 'default' : 'outline'}
+                    onClick={() => setWorkDayRetroMode('ot')}
+                    disabled={retroSaving}
+                  >
+                    แก้ OT
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={workDayRetroMode === 'reverse' ? 'default' : 'outline'}
+                    onClick={() => setWorkDayRetroMode('reverse')}
+                    disabled={retroSaving}
+                  >
+                    หักคืนวันนี้
+                  </Button>
+                </div>
+              ) : null}
+              {workDayRetroMode === 'add' ? (
+                <Alert>
+                  <AlertTitle className="text-sm">เพิ่มหนึ่งวันทำงาน</AlertTitle>
+                  <AlertDescription className="text-xs leading-relaxed">
+                    ช่องบนตารางเดือนที่ปิดจะขึ้น W† ชั่วโมงรวมของงวดที่จ่ายแล้วยังเป็นยอดเดิม
+                    ยอดนี้ใช้ค่าแรงของวันที่นี้ และไปอยู่ในงวดตกเบิก ไม่ปนบรรทัด OT
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              {workDayRetroMode === 'reverse' ? (
+                <Alert>
+                  <AlertTitle className="text-sm">หักวันที่จ่ายไปแล้ว</AlertTitle>
+                  <AlertDescription className="text-xs leading-relaxed">
+                    ช่องนี้ยังเป็น W ตามสลิปเดิม และมีเครื่องหมาย †− ยอดหักเท่ากับที่ล็อกไว้ในวันนั้น
+                    ไปหักในสลิปเงินเดือนปกติของงวดที่เลือก ถ้าสุทธิของงวดนั้นไม่พอ รายการนี้จะค้างไว้จนกว่าจะมีงวดที่หักได้
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              {workDayRetroMode === 'ot' ? (
+              <>
               <div className="space-y-1.5">
                 <Label>ประเภทวัน</Label>
                 <Select
@@ -3816,9 +3944,13 @@ export default function WaveMonthTimesheetSummaryPage() {
                   />
                 </div>
               )}
-              {retroEvent !== WAVE_MONTH_EVENT_CLEAR ? (
+              </>
+              ) : null}
+              {workDayRetroMode !== 'ot' || retroEvent !== WAVE_MONTH_EVENT_CLEAR ? (
               <div className="space-y-1.5">
-                <Label htmlFor="retro-apply-ym">จ่ายในงวด payroll</Label>
+                <Label htmlFor="retro-apply-ym">
+                  {workDayRetroMode === 'reverse' ? 'หักในสลิปงวด' : 'จ่ายในงวด payroll'}
+                </Label>
                 <Input
                   id="retro-apply-ym"
                   type="month"
@@ -3827,7 +3959,18 @@ export default function WaveMonthTimesheetSummaryPage() {
                   disabled={retroSaving}
                 />
                 <p className="text-[11px] text-muted-foreground leading-snug">
-                  {hasPayrollBatchForMonth ? (
+                  {workDayRetroMode === 'reverse' ? (
+                    <>
+                      หักในสลิปเงินเดือนปกติของงวดนี้ ไม่เข้าตกเบิก OT ถ้าสุทธิของงวดนั้นไม่พอทั้งก้อน รายการจะค้างไว้จนกว่าจะสร้างสลิปงวดนี้ใหม่แล้วหักได้
+                    </>
+                  ) : workDayRetroMode === 'add' ? (
+                    <>
+                      จ่ายเป็นบรรทัด «ค่าแรงตกเบิก 1 วัน» ในงวดตกเบิก ไม่ปนกับ OT
+                      {hasPayrollBatchForMonth
+                        ? ' ค่าเริ่มต้นคืองวดนี้ — เลื่อนเดือนได้ที่ช่องนี้'
+                        : ` ค่าเริ่มต้นคือเดือนถัดไป — ถ้าจะจ่ายในงวด ${monthYm} ให้เลือกที่ช่องนี้`}
+                    </>
+                  ) : hasPayrollBatchForMonth ? (
                     <>
                       มีงวดจ่ายเดือนนี้แล้ว — ค่าเริ่มต้นคือจ่ายในงวดเดียวกัน (สร้าง{' '}
                       <strong>ตกเบิก</strong> เดือน {monthYm}) ถ้าจะเลื่อนไปเดือนถัดไปให้เปลี่ยนที่ช่องนี้
@@ -3849,35 +3992,49 @@ export default function WaveMonthTimesheetSummaryPage() {
                   value={retroReason}
                   onChange={(e) => setRetroReason(e.target.value)}
                   disabled={retroSaving}
-                  placeholder="เช่น OT 29–31 พ.ค. ลืมลงก่อนปิด payroll"
+                  placeholder={
+                    workDayRetroMode === 'add'
+                      ? 'เช่น ลืมลงวันทำงานก่อนปิด payroll'
+                      : workDayRetroMode === 'reverse'
+                        ? 'เช่น วันนี้งานจบแล้ว แต่สลิปจ่ายไปแล้ว'
+                        : 'เช่น OT 29–31 พ.ค. ลืมลงก่อนปิด payroll'
+                  }
                 />
               </div>
-              {retroEvent !== WAVE_MONTH_EVENT_CLEAR ? (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-sm">
+              {workDayRetroMode !== 'ot' || retroEvent !== WAVE_MONTH_EVENT_CLEAR ? (
+              <div className={`rounded-md border px-3 py-2 text-sm ${workDayRetroMode === 'reverse' ? 'border-amber-200 bg-amber-50/80' : 'border-emerald-200 bg-emerald-50/80'}`}>
                   <span className="text-muted-foreground">
-                  ยอดจ่ายเพิ่ม
-                  {retroEvent === 'work_day' && retroOtPayHours > 0
+                  {workDayRetroMode === 'reverse' ? 'ยอดหักคืน' : workDayRetroMode === 'add' ? 'ยอดตกเบิกวันทำงาน' : 'ยอดจ่ายเพิ่ม'}
+                  {workDayRetroMode === 'ot' && retroEvent === 'work_day' && retroOtPayHours > 0
                     ? ` (${timesheetOtTierLabel(retroOtTier)} ${retroOtPayHours} ชม. ที่รอจ่ายใหม่)`
                     : ''}
-                  {retroPayRateSource === 'worker_custom'
-                    ? ' (จากฐานทะเบียนลูกจ้าง): '
-                    : ' (จากตารางอัตรา): '}
+                  {workDayRetroMode === 'ot'
+                    ? retroPayRateSource === 'worker_custom'
+                      ? ' (จากฐานทะเบียนลูกจ้าง): '
+                      : ' (จากตารางอัตรา): '
+                    : ': '}
                 </span>
                 {retroPayPreviewLoading ? (
                   <span className="inline-flex items-center gap-1 text-muted-foreground">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" /> กำลังคำนวณ…
                   </span>
-                ) : retroPayMissing.length > 0 ? (
+                ) : workDayRetroMode === 'ot' && retroPayMissing.length > 0 ? (
                   <span className="text-amber-900 font-medium">— ยังใส่อัตราไม่ครบ</span>
                 ) : retroPayPreview != null && retroPayPreview > 0 ? (
-                  <strong className="text-emerald-900 font-mono tabular-nums">
+                  <strong className={workDayRetroMode === 'reverse' ? 'text-amber-950 font-mono tabular-nums' : 'text-emerald-900 font-mono tabular-nums'}>
                     ฿{retroPayPreview.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </strong>
                 ) : (
-                  <span className="text-muted-foreground">— กรอกชม. OT/standby เพื่อคำนวณ</span>
+                  <span className="text-muted-foreground">
+                    {workDayRetroMode === 'ot' ? '— กรอกชม. OT/standby เพื่อคำนวณ' : '— คำนวณยอดวันนี้ไม่ได้'}
+                  </span>
                 )}
                 <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
-                  {retroPayRateSource === 'worker_custom' ? (
+                  {workDayRetroMode === 'reverse' ? (
+                    <>ยอดนี้คือที่ล็อกไว้ในสลิปวันนั้น ไม่ได้คำนวณเรทใหม่</>
+                  ) : workDayRetroMode === 'add' ? (
+                    <>ค่าแรงหนึ่งวันทำงานของวันที่นี้ ตามแพ็กและเรทที่ใช้ในวันนั้น</>
+                  ) : retroPayRateSource === 'worker_custom' ? (
                     <>
                       ยึดฐานออฟชอร์/ออนชอร์จากหน้าลูกจ้าง · อัตรา OT ตามที่เลือก (OT1.5 / OT2 / OT3)
                     </>
@@ -3928,7 +4085,11 @@ export default function WaveMonthTimesheetSummaryPage() {
                 retroSaving ||
                 !retroEdit ||
                 !retroReason.trim() ||
-                (retroEvent !== WAVE_MONTH_EVENT_CLEAR &&
+                (workDayRetroMode !== 'ot'
+                  ? retroPayPreviewLoading || retroPayPreview == null || retroPayPreview <= 0
+                  : false) ||
+                (workDayRetroMode === 'ot' &&
+                  retroEvent !== WAVE_MONTH_EVENT_CLEAR &&
                   (retroPayMissing.length > 0 ||
                     (() => {
                       if (retroEvent === 'work_day') {
@@ -3970,7 +4131,13 @@ export default function WaveMonthTimesheetSummaryPage() {
               onClick={() => void performSaveRetroEdit()}
             >
               {retroSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              {retroEvent === WAVE_MONTH_EVENT_CLEAR ? 'ยืนยันล้างช่อง' : 'บันทึกแก้ไขย้อนหลัง'}
+              {workDayRetroMode === 'add'
+                ? 'บันทึกเพิ่มวันทำงาน'
+                : workDayRetroMode === 'reverse'
+                  ? 'บันทึกหักคืนวันนี้'
+                  : retroEvent === WAVE_MONTH_EVENT_CLEAR
+                    ? 'ยืนยันล้างช่อง'
+                    : 'บันทึกแก้ไขย้อนหลัง'}
             </Button>
           </DialogFooter>
         </DialogContent>
