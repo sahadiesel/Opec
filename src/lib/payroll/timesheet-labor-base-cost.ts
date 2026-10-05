@@ -1,23 +1,36 @@
 /**
  * ฐานต้นทุนค่าแรงต่อใบ timesheet — **รายวัน / ราย PO / รายสัญญา**
- * (คนเดียวในเดือนเดียวอาจมีหลายสัญญา — แต่ละแถว daily_timesheets ใช้ contractId ของตัวเอง)
+ * (คนเดียวในเดือนเดียวอาจมีหลายสัญญา — แต่ละแถว daily_timesheets ใช้ contractId ของตัวเอง
+ * ซึ่งคือสัญญาของลูกค้าที่ assignment / PO นั้นผูกไว้)
  *
- * ลำดับ:
- * รายคน (custom) → ทะเบียนต่อสัญญาบน Position (`laborCostByContract` × contract ของใบงาน)
- * → ทับต่อตำแหน่งบนสัญญาหลัก (`MainContract.laborCostBaselinesByPositionId`)
- * → มาตรฐาน Position (`defaultLaborCost*`) → costBaselineSnapshot จาก PO line ของ PO นั้น
+ * สวิตช์ทะเบียนเปิด (ค่าเริ่มต้น — ยึดฐานตามสัญญา):
+ * เรทต้นทุนบน Rate Sheet ของสัญญานั้น (คอลัมน์ OFF/ON Work — matrix ก่อน แล้ว baseline)
+ * → ทะเบียนต่อสัญญาบน Position → ฐานมาตรฐานตำแหน่ง
+ * → บวกค่าตำแหน่งรายคน → ถ้ายังไม่มี ใช้ costBaselineSnapshot ของ PO
+ *
+ * สวิตช์ปิด (ไม่ยึดสัญญา): ฐาน onshore/offshore ที่กรอกในทะเบียนลูกจ้าง
+ * ไม่บวกค่าตำแหน่ง และไม่ใช้เรทในสัญญา
  */
 import { collection, doc, getDoc, getDocs, type Firestore } from 'firebase/firestore';
 import type {
+  Assignment,
   DailyTimesheet,
   JobMode,
+  LaborCostResolutionSnapshot,
   MainContract,
   Position,
+  PositionRate,
   PurchaseOrder,
   Worker,
   LaborCostSourceKind,
   LaborCostWorkMode,
 } from '@/lib/types';
+import { buildLaborCostResolutionSnapshot } from '@/lib/payroll/labor-cost-model';
+import { applyLaborCostEpochToWorkerForDate } from '@/lib/payroll/remob-position-for-payroll';
+import {
+  buildRateSheetColumns,
+  readRateSheetCell,
+} from '@/lib/commercial/position-rate-matrix';
 import {
   parseCanonicalPoActiveBundleRouteKey,
   resolveWorkModeForPoContext,
@@ -252,27 +265,34 @@ function resolveLaborCostFromContractPositionBaseline(
   return Number.isFinite(f) && f > 0 ? f : 0;
 }
 
-/** OFF/ON Work จาก rateMatrix.cost บน position_rates ของสัญญา */
-function resolveLaborCostFromContractPositionRateMatrix(
+const COST_WORKING_DAY_COLUMN = {
+  offshore: buildRateSheetColumns([], { includeOffshore: true, includeOnshore: false, includeMob: false }).find(
+    (c) => c.category === 'offshore_working_day',
+  )!,
+  onshore: buildRateSheetColumns([], { includeOffshore: false, includeOnshore: true, includeMob: false }).find(
+    (c) => c.category === 'onshore_working_day',
+  )!,
+};
+
+/**
+ * ฐานวันทำงานฝั่งต้นทุนที่หน้าสัญญาโชว์ในคอลัมน์ OFF/ON Work
+ * matrix มาก่อน baseline — ตรงกับ Rate Sheet ที่ผู้ใช้แก้
+ */
+export function resolveContractRateSheetCostWorkingDay(
   mainContract: MainContract | null | undefined,
   positionId: string | undefined,
   mode: LaborCostWorkMode,
 ): number {
   const pid = (positionId || '').trim();
-  if (!mainContract?.positionRates?.length || !pid) return 0;
-  const rate = mainContract.positionRates.find((r) => r.positionId === pid && r.active !== false);
-  if (!rate) return 0;
-  const bundle = rate.rateMatrix?.cost;
-  const primary =
-    mode === 'onshore'
-      ? Number(bundle?.onshore?.workingDay)
-      : Number(bundle?.offshore?.workingDay);
-  if (Number.isFinite(primary) && primary > 0) return primary;
-  const fallback =
-    mode === 'onshore'
-      ? Number(bundle?.offshore?.workingDay)
-      : Number(bundle?.onshore?.workingDay);
-  return Number.isFinite(fallback) && fallback > 0 ? fallback : 0;
+  if (!mainContract || !pid) return 0;
+  const rate = mainContract.positionRates?.find((r) => r.positionId === pid && r.active !== false);
+  if (rate) {
+    const shown = readRateSheetCell(rate, 'cost', COST_WORKING_DAY_COLUMN[mode], {
+      contract: mainContract,
+    });
+    if (shown != null && shown > 0) return shown;
+  }
+  return resolveLaborCostFromContractPositionBaseline(mainContract, pid, mode);
 }
 
 /**
@@ -296,16 +316,14 @@ function resolvePayrollLaborBaseCore(input: {
   const positionId = (input.timesheet.positionId || linePos?.id || '').trim();
   const payrollContractId = resolveEffectivePayrollContractId(input.timesheet, input.poContractById);
   const registryB = resolveLaborCostFromPositionRegistry(linePos, payrollContractId, mode);
-  const contractBaseline =
-    resolveLaborCostFromContractPositionBaseline(input.mainContract, positionId, mode) ||
-    resolveLaborCostFromContractPositionRateMatrix(input.mainContract, positionId, mode);
+  const contractSheet = resolveContractRateSheetCostWorkingDay(input.mainContract, positionId, mode);
 
-  const contractBaselineResolution = contractBaseline > 0
+  const contractSheetResolution = contractSheet > 0
     ? {
-        baseCost: contractBaseline,
+        baseCost: contractSheet,
         fromPositionModel: true,
         resolution: {
-          rate: contractBaseline,
+          rate: contractSheet,
           source: 'contract_position_baseline' as const,
           workMode: mode,
         },
@@ -337,6 +355,7 @@ function resolvePayrollLaborBaseCore(input: {
           resolution: { rate: n, source: 'worker_custom', workMode: mode },
         };
       }
+      if (contractSheetResolution) return contractSheetResolution;
       if (registryB > 0) {
         return {
           baseCost: registryB,
@@ -344,11 +363,11 @@ function resolvePayrollLaborBaseCore(input: {
           resolution: { rate: registryB, source: 'position_contract_registry', workMode: mode },
         };
       }
-      if (contractBaselineResolution) return contractBaselineResolution;
       if (positionDefaultResolution) return positionDefaultResolution;
       return { baseCost: 0, fromPositionModel: true, resolution: null };
     }
 
+    if (contractSheetResolution) return contractSheetResolution;
     if (registryB > 0) {
       return {
         baseCost: registryB,
@@ -356,11 +375,11 @@ function resolvePayrollLaborBaseCore(input: {
         resolution: { rate: registryB, source: 'position_contract_registry', workMode: mode },
       };
     }
-    if (contractBaselineResolution) return contractBaselineResolution;
     if (positionDefaultResolution) return positionDefaultResolution;
     return { baseCost: 0, fromPositionModel: true, resolution: null };
   }
 
+  if (contractSheetResolution) return contractSheetResolution;
   if (registryB > 0) {
     return {
       baseCost: registryB,
@@ -368,7 +387,6 @@ function resolvePayrollLaborBaseCore(input: {
       resolution: { rate: registryB, source: 'position_contract_registry', workMode: mode },
     };
   }
-  if (contractBaselineResolution) return contractBaselineResolution;
   if (positionDefaultResolution) return positionDefaultResolution;
   return { baseCost: 0, fromPositionModel: true, resolution: null };
 }
@@ -523,4 +541,105 @@ export function resolvePoLineForPayrollTimesheet(
   }
   if (byPos) return byPos;
   return direct || {};
+}
+
+/** Snapshot ฐานที่ใช้คิดสลิปจริง (รวมค่าตำแหน่ง) — ไม่ใช่แค่ default ของตำแหน่ง */
+export function buildPayrollLaborResolutionSnapshotForTimesheets(
+  timesheets: readonly DailyTimesheet[],
+  deps: {
+    workerById: Map<string, Worker>;
+    posById: Map<string, Position>;
+    contractMap: Map<string, MainContract>;
+    poContractById?: Map<string, string>;
+    poWorkModeByPoId?: Map<string, JobMode>;
+    poLineMaps: PayrollPoLineMaps;
+    assignmentById?: Map<string, Pick<Assignment, 'laborCostEpochs'>>;
+  },
+): LaborCostResolutionSnapshot | undefined {
+  for (const ts of timesheets) {
+    const asgn = deps.assignmentById?.get(String(ts.assignmentId || '').trim());
+    const wkLive = deps.workerById.get(ts.workerId);
+    const wk = applyLaborCostEpochToWorkerForDate(wkLive, asgn, ts.date);
+    const linePos = ts.positionId ? deps.posById.get(ts.positionId) : undefined;
+    const payrollContractId = resolveEffectivePayrollContractId(ts, deps.poContractById);
+    const mainContract = payrollContractId ? deps.contractMap.get(payrollContractId) : undefined;
+    const { resolution } = resolveBaseCostForPayrollTimesheet({
+      worker: wk,
+      linePosition: linePos,
+      poLine: resolvePoLineForPayrollTimesheet(ts, deps.poLineMaps),
+      timesheet: ts,
+      mainContract,
+      poContractById: deps.poContractById,
+      poWorkModeByPoId: deps.poWorkModeByPoId,
+    });
+    if (!resolution || !(resolution.rate > 0)) continue;
+    const positionId = (ts.positionId || linePos?.id || wk?.currentPositionId || '').trim();
+    if (!positionId) continue;
+    return buildLaborCostResolutionSnapshot({
+      positionId,
+      workMode: resolution.workMode,
+      rate: resolution.rate,
+      source: resolution.source,
+    });
+  }
+  return undefined;
+}
+
+export type AssignedContractLaborQuote = {
+  assignmentId: string;
+  contractId: string;
+  contractLabel: string;
+  projectName: string;
+  positionId: string;
+  positionName: string;
+  workMode: LaborCostWorkMode;
+  /** ฐานวันทำงานฝั่งต้นทุนบน Rate Sheet ของสัญญานี้ — 0 = สัญญาไม่มีเรทตำแหน่งนี้ */
+  contractDaily: number;
+};
+
+/** เรทต้นทุนของสัญญาที่ลูกจ้างถูก assign อยู่ — คนละงานอาจคนละสัญญา */
+export async function loadAssignedContractLaborQuotes(
+  db: Firestore,
+  assignments: readonly Pick<Assignment, 'id' | 'contractId' | 'positionId' | 'projectName' | 'workMode'>[],
+  positions: readonly Pick<Position, 'id' | 'positionName' | 'positionNameTh'>[] | null | undefined,
+): Promise<AssignedContractLaborQuote[]> {
+  const open = assignments.filter(
+    (a) => (a.contractId || '').trim().length > 0 && (a.positionId || '').trim().length > 0,
+  );
+  const contractIds = [...new Set(open.map((a) => (a.contractId || '').trim()))];
+  const contracts = new Map<string, MainContract>();
+  await Promise.all(
+    contractIds.map(async (cid) => {
+      const snap = await getDoc(doc(db, 'main_contracts', cid));
+      if (!snap.exists()) return;
+      const data = { id: snap.id, ...(snap.data() as object) } as MainContract;
+      const ratesSnap = await getDocs(collection(db, 'main_contracts', cid, 'position_rates'));
+      data.positionRates = ratesSnap.docs.map(
+        (d) => ({ id: d.id, ...(d.data() as object) }) as PositionRate,
+      );
+      contracts.set(cid, data);
+    }),
+  );
+
+  const positionName = (id: string) => {
+    const p = positions?.find((x) => x.id === id);
+    return (p?.positionName || p?.positionNameTh || id).trim();
+  };
+
+  return open.map((a) => {
+    const contractId = (a.contractId || '').trim();
+    const positionId = (a.positionId || '').trim();
+    const contract = contracts.get(contractId);
+    const workMode: LaborCostWorkMode = a.workMode === 'ONSHORE' ? 'onshore' : 'offshore';
+    return {
+      assignmentId: a.id,
+      contractId,
+      contractLabel: (contract?.contractNumber || contract?.title || contractId).trim(),
+      projectName: (a.projectName || '').trim(),
+      positionId,
+      positionName: positionName(positionId),
+      workMode,
+      contractDaily: resolveContractRateSheetCostWorkingDay(contract, positionId, workMode),
+    };
+  });
 }

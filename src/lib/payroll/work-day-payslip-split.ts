@@ -201,6 +201,66 @@ function offshoreOt30RateFromPackage(packageRate: number): number {
   return round2((packageRate / 14) * 3);
 }
 
+/**
+ * วันหยุดออฟชอร์คิดค่าแรงแค่แพ็ก 12 ชม. — ชม. OT แยกไปบรรทัด OT
+ * ยอดวัน = (12 + ชม.OT) × อัตราแบน → ส่วน 12 ชม. คือค่าแรงวันหยุด
+ */
+function holidayPackageHours(workMode: string | undefined, normalHours: number): number {
+  const mode = String(workMode || '').toUpperCase();
+  if (mode.includes('ONSHORE') && !mode.includes('OFFSHORE')) return 8;
+  if (normalHours > 0 && normalHours <= 8 && !mode.includes('OFFSHORE')) return 8;
+  return 12;
+}
+
+function splitHolidayPackageAndOt(input: {
+  amount: number;
+  workMode?: string;
+  normalHours: number;
+  otHours: number;
+}): { holidayLabor: number; otPool: number } {
+  const amount = round2(input.amount);
+  const otHours = Math.max(0, input.otHours);
+  if (amount <= 0.005 || otHours <= 0.005) {
+    return { holidayLabor: amount, otPool: 0 };
+  }
+  const pkgHours = holidayPackageHours(input.workMode, input.normalHours);
+  const holidayLabor = round2((amount * pkgHours) / (pkgHours + otHours));
+  return { holidayLabor, otPool: round2(amount - holidayLabor) };
+}
+
+function allocateOtPoolByHours(
+  otPool: number,
+  o15: number,
+  o20: number,
+  o30: number,
+  beyond12: number,
+): { ot15Amt: number; ot20Amt: number; ot30Amt: number; beyondAmt: number } {
+  const otHoursTotal = o15 + o20 + o30 + beyond12;
+  const otWeight = o15 * 1.5 + o20 * 2 + o30 * 3 + beyond12 * 1.5;
+  let ot15Amt = 0;
+  let ot20Amt = 0;
+  let ot30Amt = 0;
+  let beyondAmt = 0;
+  if (otPool > 0.005 && otWeight > 0.005) {
+    const alloc = (w: number) => round2(otPool * (w / otWeight));
+    ot15Amt = alloc(o15 * 1.5);
+    ot20Amt = alloc(o20 * 2);
+    ot30Amt = alloc(o30 * 3);
+    beyondAmt = alloc(beyond12 * 1.5);
+    const otSum = round2(ot15Amt + ot20Amt + ot30Amt + beyondAmt);
+    const otDrift = round2(otPool - otSum);
+    if (Math.abs(otDrift) >= 0.01) {
+      if (o15 > 0) ot15Amt = round2(ot15Amt + otDrift);
+      else if (beyond12 > 0) beyondAmt = round2(beyondAmt + otDrift);
+      else if (o20 > 0) ot20Amt = round2(ot20Amt + otDrift);
+      else ot30Amt = round2(ot30Amt + otDrift);
+    }
+  } else if (otPool > 0.005 && otHoursTotal <= 0) {
+    ot15Amt = otPool;
+  }
+  return { ot15Amt, ot20Amt, ot30Amt, beyondAmt };
+}
+
 
 export function payslipWorkDaySplitTotal(split: PayslipWorkDaySplit): number {
   if (split.otAmount == null) {
@@ -541,7 +601,7 @@ export function computeWorkDayPackagePayslipPositionSplits(
 /**
  * สร้างแยกตำแหน่งจาก dailyRowSnapshots
  * — วันธรรมดา: ค่าแรง = วัน × แพ็กจริง (1800/2600) + OT ชม.×อัตราจากแพ็ก
- * — วันหยุด (อาทิตย์ + นักขัตฤกษ์): ค่าแรงวันหยุด แยกอัตรารายวัน (ไม่เฉลี่ยข้ามอัตรา)
+ * — วันหยุด (อาทิตย์ + นักขัตฤกษ์): ค่าแรงวันหยุด = แพ็ก 12 ชม. · ชม. OT ของวันนั้นไปบรรทัด OT
  */
 export function buildPositionSplitsFromDailyRowSnapshots(
   snaps: readonly PayrollBatchLineDailyRowSnapshot[] | null | undefined,
@@ -655,15 +715,26 @@ export function buildPositionSplitsFromDailyRowSnapshots(
       packageRate = inferOffshorePackageRateFromDayAmount(amount, o15, o20, o30, nh);
       if (packageRate > 0.005) packageByPos.set(posKey, packageRate);
     }
-    if (packageRate == null || packageRate <= 0.005) {
+    if ((packageRate == null || packageRate <= 0.005) && !provisionalHoliday) {
       packageRate = round2(amount);
     }
 
     const isHolidayDay = isHolidayWorkDayFromSnapshotRow(row, packageRate);
 
     if (isHolidayDay) {
-      /** วันหยุด: ทั้งวันคิดอัตราหยุด — แยกกลุ่มตามอัตรารายวัน ไม่ปน OT แพ็กวันธรรมดา */
-      const dayRate = round2(amount);
+      /**
+       * ค่าแรงวันหยุด = แพ็ก 12 ชม. เท่านั้น
+       * ชม. OT ในวันนั้นไปบรรทัด OT (อัตราเดียวกับวันธรรมดาเมื่อตรง D/14×1.5)
+       */
+      const otHoursTotal = o15 + o20 + o30 + beyond12;
+      const { holidayLabor, otPool } = splitHolidayPackageAndOt({
+        amount,
+        workMode,
+        normalHours: nh,
+        otHours: otHoursTotal,
+      });
+      const otParts = allocateOtPoolByHours(otPool, o15, o20, o30, beyond12);
+      const dayRate = holidayLabor;
       const key = `${positionId}\t${workMode || ''}\t${dayRate}\tholiday`;
       bump(
         key,
@@ -688,9 +759,57 @@ export function buildPositionSplitsFromDailyRowSnapshots(
         },
         (acc) => {
           acc.holidayDays += 1;
-          acc.holidayAmount = round2(acc.holidayAmount + dayRate);
+          acc.holidayAmount = round2(acc.holidayAmount + holidayLabor);
         },
       );
+      if (otPool > 0.005) {
+        const peerD = round2(Number(packageRate) || 0);
+        const flat = otHoursTotal > 0 ? otPool / otHoursTotal : 0;
+        const impliedD = flat > 0 ? round2((flat * 14) / 1.5) : 0;
+        const D =
+          peerD > 0.005 && Math.abs(offshoreOt15RateFromPackage(peerD) - flat) <= 0.05
+            ? peerD
+            : impliedD;
+        const otRate = flat;
+        const expected15 = D > 0 ? offshoreOt15RateFromPackage(D) : 0;
+        const foldIntoWeekday =
+          D > 0.005 && expected15 > 0 && Math.abs(otRate - expected15) <= 0.05;
+        const otKey = foldIntoWeekday
+          ? `${positionId}\t${workMode || ''}\t${D}\tweekday`
+          : key;
+        bump(
+          otKey,
+          {
+            positionId,
+            positionNameSnapshot,
+            workMode,
+            packageRatePerDay: foldIntoWeekday ? D : dayRate,
+            isHoliday: !foldIntoWeekday,
+            normalDays: 0,
+            normalAmount: 0,
+            holidayDays: 0,
+            holidayAmount: 0,
+            ot15Hours: 0,
+            ot15Amount: 0,
+            ot20Hours: 0,
+            ot20Amount: 0,
+            ot30Hours: 0,
+            ot30Amount: 0,
+            overflowBeyond12Hours: 0,
+            overflowBeyond12Amount: 0,
+          },
+          (acc) => {
+            acc.ot15Hours += o15;
+            acc.ot15Amount = round2(acc.ot15Amount + otParts.ot15Amt);
+            acc.ot20Hours += o20;
+            acc.ot20Amount = round2(acc.ot20Amount + otParts.ot20Amt);
+            acc.ot30Hours += o30;
+            acc.ot30Amount = round2(acc.ot30Amount + otParts.ot30Amt);
+            acc.overflowBeyond12Hours += beyond12;
+            acc.overflowBeyond12Amount = round2(acc.overflowBeyond12Amount + otParts.beyondAmt);
+          },
+        );
+      }
       continue;
     }
 
@@ -698,30 +817,11 @@ export function buildPositionSplitsFromDailyRowSnapshots(
     const labor = round2(D);
     /** OT = ยอดวันในงวด − แพ็กวัน — ชม.ตามใบงาน · อัตรา = OT÷ชม. (ใกล้ D/14×1.5) */
     const otPool = round2(Math.max(0, amount - labor));
-    const otHoursTotal = o15 + o20 + o30 + beyond12;
-    const otWeight = o15 * 1.5 + o20 * 2 + o30 * 3 + beyond12 * 1.5;
-    let ot15Amt = 0;
-    let ot20Amt = 0;
-    let ot30Amt = 0;
-    let beyondAmt = 0;
-    if (otPool > 0.005 && otWeight > 0.005) {
-      const alloc = (w: number) => round2(otPool * (w / otWeight));
-      ot15Amt = alloc(o15 * 1.5);
-      ot20Amt = alloc(o20 * 2);
-      ot30Amt = alloc(o30 * 3);
-      beyondAmt = alloc(beyond12 * 1.5);
-      const otSum = round2(ot15Amt + ot20Amt + ot30Amt + beyondAmt);
-      const otDrift = round2(otPool - otSum);
-      if (Math.abs(otDrift) >= 0.01) {
-        if (o15 > 0) ot15Amt = round2(ot15Amt + otDrift);
-        else if (beyond12 > 0) beyondAmt = round2(beyondAmt + otDrift);
-        else if (o20 > 0) ot20Amt = round2(ot20Amt + otDrift);
-        else ot30Amt = round2(ot30Amt + otDrift);
-      }
-    } else if (otPool > 0.005 && otHoursTotal <= 0) {
-      /** มียอดเกินแพ็กแต่ไม่ลงชม.OT — รวมในค่าแรงไม่ได้ ใส่ OT ทั่วไปไม่ได้ → คงใน labor ไม่ได้; เก็บใน ot15 0 ชม. ไม่โชว์ · ปรับวันท้าย */
-      ot15Amt = otPool;
-    }
+    const otParts = allocateOtPoolByHours(otPool, o15, o20, o30, beyond12);
+    const ot15Amt = otParts.ot15Amt;
+    const ot20Amt = otParts.ot20Amt;
+    const ot30Amt = otParts.ot30Amt;
+    const beyondAmt = otParts.beyondAmt;
 
     const key = `${positionId}\t${workMode || ''}\t${D}\tweekday`;
     bump(

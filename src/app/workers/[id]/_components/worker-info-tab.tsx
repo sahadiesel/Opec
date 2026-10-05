@@ -24,6 +24,7 @@ import type { Worker, Position, Assignment } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
 import { resolveWorkerLaborBaseRate } from '@/lib/payroll/labor-cost-model';
+import type { AssignedContractLaborQuote } from '@/lib/payroll/timesheet-labor-base-cost';
 import { deriveOtHourlyRatesFromDailyPackage } from '@/lib/commercial/package-hourly-rate';
 import { useActiveBankNameCatalog, useActiveSsoHospitalCatalog } from '@/hooks/use-hrm-name-catalogs';
 import { NameTitleSelect, NameTitleEnSelect, type EnNameTitle } from '@/components/hr/name-title-select';
@@ -58,6 +59,8 @@ interface WorkerInfoTabProps {
   activateWorkerLoginBusy?: boolean;
   /** mobilization ที่เปิดอยู่ — ใช้คำนวณสถานะงานที่แสดง */
   openMobilizations?: Assignment[] | null;
+  /** null = กำลังโหลดเรทจากสัญญาของงานที่มอบหมาย */
+  assignedLaborQuotes?: AssignedContractLaborQuote[] | null;
 }
 
 function numIn(v: number | undefined) {
@@ -89,6 +92,7 @@ export function WorkerInfoTab({
   onActivateWorkerLogin,
   activateWorkerLoginBusy = false,
   openMobilizations,
+  assignedLaborQuotes = null,
 }: WorkerInfoTabProps) {
   const activeBankCatalog = useActiveBankNameCatalog();
   const activeHospitalCatalog = useActiveSsoHospitalCatalog();
@@ -135,9 +139,44 @@ export function WorkerInfoTab({
     ? (editedWorker.laborCostCustomOffshore !== undefined ? editedWorker.laborCostCustomOffshore : worker.laborCostCustomOffshore)
     : worker.laborCostCustomOffshore;
 
+  const allowanceDaily = (() => {
+    const n = Number(wEff.positionAllowanceDailyBaht);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  })();
+
+  const slipRateLabel = (mode: 'onshore' | 'offshore') => {
+    if (!usePosDefault) {
+      const eff = mode === 'onshore' ? onshoreEff : offshoreEff;
+      return eff?.rate != null ? `฿${eff.rate.toLocaleString('th-TH')} (กำหนดเอง)` : '—';
+    }
+    const fromContract = (assignedLaborQuotes ?? []).find((q) => q.workMode === mode && q.contractDaily > 0);
+    if (fromContract) {
+      const total = allowanceDaily > 0 ? fromContract.contractDaily + allowanceDaily : fromContract.contractDaily;
+      return `฿${total.toLocaleString('th-TH')} (สัญญา${allowanceDaily > 0 ? ' + ค่าตำแหน่ง' : ''})`;
+    }
+    const fallback = mode === 'onshore'
+      ? currentPosition?.defaultLaborCostOnshore
+      : currentPosition?.defaultLaborCostOffshore;
+    const n = Number(fallback);
+    if (Number.isFinite(n) && n > 0) {
+      const total = allowanceDaily > 0 ? n + allowanceDaily : n;
+      return `฿${total.toLocaleString('th-TH')} (ฐานตำแหน่ง)`;
+    }
+    return '—';
+  };
+
   /** มาตรฐานออฟชอร์ 12 ชม. = 8 ปกติ + 4 OT → OT1.5/ชม. จากฐานรายวัน */
   const offshoreOtPreview = useMemo(() => {
-    const d = offshoreEff?.rate;
+    let d: number | null = null;
+    if (usePosDefault) {
+      const fromContract = (assignedLaborQuotes ?? []).find(
+        (q) => q.workMode === 'offshore' && q.contractDaily > 0,
+      );
+      const base = fromContract?.contractDaily || Number(currentPosition?.defaultLaborCostOffshore) || 0;
+      if (base > 0) d = allowanceDaily > 0 ? base + allowanceDaily : base;
+    } else {
+      d = offshoreEff?.rate ?? null;
+    }
     if (d == null || !(d > 0)) return null;
     const rates = deriveOtHourlyRatesFromDailyPackage(d, 12);
     return {
@@ -145,7 +184,13 @@ export function WorkerInfoTab({
       normalHourly: Math.round(rates.normalHourly * 100) / 100,
       ot15Hourly: Math.round(rates.ot15Hourly * 100) / 100,
     };
-  }, [offshoreEff?.rate]);
+  }, [
+    usePosDefault,
+    assignedLaborQuotes,
+    currentPosition?.defaultLaborCostOffshore,
+    allowanceDaily,
+    offshoreEff?.rate,
+  ]);
 
   const readinessOnHold = worker.readinessManualHold === true;
   const readinessComplianceOk = worker.readinessStatus === 'READY';
@@ -520,9 +565,10 @@ export function WorkerInfoTab({
             <CardContent className="pt-6 space-y-4">
               <div className="flex items-center justify-between gap-4">
                 <div className="space-y-0.5">
-                  <Label className="font-bold">ยึด default ของตำแหน่งหลัก</Label>
+                  <Label className="font-bold">ยึดฐานค่าแรงตามสัญญา</Label>
                   <p className="text-xs text-muted-foreground">
-                    ปิด = กำหนดฐาน onshore / offshore เอง → payroll / ตกเบิก OT ยึดฐานนี้ (ไม่ใช้ OFF OT/hr ในสัญญา)
+                    เปิด = ดึง OFF/ON Work จากสัญญาของลูกค้าที่ได้รับมอบหมายไปทำงาน
+                    {' '}· ปิด = ใช้ฐานที่กรอกด้านล่าง (ไม่บวกค่าตำแหน่ง และไม่ใช้เรทในสัญญา)
                   </p>
                 </div>
                 <Switch
@@ -533,15 +579,58 @@ export function WorkerInfoTab({
                   }}
                 />
               </div>
-              {usePosDefault && !currentPosition && (
+              {usePosDefault && assignedLaborQuotes == null && (
+                <p className="text-sm text-muted-foreground">กำลังอ่านสัญญาของงานที่มอบหมาย…</p>
+              )}
+              {usePosDefault && assignedLaborQuotes != null && assignedLaborQuotes.length === 0 && (
                 <p className="text-sm rounded-md border border-amber-200 bg-amber-100/50 p-3 text-amber-900">
-                  ยังไม่มีตำแหน่งหลัก (หรือรอโหลด) — กรุณาเลือกตำแหน่งในฟอร์มด้านบนเพื่อใช้ฐาน default
+                  ยังไม่มีงานที่มอบหมายที่ผูกสัญญา — ตอนออกสลิปจะใช้สัญญาบนใบงานของวันนั้น
+                  ถ้าวันนั้นไม่มีเรทต้นทุนในสัญญา จะใช้ฐานมาตรฐานตำแหน่ง
                 </p>
               )}
+              {usePosDefault && assignedLaborQuotes != null && assignedLaborQuotes.length > 0 && (
+                <div className="space-y-2">
+                  {assignedLaborQuotes.map((q) => {
+                    const slipDaily = q.contractDaily > 0 && allowanceDaily > 0
+                      ? q.contractDaily + allowanceDaily
+                      : q.contractDaily;
+                    return (
+                      <div
+                        key={q.assignmentId}
+                        className="text-sm rounded-md border border-amber-200/60 bg-amber-50/50 p-3 text-amber-950 space-y-1"
+                      >
+                        <p>
+                          งาน <strong>{q.projectName || '—'}</strong>
+                          {' · สัญญา '}
+                          <Link href={`/main-contracts/${q.contractId}`} className="underline underline-offset-2">
+                            {q.contractLabel}
+                          </Link>
+                        </p>
+                        <p>
+                          {q.positionName} · {q.workMode === 'offshore' ? 'ออฟชอร์' : 'ออนชอร์'}{' '}
+                          {q.contractDaily > 0 ? (
+                            <strong>฿{q.contractDaily.toLocaleString('th-TH')}</strong>
+                          ) : (
+                            <span>สัญญานี้ยังไม่มีเรทต้นทุนของตำแหน่งนี้</span>
+                          )}
+                        </p>
+                        {q.contractDaily > 0 && allowanceDaily > 0 ? (
+                          <p>
+                            ค่าตำแหน่ง +฿{allowanceDaily.toLocaleString('th-TH')} → วันทำงานในสลิป{' '}
+                            <strong>฿{slipDaily.toLocaleString('th-TH')}</strong>
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               {usePosDefault && currentPosition && (
-                <p className="text-sm rounded-md border border-amber-200/60 bg-amber-50/50 p-3 text-amber-900">
-                  ฐานจากตำแหน่ง <strong>{currentPosition.positionName || currentPosition.positionNameTh}</strong>: ออนชอร์{' '}
-                  {currentPosition.defaultLaborCostOnshore != null ? `฿${currentPosition.defaultLaborCostOnshore}` : '—'} ออฟชอร์{' '}
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  ฐานมาตรฐานตำแหน่ง {currentPosition.positionName || currentPosition.positionNameTh}{' '}
+                  (ใช้เมื่อสัญญาของวันนั้นไม่มีเรท): ออนชอร์{' '}
+                  {currentPosition.defaultLaborCostOnshore != null ? `฿${currentPosition.defaultLaborCostOnshore}` : '—'}{' '}
+                  ออฟชอร์{' '}
                   {currentPosition.defaultLaborCostOffshore != null ? `฿${currentPosition.defaultLaborCostOffshore}` : '—'}
                 </p>
               )}
@@ -590,12 +679,10 @@ export function WorkerInfoTab({
                   )}
                 </p>
                 <p>
-                  ฐานต้นทุนต่อวัน: ออนชอร์{' '}
-                  {onshoreEff?.rate != null ? `฿${onshoreEff.rate} (${onshoreEff.source === 'position_default' ? 'ตำแหน่ง' : 'กำหนดเอง'})` : '—'} · ออฟชอร์{' '}
-                  {offshoreEff?.rate != null ? `฿${offshoreEff.rate} (${offshoreEff.source === 'position_default' ? 'ตำแหน่ง' : 'กำหนดเอง'})` : '—'}
+                  ใช้คิดสลิปต่อวัน: ออนชอร์ {slipRateLabel('onshore')} · ออฟชอร์ {slipRateLabel('offshore')}
                 </p>
                 <p className="text-[11px]">
-                  ถ้าปิดยึดตำแหน่งและกรอกฐานเอง — ค่าแรงรวม OT (payroll + ตกเบิก) คำนวณจากฐานหน้าลูกจ้างตามสูตรด้านบน ไม่ใช้ OFF OT/hr ในตารางสัญญา
+                  ถ้าปิดสวิตช์และกรอกฐานเอง — ค่าแรงรวม OT (payroll + ตกเบิก) คำนวณจากฐานหน้าลูกจ้างตามสูตรด้านบน ไม่บวกค่าตำแหน่ง และไม่ใช้เรทในสัญญา
                 </p>
               </div>
             </CardContent>

@@ -147,8 +147,8 @@ export interface Worker {
   /** เชื่อมบัญชี Firebase Auth สำหรับพอร์ทัลพนักงาน / เบิกล่วงหน้า */
   linkedUserId?: string;
   /**
-   * ต้นทุนค่าแรง: `true` / undefined = ยึด `defaultLaborCost*` ของ Position ตาม `currentPositionId` ทุกงาน/สัญญา
-   * `false` = ใช้ `laborCostCustom*` ทุกที่
+   * ต้นทุนค่าแรง: `true` / undefined = ยึดเรทต้นทุนบนสัญญาของลูกค้าที่ assignment นั้นผูกไว้
+   * `false` = ใช้ `laborCostCustom*` ที่กรอกในทะเบียนลูกจ้าง (ไม่บวกค่าตำแหน่ง ไม่ใช้เรทสัญญา)
    */
   laborCostUsePositionDefault?: boolean;
   laborCostCustomOnshore?: number;

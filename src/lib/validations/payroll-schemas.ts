@@ -149,7 +149,12 @@ export const PayrollBatchLineSchema = z.object({
   d8Snapshot: z.record(z.any()).optional().nullable(),
   laborCostResolutionSnapshot: z
     .object({
-      source: z.enum(['position_default', 'worker_custom']),
+      source: z.enum([
+        'position_default',
+        'worker_custom',
+        'contract_position_baseline',
+        'position_contract_registry',
+      ]),
       positionId: z.string().min(1),
       workMode: z.enum(['onshore', 'offshore']),
       effectiveBaseRate: z.number().min(0),

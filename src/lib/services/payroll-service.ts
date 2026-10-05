@@ -34,7 +34,6 @@ import {
   PositionRate,
   PayrollLineD8Snapshot,
   PayrollBatchStatus,
-  LaborCostResolutionSnapshot,
   WorkerPitCalculationMode,
   OfficePayrollLine,
   OfficePayrollRun,
@@ -83,10 +82,6 @@ import {
   resolveWorkerPitWithholdingBaht,
 } from '@/lib/payroll/d8';
 import {
-  buildLaborCostResolutionSnapshot,
-  resolveWorkerLaborBaseRate,
-} from '@/lib/payroll/labor-cost-model';
-import {
   loadWorkersAndPositionsForPayroll,
   ensurePositionsLoadedForTimesheets,
   loadPayrollPoLineMaps,
@@ -98,7 +93,7 @@ import {
   resolvePoLineForPayrollTimesheet,
   resolveEffectivePayrollContractId,
   resolveEffectivePayrollJobMode,
-  timesheetToLaborWorkMode,
+  buildPayrollLaborResolutionSnapshotForTimesheets,
 } from '@/lib/payroll/timesheet-labor-base-cost';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
 import { fetchWorkerGlobalLaborContextFromFirestore, workerGlobalLaborToPayrollRestSchedule } from '@/lib/payroll/worker-global-labor-policy';
@@ -1045,30 +1040,15 @@ export class PayrollService {
       batchDeductions += lineDedTotalFull;
       batchNet += lineNetAmount;
 
-      const wkLine = workerById.get(workerId);
-      const posLine = wkLine?.currentPositionId ? posById.get(wkLine.currentPositionId) : null;
-      const firstWm = timesheetToLaborWorkMode(workerTs[0], poWorkModeByPoId);
-      const snapRes = wkLine
-        ? resolveWorkerLaborBaseRate(
-            {
-              laborCostUsePositionDefault: wkLine.laborCostUsePositionDefault,
-              laborCostCustomOnshore: wkLine.laborCostCustomOnshore,
-              laborCostCustomOffshore: wkLine.laborCostCustomOffshore,
-              positionAllowanceDailyBaht: wkLine.positionAllowanceDailyBaht,
-            },
-            posLine ?? undefined,
-            firstWm,
-          )
-        : { rate: null as number | null, source: 'position_default' as const };
-      let laborCostResolutionSnapshot: LaborCostResolutionSnapshot | undefined;
-      if (wkLine?.currentPositionId && snapRes.rate != null && snapRes.rate > 0) {
-        laborCostResolutionSnapshot = buildLaborCostResolutionSnapshot({
-          positionId: wkLine.currentPositionId,
-          workMode: firstWm,
-          rate: snapRes.rate,
-          source: snapRes.source,
-        });
-      }
+      const laborCostResolutionSnapshot = buildPayrollLaborResolutionSnapshotForTimesheets(workerTs, {
+        workerById,
+        posById,
+        contractMap,
+        poContractById,
+        poWorkModeByPoId,
+        poLineMaps,
+        assignmentById,
+      });
 
       const line: PayrollBatchLine = {
         id: `${batchId}_${workerId}`,
@@ -2757,32 +2737,15 @@ export class PayrollService {
       updatedBy: user.displayName || user.email || user.id || 'system',
     };
 
-    const wkLine = workerById.get(workerId);
-    const posLine = wkLine?.currentPositionId ? posById.get(wkLine.currentPositionId) : null;
-    const firstWm = workerTsForCalc[0]
-      ? timesheetToLaborWorkMode(workerTsForCalc[0], poWorkModeByPoId)
-      : 'onshore';
-    const snapRes = wkLine
-      ? resolveWorkerLaborBaseRate(
-          {
-            laborCostUsePositionDefault: wkLine.laborCostUsePositionDefault,
-            laborCostCustomOnshore: wkLine.laborCostCustomOnshore,
-            laborCostCustomOffshore: wkLine.laborCostCustomOffshore,
-            positionAllowanceDailyBaht: wkLine.positionAllowanceDailyBaht,
-          },
-          posLine ?? undefined,
-          firstWm,
-        )
-      : { rate: null as number | null, source: 'position_default' as const };
-    let laborCostResolutionSnapshot: LaborCostResolutionSnapshot | undefined;
-    if (wkLine?.currentPositionId && snapRes.rate != null && snapRes.rate > 0) {
-      laborCostResolutionSnapshot = buildLaborCostResolutionSnapshot({
-        positionId: wkLine.currentPositionId,
-        workMode: firstWm,
-        rate: snapRes.rate,
-        source: snapRes.source,
-      });
-    }
+    const laborCostResolutionSnapshot = buildPayrollLaborResolutionSnapshotForTimesheets(workerTsForCalc, {
+      workerById,
+      posById,
+      contractMap,
+      poContractById,
+      poWorkModeByPoId,
+      poLineMaps,
+      assignmentById,
+    });
 
     if (snapshotBackfill) {
       const storedGross = round2Payroll(Number(line.grossAmount) || 0);

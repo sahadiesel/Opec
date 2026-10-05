@@ -92,6 +92,10 @@ import {
   canViewWorkerBankPayrollFieldsFromUser,
 } from '@/lib/payroll/labor-cost-model';
 import { WorkerInfoTab } from './_components/worker-info-tab';
+import {
+  loadAssignedContractLaborQuotes,
+  type AssignedContractLaborQuote,
+} from '@/lib/payroll/timesheet-labor-base-cost';
 import { WorkerCredentialsTab } from './_components/worker-credentials-tab';
 import { WorkerMedicalTab } from './_components/worker-medical-tab';
 import { WorkerDrugTab } from './_components/worker-drug-tab';
@@ -252,6 +256,22 @@ function WorkerDetailContent({ id }: { id: string }) {
   const [rateEditSaving, setRateEditSaving] = useState(false);
   const [editedWorker, setEditedWorker] = useState<Partial<Worker>>({});
   const [activateLoginBusy, setActivateLoginBusy] = useState(false);
+  const [assignedLaborQuotes, setAssignedLaborQuotes] = useState<AssignedContractLaborQuote[] | null>(null);
+
+  useEffect(() => {
+    if (!firestore || !workerMobilizations) return;
+    let cancelled = false;
+    void loadAssignedContractLaborQuotes(firestore, workerMobilizations, allPositions)
+      .then((rows) => {
+        if (!cancelled) setAssignedLaborQuotes(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setAssignedLaborQuotes([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, workerMobilizations, allPositions]);
 
   // --- Derived data (unchanged) ---
   const workerTimesheets = useMemo(() => {
@@ -865,6 +885,7 @@ function WorkerDetailContent({ id }: { id: string }) {
               onActivateWorkerLogin={handleActivateWorkerLogin}
               activateWorkerLoginBusy={activateLoginBusy}
               openMobilizations={workerMobilizations}
+              assignedLaborQuotes={workerMobilizations ? assignedLaborQuotes : null}
             />
           </TabsContent>
 
