@@ -1960,6 +1960,7 @@ export default function WaveMonthTimesheetSummaryPage() {
         }
         const inMobWindow = isYmdEditableForAssignmentTimesheet(assignment, cellDate, {
           hasPersistedTimesheetOnDate: !!ts,
+          siblingAssignments: mobAssignments.filter((m) => m.workerId === assignment.workerId),
         });
         if (!inMobWindow && !ts) {
           toast({
@@ -2056,6 +2057,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       }
       const inMobWindow = isYmdEditableForAssignmentTimesheet(assignment, cellDate, {
         hasPersistedTimesheetOnDate: !!ts,
+        siblingAssignments: mobAssignments.filter((m) => m.workerId === assignment.workerId),
       });
       if (!inMobWindow && !ts) {
         toast({
@@ -2078,7 +2080,7 @@ export default function WaveMonthTimesheetSummaryPage() {
         ...(firestore ? await loadCellEditRateContext(firestore, assignment, po) : {}),
       });
     },
-    [canEditTs, toast, isRowLockedForWorker, retroOnlyPayrollMonth, firestore, retroByTimesheetId, retroByCellKey],
+    [canEditTs, toast, isRowLockedForWorker, retroOnlyPayrollMonth, firestore, retroByTimesheetId, retroByCellKey, mobAssignments],
   );
 
   const performSaveCellEdit = useCallback(async () => {
@@ -2191,6 +2193,7 @@ export default function WaveMonthTimesheetSummaryPage() {
 
     const inMobWindow = isYmdEditableForAssignmentTimesheet(assignment, editDate, {
       hasPersistedTimesheetOnDate: !!(openedTs || baseTs),
+      siblingAssignments: mobAssignments.filter((m) => m.workerId === assignment.workerId),
     });
     if (!inMobWindow && !closedPeriodCorrection) {
       toast({
@@ -2399,6 +2402,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     allWorkers,
     retroOnlyPayrollMonth,
     isRowLockedForWorker,
+    mobAssignments,
   ]);
 
   const performSaveRetroEdit = useCallback(async () => {
@@ -3246,7 +3250,9 @@ export default function WaveMonthTimesheetSummaryPage() {
                                   ) : null}
                                 </div>
                               </TableCell>
-                              {days.map((d) => {
+                              {(() => {
+                                const siblingAssignments = mobAssignments.filter((m) => m.workerId === rw.workerId);
+                                return days.map((d) => {
                                 /** จับคู่แบบเดียวกับ resolve ในเซลล์ — คอลัมน์รวมชม.ใช้ logic เดียวกัน */
                                 const tsRaw = resolveTimesheetForWaveMonthCell(
                                   wave.id,
@@ -3264,6 +3270,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                                   : undefined;
                                 const inMobWindow = isYmdEditableForAssignmentTimesheet(rosterAssignment, d, {
                                   hasPersistedTimesheetOnDate: !!ts,
+                                  siblingAssignments,
                                 });
                                 const retroForCell = (() => {
                                   const seen = new Set<string>();
@@ -3289,7 +3296,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                                   (tsLocked || retroOnlyPayrollMonth || rowClosed || editableGrid);
                                 return (
                                   <TableCell key={d} className="px-0.5 text-center text-[11px] leading-none">
-                                    {!ts ? (
+                                    {!ts && !inMobWindow ? (
                                       <span
                                         className="inline-flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-sm py-0.5 text-[11px] font-medium text-muted-foreground/40"
                                         title="นอกช่วง mobilization ตามฟิลด์บนเอกสาร — ยังไม่มีบันทึกรายวันที่จับคู่ได้"
@@ -3370,7 +3377,8 @@ export default function WaveMonthTimesheetSummaryPage() {
                                     )}
                                   </TableCell>
                                 );
-                              })}
+                              });
+                              })()}
                               <TableCell
                                 className="text-center font-bold tabular-nums text-xs min-w-[5.75rem] w-[5.75rem] shrink-0 px-2 py-1.5"
                                 title="ชม.ทำงานรวมในแถวนี้ (ไม่รวม standby)"

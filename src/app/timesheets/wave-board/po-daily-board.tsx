@@ -55,8 +55,10 @@ import {
   assignmentIncludedInWaveTimesheetRoster,
   assignmentExcludedFromPoDailyBoardOnDate,
   assignmentAwaitingRemobAfterSiteFinish,
+  assignmentOwningCrossDocRemobGapDate,
   isHtmlDateAfterMobLocationEnd,
   isYmdEditableForAssignmentTimesheet,
+  isYmdInRemobGapBetweenCycles,
   isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob,
 } from '@/lib/constants/timesheet-ui';
 import { poTimesheetScopeId, isPoTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
@@ -243,8 +245,23 @@ function assignmentYmdEditableOnPoDailyBoard(
   asgn: Assignment,
   dateYmd: string,
   hasPersistedTimesheetOnDate = false,
+  siblingAssignments?: readonly Assignment[],
 ): boolean {
-  return isYmdEditableForAssignmentTimesheet(asgn, dateYmd, { hasPersistedTimesheetOnDate });
+  return isYmdEditableForAssignmentTimesheet(asgn, dateYmd, {
+    hasPersistedTimesheetOnDate,
+    siblingAssignments,
+  });
+}
+
+/** ช่วงว่าง remob — ลงมือได้ แม้ mobLocationEndDate ของรอบเก่ายังเป็นเพดาน */
+function isManualRemobGapDay(
+  asgn: Assignment,
+  dateYmd: string,
+  siblingAssignments?: readonly Assignment[],
+): boolean {
+  if (isYmdInRemobGapBetweenCycles(asgn, dateYmd)) return true;
+  if (!siblingAssignments?.length) return false;
+  return assignmentOwningCrossDocRemobGapDate(dateYmd, siblingAssignments) === asgn.id;
 }
 
 /** แถวอยู่ในกระดานรายวันสำหรับวันที่เลือก — ไม่รวม unassign / จบงานแล้วนอกช่วง */
@@ -252,12 +269,45 @@ function poDailyBoardAssignmentVisibleOnDate(
   asgn: Assignment,
   dateYmd: string,
   hasPersistedTimesheetOnDate = false,
+  siblingAssignments?: readonly Assignment[],
 ): boolean {
   if (assignmentExcludedFromPoDailyBoardOnDate(asgn, dateYmd)) return false;
   return (
-    assignmentYmdEditableOnPoDailyBoard(asgn, dateYmd, hasPersistedTimesheetOnDate) ||
-    isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(asgn, dateYmd)
+    assignmentYmdEditableOnPoDailyBoard(
+      asgn,
+      dateYmd,
+      hasPersistedTimesheetOnDate,
+      siblingAssignments,
+    ) || isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(asgn, dateYmd)
   );
+}
+
+/** คนละหนึ่งแถว — ถ้ามีใบที่ลงวันนั้นได้ (รวมช่องว่าง remob) ใช้ใบนั้น ไม่ยึดสถานะ ACTIVE ล่าสุดที่ยังไม่ครอบวัน */
+function pickDailyBoardLinePerWorker(
+  inScope: readonly Assignment[],
+  allMobs: readonly Assignment[],
+  dateYmd: string,
+  persistedAssignmentIds: ReadonlySet<string>,
+  clearedRowIds: ReadonlySet<string>,
+): Assignment[] {
+  const by = new Map<string, Assignment[]>();
+  for (const a of inScope) {
+    const list = by.get(a.workerId) ?? [];
+    list.push(a);
+    by.set(a.workerId, list);
+  }
+  const out: Assignment[] = [];
+  for (const [workerId, list] of by) {
+    const siblings = allMobs.filter((m) => m.workerId === workerId);
+    const covering = list.filter((a) =>
+      isYmdEditableForAssignmentTimesheet(a, dateYmd, {
+        hasPersistedTimesheetOnDate: persistedAssignmentIds.has(a.id) && !clearedRowIds.has(a.id),
+        siblingAssignments: siblings,
+      }),
+    );
+    out.push(...pickRosterLinePerWorker(covering.length ? covering : list));
+  }
+  return out;
 }
 
 export type PoDailyBoardScope =
@@ -618,7 +668,9 @@ export function PoDailyBoardCard({
 
   const assignmentRows = useMemo(() => {
     if (!mobsForPo) return [] as Assignment[];
-    if (!rosterFilterYm || !/^\d{4}-\d{2}$/.test(rosterFilterYm)) {
+    const dateYmd = targetDate.slice(0, 10);
+    const useMonth = !!(rosterFilterYm && /^\d{4}-\d{2}$/.test(rosterFilterYm));
+    if (!useMonth) {
       try {
         const t = parseISO(targetDate);
         if (Number.isNaN(t.getTime())) return [];
@@ -626,18 +678,41 @@ export function PoDailyBoardCard({
         return [];
       }
     }
-    const inScope = mobsForPo.filter((a) => {
-      if (!assignmentCountsTowardQuota(a)) return false;
-      if (!assignmentIncludedInWaveTimesheetRoster(a)) return false;
-      if (rosterFilterYm && /^\d{4}-\d{2}$/.test(rosterFilterYm)) {
-        return poDailyBoardAssignmentInMonthRoster(a, rosterFilterYm);
+    const byWorker = new Map<string, Assignment[]>();
+    for (const a of mobsForPo) {
+      const list = byWorker.get(a.workerId) ?? [];
+      list.push(a);
+      byWorker.set(a.workerId, list);
+    }
+    const inScope: Assignment[] = [];
+    for (const list of byWorker.values()) {
+      for (const a of list) {
+        if (!assignmentIncludedInWaveTimesheetRoster(a)) continue;
+        const hasPersisted = persistedAssignmentIds.has(a.id) && !clearedRowIds.has(a.id);
+        const editable = isYmdEditableForAssignmentTimesheet(a, dateYmd, {
+          hasPersistedTimesheetOnDate: hasPersisted,
+          siblingAssignments: list,
+        });
+        if (useMonth) {
+          const onMonthRoster =
+            assignmentCountsTowardQuota(a) && poDailyBoardAssignmentInMonthRoster(a, rosterFilterYm!);
+          /** รอบเก่าที่หลุดโควต้าแล้ว แต่เป็นใบที่ลงช่องว่างวันนี้ได้ — ยังต้องขึ้นเพื่อแก้วัน */
+          if (onMonthRoster || editable) inScope.push(a);
+          continue;
+        }
+        if (!assignmentCountsTowardQuota(a) && !editable) continue;
+        if (poDailyBoardAssignmentVisibleOnDate(a, dateYmd, hasPersisted, list) || editable) {
+          inScope.push(a);
+        }
       }
-      const dateYmd = targetDate.slice(0, 10);
-      const hasPersisted =
-        persistedAssignmentIds.has(a.id) && !clearedRowIds.has(a.id);
-      return poDailyBoardAssignmentVisibleOnDate(a, dateYmd, hasPersisted);
-    });
-    const roster = pickRosterLinePerWorker(inScope);
+    }
+    const roster = pickDailyBoardLinePerWorker(
+      inScope,
+      mobsForPo,
+      dateYmd,
+      persistedAssignmentIds,
+      clearedRowIds,
+    );
     return [...roster].sort((a, b) => compareAssignmentWorkerNamesTh(a, b, workers));
   }, [mobsForPo, targetDate, workers, rosterFilterYm, persistedAssignmentIds, clearedRowIds]);
 
@@ -884,9 +959,13 @@ export function PoDailyBoardCard({
     const updated = { ...rosterData };
     const service = new TimesheetService(firestore);
     const nextCleared = new Set(clearedRowIds);
+    const dateYmd = targetDate.slice(0, 10);
     for (const asgn of assignmentRows) {
-      if (!assignmentYmdEditableOnPoDailyBoard(asgn, targetDate.slice(0, 10))) continue;
-      if (isHtmlDateAfterMobLocationEnd(asgn, targetDate)) continue;
+      const siblings = (mobsForPo ?? []).filter((m) => m.workerId === asgn.workerId);
+      if (!assignmentYmdEditableOnPoDailyBoard(asgn, dateYmd, false, siblings)) continue;
+      if (isHtmlDateAfterMobLocationEnd(asgn, targetDate) && !isManualRemobGapDay(asgn, dateYmd, siblings)) {
+        continue;
+      }
       const currentStatus = (updated[asgn.id]?.status ?? rosterData[asgn.id]?.status) as
         | DailyTimesheetStatus
         | undefined;
@@ -988,9 +1067,13 @@ export function PoDailyBoardCard({
       const nextPersisted = new Set(persistedAssignmentIds);
       const nextRoster: Record<string, Partial<DailyTimesheet>> = { ...rosterData };
 
+      const dateYmd = targetDate.slice(0, 10);
       for (const asgn of assignmentRows) {
-        if (!assignmentYmdEditableOnPoDailyBoard(asgn, targetDate.slice(0, 10))) continue;
-        if (isHtmlDateAfterMobLocationEnd(asgn, targetDate)) continue;
+        const siblings = (mobsForPo ?? []).filter((m) => m.workerId === asgn.workerId);
+        if (!assignmentYmdEditableOnPoDailyBoard(asgn, dateYmd, false, siblings)) continue;
+        if (isHtmlDateAfterMobLocationEnd(asgn, targetDate) && !isManualRemobGapDay(asgn, dateYmd, siblings)) {
+          continue;
+        }
 
         const currentStatus = rosterData[asgn.id]?.status as DailyTimesheetStatus | undefined;
         if (currentStatus && service.isFinalized(currentStatus)) {
@@ -1071,10 +1154,14 @@ export function PoDailyBoardCard({
       let deleted = 0;
       let deleteSkipped = 0;
 
+      const dateYmd = targetDate.slice(0, 10);
       for (const asgn of assignmentRows) {
         if (!clearedRowIds.has(asgn.id)) continue;
-        if (!assignmentYmdEditableOnPoDailyBoard(asgn, targetDate.slice(0, 10))) continue;
-        if (isHtmlDateAfterMobLocationEnd(asgn, targetDate)) continue;
+        const siblings = (mobsForPo ?? []).filter((m) => m.workerId === asgn.workerId);
+        if (!assignmentYmdEditableOnPoDailyBoard(asgn, dateYmd, false, siblings)) continue;
+        if (isHtmlDateAfterMobLocationEnd(asgn, targetDate) && !isManualRemobGapDay(asgn, dateYmd, siblings)) {
+          continue;
+        }
 
         const docId = service.getTimesheetId(asgn.workerId, asgn.id, targetDate);
         const docRef = doc(firestore, 'daily_timesheets', docId);
@@ -1089,9 +1176,11 @@ export function PoDailyBoardCard({
         deleted += 1;
       }
 
+      const saveDateYmd = targetDate.slice(0, 10);
       for (const asgn of assignmentRows) {
         if (clearedRowIds.has(asgn.id)) continue;
-        if (!assignmentYmdEditableOnPoDailyBoard(asgn, targetDate.slice(0, 10))) continue;
+        const siblings = (mobsForPo ?? []).filter((m) => m.workerId === asgn.workerId);
+        if (!assignmentYmdEditableOnPoDailyBoard(asgn, saveDateYmd, false, siblings)) continue;
         const ts = rosterData[asgn.id];
         if (!ts?.workerId) continue;
         if (ts.status && service.isFinalized(ts.status as DailyTimesheetStatus)) continue;
@@ -1815,19 +1904,22 @@ export function PoDailyBoardCard({
                   /** ยังไม่มีเอกสาร / ยังไม่เลือกประเภทวัน — แสดง «ว่าง» ไม่บังคับเป็น work_day */
                   const isEmptySlot = isRowCleared || !raw;
                   const persisted = persistedAssignmentIds.has(asgn.id) && !isRowCleared;
+                  const dateYmd = targetDate.slice(0, 10);
+                  const siblings = (mobsForPo ?? []).filter((m) => m.workerId === asgn.workerId);
+                  const manualGapEdit = isManualRemobGapDay(asgn, dateYmd, siblings);
                   const afterMobEnd = isHtmlDateAfterMobLocationEnd(asgn, targetDate);
                   const awaitingRemob = assignmentAwaitingRemobAfterSiteFinish(asgn);
                   const priorCycleWorkWhileAwaitingRemob = isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(
                     asgn,
-                    targetDate.slice(0, 10),
+                    dateYmd,
                   );
                   const worker = workers?.find((x) => x.id === asgn.workerId);
                   const et = raw?.eventType ?? 'work_day';
                   const showEventTypeEditor =
-                    !afterMobEnd || persisted || priorCycleWorkWhileAwaitingRemob;
+                    !afterMobEnd || persisted || priorCycleWorkWhileAwaitingRemob || manualGapEdit;
                   /** หลัง mob end — ซ่อนยอดจาก Firestore เฉพาะเมื่อไม่เปิดแก้ประเภทวัน */
                   const maskAfterMobEnd =
-                    afterMobEnd && !(awaitingRemob && priorCycleWorkWhileAwaitingRemob);
+                    afterMobEnd && !(awaitingRemob && priorCycleWorkWhileAwaitingRemob) && !manualGapEdit;
                   const emptyRowDisplay = {
                     eventType: 'work_day' as RateConditionEventType,
                     normalHours: 0,
@@ -1866,8 +1958,9 @@ export function PoDailyBoardCard({
                   const isLocked = tsService.isFinalized(row.status as DailyTimesheetStatus);
                   const dateInAssignment = assignmentYmdEditableOnPoDailyBoard(
                     asgn,
-                    targetDate.slice(0, 10),
+                    dateYmd,
                     persisted,
+                    siblings,
                   );
                   const editableMobWindow = dateInAssignment;
                   const rowEditLocked =
@@ -1875,7 +1968,7 @@ export function PoDailyBoardCard({
                     rowLocked ||
                     anyMonthLocked ||
                     !editableMobWindow ||
-                    (afterMobEnd && !persisted && !priorCycleWorkWhileAwaitingRemob);
+                    (afterMobEnd && !persisted && !priorCycleWorkWhileAwaitingRemob && !manualGapEdit);
                   const canFinishJob =
                     editableMobWindow &&
                     WAVE_TIMESHEET_DEPLOYMENT_STATUSES.includes(asgn.deploymentStatus as Assignment['deploymentStatus']);
@@ -2098,7 +2191,7 @@ export function PoDailyBoardCard({
                             title={
                               !dateInAssignment
                                 ? 'วันนี้อยู่นอกช่วงมอบหมาย — ไม่บันทึกจากแถวนี้'
-                                : afterMobEnd
+                                : afterMobEnd && !manualGapEdit
                                   ? 'หลังวันจบงาน — ไม่แสดงลงเวลาหลังวันจบไซต์ที่บันทึกแล้ว'
                                   : persisted
                                     ? `บันทึกแล้ว · ${row.eventType}`
@@ -2107,7 +2200,7 @@ export function PoDailyBoardCard({
                           >
                             {!dateInAssignment
                               ? '—'
-                              : afterMobEnd || isEmptySlot
+                              : (afterMobEnd && !manualGapEdit) || isEmptySlot
                                 ? '—'
                                 : waveBoardStatusCode(persisted, row.eventType)}
                           </span>

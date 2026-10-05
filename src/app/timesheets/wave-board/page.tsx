@@ -75,10 +75,14 @@ function WaveTimesheetBoardContent() {
   const filterPoActiveBundleId = filterPoActiveBundleIdRaw ? normalizePoActiveBundleId(filterPoActiveBundleIdRaw) : null;
   const monthFromQuery = (searchParams.get('month') || '').trim() || null;
 
-  /** เมื่อเปิดจากศูนย์ลงเวลา (?month=) ให้รายชื่อตรงกับงวดเดือน — ไม่ใช่แค่วันแรกของเดือน */
+  /**
+   * เปิดจากศูนย์ลงเวลา (?month=) แล้วรายชื่อตามเดือนของวันที่ที่เลือก
+   * เปลี่ยนวันข้ามเดือน (เช่น ลิงก์ตุลาคม แล้วเลือก 15 ก.ย.) ต้องไม่ยุบเหลือเฉพาะคนที่หน้าต่าง mob ครอบวันนั้น
+   */
   const rosterFilterYm = useMemo(() => {
     if (!monthFromQuery || !/^\d{4}-\d{2}$/.test(monthFromQuery)) return null;
-    if (!targetDate.startsWith(monthFromQuery)) return null;
+    const dateYm = targetDate.slice(0, 7);
+    if (/^\d{4}-\d{2}$/.test(dateYm)) return dateYm;
     return monthFromQuery;
   }, [monthFromQuery, targetDate]);
 
@@ -354,7 +358,7 @@ function WaveTimesheetBoardContent() {
                 'ชุด PO Active = ตารางเดียวรายชื่อรวม; คนที่ยังอยู่แค่ assign / ยังไม่ mob จะไม่ขึ้นในกระดานจนกว่าจะผ่าน Mobilization ตามเกณฑ์ readiness + deployment',
                 'วางบิล / payroll รอบเดือนให้ยึดเอกสาร Monthly Timesheet หลังอนุมัติ',
                 'รายคน = 1 assignment — demob แล้วจะไม่ขึ้นในกระดานเมื่อวันที่อยู่นอกช่วง',
-                'พารามิเตอร์ ?month=YYYY-MM = แสดงทุกคนที่ทับเดือนนั้น (ตรงจำนวน MOB ผ่านใน Assignments); วันที่ใน date picker = วันที่ลงเวลา — แถวที่วันนั้นอยู่นอกช่วงมอบหมายจะล็อกไม่ให้บันทึก',
+                'พารามิเตอร์ ?month=YYYY-MM เปิดกระดานที่เดือนนั้น; เปลี่ยนวันที่แล้วรายชื่อตามเดือนของวันที่เลือก (คนที่ทับเดือนนั้น) — ช่องว่างระหว่าง remob ลงมือได้ วันนอกช่วงมอบหมายอื่นยังล็อก',
                 'แถวที่ lock ตามสถานะส่งตรวจ/อนุมัติของงวด PO (หรือ wave ในข้อมูลเก่า)',
                 'คนที่สถานะ ACTIVE (on-site): Cloud Function + Scheduler เติม/รักษาวันนี้ (~00:10 Asia/Bangkok) และ UI ซิงก์เมื่อมีผู้เปิดกระดาน (~45 วินาที) — ยกเว้นเมื่อปิดสวิตช์ «ลงเวลาอัตโนมัติ» บนกระดาน; ช่วงหยุดแบบ standby จะเป็น SB อัตโนมัติตามช่วงที่ตั้งไว้ · ปุ่ม Auto gen เติมช่วงที่ขาด (รวมตอนปิดสวิตช์) · ปุ่มหยุด = จบงานหรือพัก SB',
                 'อัปเดตหน้าจอ (สวิตช์ Auto / ข้อความใต้ชื่อ): ต้อง deploy แอป — เช่น npm run deploy:app (Firebase App Hosting; opecbackend) — deploy เฉพาะ functions ไม่เปลี่ยน UI',

@@ -441,6 +441,35 @@ export function isYmdInRemobGapBetweenCycles(
 }
 
 /**
+ * วันนี้อยู่ระหว่างจบไซต์รอบก่อนกับเริ่มรอบใหม่คนละเอกสาร mobilization
+ * — คืน id ของรอบที่เพิ่งจบ เพื่อลงเวลาด้วยมือ (ออโต้ยังไม่สร้างแถวในช่วงนี้)
+ */
+export function assignmentOwningCrossDocRemobGapDate(
+  ymd: string,
+  assignments: readonly Pick<Assignment, 'id' | 'mobLocationEndDate' | 'mobStandbyDate' | 'mobWorkingStartDate'>[],
+): string | null {
+  const d = ymd.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || assignments.length < 2) return null;
+  let laterStart = false;
+  let bestId: string | null = null;
+  let bestEnd = '';
+  for (const a of assignments) {
+    const seg = resolveMobSegmentStartYmd(a);
+    if (seg && seg > d) laterStart = true;
+    const end = (a.mobLocationEndDate || '').trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(end) || !(end < d)) continue;
+    /** เอกสารเดียวกันที่เก็บทั้งวันจบกับวันเริ่มรอบใหม่ — ใช้ isYmdInRemobGapBetweenCycles */
+    if (seg && end < seg) continue;
+    if (!bestEnd || end > bestEnd) {
+      bestEnd = end;
+      bestId = a.id;
+    }
+  }
+  if (!laterStart || !bestId) return null;
+  return bestId;
+}
+
+/**
  * หลังวันจบไซต์ที่บันทึกแล้ว และยังไม่ถึงช่วง mobilization รอบใหม่ — ไม่อยู่ไซต์ (รอ remob)
  * กรอง auto W ผิดช่วง / ไม่แสดงเซลล์ในงวดเดือนใหม่
  */
@@ -751,6 +780,7 @@ export function isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(
 export function isYmdEditableForAssignmentTimesheet(
   asgn: Pick<
     Assignment,
+    | 'id'
     | 'deploymentStatus'
     | 'mobLocationEndDate'
     | 'mobCycleNumber'
@@ -764,12 +794,35 @@ export function isYmdEditableForAssignmentTimesheet(
     | 'poActiveStandbyAutoEndYmd'
   >,
   ymd: string,
-  options?: { hasPersistedTimesheetOnDate?: boolean },
+  options?: {
+    hasPersistedTimesheetOnDate?: boolean;
+    /** mobilization อื่นของคนเดียวกัน — ใช้เปิดลงมือในช่วงว่างข้ามเอกสาร */
+    siblingAssignments?: readonly Pick<
+      Assignment,
+      'id' | 'mobLocationEndDate' | 'mobStandbyDate' | 'mobWorkingStartDate'
+    >[];
+  },
 ): boolean {
   const d = ymd.slice(0, 10);
   if (options?.hasPersistedTimesheetOnDate && !isHtmlDateAfterMobLocationEnd(asgn, d)) return true;
   if (isYmdWithinAssignmentMobTimesheetWindow(asgn, d)) return true;
   if (isPoDailyBoardPriorCycleWorkDateWhileAwaitingRemob(asgn, d)) return true;
+  /**
+   * ช่องว่างระหว่างจบไซต์กับ remob — ออโต้ไม่สร้างแถว แต่ลงมือได้
+   * เพื่อเติมวันที่ทำงานที่ขาดบนกระดานรายวัน / สรุปรายเดือน
+   */
+  if (!assignmentExcludedFromPoDailyBoardOnDate(asgn, d) && isYmdInRemobGapBetweenCycles(asgn, d)) {
+    return true;
+  }
+  const siblings = options?.siblingAssignments;
+  if (
+    siblings &&
+    siblings.length > 1 &&
+    !assignmentExcludedFromPoDailyBoardOnDate(asgn, d) &&
+    assignmentOwningCrossDocRemobGapDate(d, siblings) === asgn.id
+  ) {
+    return true;
+  }
   return false;
 }
 
