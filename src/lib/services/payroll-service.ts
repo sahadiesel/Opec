@@ -1109,7 +1109,7 @@ export class PayrollService {
       const reversalDeductions = reversalsForWorker
         .map((r) => ({
           id: r.id,
-          label: `หักคืนค่าแรง ${r.workDateYmd} (งวด ${r.sourceYearMonth}) — ${r.reason}`.slice(0, 180),
+          label: `${r.retroEventType === 'standby_day' ? 'หักคืน Standby' : 'หักคืนค่าแรง'} ${r.workDateYmd} (งวด ${r.sourceYearMonth}) — ${r.reason}`.slice(0, 180),
           amount: Math.round(Math.max(0, Number(r.computedPayAmountBaht) || 0) * 100) / 100,
         }))
         .filter((x) => x.amount > 0);

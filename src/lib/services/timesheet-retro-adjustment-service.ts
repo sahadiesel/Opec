@@ -254,7 +254,9 @@ export async function createWorkDayPayrollAdjustment(
     sourceYearMonth: input.sourceYearMonth,
     applyPayrollYearMonth: input.applyPayrollYearMonth,
     adjustmentKind: kind,
-    retroEventType: 'work_day' as const,
+    retroEventType: (input.direction === 'reversal' && ts.eventType === 'standby_day'
+      ? 'standby_day'
+      : 'work_day') satisfies 'standby_day' | 'work_day',
     reason,
     computedPayAmountBaht: amount,
     computedPaySnapshotAt: now,
@@ -841,7 +843,7 @@ export async function createLockedWorkDayReversalsAfterFinish(
   for (const d of snap.docs) {
     const ts = { id: d.id, ...(d.data() as object) } as DailyTimesheet;
     if (!timesheetFinanciallyImmutable(ts.status)) continue;
-    if (ts.eventType !== 'work_day') continue;
+    if (ts.eventType !== 'work_day' && ts.eventType !== 'standby_day') continue;
     const sourceYm = /^\d{4}-\d{2}-\d{2}$/.test(String(ts.date || '').slice(0, 10))
       ? String(ts.date).slice(0, 7)
       : finish.slice(0, 7);

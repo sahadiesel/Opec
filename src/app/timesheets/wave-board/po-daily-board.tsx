@@ -2652,7 +2652,7 @@ export function PoDailyBoardCard({
                       </li>
                       <li>วันหลังวันนี้ที่ยังไม่ล็อกบัญชี จะถูกลบ และระบบหยุดลง W อัตโนมัติ</li>
                       <li>
-                        วันที่ payroll จ่ายไปแล้วจะไม่ถูกลบ และสลิปเดือนนั้นไม่ถูกคำนวณใหม่
+                        วันทำงานและ Standby ที่ payroll จ่ายไปแล้วจะไม่ถูกลบ และสลิปเดือนนั้นไม่ถูกคำนวณใหม่
                         {finishAfterCounts && finishAfterCounts.locked > 0 ? (
                           <>
                             {' '}
@@ -2706,7 +2706,7 @@ export function PoDailyBoardCard({
                 </p>
                 {(finishPurgeConfirm?.locked ?? 0) > 0 ? (
                   <p className="text-xs leading-relaxed">
-                    แถวที่ล็อกบัญชีแล้ว {finishPurgeConfirm?.locked} รายการจะไม่ถูกลบ และสลิปเดือนนั้นไม่ถูกคำนวณใหม่
+                    วันทำงานและ Standby ที่ล็อกบัญชีแล้ว {finishPurgeConfirm?.locked} รายการจะไม่ถูกลบ และสลิปเดือนนั้นไม่ถูกคำนวณใหม่
                     แต่ละวันจะกลายเป็นรายการหักในสลิปเงินเดือนปกติของเดือนถัดไป ยอดเท่าที่จ่ายไปแล้ว ไม่เข้าก้อนตกเบิก OT
                   </p>
                 ) : null}

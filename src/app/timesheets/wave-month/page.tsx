@@ -2470,7 +2470,7 @@ export default function WaveMonthTimesheetSummaryPage() {
           title: workDayRetroMode === 'reverse' ? 'บันทึกหักคืนวันทำงานแล้ว' : 'บันทึกเพิ่มวันทำงานแล้ว',
           description:
             workDayRetroMode === 'reverse'
-              ? `หัก ฿${amount.toLocaleString()} ในสลิปปกติงวด ${formatPayrollYearMonthThaiBE(applyYm)} — สลิปเดือนนี้ไม่เปลี่ยน ช่องนี้แสดง W†−`
+              ? `หัก ฿${amount.toLocaleString()} ในสลิปปกติงวด ${formatPayrollYearMonthThaiBE(applyYm)} — สลิปเดือนนี้ไม่เปลี่ยน ช่องนี้แสดง ${retroEdit.timesheet.eventType === 'standby_day' ? 'SB†−' : 'W†−'}`
               : `ตกเบิก ฿${amount.toLocaleString()} ในงวด ${formatPayrollYearMonthThaiBE(applyYm)} — ไม่ปนกับ OT ช่องนี้แสดง W†`,
         });
         setRetroEdit(null);
@@ -3392,7 +3392,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                                             : '') +
                                           (hasRetro
                                             ? retroForCell.some((r) => r.adjustmentKind === 'work_day_reversal')
-                                              ? ' · หักคืนวันที่จ่ายแล้ว (W†−) — สลิปเดือนนี้ไม่เปลี่ยน'
+                                              ? ` · หักคืนวันที่จ่ายแล้ว (${ts.eventType === 'standby_day' ? 'SB†−' : 'W†−'}) — สลิปเดือนนี้ไม่เปลี่ยน`
                                               : ` · แก้ไขย้อนหลัง (+OT ${retroAddedOtHours(retroForCell)} ชม.` +
                                                 (sumRetroAddedM1Trips(retroForCell) > 0
                                                   ? ` · M1 +${sumRetroAddedM1Trips(retroForCell)} trip`
@@ -3480,7 +3480,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                         <strong>M1 / D1 / SB</strong> = ไม่ติดชม.บนเซลล์ (คลิกดูรายละเอียด — บิล/จ่ายอาจคนละชม.) ·{' '}
                         ฐานแพ็กสัญญา OFF 12 / ON 8 ·{' '}
                         <strong>†</strong> = มีแก้ไขย้อนหลัง (วงแหวนแดง) · <strong>W†</strong> = เพิ่มวันทำงานหลังปิด payroll (ชั่วโมงรวมของงวดเดิมไม่เปลี่ยน) ·{' '}
-                        <strong>W†−</strong> = หักคืนวันที่จ่ายแล้ว ในสลิปปกติงวดถัดไป · เซลล์ «-» = ยังไม่มีบันทึก —{' '}
+                        <strong>W†− / SB†−</strong> = หักคืนวันทำงานหรือ Standby ที่จ่ายแล้ว ในสลิปปกติงวดถัดไป · เซลล์ «-» = ยังไม่มีบันทึก —{' '}
                         <strong className="text-emerald-700">เขียว</strong>=ทำงาน{' '}
                         <strong className="text-sky-700">ฟ้า</strong>=สแตนด์บาย{' '}
                         <strong className="text-violet-700">ม่วง</strong>=เดินทาง{' '}
@@ -3708,7 +3708,9 @@ export default function WaveMonthTimesheetSummaryPage() {
               {workDayRetroMode === 'add'
                 ? 'เพิ่มวันทำงานหลังปิด payroll'
                 : workDayRetroMode === 'reverse'
-                  ? 'หักคืนวันทำงานที่จ่ายไปแล้ว'
+                  ? retroEdit?.timesheet.eventType === 'standby_day'
+                    ? 'หักคืน Standby ที่จ่ายไปแล้ว'
+                    : 'หักคืนวันทำงานที่จ่ายไปแล้ว'
                   : 'แก้ไขย้อนหลัง (งวดปิด / ใบงานล็อค)'}
             </DialogTitle>
             <DialogDescription>
@@ -3740,7 +3742,8 @@ export default function WaveMonthTimesheetSummaryPage() {
               </div>
               {retroEdit.persisted &&
               (isTimesheetPayrollLocked(retroEdit.timesheet) || retroOnlyPayrollMonth) &&
-              retroEdit.timesheet.eventType === 'work_day' ? (
+              (retroEdit.timesheet.eventType === 'work_day' ||
+                retroEdit.timesheet.eventType === 'standby_day') ? (
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
@@ -3749,7 +3752,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                     onClick={() => setWorkDayRetroMode('ot')}
                     disabled={retroSaving}
                   >
-                    แก้ OT
+                    {retroEdit.timesheet.eventType === 'standby_day' ? 'แก้ Standby' : 'แก้ OT'}
                   </Button>
                   <Button
                     type="button"
@@ -3775,7 +3778,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                 <Alert>
                   <AlertTitle className="text-sm">หักวันที่จ่ายไปแล้ว</AlertTitle>
                   <AlertDescription className="text-xs leading-relaxed">
-                    ช่องนี้ยังเป็น W ตามสลิปเดิม และมีเครื่องหมาย †− ยอดหักเท่ากับที่ล็อกไว้ในวันนั้น
+                    ช่องนี้ยังเป็น {retroEdit.timesheet.eventType === 'standby_day' ? 'SB' : 'W'} ตามสลิปเดิม และมีเครื่องหมาย †− ยอดหักเท่ากับที่ล็อกไว้ในวันนั้น
                     ไปหักในสลิปเงินเดือนปกติของงวดที่เลือก ถ้าสุทธิของงวดนั้นไม่พอ รายการนี้จะค้างไว้จนกว่าจะมีงวดที่หักได้
                   </AlertDescription>
                 </Alert>

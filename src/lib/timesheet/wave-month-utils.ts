@@ -344,7 +344,12 @@ export function timesheetWaveMonthCellDisplayWithRetro(
   const workDayAdd = activeRetro.some((a) => a.adjustmentKind === 'work_day_add');
   const retroEventOverride = [...activeRetro]
     .reverse()
-    .find((a) => a.retroEventType)?.retroEventType as DailyTimesheet['eventType'] | undefined;
+    .find(
+      (a) =>
+        a.retroEventType &&
+        a.adjustmentKind !== 'work_day_reversal' &&
+        a.adjustmentKind !== 'work_day_add',
+    )?.retroEventType as DailyTimesheet['eventType'] | undefined;
   if (!ts) {
     if (workDayAdd) return 'W†';
     const displayEv = retroEventOverride;
