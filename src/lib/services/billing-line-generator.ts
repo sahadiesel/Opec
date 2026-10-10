@@ -9,6 +9,7 @@ import {
   getDoc,
   doc,
   addDoc,
+  type QueryConstraint,
 } from 'firebase/firestore';
 import type {
   Assignment,
@@ -24,8 +25,14 @@ import type {
   TimesheetRetroAdjustment,
   PositionRate,
 } from '@/lib/types';
-import { isYmdWithinAssignmentMobTimesheetWindow } from '@/lib/constants/timesheet-ui';
+import {
+  buildBillableTimesheetForAddedDay,
+  loadWorkDayAddsForBillingPeriod,
+  loadWorkDayReversalsForBillingPeriod,
+  matchWorkDayReversal,
+} from '@/lib/commercial/billing-reversal-days';
 import { normalizeTimesheetsForBillingLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
+import { isDailyTimesheetPayableForWorkerPayroll } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
 import {
   resolveBillingMatrixEventDayRate,
   resolveBillingMatrixOtTierHourlyRate,
@@ -81,6 +88,16 @@ export interface GenerateBillingLinesOptions {
   excludeWorkerIds?: readonly string[] | null;
   /** จำกัดเฉพาะวันที่อยู่ในช่วงที่ส่งออกบิลรอบนี้ (หลายช่วงได้) */
   dateRanges?: ReadonlyArray<{ startYmd: string; endYmd: string }> | null;
+  /**
+   * วันที่มีหักเงินคืน (work_day_reversal)
+   * true = นำวันที่ลงเวลานั้นมาวางบิล · false หรือไม่ส่ง = ตัดวันนั้นออก
+   */
+  billingReversalIncludeByWorkerId?: Readonly<Record<string, boolean>> | null;
+  /**
+   * วันที่จ่ายลูกจ้างเพิ่มหลังจ่ายค่าแรงแล้ว (work_day_add)
+   * true = วางบิลลูกค้าเพิ่ม · false หรือไม่ส่ง = ไม่นำวันนั้นมาวางบิล
+   */
+  billingAddedDayIncludeByWorkerId?: Readonly<Record<string, boolean>> | null;
 }
 
 /**
@@ -153,6 +170,14 @@ function roundMoney(n: number): number {
 
 function isUnpaidLeaveEvent(eventType: string | undefined | null): boolean {
   return String(eventType ?? '').trim() === 'unpaid_leave';
+}
+
+/** ใบงานที่ payroll ล็อก/ปิดแล้ว แต่ยังไม่ได้ติด readyForBilling — ต้องนับถ้าวางบิลตาม timesheet */
+const RECORDED_TIMESHEET_STATUSES = new Set(['LOCKED', 'CLIENT_APPROVED', 'VERIFIED_PAPER']);
+
+function isRecordedTimesheetMissingBillingFlag(ts: Pick<DailyTimesheet, 'status' | 'readyForBilling'>): boolean {
+  if (ts.readyForBilling === true) return false;
+  return RECORDED_TIMESHEET_STATUSES.has(String(ts.status || ''));
 }
 
 /**
@@ -777,22 +802,28 @@ export async function generateBillingLines(
     }
   }
 
-  const tsConstraints = mobCycleFilter.length > 0
-    ? [where('readyForBilling', '==', true)]
-    : [
-        where('purchaseOrderId', '==', poId),
-        where('readyForBilling', '==', true),
-        where('date', '>=', periodStart),
-        where('date', '<=', periodEnd),
-      ];
+  const periodConstraints: QueryConstraint[] =
+    mobCycleFilter.length > 0
+      ? []
+      : [
+          where('purchaseOrderId', '==', poId),
+          where('date', '>=', periodStart),
+          where('date', '<=', periodEnd),
+        ];
+  const tsConstraints =
+    mobCycleFilter.length > 0
+      ? [where('readyForBilling', '==', true)]
+      : [where('readyForBilling', '==', true), ...periodConstraints];
   if (waveId) {
     tsConstraints.push(where('waveId', '==', waveId));
+    periodConstraints.push(where('waveId', '==', waveId));
   } else if (mobCycleFilter.length === 0) {
     const scope = (options?.poMonthWaveIds ?? [])
       .map((x) => String(x).trim())
       .filter(Boolean);
     if (scope.length === 1) {
       tsConstraints.push(where('waveId', '==', scope[0]));
+      periodConstraints.push(where('waveId', '==', scope[0]));
       warnings.push(
         'จำกัด timesheet เฉพาะ 1 wave ตามเอกสาร PO+เดือน (relatedWaveIds) — ไม่รวม wave อื่นใต้ PO ที่ไม่ได้ผูกในงวดนี้',
       );
@@ -804,6 +835,7 @@ export async function generateBillingLines(
         );
       }
       tsConstraints.push(where('waveId', 'in', capped));
+      periodConstraints.push(where('waveId', 'in', capped));
       warnings.push(
         `จำกัด timesheet เฉพาะ ${capped.length} wave ตามเอกสาร PO+เดือน (relatedWaveIds) — ไม่รวม wave อื่นใต้ PO ที่ไม่ได้ผูกในงวดนี้`,
       );
@@ -867,7 +899,27 @@ export async function generateBillingLines(
       return list;
     }
     const snap = await getDocs(query(collection(db, 'daily_timesheets'), ...tsConstraints));
-    let list = snap.docs.map((d) => ({ ...d.data(), id: d.id } as DailyTimesheet));
+    const byId = new Map<string, DailyTimesheet>();
+    for (const d of snap.docs) {
+      byId.set(d.id, { ...d.data(), id: d.id } as DailyTimesheet);
+    }
+    if (periodConstraints.length > 0) {
+      const recordedSnap = await getDocs(query(collection(db, 'daily_timesheets'), ...periodConstraints));
+      let addedRecorded = 0;
+      for (const d of recordedSnap.docs) {
+        if (byId.has(d.id)) continue;
+        const ts = { ...d.data(), id: d.id } as DailyTimesheet;
+        if (!isRecordedTimesheetMissingBillingFlag(ts)) continue;
+        byId.set(ts.id, ts);
+        addedRecorded++;
+      }
+      if (addedRecorded > 0) {
+        warnings.push(
+          `รวม ${addedRecorded} ใบงานที่บันทึกและล็อกจาก payroll แล้ว แต่ยังไม่ได้ตั้งพร้อมวางบิล — นับตาม timesheet`,
+        );
+      }
+    }
+    let list = [...byId.values()];
     const poRetro = await loadRetroAdjustmentsForPoPeriod(
       db,
       poId,
@@ -928,15 +980,83 @@ export async function generateBillingLines(
 
   /** อย่าใช้ normalize แบบ payroll (W ทับ SB คน+วัน) — จะทำให้บรรทัด standby หาย */
   const normalized = normalizeTimesheetsForBillingLine(timesheetsRaw);
-  const inMobWindow = normalized.filter((ts) => {
-    const aid = String(ts.assignmentId || '').trim();
-    if (!aid) return true;
-    const a = mobById.get(aid);
-    if (!a) return true;
-    return isYmdWithinAssignmentMobTimesheetWindow(a, ts.date);
+  const retroWorkerIds = options?.workerIds ?? undefined;
+  const [reversals, addedDays] = await Promise.all([
+    loadWorkDayReversalsForBillingPeriod(db, poId, periodStart, periodEnd, retroWorkerIds),
+    loadWorkDayAddsForBillingPeriod(db, poId, periodStart, periodEnd, retroWorkerIds),
+  ]);
+  const includeReversalByWorker = options?.billingReversalIncludeByWorkerId ?? {};
+  const includeAddedByWorker = options?.billingAddedDayIncludeByWorkerId ?? {};
+  let reversalIncluded = 0;
+  let reversalExcluded = 0;
+  let addedIncluded = 0;
+  let addedExcluded = 0;
+  let addedSheetExcluded = 0;
+  const matchedAddedIds = new Set<string>();
+  /**
+   * นับวันตามใบงานที่ payroll จ่าย — วัน W ที่ลงไว้ในช่วง remob ไม่ใช่วันว่าง
+   * วันหักเงินคืนและวันจ่ายเพิ่ม ใส่หรือตัดตามที่ยืนยันตอนสร้างใบ
+   * แถว auto หลังวันจบไซต์ที่ไม่มีรายการเหล่านี้ ยังไม่นับ
+   */
+  const inAttendance = normalized.filter((ts) => {
+    const reversal = matchWorkDayReversal(ts, reversals);
+    if (reversal) {
+      const include = includeReversalByWorker[String(ts.workerId || '').trim()] === true;
+      if (include) reversalIncluded++;
+      else reversalExcluded++;
+      return include;
+    }
+    const added = matchWorkDayReversal(ts, addedDays);
+    if (added) {
+      if (added.id) matchedAddedIds.add(added.id);
+      const include = includeAddedByWorker[String(ts.workerId || '').trim()] === true;
+      if (include) addedIncluded++;
+      else {
+        addedExcluded++;
+        addedSheetExcluded++;
+      }
+      return include;
+    }
+    return isDailyTimesheetPayableForWorkerPayroll(ts, mobById);
   });
-  const beforeBillingDedupe = inMobWindow.length;
-  let timesheets = dedupeTimesheetsForBilling(inMobWindow);
+  const addedExtras: DailyTimesheet[] = [];
+  for (const retro of addedDays) {
+    if (retro.id && matchedAddedIds.has(retro.id)) continue;
+    const workerId = String(retro.workerId || '').trim();
+    const include = includeAddedByWorker[workerId] === true;
+    if (!include) {
+      addedExcluded++;
+      continue;
+    }
+    const assignment = mobById.get(String(retro.assignmentId || '').trim());
+    const dateYmd = String(retro.workDateYmd || '').slice(0, 10);
+    if (!assignment) {
+      warnings.push(`ไม่นำวันจ่ายเพิ่ม ${dateYmd || '—'} มาวางบิล — ไม่พบการมอบหมาย`);
+      continue;
+    }
+    const synthetic = buildBillableTimesheetForAddedDay(retro, assignment);
+    if (!synthetic) {
+      warnings.push(`ไม่นำวันจ่ายเพิ่ม ${dateYmd || '—'} มาวางบิล — ข้อมูลตำแหน่งไม่ครบ`);
+      continue;
+    }
+    if (inAttendance.some((ts) => matchWorkDayReversal(ts, [retro]))) continue;
+    addedExtras.push(synthetic);
+    addedIncluded++;
+  }
+  if (reversalIncluded > 0) {
+    warnings.push(`นำ ${reversalIncluded} วันที่มีหักเงินคืนมาวางบิล ตามที่ยืนยัน`);
+  }
+  if (reversalExcluded > 0) {
+    warnings.push(`ตัด ${reversalExcluded} วันที่มีหักเงินคืนออกจากใบวางบิล ตามที่ยืนยัน`);
+  }
+  if (addedIncluded > 0) {
+    warnings.push(`นำ ${addedIncluded} วันที่มีจ่ายเพิ่มมาวางบิล ตามที่ยืนยัน`);
+  }
+  if (addedExcluded > 0) {
+    warnings.push(`ไม่นำ ${addedExcluded} วันที่มีจ่ายเพิ่มมาวางบิล ตามที่ยืนยัน`);
+  }
+  const beforeBillingDedupe = inAttendance.length + addedExtras.length;
+  let timesheets = dedupeTimesheetsForBilling([...inAttendance, ...addedExtras]);
   const billingDeduped = beforeBillingDedupe - timesheets.length;
 
   if (mobCycleFilter.length > 0) {
@@ -979,10 +1099,10 @@ export async function generateBillingLines(
     }
   }
 
-  const payrollMobDropped = timesheetsRaw.length - inMobWindow.length;
-  if (payrollMobDropped > 0) {
+  const attendanceDropped = normalized.length - inAttendance.length - reversalExcluded - addedSheetExcluded;
+  if (attendanceDropped > 0) {
     warnings.push(
-      `ตัด ${payrollMobDropped} แถว timesheet ก่อนรวมยอดวางบิล (id/มอบหมายซ้ำ หรือวันที่อยู่นอกหน้าต่าง mobilization)`,
+      `ไม่นับ ${attendanceDropped} แถวในวางบิล — ลาไม่จ่าย หรือแถวอัตโนมัติหลังวันจบไซต์ขณะรอ remob`,
     );
   }
   if (billingDeduped > 0) {
@@ -994,7 +1114,7 @@ export async function generateBillingLines(
   if (timesheets.length === 0) {
     if (timesheetsRaw.length > 0) {
       warnings.push(
-        'หลังตัดซ้ำและกรองตามหน้าต่าง mobilization ไม่เหลือ timesheet สำหรับวางบิล — ตรวจวันที่กับมอบหมาย (mobilizations)',
+        'หลังตัดซ้ำและตัดแถวอัตโนมัติหลังวันจบไซต์ ไม่เหลือ timesheet สำหรับวางบิล',
       );
     } else {
       warnings.push(
@@ -1130,7 +1250,10 @@ export async function generateBillingLinesForMobCycles(
   mobCycleIds: readonly string[],
   periodStart: string,
   periodEnd: string,
-  options?: Pick<GenerateBillingLinesOptions, 'tripMobDemobLocationKey'>,
+  options?: Pick<
+    GenerateBillingLinesOptions,
+    'tripMobDemobLocationKey' | 'billingReversalIncludeByWorkerId' | 'billingAddedDayIncludeByWorkerId'
+  >,
 ): Promise<BillingLineGenerationResult> {
   const ids = mobCycleIds.map((x) => String(x).trim()).filter(Boolean);
   if (ids.length === 0) {
@@ -1143,6 +1266,8 @@ export async function generateBillingLinesForMobCycles(
   }
   const base = await generateBillingLines(db, poId, periodStart, periodEnd, undefined, {
     mobCycleIds: ids,
+    billingReversalIncludeByWorkerId: options?.billingReversalIncludeByWorkerId,
+    billingAddedDayIncludeByWorkerId: options?.billingAddedDayIncludeByWorkerId,
   });
 
   const poSnap = await getDoc(doc(db, 'purchase_orders', poId));

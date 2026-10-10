@@ -22,7 +22,11 @@ import type {
   PoMonthTimesheetReview,
   PurchaseOrder,
 } from '@/lib/types';
-import { partitionTimesheetsForPayrollReadiness } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
+import {
+  isDailyTimesheetPayableForWorkerPayroll,
+  loadAssignmentsForTimesheets,
+  partitionTimesheetsForPayrollReadiness,
+} from '@/lib/payroll/filter-timesheets-for-worker-payroll';
 import { resolveBillingMode } from '@/lib/commercial/resolve-billing-mode';
 import { poTimesheetScopeId } from '@/lib/constants/timesheet-po-scope';
 import { purchaseOrderOverlapsYearMonth } from '@/lib/timesheet/po-location-month-shell';
@@ -514,6 +518,109 @@ export async function markTimesheetsReadyForPoMonthWorkerIds(
 
   const { updated } = await applyPoMonthPayrollReadyFlags(db, refs, billingMode);
   return { updated: updated + unlocked };
+}
+
+const RECORDED_TIMESHEET_STATUSES = new Set(['LOCKED', 'CLIENT_APPROVED', 'VERIFIED_PAPER']);
+
+/**
+ * ใบงานที่ payroll ล็อกแล้วแต่ยังไม่ติด readyForBilling
+ * — วัน W ที่ลงไว้ในช่วง remob ต้องส่งออกบิลได้เหมือนวันที่ payroll จ่าย
+ * ไม่รวมแถว auto ที่ค้างหลังวันจบไซต์ขณะรอ remob
+ */
+async function gatherRecordedTimesheetsMissingBillingFlag(
+  db: Firestore,
+  poId: string,
+  yearMonth: string,
+  workerIds: Set<string>,
+  dateRanges?: ReadonlyArray<{ startYmd: string; endYmd: string }>,
+): Promise<DailyTimesheet[]> {
+  const monthFirst = `${yearMonth}-01`;
+  const monthLast = lastDayOfCalendarMonth(yearMonth);
+  const snap = await getDocs(
+    query(
+      collection(db, 'daily_timesheets'),
+      where('purchaseOrderId', '==', poId),
+      where('date', '>=', monthFirst),
+      where('date', '<=', monthLast),
+    ),
+  );
+  const candidates: DailyTimesheet[] = [];
+  for (const d of snap.docs) {
+    const ts = { id: d.id, ...(d.data() as object) } as DailyTimesheet;
+    if (ts.readyForBilling === true) continue;
+    if (!RECORDED_TIMESHEET_STATUSES.has(String(ts.status || ''))) continue;
+    const wid = String(ts.workerId || '').trim();
+    if (!workerIds.has(wid)) continue;
+    const ymd = String(ts.date || '').slice(0, 10);
+    if (dateRanges && dateRanges.length > 0 && !dateRanges.some((r) => ymd >= r.startYmd && ymd <= r.endYmd)) {
+      continue;
+    }
+    candidates.push(ts);
+  }
+  if (candidates.length === 0) return [];
+  const assignmentById = await loadAssignmentsForTimesheets(db, candidates);
+  return candidates.filter((ts) => isDailyTimesheetPayableForWorkerPayroll(ts, assignmentById));
+}
+
+/**
+ * เส้นทางวางบิลเท่านั้น — ตั้ง readyForBilling
+ * ไม่ปลดล็อกใบงานที่ payroll ล็อกไว้ และไม่ตั้ง readyForPayroll
+ * รวมใบงานที่ล็อกแล้วถ้าเป็นวันที่ payroll จ่าย (ไม่ตัดวัน W ที่ลงในช่วง remob)
+ */
+export async function markTimesheetsReadyForBillingOnly(
+  db: Firestore,
+  poId: string,
+  yearMonth: string,
+  workerIds: string[],
+  dateRanges?: ReadonlyArray<{ startYmd: string; endYmd: string }>,
+): Promise<{ updated: number }> {
+  const ym = yearMonth.trim();
+  const pid = poId.trim();
+  const allow = new Set(workerIds.map((id) => id.trim()).filter(Boolean));
+  if (!pid || !/^\d{4}-\d{2}$/.test(ym) || allow.size === 0) return { updated: 0 };
+
+  const poSnap = await getDoc(doc(db, 'purchase_orders', pid));
+  if (poSnap.exists()) {
+    const billingMode = await resolveBillingMode(db, { id: poSnap.id, ...(poSnap.data() as object) } as PurchaseOrder);
+    if (billingMode === 'TRIP') return { updated: 0 };
+  }
+
+  let refs = await filterTimesheetRefsByWorkerIds(
+    db,
+    await gatherNonLockedDailyTimesheetRefsForPoCalendarMonth(db, pid, ym),
+    allow,
+  );
+  if (dateRanges && dateRanges.length > 0) {
+    const ranged: typeof refs = [];
+    for (const ref of refs) {
+      const snap = await getDoc(ref);
+      const ymd = String((snap.data() as { date?: string } | undefined)?.date || '').slice(0, 10);
+      if (dateRanges.some((r) => ymd >= r.startYmd && ymd <= r.endYmd)) ranged.push(ref);
+    }
+    refs = ranged;
+  }
+  const recordedMissingFlag = await gatherRecordedTimesheetsMissingBillingFlag(db, pid, ym, allow, dateRanges);
+  for (const row of recordedMissingFlag) {
+    refs.push(doc(db, 'daily_timesheets', row.id));
+  }
+  if (refs.length === 0) return { updated: 0 };
+
+  let batch = writeBatch(db);
+  let n = 0;
+  let updated = 0;
+  const ts = Date.now();
+  for (const ref of refs) {
+    batch.update(ref, { readyForBilling: true, updatedAt: ts });
+    updated++;
+    n++;
+    if (n >= FIRESTORE_BATCH_LIMIT) {
+      await batch.commit();
+      batch = writeBatch(db);
+      n = 0;
+    }
+  }
+  if (n > 0) await batch.commit();
+  return { updated };
 }
 
 /**

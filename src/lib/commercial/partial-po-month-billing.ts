@@ -107,6 +107,13 @@ export function listPartialBillingCandidates(
   );
   if (unbilledApproved.length === 0) return [];
 
+  const storedNameByWorkerId = new Map<string, string>();
+  for (const c of unbilledApproved) {
+    const name = (c.workerName || '').trim();
+    if (name && name !== c.workerId) storedNameByWorkerId.set(c.workerId, name);
+  }
+  const namesFor = (workerIds: string[]) => workerIds.map((id) => storedNameByWorkerId.get(id) || id);
+
   const out: PartialBillingCandidate[] = [];
   const batchNos = [
     ...new Set(
@@ -128,7 +135,7 @@ export function listPartialBillingCandidates(
       reviewId,
       batchNo,
       workerIds,
-      workerNames: inBatch.map((c) => c.workerName || c.workerId),
+      workerNames: namesFor(workerIds),
     });
   }
 
@@ -145,7 +152,7 @@ export function listPartialBillingCandidates(
       yearMonth,
       reviewId,
       workerIds,
-      workerNames: [c.workerName || c.workerId],
+      workerNames: namesFor(workerIds),
     });
   }
 

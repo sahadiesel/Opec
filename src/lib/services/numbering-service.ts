@@ -258,6 +258,66 @@ export function getPreviewPattern(sequenceKey: string): string {
 }
 
 /**
+ * เลขที่ถูกลบออกจากคอลเลกชันแล้ว (ไม่มีเอกสารเหลือ) ให้กลับมาใช้ได้
+ * เอกสารที่ยกเลิกแต่ยังอยู่ในระบบนับว่าเลขนั้นถูกใช้แล้ว
+ */
+async function syncMonthlyReleasedSlots(db: Firestore, sequenceKey: string, date: Date): Promise<void> {
+  const config = SEQUENCE_REGISTRY[sequenceKey];
+  if (!config || config.resetPolicy !== 'monthly') return;
+
+  const year = date.getFullYear();
+  const month = date.getMonth() + 1;
+  const prefix = `${config.prefix}${year}-${String(month).padStart(2, '0')}-`;
+  const nextMonth = new Date(year, month, 1);
+  const endPrefix = `${config.prefix}${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-`;
+
+  const snap = await getDocs(
+    query(
+      collection(db, config.collectionName),
+      where(config.fieldName, '>=', prefix),
+      where(config.fieldName, '<', endPrefix),
+    ),
+  );
+  const used = new Set<number>();
+  for (const d of snap.docs) {
+    const raw = String(d.get(config.fieldName) || '').replace(/\s+R\d+$/i, '').trim();
+    const parsed = parseMonthlySequenceCode(config, raw);
+    if (parsed && parsed.year === year && parsed.month === month && parsed.runningNumber > 0) {
+      used.add(parsed.runningNumber);
+    }
+  }
+
+  const seqRef = doc(db, 'number_sequences', sequenceKey);
+  await runTransaction(db, async (transaction) => {
+    const seqSnap = await transaction.get(seqRef);
+    if (!seqSnap.exists()) return;
+    const data = seqSnap.data() as Record<string, unknown>;
+    if (data.year !== year || data.month !== month) return;
+    const lastNumber = typeof data.lastNumber === 'number' ? data.lastNumber : 0;
+    const released: number[] = [];
+    for (let n = 1; n <= lastNumber; n++) {
+      if (!used.has(n)) released.push(n);
+    }
+    const prev = Array.isArray(data.releasedRunningNumbers)
+      ? (data.releasedRunningNumbers as unknown[])
+          .map((n) => Number(n))
+          .filter((n) => Number.isFinite(n))
+          .sort((a, b) => a - b)
+      : [];
+    if (prev.length === released.length && prev.every((n, i) => n === released[i])) return;
+    transaction.set(
+      seqRef,
+      {
+        releasedRunningNumbers: released,
+        updatedAt: Date.now(),
+        updatedBy: 'sequence_sync',
+      },
+      { merge: true },
+    );
+  });
+}
+
+/**
  * Atomicly generates the next sequential number for a given document type.
  */
 export async function generateNextDocumentCode(
@@ -277,6 +337,10 @@ export async function generateNextDocumentCode(
 
   let attempts = 0;
   const MAX_ATTEMPTS = 5;
+
+  if (config.resetPolicy === 'monthly') {
+    await syncMonthlyReleasedSlots(db, sequenceKey, date);
+  }
 
   while (attempts < MAX_ATTEMPTS) {
     const result = await runTransaction(db, async (transaction) => {

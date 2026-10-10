@@ -32,6 +32,7 @@ import {
   PurchaseOrder,
   Wave,
   WaveMonthTimesheetReview,
+  Worker,
 } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -94,6 +95,14 @@ import {
 import { fetchWorkerClosuresForPoMonth } from '@/lib/timesheet/worker-month-closure';
 import type { WorkerMonthTimesheetClosure } from '@/lib/types';
 import { resolvePoMonthPeriodBounds } from '@/lib/timesheet/po-month-timesheet-bridge';
+import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
+import {
+  emptyBillingRetroChoices,
+  listBillingRetroPrompts,
+  type BillingRetroChoices,
+  type BillingRetroPromptSet,
+} from '@/lib/commercial/billing-reversal-days';
+import { BillingReversalConfirmDialog } from '@/components/commercial/billing-reversal-confirm-dialog';
 import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import Link from 'next/link';
 import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
@@ -274,6 +283,7 @@ export default function DraftInvoicesPage() {
     workers: InvoiceReadyWorker[];
     keys: Record<string, string>;
     decided: string[];
+    billingRetroChoices?: BillingRetroChoices;
   } | null>(null);
   const [customerId, setCustomerId] = useState<string>('');
   const [poId, setPoId] = useState<string>('');
@@ -299,6 +309,12 @@ export default function DraftInvoicesPage() {
   const [statusFilter, setStatusFilter] = useState<InvoiceListStatusFilter>('all');
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
+  const [reversalGate, setReversalGate] = useState<{
+    reversals: BillingRetroPromptSet['reversals'];
+    addedDays: BillingRetroPromptSet['addedDays'];
+    confirmLabel: string;
+    run: (choices: BillingRetroChoices) => Promise<void>;
+  } | null>(null);
 
   const approvedReviewsQuery = useMemoFirebase(
     () =>
@@ -356,6 +372,23 @@ export default function DraftInvoicesPage() {
   );
   const { data: allPos } = useCollection<PurchaseOrder>(posLookupQuery as any);
 
+  const workersLookupQuery = useMemoFirebase(
+    () => (firestore && isAuthorized ? collection(firestore, 'workers') : null),
+    [firestore, isAuthorized],
+  );
+  const { data: allWorkers } = useCollection<Worker>(workersLookupQuery as any);
+
+  const workerLabelById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const w of allWorkers ?? []) {
+      const en = `${w.firstName || ''} ${w.lastName || ''}`.replace(/\s+/g, ' ').trim();
+      const th = `${w.firstNameTh || ''} ${w.lastNameTh || ''}`.replace(/\s+/g, ' ').trim();
+      const name = en || th || (w.workerCode || '').trim();
+      if (name) m.set(w.id, name);
+    }
+    return m;
+  }, [allWorkers]);
+
   const contractsLookupQuery = useMemoFirebase(
     () => (firestore && isAuthorized ? collection(firestore, 'main_contracts') : null),
     [firestore, isAuthorized],
@@ -409,7 +442,15 @@ export default function DraftInvoicesPage() {
         ...listPartialBillingCandidates(r.poId, r.yearMonth, r.id, closures, inv, {
           start,
           end,
-        }),
+        }).map((c) => ({
+          ...c,
+          workerNames: c.workerIds.map((id, i) => {
+            const fromRegistry = workerLabelById.get(id);
+            if (fromRegistry) return fromRegistry;
+            const stored = (c.workerNames[i] || '').trim();
+            return stored && stored !== id ? stored : id;
+          }),
+        })),
       );
     }
     out.sort((a, b) => {
@@ -418,7 +459,7 @@ export default function DraftInvoicesPage() {
       return a.id.localeCompare(b.id);
     });
     return out;
-  }, [approvedPoMonthReviews, workerClosuresByReviewId, invoices, isMonthlyBillingPo]);
+  }, [approvedPoMonthReviews, workerClosuresByReviewId, invoices, isMonthlyBillingPo, workerLabelById]);
 
   const customerLabel = useMemo(() => {
     const nameById = new Map<string, string>();
@@ -616,6 +657,7 @@ export default function DraftInvoicesPage() {
     picked: InvoiceReadyWorker[],
     keys: Record<string, string>,
     decided: string[],
+    billingRetroChoices?: BillingRetroChoices,
   ) => {
     if (!firestore || !currentUser) return;
     const step = await nextTripMobLocationPrompt(firestore, picked, decided, keys);
@@ -628,6 +670,7 @@ export default function DraftInvoicesPage() {
         workers: picked,
         keys: step.keys,
         decided,
+        billingRetroChoices,
       });
       return;
     }
@@ -637,6 +680,8 @@ export default function DraftInvoicesPage() {
       issueDate: timestampToHtmlDateValue(issueDateMs),
       actor: currentUser,
       tripMobDemobByBatch: step.keys,
+      billingReversalIncludeByWorkerId: billingRetroChoices?.reversalIncludeByWorkerId,
+      billingAddedDayIncludeByWorkerId: billingRetroChoices?.addedDayIncludeByWorkerId,
     });
     toast({
       title: 'สร้างใบแจ้งหนี้แล้ว',
@@ -646,6 +691,51 @@ export default function DraftInvoicesPage() {
     setTripMobPrompt(null);
     resetForm();
     router.push(`/draft-invoices/${id}`);
+  };
+
+  const promptsForMonthlyWorkers = async (picked: InvoiceReadyWorker[]): Promise<BillingRetroPromptSet> => {
+    const out: BillingRetroPromptSet = { reversals: [], addedDays: [] };
+    if (!firestore) return out;
+    const groups = new Map<string, InvoiceReadyWorker[]>();
+    for (const w of picked) {
+      if (w.kind !== 'monthly' || !w.poId || !w.yearMonth) continue;
+      const key = `${w.poId}|${w.yearMonth}`;
+      const list = groups.get(key) ?? [];
+      list.push(w);
+      groups.set(key, list);
+    }
+    for (const [key, group] of groups) {
+      const [poKey, ym] = key.split('|');
+      if (!poKey || !ym) continue;
+      const set = await listBillingRetroPrompts(
+        firestore,
+        poKey,
+        `${ym}-01`,
+        lastDayOfCalendarMonth(ym),
+        group.map((g) => g.workerId),
+      );
+      out.reversals.push(...set.reversals);
+      out.addedDays.push(...set.addedDays);
+    }
+    return out;
+  };
+
+  const askReversalThen = async (
+    load: () => Promise<BillingRetroPromptSet>,
+    confirmLabel: string,
+    run: (choices: BillingRetroChoices) => Promise<void>,
+  ) => {
+    const set = await load();
+    if (set.reversals.length === 0 && set.addedDays.length === 0) {
+      await run(emptyBillingRetroChoices());
+      return;
+    }
+    setReversalGate({
+      reversals: set.reversals,
+      addedDays: set.addedDays,
+      confirmLabel,
+      run,
+    });
   };
 
   const handleCreate = async () => {
@@ -676,7 +766,22 @@ export default function DraftInvoicesPage() {
       }
       const picked = invoiceWorkers.filter((w) => selectedWorkerKeys.has(w.key));
       if (picked.length === 0) throw new Error('เลือกคนงานที่ส่งรอออกบิลแล้ว');
-      await createTimesheetInvoice(picked, {}, []);
+      setCreating(false);
+      await askReversalThen(
+        () => promptsForMonthlyWorkers(picked),
+        'สร้างใบแจ้งหนี้',
+        async (decisions) => {
+          setCreating(true);
+          try {
+            await createTimesheetInvoice(picked, {}, [], decisions);
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'สร้างไม่สำเร็จ';
+            toast({ variant: 'destructive', title: 'ไม่สามารถสร้างได้', description: msg });
+          } finally {
+            setCreating(false);
+          }
+        },
+      );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'สร้างไม่สำเร็จ';
       toast({ variant: 'destructive', title: 'ไม่สามารถสร้างได้', description: msg });
@@ -716,20 +821,36 @@ export default function DraftInvoicesPage() {
     if (!firestore || !currentUser || !canCreateDoc) return;
     setSyncRowId(review.id);
     try {
-      const res = await ensureCommercialDraftInvoiceAfterMonthApproval(firestore, review, currentUser);
-      if (res.ok === true) {
-        toast({
-          title: 'สร้างใบแจ้งหนี้แล้ว',
-          description: `เลขที่ ${res.invoiceNo} — ตรวจยอด สั่งพิมพ์ และส่งลูกค้าได้จากหน้ารายละเอียด`,
-        });
-        router.push(`/draft-invoices/${res.id}`);
-      } else {
-        toast({
-          variant: 'destructive',
-          title: 'ยังสร้างใบไม่ได้',
-          description: res.reason,
-        });
-      }
+      const start = `${review.yearMonth}-01`;
+      const end = lastDayOfCalendarMonth(review.yearMonth);
+      setSyncRowId(null);
+      await askReversalThen(
+        () => listBillingRetroPrompts(firestore, review.poId, start, end),
+        'สร้างใบแจ้งหนี้',
+        async (decisions) => {
+          setSyncRowId(review.id);
+          try {
+            const res = await ensureCommercialDraftInvoiceAfterMonthApproval(firestore, review, currentUser, {
+              billingReversalIncludeByWorkerId: decisions.reversalIncludeByWorkerId, billingAddedDayIncludeByWorkerId: decisions.addedDayIncludeByWorkerId,
+            });
+            if (res.ok === true) {
+              toast({
+                title: 'สร้างใบแจ้งหนี้แล้ว',
+                description: `เลขที่ ${res.invoiceNo} — ตรวจยอด สั่งพิมพ์ และส่งลูกค้าได้จากหน้ารายละเอียด`,
+              });
+              router.push(`/draft-invoices/${res.id}`);
+            } else {
+              toast({
+                variant: 'destructive',
+                title: 'ยังสร้างใบไม่ได้',
+                description: res.reason,
+              });
+            }
+          } finally {
+            setSyncRowId(null);
+          }
+        },
+      );
     } finally {
       setSyncRowId(null);
     }
@@ -739,20 +860,38 @@ export default function DraftInvoicesPage() {
     if (!firestore || !currentUser || !canCreateDoc) return;
     setSyncRowId(review.id);
     try {
-      const res = await ensureCommercialDraftInvoiceAfterPoMonthApproval(firestore, review, currentUser);
-      if (res.ok === true) {
-        toast({
-          title: 'สร้างใบแจ้งหนี้แล้ว',
-          description: `เลขที่ ${res.invoiceNo} — ตรวจยอด สั่งพิมพ์ และส่งลูกค้าได้จากหน้ารายละเอียด`,
-        });
-        router.push(`/draft-invoices/${res.id}`);
-      } else {
-        toast({
-          variant: 'destructive',
-          title: 'ยังสร้างใบไม่ได้',
-          description: res.reason,
-        });
-      }
+      const { start, end } = resolvePoMonthPeriodBounds(review);
+      setSyncRowId(null);
+      await askReversalThen(
+        () => listBillingRetroPrompts(firestore, review.poId, start, end),
+        'สร้างใบแจ้งหนี้',
+        async (decisions) => {
+          setSyncRowId(review.id);
+          try {
+            const res = await ensureCommercialDraftInvoiceAfterPoMonthApproval(
+              firestore,
+              review,
+              currentUser,
+              { billingReversalIncludeByWorkerId: decisions.reversalIncludeByWorkerId, billingAddedDayIncludeByWorkerId: decisions.addedDayIncludeByWorkerId },
+            );
+            if (res.ok === true) {
+              toast({
+                title: 'สร้างใบแจ้งหนี้แล้ว',
+                description: `เลขที่ ${res.invoiceNo} — ตรวจยอด สั่งพิมพ์ และส่งลูกค้าได้จากหน้ารายละเอียด`,
+              });
+              router.push(`/draft-invoices/${res.id}`);
+            } else {
+              toast({
+                variant: 'destructive',
+                title: 'ยังสร้างใบไม่ได้',
+                description: res.reason,
+              });
+            }
+          } finally {
+            setSyncRowId(null);
+          }
+        },
+      );
     } finally {
       setSyncRowId(null);
     }
@@ -761,27 +900,63 @@ export default function DraftInvoicesPage() {
   const handleEnsureAllMissing = async () => {
     if (!firestore || !currentUser || !canCreateDoc || totalMissingInvoiceCount === 0) return;
     setSyncingBulk(true);
-    let ok = 0;
-    const errors: string[] = [];
     try {
+      const prompts: BillingRetroPromptSet = { reversals: [], addedDays: [] };
       for (const r of sortedMissingReviews) {
-        const res = await ensureCommercialDraftInvoiceAfterMonthApproval(firestore, r, currentUser);
-        if (res.ok === true) ok++;
-        else errors.push(`wave ${r.yearMonth}: ${res.reason}`);
+        const set = await listBillingRetroPrompts(
+          firestore,
+          r.poId,
+          `${r.yearMonth}-01`,
+          lastDayOfCalendarMonth(r.yearMonth),
+        );
+        prompts.reversals.push(...set.reversals);
+        prompts.addedDays.push(...set.addedDays);
       }
       for (const r of sortedMissingPoMonth) {
-        const res = await ensureCommercialDraftInvoiceAfterPoMonthApproval(firestore, r, currentUser);
-        if (res.ok === true) ok++;
-        else errors.push(`PO+เดือน ${r.yearMonth}: ${res.reason}`);
+        const { start, end } = resolvePoMonthPeriodBounds(r);
+        const set = await listBillingRetroPrompts(firestore, r.poId, start, end);
+        prompts.reversals.push(...set.reversals);
+        prompts.addedDays.push(...set.addedDays);
       }
-      toast({
-        title: 'สร้างจากงวดที่อนุมัติแล้ว',
-        description:
-          errors.length === 0
-            ? `สำเร็จ ${ok} รายการ — ดูในรายการด้านล่าง`
-            : `สำเร็จ ${ok} — มีข้อผิดพลาด ${errors.length} รายการ: ${errors.slice(0, 3).join(' · ')}`,
-        variant: ok === 0 && errors.length > 0 ? 'destructive' : 'default',
-      });
+      setSyncingBulk(false);
+      await askReversalThen(
+        async () => prompts,
+        'สร้างใบแจ้งหนี้',
+        async (decisions) => {
+          setSyncingBulk(true);
+          let ok = 0;
+          const errors: string[] = [];
+          try {
+            for (const r of sortedMissingReviews) {
+              const res = await ensureCommercialDraftInvoiceAfterMonthApproval(firestore, r, currentUser, {
+                billingReversalIncludeByWorkerId: decisions.reversalIncludeByWorkerId, billingAddedDayIncludeByWorkerId: decisions.addedDayIncludeByWorkerId,
+              });
+              if (res.ok === true) ok++;
+              else errors.push(`wave ${r.yearMonth}: ${res.reason}`);
+            }
+            for (const r of sortedMissingPoMonth) {
+              const res = await ensureCommercialDraftInvoiceAfterPoMonthApproval(
+                firestore,
+                r,
+                currentUser,
+                { billingReversalIncludeByWorkerId: decisions.reversalIncludeByWorkerId, billingAddedDayIncludeByWorkerId: decisions.addedDayIncludeByWorkerId },
+              );
+              if (res.ok === true) ok++;
+              else errors.push(`PO+เดือน ${r.yearMonth}: ${res.reason}`);
+            }
+            toast({
+              title: 'สร้างจากงวดที่อนุมัติแล้ว',
+              description:
+                errors.length === 0
+                  ? `สำเร็จ ${ok} รายการ — ดูในรายการด้านล่าง`
+                  : `สำเร็จ ${ok} — มีข้อผิดพลาด ${errors.length} รายการ: ${errors.slice(0, 3).join(' · ')}`,
+              variant: ok === 0 && errors.length > 0 ? 'destructive' : 'default',
+            });
+          } finally {
+            setSyncingBulk(false);
+          }
+        },
+      );
     } finally {
       setSyncingBulk(false);
     }
@@ -791,26 +966,41 @@ export default function DraftInvoicesPage() {
     if (!firestore || !currentUser || !canCreateDoc) return;
     setPartialSyncId(candidate.id);
     try {
-      const res = await ensureCommercialDraftInvoiceForWorkerSet(firestore, {
-        poId: candidate.poId,
-        yearMonth: candidate.yearMonth,
-        workerIds: candidate.workerIds,
-        actor: currentUser,
-        partialPoMonthBatchNo: candidate.batchNo,
-      });
-      if (res.ok) {
-        toast({
-          title: 'สร้างใบแจ้งหนี้ partial แล้ว',
-          description: `เลขที่ ${res.invoiceNo} — ${candidate.workerNames.join(', ')}`,
-        });
-        router.push(`/draft-invoices/${res.id}`);
-      } else {
-        toast({
-          variant: 'destructive',
-          title: 'ยังสร้าง partial ไม่ได้',
-          description: res.reason,
-        });
-      }
+      const start = `${candidate.yearMonth}-01`;
+      const end = lastDayOfCalendarMonth(candidate.yearMonth);
+      setPartialSyncId(null);
+      await askReversalThen(
+        () => listBillingRetroPrompts(firestore, candidate.poId, start, end, candidate.workerIds),
+        'สร้าง invoice partial',
+        async (decisions) => {
+          setPartialSyncId(candidate.id);
+          try {
+            const res = await ensureCommercialDraftInvoiceForWorkerSet(firestore, {
+              poId: candidate.poId,
+              yearMonth: candidate.yearMonth,
+              workerIds: candidate.workerIds,
+              actor: currentUser,
+              partialPoMonthBatchNo: candidate.batchNo,
+              billingReversalIncludeByWorkerId: decisions.reversalIncludeByWorkerId, billingAddedDayIncludeByWorkerId: decisions.addedDayIncludeByWorkerId,
+            });
+            if (res.ok) {
+              toast({
+                title: 'สร้างใบแจ้งหนี้ partial แล้ว',
+                description: `เลขที่ ${res.invoiceNo} — ${candidate.workerNames.join(', ')}`,
+              });
+              router.push(`/draft-invoices/${res.id}`);
+            } else {
+              toast({
+                variant: 'destructive',
+                title: 'ยังสร้าง partial ไม่ได้',
+                description: res.reason,
+              });
+            }
+          } finally {
+            setPartialSyncId(null);
+          }
+        },
+      );
     } finally {
       setPartialSyncId(null);
     }
@@ -879,6 +1069,18 @@ export default function DraftInvoicesPage() {
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
+      <BillingReversalConfirmDialog
+        reversalPrompts={reversalGate?.reversals ?? null}
+        addedDayPrompts={reversalGate?.addedDays ?? null}
+        confirmLabel={reversalGate?.confirmLabel ?? 'ยืนยัน'}
+        busy={creating || syncingBulk || partialSyncId != null || syncRowId != null}
+        onCancel={() => setReversalGate(null)}
+        onConfirm={(decisions) => {
+          const run = reversalGate?.run;
+          setReversalGate(null);
+          if (run) void run(decisions);
+        }}
+      />
       <div className="mx-auto w-full min-w-0 max-w-[1600px] space-y-6 p-4 md:p-6">
         <div className="flex items-center gap-3 overflow-x-auto">
           <h1 className="flex min-w-0 shrink items-center gap-2 text-xl font-bold tracking-tight text-primary whitespace-nowrap">
@@ -1009,7 +1211,7 @@ export default function DraftInvoicesPage() {
                           <p className="p-3 text-sm text-muted-foreground">กำลังโหลดรายชื่อ…</p>
                         ) : invoiceWorkers.length === 0 ? (
                           <p className="p-3 text-sm text-muted-foreground">
-                            ยังไม่มีคนที่ส่งจากหน้า timesheet ในเดือนนี้
+                            ยังไม่มีคนที่พร้อมออกบิลในเดือนนี้ — สัญญารายเดือนต้องปิดงวดแล้ว สัญญา Trip ต้องมีชุดวางบิลที่อนุมัติแล้ว
                           </p>
                         ) : (
                           invoiceWorkers.map((w) => (
@@ -1196,6 +1398,7 @@ export default function DraftInvoicesPage() {
                     prompt.workers,
                     { ...prompt.keys, [prompt.batchId]: prompt.selectedKey },
                     [...prompt.decided, prompt.batchId],
+                    prompt.billingRetroChoices,
                   )
                     .catch((err: unknown) => {
                       toast({
@@ -1429,37 +1632,35 @@ export default function DraftInvoicesPage() {
             <CardContent className="p-0">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead className="pl-6">เดือน</TableHead>
-                    <TableHead>PO</TableHead>
-                    <TableHead>คนงาน</TableHead>
-                    <TableHead>รอบ</TableHead>
-                    <TableHead className="text-right pr-6">การทำงาน</TableHead>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="h-9 whitespace-nowrap py-1.5 pl-6">เดือน</TableHead>
+                    <TableHead className="h-9 whitespace-nowrap py-1.5">PO</TableHead>
+                    <TableHead className="h-9 whitespace-nowrap py-1.5">คนงาน</TableHead>
+                    <TableHead className="h-9 whitespace-nowrap py-1.5">รอบ</TableHead>
+                    <TableHead className="h-9 whitespace-nowrap py-1.5 pr-6 text-right">การทำงาน</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {partialBillingCandidates.map((c) => {
                     const po = poById.get(c.poId);
+                    const workerLabel = c.workerNames.join(', ');
                     return (
-                      <TableRow key={c.id}>
-                        <TableCell className="pl-6 font-mono text-sm">{c.yearMonth}</TableCell>
-                        <TableCell className="text-sm">{po?.poCode ?? c.poId}</TableCell>
-                        <TableCell className="text-sm max-w-[280px]">
-                          <span className="line-clamp-2" title={c.workerNames.join(', ')}>
-                            {c.workerNames.join(', ')}
+                      <TableRow key={c.id} className="h-10">
+                        <TableCell className="py-1 pl-6 font-mono text-sm">{c.yearMonth}</TableCell>
+                        <TableCell className="py-1 text-sm">{po?.poCode ?? c.poId}</TableCell>
+                        <TableCell className="max-w-[280px] py-1 text-sm">
+                          <span className="block truncate" title={workerLabel}>
+                            {workerLabel}
                           </span>
-                          <Badge variant="outline" className="mt-1 text-[10px]">
-                            {c.workerIds.length} คน
-                          </Badge>
                         </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
+                        <TableCell className="py-1 text-sm text-muted-foreground">
                           {c.batchNo != null && c.batchNo > 0 ? `รอบ ${c.batchNo}` : '—'}
                         </TableCell>
-                        <TableCell className="text-right pr-6">
+                        <TableCell className="py-1 pr-6 text-right">
                           {canCreateDoc ? (
                             <Button
                               size="sm"
-                              className="h-8 gap-1"
+                              className="h-7 gap-1 px-2.5 text-xs"
                               variant="secondary"
                               disabled={partialSyncId === c.id || syncingBulk}
                               onClick={() => void handleCreatePartialInvoice(c)}

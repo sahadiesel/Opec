@@ -165,7 +165,9 @@ import {
   deferredClosureAgeDays,
   isDeferredClosureOverdue,
 } from '@/lib/commercial/partial-po-month-billing';
-import { isPoMonthFullGridLock } from '@/lib/timesheet/po-month-review-status';
+import { isCommittedNormalPayrollBatch } from '@/lib/payroll/committed-normal-batch';
+import { resolveBillingModeFromMaps } from '@/lib/commercial/resolve-billing-mode';
+import { isPoMonthDocumentGated, isPoMonthFullGridLock } from '@/lib/timesheet/po-month-review-status';
 import { isWorkerMonthClosureGridLocked } from '@/lib/timesheet/worker-month-closure';
 import { ensureWorkerMonthlyPayrollPeriodForYearMonth, workerPayrollPeriodIdForYearMonth } from '@/lib/timesheet/po-month-timesheet-bridge';
 import { suggestContiguousYmdRanges, ymdInRanges, type YmdRange } from '@/lib/timesheet/ymd-ranges';
@@ -853,6 +855,10 @@ export default function WaveMonthTimesheetSummaryPage() {
     () => (payrollBatchesForMonth ?? []).some((b) => (Number(b.totalWorkers) || 0) > 0),
     [payrollBatchesForMonth],
   );
+  const payrollMonthCommitted = useMemo(
+    () => (payrollBatchesForMonth ?? []).some((b) => isCommittedNormalPayrollBatch(b)),
+    [payrollBatchesForMonth],
+  );
   const existingPayrollBatchId = useMemo(() => {
     const hit = (payrollBatchesForMonth ?? []).find((b) => (Number(b.totalWorkers) || 0) > 0);
     return hit?.id ?? null;
@@ -944,15 +950,17 @@ export default function WaveMonthTimesheetSummaryPage() {
     [monthYm, monthSheetsForOpenPos, poMonthRows],
   );
 
-  /** มีงวดจ่ายเดือนนี้แล้ว หรือเดือนปิดแล้ว (แก้ย้อนหลังอย่างเดียว) → default จ่ายตกเบิกในงวดเดียวกัน */
+  /** งวดที่ส่งจ่ายแล้ว — การแก้วัน/OT ไปงวดถัดไป งวดที่ยังเป็นร่างยังจ่ายในเดือนเดียวกันได้ */
   useEffect(() => {
     if (!retroEdit || !/^\d{4}-\d{2}$/.test(monthYm)) return;
     setRetroApplyYm(
-      hasPayrollBatchForMonth || retroOnlyPayrollMonth
-        ? monthYm
-        : defaultApplyPayrollYmAfter(monthYm),
+      payrollMonthCommitted
+        ? defaultApplyPayrollYmAfter(monthYm)
+        : hasPayrollBatchForMonth || retroOnlyPayrollMonth
+          ? monthYm
+          : defaultApplyPayrollYmAfter(monthYm),
     );
-  }, [retroEdit, monthYm, hasPayrollBatchForMonth, retroOnlyPayrollMonth]);
+  }, [retroEdit, monthYm, hasPayrollBatchForMonth, payrollMonthCommitted, retroOnlyPayrollMonth]);
 
   /** คน ACTIVE ในชุดนี้ที่ยังแก้ตารางได้ — ใช้ทั้งซิงก์เงียบและปุ่ม Auto gen */
   const poActiveAutoDailyEligibleIds = useMemo(() => {
@@ -1616,6 +1624,12 @@ export default function WaveMonthTimesheetSummaryPage() {
     return out;
   }, [dedupedTableRows, workerClosureByKey, monthSheetsForOpenPos, monthYm]);
 
+  const contractsById = useMemo(() => {
+    const m = new Map<string, MainContract>();
+    for (const c of activeContracts ?? []) m.set(c.id, c);
+    return m;
+  }, [activeContracts]);
+
   const collectBillingPicks = useCallback((): WaveMonthClosePick[] => {
     const nameByKey = new Map<string, { name: string; poCode: string }>();
     for (const tr of dedupedTableRows) {
@@ -1623,6 +1637,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       nameByKey.set(`${tr.po.id}|${tr.rw.workerId}`, { name: tr.rw.name, poCode: tr.po.poCode || tr.po.id });
     }
     const out: WaveMonthClosePick[] = [];
+    const pushed = new Set<string>();
     for (const c of workerClosureRows) {
       if (c.yearMonth !== monthYm) continue;
       if (c.status === 'deferred' || c.status === 'open' || c.status === 'rejected') continue;
@@ -1634,6 +1649,7 @@ export default function WaveMonthTimesheetSummaryPage() {
       if (!pending) continue;
       const key = `${c.poId}|${c.workerId}`;
       const meta = nameByKey.get(key);
+      pushed.add(key);
       out.push({
         key,
         poId: c.poId,
@@ -1643,17 +1659,59 @@ export default function WaveMonthTimesheetSummaryPage() {
         openDates: ranges.filter((r) => !r.billingReleased).flatMap((r) => [r.startYmd, r.endYmd]),
       });
     }
+    /**
+     * ปิดงวดแบบ PO+เดือน (รายเดือน) ไม่ได้สร้างเอกสารปิดรายคน
+     * คนที่มีใบงานในเดือนที่ปิดแล้วต้องส่งออกบิลได้ — สัญญา Trip ไม่เข้าก้อนนี้
+     */
+    for (const tr of dedupedTableRows) {
+      const po = tr.po;
+      if (!po?.id) continue;
+      if (resolveBillingModeFromMaps(po, contractsById) === 'TRIP') continue;
+      if (!isPoMonthDocumentGated(poMonthByPoId.get(po.id))) continue;
+      const key = `${po.id}|${tr.rw.workerId}`;
+      if (pushed.has(key)) continue;
+      const closure = workerClosureByKey.get(key);
+      if (closure?.status === 'deferred' || closure?.status === 'rejected') continue;
+      const ranges = closure?.closedDateRanges ?? [];
+      const alreadySent =
+        closure?.status === 'approved' && (ranges.length === 0 || ranges.every((r) => r.billingReleased));
+      if (alreadySent) continue;
+      const hasSheet = monthSheetsForOpenPos.some(
+        (t) =>
+          t.workerId === tr.rw.workerId &&
+          t.purchaseOrderId === po.id &&
+          String(t.date || '').startsWith(`${monthYm}-`),
+      );
+      if (!hasSheet) continue;
+      pushed.add(key);
+      out.push({
+        key,
+        poId: po.id,
+        workerId: tr.rw.workerId,
+        name: tr.rw.name,
+        poCode: po.poCode || po.id,
+        openDates: [],
+      });
+    }
     out.sort((a, b) => a.name.localeCompare(b.name, 'th', { sensitivity: 'base' }));
     return out;
-  }, [workerClosureRows, dedupedTableRows, monthYm]);
+  }, [workerClosureRows, dedupedTableRows, monthYm, contractsById, poMonthByPoId, workerClosureByKey, monthSheetsForOpenPos]);
 
   const openCloseDialog = useCallback(() => {
+    if (payrollMonthCommitted) {
+      toast({
+        variant: 'destructive',
+        title: 'ปิดงวดจ่ายซ้ำไม่ได้',
+        description: `งวด ${monthYm} ส่งจ่ายแล้ว การเพิ่มหรือลดวันและแก้ OT ให้ทำที่ตาราง ระบบจะนำไปงวดถัดไป การออกบิลลูกค้าใช้ปุ่มส่งรอออกบิล`,
+      });
+      return;
+    }
     const picks = collectOpenClosePicks();
     setClosePicks(picks);
     setCloseSelected(new Set());
     setCloseRanges(suggestContiguousYmdRanges(picks.flatMap((p) => p.openDates)));
     setCloseDialogOpen(true);
-  }, [collectOpenClosePicks]);
+  }, [collectOpenClosePicks, payrollMonthCommitted, monthYm, toast]);
 
   const openBillingDialog = useCallback(() => {
     const picks = collectBillingPicks();
@@ -1664,6 +1722,14 @@ export default function WaveMonthTimesheetSummaryPage() {
 
   const handlePartialCloseSelected = useCallback(async () => {
     if (!firestore || !currentUser || !canEditTs) return;
+    if (payrollMonthCommitted) {
+      toast({
+        variant: 'destructive',
+        title: 'ปิดงวดจ่ายซ้ำไม่ได้',
+        description: `งวด ${monthYm} ส่งจ่ายแล้ว ไม่สร้างรายการ payroll ซ้อน`,
+      });
+      return;
+    }
     const ranges = closeRanges.filter((r) => r.startYmd && r.endYmd && r.startYmd <= r.endYmd);
     if (ranges.length === 0) {
       toast({ variant: 'destructive', title: 'ระบุช่วงวันที่', description: 'ใส่วันเริ่มและวันสิ้นสุดของงวดที่จะปิด' });
@@ -1718,6 +1784,7 @@ export default function WaveMonthTimesheetSummaryPage() {
     closePicks,
     closeSelected,
     monthYm,
+    payrollMonthCommitted,
     refreshWorkerClosures,
     toast,
   ]);
@@ -3074,8 +3141,13 @@ export default function WaveMonthTimesheetSummaryPage() {
                               size="sm"
                               variant="secondary"
                               className="h-8 gap-1"
-                              disabled={partialWorkflowBusy}
+                              disabled={partialWorkflowBusy || payrollMonthCommitted}
                               onClick={openCloseDialog}
+                              title={
+                                payrollMonthCommitted
+                                  ? 'งวดนี้ส่งจ่ายแล้ว — ปิดซ้ำไม่ได้ การแก้วันหรือ OT ไปงวดถัดไป'
+                                  : 'ปิดงวดจ่ายเงินเดือน ก่อนสร้างสลิป'
+                              }
                             >
                               <Lock className="h-3.5 w-3.5" />
                               ปิดงวดจ่าย Payroll
@@ -3100,9 +3172,18 @@ export default function WaveMonthTimesheetSummaryPage() {
                             ) : null}
                           </div>
                           <p className="text-[10px] text-muted-foreground">
-                            ปิดงวดจ่าย Payroll = เลือกรายชื่อและช่วงวันที่ (แก้ได้ เช่น 1–10 แทน 1–12) · วันนอกช่วงยังลงงานและปิดงวดรอบถัดไปได้
-                            {' · '}
-                            <strong className="text-foreground">ส่งรอออกบิล</strong> = เลือกรายชื่อที่ปิดงวดแล้ว ไปรอสร้างใบแจ้งหนี้ทันที ไม่รอผู้จัดการ
+                            {payrollMonthCommitted ? (
+                              <>
+                                งวด payroll นี้ส่งจ่ายแล้ว — ปิดงวดจ่ายซ้ำไม่ได้ การเพิ่มวัน ลดวัน หรือแก้ OT ที่ตารางไปงวดถัดไป
+                                {' · '}
+                              </>
+                            ) : (
+                              <>
+                                ปิดงวดจ่าย Payroll = เลือกรายชื่อและช่วงวันที่ก่อนสร้างสลิป (แก้ได้ เช่น 1–10 แทน 1–12)
+                                {' · '}
+                              </>
+                            )}
+                            <strong className="text-foreground">ส่งรอออกบิล</strong> = วางบิลลูกค้า คนละเส้นทางกับ payroll ไม่รอผู้จัดการ
                           </p>
                           {overdueDeferredClosures.length > 0 ? (
                             <Alert variant="destructive" className="py-2">
@@ -3957,14 +4038,19 @@ export default function WaveMonthTimesheetSummaryPage() {
                 <Input
                   id="retro-apply-ym"
                   type="month"
+                  min={payrollMonthCommitted ? defaultApplyPayrollYmAfter(monthYm) : undefined}
                   value={retroApplyYm}
                   onChange={(e) => setRetroApplyYm(e.target.value)}
                   disabled={retroSaving}
                 />
                 <p className="text-[11px] text-muted-foreground leading-snug">
-                  {workDayRetroMode === 'reverse' ? (
+                  {payrollMonthCommitted ? (
                     <>
-                      หักในสลิปเงินเดือนปกติของงวดนี้ ไม่เข้าตกเบิก OT ถ้าสุทธิของงวดนั้นไม่พอทั้งก้อน รายการจะค้างไว้จนกว่าจะสร้างสลิปงวดนี้ใหม่แล้วหักได้
+                      งวด {monthYm} ส่งจ่ายแล้ว — รายการนี้ไปงวด {defaultApplyPayrollYmAfter(monthYm)} ไม่ย้อนเข้าสลิปที่จ่ายแล้ว
+                    </>
+                  ) : workDayRetroMode === 'reverse' ? (
+                    <>
+                      หักในสลิปเงินเดือนปกติของงวดที่เลือก ไม่เข้าตกเบิก OT ถ้าสุทธิของงวดนั้นไม่พอทั้งก้อน รายการจะค้างไว้จนกว่าจะสร้างสลิปงวดนั้นแล้วหักได้
                     </>
                   ) : workDayRetroMode === 'add' ? (
                     <>
@@ -4325,8 +4411,8 @@ export default function WaveMonthTimesheetSummaryPage() {
             <div className="max-h-64 overflow-y-auto rounded-md border">
               {billingPicks.length === 0 ? (
                 <p className="p-3 text-sm text-muted-foreground">
-                  ยังไม่มีคนที่ปิดงวดแล้วรอออกบิล — คนที่ส่งไปแล้วให้สร้างใบแจ้งหนี้ที่เมนูการออกใบแจ้งหนี้
-                  ถ้ายกเลิกใบแล้ว รายชื่อจะกลับไปให้เลือกที่นั่น ไม่ต้องส่งซ้ำ
+                  ยังไม่มีคนที่ปิดงวดแล้วรอออกบิล — ปิดงวด PO รายเดือนก่อน หรือปิดงวดรายคน
+                  คนที่ส่งไปแล้วให้สร้างใบแจ้งหนี้ที่เมนูการออกใบแจ้งหนี้
                 </p>
               ) : (
                 billingPicks.map((p) => (

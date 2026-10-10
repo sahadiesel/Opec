@@ -24,6 +24,7 @@ import {
   retroHoursDeltaFromAdjustment,
   RetroRateMatrixMissingError,
 } from '@/lib/payroll/retro-adjustment-pay';
+import { assertPayrollMonthOpenForNewPayItems } from '@/lib/payroll/committed-normal-batch';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { writeAuditLog } from './audit-service';
 import { canAccess, canEdit } from '@/lib/permissions';
@@ -110,6 +111,7 @@ export async function createTimesheetRetroAdjustment(
   if (!/^\d{4}-\d{2}$/.test(input.sourceYearMonth) || !/^\d{4}-\d{2}$/.test(input.applyPayrollYearMonth)) {
     throw new Error('รูปแบบงวด YYYY-MM ไม่ถูกต้อง');
   }
+  await assertPayrollMonthOpenForNewPayItems(db, input.applyPayrollYearMonth);
 
   const ts = input.sourceTimesheet;
   const now = Date.now();
@@ -234,6 +236,7 @@ export async function createWorkDayPayrollAdjustment(
   if (!/^\d{4}-\d{2}$/.test(input.sourceYearMonth) || !/^\d{4}-\d{2}$/.test(input.applyPayrollYearMonth)) {
     throw new Error('รูปแบบงวด YYYY-MM ไม่ถูกต้อง');
   }
+  await assertPayrollMonthOpenForNewPayItems(db, input.applyPayrollYearMonth);
   const amount = roundRetroMoney(input.amountBaht);
   if (amount <= 0) throw new Error('ยอดวันทำงานต้องมากกว่า 0');
   const ts = input.sourceTimesheet;
@@ -364,9 +367,7 @@ export async function reassignApprovedRetroApplyYm(
   if (!/^\d{4}-\d{2}$/.test(sourceYm) || !/^\d{4}-\d{2}$/.test(targetYm)) {
     throw new Error('รูปแบบงวด YYYY-MM ไม่ถูกต้อง');
   }
-  if (sourceYm === targetYm) {
-    /** ยังย้ายจาก apply อื่น → target ได้แม้ target = source (เคสปกติหลังปิดงวด) */
-  }
+  await assertPayrollMonthOpenForNewPayItems(db, targetYm);
 
   const snap = await getDocs(
     query(collection(db, COLLECTION), where('sourceYearMonth', '==', sourceYm)),

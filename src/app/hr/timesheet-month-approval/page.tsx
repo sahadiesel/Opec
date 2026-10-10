@@ -267,7 +267,7 @@ export default function TimesheetMonthApprovalQueuePage() {
             : ` — ใบแจ้งหนี้: ${billing.reason}`;
         const zeroPayrollHint =
           updated === 0
-            ? ' — ไม่พบ timesheet ที่อัปเดตได้ในช่วงงวด (หรือถูก LOCKED หมด) — เปิดสรุปลงเวลารายเดือน (Wave) เดือนเดียวกัน แล้วกด «ซิงค์พร้อมจ่าย payroll»'
+            ? ' — ไม่พบ timesheet ที่อัปเดตได้ในช่วงงวด (หรือถูก LOCKED หมด) — เปิดสรุปลงเวลารายเดือนเดือนเดียวกันแล้วปิดงวดสร้าง Payroll ระบบจะตั้งพร้อมจ่ายให้เอง'
             : '';
         const periodHint = payrollPeriod.created
           ? ' — สร้างรอบบัญชีลูกจ้างอัตโนมัติแล้ว (ไปเมนูงวดจ่ายลูกจ้างแล้วเลือกรอบเดือนนี้)'

@@ -17,8 +17,10 @@ import type {
   WorkerMonthClosureStatus,
   WorkerMonthTimesheetClosure,
 } from '@/lib/types';
+import { assertPayrollMonthOpenForNewPayItems } from '@/lib/payroll/committed-normal-batch';
 import {
   clearReadyPayrollFlagsForPoMonthWorkerIds,
+  markTimesheetsReadyForBillingOnly,
   markTimesheetsReadyForPoMonthWorkerIds,
   poMonthTimesheetReviewDocId,
   workerPayrollPeriodIdForYearMonth,
@@ -316,6 +318,7 @@ export async function partialCloseWorkersForPoMonth(
 ): Promise<{ closed: number }> {
   const { poId, yearMonth, workers, actor } = params;
   if (workers.length === 0) throw new Error('ไม่ได้เลือกคนงาน');
+  await assertPayrollMonthOpenForNewPayItems(db, yearMonth);
   const incoming = (params.dateRanges ?? []).filter(
     (r) => /^\d{4}-\d{2}-\d{2}$/.test(r.startYmd) && /^\d{4}-\d{2}-\d{2}$/.test(r.endYmd) && r.startYmd <= r.endYmd,
   );
@@ -702,9 +705,11 @@ export async function releaseWorkersForBilling(
   const closures = await fetchWorkerClosuresForPoMonth(db, params.poId, params.yearMonth);
   const now = Date.now();
   let released = 0;
+  const seen = new Set<string>();
   for (const c of closures) {
     if (!allow.has(c.workerId)) continue;
-    if (c.status === 'deferred' || c.status === 'open' || c.status === 'rejected') continue;
+    seen.add(c.workerId);
+    if (c.status === 'deferred' || c.status === 'rejected') continue;
     const ranges = (c.closedDateRanges ?? []).map((r) => ({ ...r, billingReleased: true }));
     if (ranges.length === 0 && c.status === 'approved') continue;
     await upsertWorkerClosure(db, {
@@ -727,13 +732,34 @@ export async function releaseWorkersForBilling(
     });
     released++;
     const unreleased = (c.closedDateRanges ?? []).filter((r) => !r.billingReleased);
-    await markTimesheetsReadyForPoMonthWorkerIds(
+    await markTimesheetsReadyForBillingOnly(
       db,
       params.poId,
       params.yearMonth,
       [c.workerId],
       unreleased.length > 0 ? unreleased : undefined,
     );
+  }
+  for (const workerId of allow) {
+    if (seen.has(workerId)) continue;
+    await upsertWorkerClosure(db, {
+      poId: params.poId,
+      yearMonth: params.yearMonth,
+      workerId,
+      status: 'approved',
+      actor: params.actor,
+      patch: {
+        submittedAt: now,
+        submittedByUserId: params.actor.id,
+        submittedByName: params.actor.displayName || params.actor.email || params.actor.id,
+        reviewedAt: now,
+        reviewedByUserId: params.actor.id,
+        reviewedByName: params.actor.displayName || params.actor.email || params.actor.id,
+        reviewNote: 'ส่งออกบิลจากงวดรายเดือนที่ปิดไว้แล้ว — ไม่รอผู้จัดการ',
+      },
+    });
+    await markTimesheetsReadyForBillingOnly(db, params.poId, params.yearMonth, [workerId]);
+    released++;
   }
   if (released === 0) throw new Error('ไม่มีคนที่ปิดงวดแล้วรอออกบิล');
   await syncPoMonthReviewFromClosures(db, params.poId, params.yearMonth, params.actor);

@@ -48,6 +48,7 @@ import {
 import { resolveBillingMode } from '@/lib/commercial/resolve-billing-mode';
 import { sellSnapshotForWorkMode } from '@/lib/commercial/position-rate-sell';
 import { resolveWaveMonthPeriodBounds } from '@/lib/timesheet/wave-month-payroll-bridge';
+import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
 import {
   poMonthTimesheetReviewDocId,
   resolvePoMonthPeriodBounds,
@@ -71,7 +72,7 @@ import {
   type TripMobDemobLocationOption,
 } from '@/lib/services/trip-mob-demob-billing';
 import { collapseSameLocationMobDemobLines } from '@/lib/commercial/mob-demob-invoice-lines';
-import { generateNextDocumentCode } from '@/lib/services/numbering-service';
+import { generateNextDocumentCode, releaseSequenceSlotIfLastIssued } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 
 async function stampCommercialInvoiceRevisionRoot(
@@ -702,6 +703,75 @@ async function tripWorkersFromReviews(
   return out;
 }
 
+function invoiceOverlapsYearMonth(inv: Pick<CommercialInvoice, 'periodStart' | 'periodEnd'>, yearMonth: string): boolean {
+  const start = `${yearMonth}-01`;
+  const end = lastDayOfCalendarMonth(yearMonth);
+  const ps = String(inv.periodStart || '').slice(0, 10);
+  const pe = String(inv.periodEnd || '').slice(0, 10);
+  if (!ps || !pe) return false;
+  return ps <= end && pe >= start;
+}
+
+/**
+ * สัญญารายเดือนที่ปิดงวดแบบ PO+เดือน (readyForBilling) แต่ยังไม่มีเอกสารปิดรายคน
+ * — ไม่ใช้กับสัญญา Trip
+ */
+async function monthlyWorkersFromReadyTimesheets(
+  db: Firestore,
+  po: PurchaseOrder,
+  yearMonth: string,
+  alreadyWorkerIds: ReadonlySet<string>,
+): Promise<InvoiceReadyWorker[]> {
+  const monthFirst = `${yearMonth}-01`;
+  const monthLast = lastDayOfCalendarMonth(yearMonth);
+  const snap = await getDocs(
+    query(
+      collection(db, 'daily_timesheets'),
+      where('purchaseOrderId', '==', po.id),
+      where('date', '>=', monthFirst),
+      where('date', '<=', monthLast),
+    ),
+  );
+  const nameByWorker = new Map<string, string>();
+  for (const d of snap.docs) {
+    const data = d.data() as { workerId?: string; workerNameSnapshot?: string; readyForBilling?: boolean };
+    if (data.readyForBilling !== true) continue;
+    const workerId = String(data.workerId || '').trim();
+    if (!workerId || alreadyWorkerIds.has(workerId)) continue;
+    if (!nameByWorker.has(workerId)) {
+      nameByWorker.set(workerId, String(data.workerNameSnapshot || '').trim() || workerId);
+    }
+  }
+  if (nameByWorker.size === 0) return [];
+
+  const invSnap = await getDocs(query(collection(db, 'commercial_invoices'), where('poId', '==', po.id)));
+  const covering = invSnap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as object) } as CommercialInvoice))
+    .filter(
+      (inv) =>
+        inv.status !== 'VOID' &&
+        inv.billingMode !== 'TRIP' &&
+        !isCommercialInvoiceSuperseded(inv) &&
+        invoiceOverlapsYearMonth(inv, yearMonth),
+    );
+
+  const out: InvoiceReadyWorker[] = [];
+  for (const [workerId, workerName] of nameByWorker) {
+    if (covering.some((inv) => commercialInvoiceCoversAnyWorker(inv, workerId))) continue;
+    out.push({
+      key: `m|${po.id}|${workerId}|${yearMonth}`,
+      kind: 'monthly',
+      poId: po.id,
+      poCode: po.poCode || po.id,
+      workerId,
+      workerName,
+      yearMonth,
+      detail: 'ทั้งเดือน',
+    });
+  }
+  return out;
+}
+
 /** คนที่ส่งรอออกบิลแล้ว และยังไม่มีใบแจ้งหนี้ครอบช่วงนั้น */
 export async function listWorkersReadyForInvoice(
   db: Firestore,
@@ -768,6 +838,11 @@ export async function listWorkersReadyForInvoice(
         yearMonth: ym,
         detail,
       });
+    }
+    const listed = new Set(out.filter((w) => w.poId === po.id).map((w) => w.workerId));
+    const fromReady = await monthlyWorkersFromReadyTimesheets(db, po, ym, listed);
+    for (const row of fromReady) {
+      if (!out.some((w) => w.key === row.key)) out.push(row);
     }
   }
 
@@ -890,6 +965,9 @@ export async function createCommercialInvoiceForReadyWorkers(
     actor: User;
     /** จุด Mob/Demob ต่อชุด Trip — ใช้เมื่อสัญญาคิดค่า MOB ไป-กลับ */
     tripMobDemobByBatch?: Record<string, string>;
+    /** true = วางบิลวันที่หักเงินคืนของคนนั้น */
+    billingReversalIncludeByWorkerId?: Record<string, boolean>;
+    billingAddedDayIncludeByWorkerId?: Record<string, boolean>;
   },
 ): Promise<{ id: string; invoiceNo: string }> {
   const workersInput = params.workers;
@@ -976,6 +1054,8 @@ export async function createCommercialInvoiceForReadyWorkers(
     const gen = await generateBillingLines(db, poId!, start, end, undefined, {
       workerIds: group.map((g) => g.workerId),
       dateRanges: ranges.length > 0 ? ranges : undefined,
+      billingReversalIncludeByWorkerId: params.billingReversalIncludeByWorkerId,
+      billingAddedDayIncludeByWorkerId: params.billingAddedDayIncludeByWorkerId,
     });
     for (const line of gen.lines) lines.push(line);
     warnings.push(...gen.warnings);
@@ -1022,7 +1102,11 @@ export async function createCommercialInvoiceForReadyWorkers(
       ids,
       start,
       end,
-      locationKey ? { tripMobDemobLocationKey: locationKey } : undefined,
+      {
+        ...(locationKey ? { tripMobDemobLocationKey: locationKey } : {}),
+        billingReversalIncludeByWorkerId: params.billingReversalIncludeByWorkerId,
+        billingAddedDayIncludeByWorkerId: params.billingAddedDayIncludeByWorkerId,
+      },
     );
     if (gen.lines.length === 0 && gen.warnings.some((w) => w.includes('Mob/Demob') || w.includes('ค่า MOB'))) {
       throw new Error(gen.warnings.find((w) => w.includes('MOB') || w.includes('Mob')) || 'สร้างบรรทัด Trip ไม่ได้');
@@ -1193,6 +1277,10 @@ export async function ensureCommercialDraftInvoiceAfterMonthApproval(
   db: Firestore,
   review: WaveMonthTimesheetReview,
   actor: User,
+  options?: {
+    billingReversalIncludeByWorkerId?: Record<string, boolean>;
+    billingAddedDayIncludeByWorkerId?: Record<string, boolean>;
+  },
 ): Promise<{ ok: true; id: string; invoiceNo: string } | { ok: false; reason: string }> {
   const existing = await findCommercialInvoiceByWaveMonthReview(db, review.id);
   if (existing?.id) {
@@ -1216,6 +1304,8 @@ export async function ensureCommercialDraftInvoiceAfterMonthApproval(
       issueDate,
       actor,
       sourceWaveMonthReviewId: review.id,
+      billingReversalIncludeByWorkerId: options?.billingReversalIncludeByWorkerId,
+      billingAddedDayIncludeByWorkerId: options?.billingAddedDayIncludeByWorkerId,
     });
     return { ok: true, id, invoiceNo };
   } catch (e: unknown) {
@@ -1324,6 +1414,10 @@ export async function ensureCommercialDraftInvoiceAfterPoMonthApproval(
   db: Firestore,
   review: PoMonthTimesheetReview,
   actor: User,
+  options?: {
+    billingReversalIncludeByWorkerId?: Record<string, boolean>;
+    billingAddedDayIncludeByWorkerId?: Record<string, boolean>;
+  },
 ): Promise<{ ok: true; id: string; invoiceNo: string } | { ok: false; reason: string }> {
   const poSnap = await getDoc(doc(db, 'purchase_orders', review.poId));
   if (poSnap.exists()) {
@@ -1364,6 +1458,8 @@ export async function ensureCommercialDraftInvoiceAfterPoMonthApproval(
         actor,
         sourcePoMonthReviewId: review.id,
         excludeWorkerIds: excludeWorkerIds.length > 0 ? excludeWorkerIds : undefined,
+        billingReversalIncludeByWorkerId: options?.billingReversalIncludeByWorkerId,
+        billingAddedDayIncludeByWorkerId: options?.billingAddedDayIncludeByWorkerId,
       },
     );
     return { ok: true, id, invoiceNo };
@@ -1467,6 +1563,9 @@ export async function createCommercialDraftInvoiceForPoMonth(
     partialPoMonthBatchNo?: number;
     /** ไม่รวมคนที่ออก partial แล้ว (ใบเต็มที่เหลือ) */
     excludeWorkerIds?: string[];
+    /** true = วางบิลวันที่หักเงินคืนของคนนั้น */
+    billingReversalIncludeByWorkerId?: Record<string, boolean>;
+    billingAddedDayIncludeByWorkerId?: Record<string, boolean>;
   },
 ): Promise<{ id: string; invoiceNo: string }> {
   const { poId, periodStart, periodEnd, issueDate, actor, sourcePoMonthReviewId } = params;
@@ -1487,6 +1586,8 @@ export async function createCommercialDraftInvoiceForPoMonth(
   const gen = await generateBillingLines(db, poId, periodStart, periodEnd, undefined, {
     workerIds: isPartial ? workerIds : undefined,
     excludeWorkerIds: !isPartial ? params.excludeWorkerIds : undefined,
+    billingReversalIncludeByWorkerId: params.billingReversalIncludeByWorkerId,
+    billingAddedDayIncludeByWorkerId: params.billingAddedDayIncludeByWorkerId,
   });
   if (gen.lines.length === 0) {
     throw new Error(
@@ -1666,6 +1767,8 @@ export async function ensureCommercialDraftInvoiceForWorkerSet(
     workerIds: string[];
     actor: User;
     partialPoMonthBatchNo?: number;
+    billingReversalIncludeByWorkerId?: Record<string, boolean>;
+    billingAddedDayIncludeByWorkerId?: Record<string, boolean>;
   },
 ): Promise<{ ok: true; id: string; invoiceNo: string } | { ok: false; reason: string }> {
   const pid = params.poId.trim();
@@ -1721,6 +1824,8 @@ export async function ensureCommercialDraftInvoiceForWorkerSet(
       sourcePoMonthReviewId: reviewId,
       workerIds,
       partialPoMonthBatchNo: params.partialPoMonthBatchNo,
+      billingReversalIncludeByWorkerId: params.billingReversalIncludeByWorkerId,
+      billingAddedDayIncludeByWorkerId: params.billingAddedDayIncludeByWorkerId,
       notes: names ? `Partial (manual): ${names}` : undefined,
     });
     return { ok: true, id, invoiceNo };
@@ -1900,6 +2005,8 @@ export async function createCommercialDraftInvoice(
     notes?: string;
     /** ผูกกับ wave_month_timesheet_reviews — กันซ้ำเมื่ออนุมัติรอบเดือน */
     sourceWaveMonthReviewId?: string;
+    billingReversalIncludeByWorkerId?: Record<string, boolean>;
+    billingAddedDayIncludeByWorkerId?: Record<string, boolean>;
   }
 ): Promise<{ id: string; invoiceNo: string }> {
   const { poId, waveId, periodStart, periodEnd, issueDate, actor } = params;
@@ -1914,7 +2021,10 @@ export async function createCommercialDraftInvoice(
   assertPurchaseOrderActiveForInvoice(poGate);
   await assertPoAllowsMonthlyCommercialInvoice(db, poGate, { periodStart, periodEnd });
 
-  const gen = await generateBillingLines(db, poId, periodStart, periodEnd, waveId);
+  const gen = await generateBillingLines(db, poId, periodStart, periodEnd, waveId, {
+    billingReversalIncludeByWorkerId: params.billingReversalIncludeByWorkerId,
+    billingAddedDayIncludeByWorkerId: params.billingAddedDayIncludeByWorkerId,
+  });
   if (gen.lines.length === 0) {
     throw new Error(
       'ไม่มีรายการจาก timesheet — ตรวจช่วงวันที่ / wave / สถานะ timesheet (ต้อง readyForBilling)',
@@ -2192,7 +2302,7 @@ function yearMonthsCovering(periodStart?: string | null, periodEnd?: string | nu
   return out;
 }
 
-/** ยกเลิกใบแจ้งหนี้เมื่อคำนวณผิดหรือต้องสร้างใหม่ — ไม่ลบเอกสาร (VOID) */
+/** ยกเลิกใบแจ้งหนี้เมื่อคำนวณผิดหรือต้องสร้างใหม่ — เอกสารยังอยู่ในระบบ เลขที่นี้ถูกใช้แล้ว ใบถัดไปรันเลขต่อ */
 export async function voidCommercialInvoice(
   db: Firestore,
   invoiceId: string,
@@ -2272,6 +2382,16 @@ export async function voidCommercialInvoice(
   }
 }
 
+async function commercialInvoiceBaseNumberStillUsed(db: Firestore, baseNo: string): Promise<boolean> {
+  const base = baseNo.trim();
+  if (!base) return false;
+  const [byBase, byNo] = await Promise.all([
+    getDocs(query(collection(db, 'commercial_invoices'), where('baseInvoiceNo', '==', base))),
+    getDocs(query(collection(db, 'commercial_invoices'), where('invoiceNo', '==', base))),
+  ]);
+  return byBase.docs.length + byNo.docs.length > 0;
+}
+
 /** ลบเอกสารถาวรจาก Firestore — กฎ: admin ได้ทุกสถานะ, ผู้ใช้ภายในอื่นได้เฉพาะ DRAFT (ดู firestore.rules) */
 export async function deleteCommercialInvoice(
   db: Firestore,
@@ -2287,7 +2407,11 @@ export async function deleteCommercialInvoice(
     await releaseTripBillingBatchAfterInvoiceRemoved(db, cur.sourceTripBillingBatchId);
   }
 
+  const baseNo = parseCommercialInvoiceBaseNo(cur.invoiceNo) || String(cur.invoiceNo || '').trim();
   await deleteDoc(ref);
+  if (baseNo && !(await commercialInvoiceBaseNumberStillUsed(db, baseNo))) {
+    await releaseSequenceSlotIfLastIssued(db, 'commercial_invoice', baseNo);
+  }
 
   await writeAuditLog(db, actor, {
     actionType: 'DELETE',
@@ -2308,6 +2432,10 @@ export async function regenerateCommercialDraftInvoiceFromTimesheets(
   db: Firestore,
   invoiceId: string,
   actor: User,
+  options?: {
+    billingReversalIncludeByWorkerId?: Record<string, boolean>;
+    billingAddedDayIncludeByWorkerId?: Record<string, boolean>;
+  },
 ): Promise<{ lineCount: number; timesheetCount: number }> {
   const ref = doc(db, 'commercial_invoices', invoiceId);
   const snap = await getDoc(ref);
@@ -2369,7 +2497,11 @@ export async function regenerateCommercialDraftInvoiceFromTimesheets(
       mobCycleIds,
       cur.periodStart,
       cur.periodEnd,
-      tripMobDemobLocationKey ? { tripMobDemobLocationKey } : undefined,
+      {
+        ...(tripMobDemobLocationKey ? { tripMobDemobLocationKey } : {}),
+        billingReversalIncludeByWorkerId: options?.billingReversalIncludeByWorkerId,
+        billingAddedDayIncludeByWorkerId: options?.billingAddedDayIncludeByWorkerId,
+      },
     );
   } else {
     const partialWorkers = normalizeWorkerIdSet(cur.coveredWorkerIds ?? []);
@@ -2379,7 +2511,11 @@ export async function regenerateCommercialDraftInvoiceFromTimesheets(
       cur.periodStart,
       cur.periodEnd,
       isPoMonth ? undefined : cur.waveId,
-      partialWorkers.length > 0 ? { workerIds: partialWorkers } : undefined,
+      {
+        ...(partialWorkers.length > 0 ? { workerIds: partialWorkers } : {}),
+        billingReversalIncludeByWorkerId: options?.billingReversalIncludeByWorkerId,
+        billingAddedDayIncludeByWorkerId: options?.billingAddedDayIncludeByWorkerId,
+      },
     );
   }
 

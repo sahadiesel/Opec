@@ -44,6 +44,12 @@ import { isSimpleAccounting, isSimpleAdmin } from '@/lib/simple-tier-model';
 import { collection, doc, query, where } from 'firebase/firestore';
 import { formatDateTimeThaiBE, formatStoredDateThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { shouldOmitCommercialInvoiceGenerationWarning } from '@/lib/services/billing-line-generator';
+import {
+  listBillingRetroPrompts,
+  type BillingRetroChoices,
+  type BillingRetroPromptSet,
+} from '@/lib/commercial/billing-reversal-days';
+import { BillingReversalConfirmDialog } from '@/components/commercial/billing-reversal-confirm-dialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
@@ -164,6 +170,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const [saveBusy, setSaveBusy] = useState(false);
   const [voidBusy, setVoidBusy] = useState(false);
   const [regenerateBusy, setRegenerateBusy] = useState(false);
+  const [regenConfirmOpen, setRegenConfirmOpen] = useState(false);
+  const [retroPrompts, setRetroPrompts] = useState<BillingRetroPromptSet | null>(null);
   const [taxFromComBusy, setTaxFromComBusy] = useState(false);
   const [offerTaxDialogOpen, setOfferTaxDialogOpen] = useState(false);
   const [draftLines, setDraftLines] = useState<CommercialInvoiceLine[]>([]);
@@ -634,7 +642,37 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     }
   };
 
-  const handleRegenerateFromTimesheets = async () => {
+  const beginRegenerate = async () => {
+    if (!firestore || !currentUser || !canAct || !invoice || !canRegenerateFromTimesheets) return;
+    setRegenerateBusy(true);
+    try {
+      const poId = String(invoice.poId || '').trim();
+      if (!poId) {
+        setRegenConfirmOpen(true);
+        return;
+      }
+      const covered = (invoice.coveredWorkerIds ?? []).map((id) => id.trim()).filter(Boolean);
+      const prompts = await listBillingRetroPrompts(
+        firestore,
+        poId,
+        invoice.periodStart,
+        invoice.periodEnd,
+        covered.length > 0 ? covered : undefined,
+      );
+      if (prompts.reversals.length > 0 || prompts.addedDays.length > 0) setRetroPrompts(prompts);
+      else setRegenConfirmOpen(true);
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ตรวจวันหักเงินคืนหรือวันจ่ายเพิ่มไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setRegenerateBusy(false);
+    }
+  };
+
+  const handleRegenerateFromTimesheets = async (choices?: BillingRetroChoices) => {
     if (!firestore || !currentUser || !canAct || !invoice || !canRegenerateFromTimesheets) return;
     setRegenerateBusy(true);
     try {
@@ -642,6 +680,12 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
         firestore,
         invoice.id,
         currentUser,
+        choices
+          ? {
+              billingReversalIncludeByWorkerId: choices.reversalIncludeByWorkerId,
+              billingAddedDayIncludeByWorkerId: choices.addedDayIncludeByWorkerId,
+            }
+          : undefined,
       );
       toast({
         title: 'ดึงรายการใหม่แล้ว',
@@ -1218,39 +1262,51 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 </>
               )}
               {canRegenerateFromTimesheets && (
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="gap-2 shrink-0 border-blue-300 text-blue-800 hover:bg-blue-50 dark:text-blue-200 dark:hover:bg-blue-950/40"
-                      disabled={regenerateBusy || saveBusy || actionBusy || linesEditing}
-                    >
-                      {regenerateBusy ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-4 w-4" />
-                      )}
-                      ดึงจาก timesheet ใหม่
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>ดึงรายการจาก timesheet ใหม่?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        ระบบจะคำนวณบรรทัดค่าแรงจาก timesheet ที่พร้อมวางบิลในงวดนี้อีกครั้ง (รวมทุก wave ใต้ PO
-                        สำหรับงวด PO+เดือน) และแทนที่บรรทัดเดิมจาก timesheet — บรรทัดที่เพิ่มเองจะยังอยู่
-                        · เลขที่ใบและสถานะ DRAFT ไม่เปลี่ยน
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-                      <AlertDialogAction onClick={() => void handleRegenerateFromTimesheets()}>
-                        ดึงใหม่
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2 shrink-0 border-blue-300 text-blue-800 hover:bg-blue-50 dark:text-blue-200 dark:hover:bg-blue-950/40"
+                    disabled={regenerateBusy || saveBusy || actionBusy || linesEditing}
+                    onClick={() => void beginRegenerate()}
+                  >
+                    {regenerateBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                    ดึงจาก timesheet ใหม่
+                  </Button>
+                  <AlertDialog open={regenConfirmOpen} onOpenChange={setRegenConfirmOpen}>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>ดึงรายการจาก timesheet ใหม่?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          ระบบจะคำนวณบรรทัดค่าแรงจาก timesheet ที่บันทึกในงวดนี้อีกครั้ง รวมวันทำงานที่ payroll
+                          จ่ายแล้ว แม้จะอยู่ในช่วงระหว่างรอบขึ้นไซต์ (รวมทุก wave ใต้ PO สำหรับงวด PO+เดือน)
+                          และแทนที่บรรทัดเดิมจาก timesheet — บรรทัดที่เพิ่มเองจะยังอยู่ · เลขที่ใบและสถานะ DRAFT ไม่เปลี่ยน
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => void handleRegenerateFromTimesheets()}>
+                          ดึงใหม่
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                  <BillingReversalConfirmDialog
+                    reversalPrompts={retroPrompts?.reversals ?? null}
+                    addedDayPrompts={retroPrompts?.addedDays ?? null}
+                    confirmLabel="ดึงใหม่"
+                    busy={regenerateBusy}
+                    onCancel={() => setRetroPrompts(null)}
+                    onConfirm={(choices) => {
+                      setRetroPrompts(null);
+                      void handleRegenerateFromTimesheets(choices);
+                    }}
+                  />
+                </>
               )}
               {canAct && (
                 <Button
