@@ -149,10 +149,30 @@ export function formatStoredDateRangeThaiBE(
   return `${a} - ${b}`;
 }
 
+/**
+ * ปี พ.ศ. ที่ถูกเก็บผิดเป็น ค.ศ. ใน yyyy-mm-dd (≥ 2400)
+ * บางเบราว์เซอร์ไทยเขียนค่าจาก input type=date เป็นปี พ.ศ. แล้ว UI บวก 543 อีกครั้ง → ปี 31xx
+ */
+const BE_YEAR_STORED_AS_CE_THRESHOLD = 2400;
+
+/** แปลง yyyy-mm-dd ที่อาจเป็นปี พ.ศ. ให้เป็น ค.ศ. สำหรับเก็บ/คำนวณ */
+export function normalizeStoredYmdToGregorian(ymd: string | null | undefined): string {
+  const t = (ymd || '').trim();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
+  if (!m) return t;
+  let y = Number(m[1]);
+  if (!Number.isFinite(y)) return t;
+  while (y >= BE_YEAR_STORED_AS_CE_THRESHOLD) {
+    y -= 543;
+  }
+  return `${y}-${m[2]}-${m[3]}`;
+}
+
 /** แปลง yyyy-mm-dd (local) → timestamp เที่ยงวัน — ใช้กับ DatePickerThaiBE โดยเก็บสตริงเดิมใน Firestore */
 export function htmlDateValueToTimestampMs(iso: string | null | undefined): number | undefined {
   if (iso == null || iso === '') return undefined;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
+  const normalized = normalizeStoredYmdToGregorian(iso);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(normalized);
   if (!m) return undefined;
   const y = Number(m[1]);
   const mo = Number(m[2]);

@@ -420,12 +420,17 @@ export const MODULE_FIRESTORE_SPECS: ModuleFirestoreSpec[] = [
       {
         path: 'rental_contracts/{id}',
         shape: 'read-only',
-        note: 'การเขียนใช้ custom approval transition ใน preserved firestore rules',
+        note: 'การเขียนใช้ custom approval/header edit ใน preserved firestore rules',
+      },
+      {
+        path: 'rental_contracts/{id}/change_logs/{logId}',
+        shape: 'append-only',
+        note: 'ประวัติแก้หัวสัญญา — อย่าให้ generator ทับ custom rule',
       },
       {
         path: 'rental_payables/{id}',
         shape: 'read-only',
-        note: 'สร้างโดย Cloud Scheduler หรือ accounting manager/admin',
+        note: 'สร้างโดย Cloud Scheduler หรือ accounting staff ใน preserved rules',
       },
     ],
   },

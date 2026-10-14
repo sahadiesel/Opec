@@ -64,6 +64,26 @@ service cloud.firestore {
     function isAccountingManagerOrAdmin() {
       return isInternalUser() && userRole() in ['system_admin', 'accounting_manager'];
     }
+    /** แก้หัวสัญญา + บันทึก change_logs — officer แก้ DRAFT/REJECTED/ACTIVE ได้ / ส่งขออนุมัติได้ */
+    function canUpdateRentalContract() {
+      return blockExecutiveWrite() && (
+        isAccountingManagerOrAdmin()
+        || (
+          isInternalUser()
+          && userRole() == 'accounting_officer'
+          && (
+            (
+              resource.data.status in ['DRAFT', 'REJECTED']
+              && request.resource.data.status == 'PENDING_APPROVAL'
+            )
+            || (
+              resource.data.status in ['DRAFT', 'REJECTED', 'ACTIVE']
+              && request.resource.data.status == resource.data.status
+            )
+          )
+        )
+      );
+    }
     /** ใบกำกับขาย / ใบเสร็จ / AR — บัญชี + ฝ่ายขาย (ไม่ลบ — delete ยัง rs19) */
     function canWriteCustomerArDocs() {
       return isInternalUser() && userRole() in ['system_admin', 'accounting_manager', 'accounting_officer', 'sales_manager', 'sales_officer'];
@@ -680,20 +700,21 @@ service cloud.firestore {
       allow create: if blockExecutiveWrite()
         && rs19()
         && request.resource.data.status == 'DRAFT';
-      allow update: if blockExecutiveWrite() && (
-        isAccountingManagerOrAdmin()
-        || (
-          isInternalUser()
-          && userRole() == 'accounting_officer'
-          && resource.data.status in ['DRAFT', 'REJECTED']
-          && request.resource.data.status == 'PENDING_APPROVAL'
-        )
-      );
+      allow update: if canUpdateRentalContract();
       allow delete: if isAdmin();
+      match /change_logs/{logId} {
+        allow read: if rs19();
+        allow create: if blockExecutiveWrite() && (
+          isAccountingManagerOrAdmin()
+          || (isInternalUser() && userRole() == 'accounting_officer')
+        );
+        allow update, delete: if isAdmin();
+      }
     }
     match /rental_payables/{id} {
       allow read: if rs19();
-      allow create, update: if isAccountingManagerOrAdmin();
+      allow create, update: if isAccountingManagerOrAdmin()
+        || (blockExecutiveWrite() && isInternalUser() && userRole() == 'accounting_officer');
       allow delete: if isAdmin();
     }
     // Trip billing (M1→D1) — ซิงก์จาก mobilization + timesheet
@@ -840,20 +861,21 @@ service cloud.firestore {
       allow create: if blockExecutiveWrite()
         && rs19()
         && request.resource.data.status == 'DRAFT';
-      allow update: if blockExecutiveWrite() && (
-        isAccountingManagerOrAdmin()
-        || (
-          isInternalUser()
-          && userRole() == 'accounting_officer'
-          && resource.data.status in ['DRAFT', 'REJECTED']
-          && request.resource.data.status == 'PENDING_APPROVAL'
-        )
-      );
+      allow update: if canUpdateRentalContract();
       allow delete: if isAdmin();
+      match /change_logs/{logId} {
+        allow read: if rs19();
+        allow create: if blockExecutiveWrite() && (
+          isAccountingManagerOrAdmin()
+          || (isInternalUser() && userRole() == 'accounting_officer')
+        );
+        allow update, delete: if isAdmin();
+      }
     }
     match /rental_payables/{id} {
       allow read: if rs19();
-      allow create, update: if isAccountingManagerOrAdmin();
+      allow create, update: if isAccountingManagerOrAdmin()
+        || (blockExecutiveWrite() && isInternalUser() && userRole() == 'accounting_officer');
       allow delete: if isAdmin();
     }
     match /users/{userId} {

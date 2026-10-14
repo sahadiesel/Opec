@@ -1,5 +1,6 @@
 import type { RentalContract, Vendor } from '@/lib/types';
 import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
+import { formatDateThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 
 function esc(value: unknown): string {
   return String(value ?? '')
@@ -19,10 +20,10 @@ function money(value: number): string {
 
 function formatContractDate(ymd?: string, fallbackMs?: number): string {
   if (ymd?.trim()) {
-    const d = new Date(`${ymd.trim()}T12:00:00`);
-    if (!Number.isNaN(d.getTime())) return d.toLocaleDateString('th-TH');
+    const label = formatYmdLocalThaiBE(ymd, '');
+    if (label) return label;
   }
-  if (fallbackMs) return new Date(fallbackMs).toLocaleDateString('th-TH');
+  if (fallbackMs) return formatDateThaiBE(fallbackMs) || '........................';
   return '........................';
 }
 
@@ -44,7 +45,7 @@ function buildPropertyPrintHtml(contract: RentalContract, vendor: Vendor): strin
   const item = contract.propertyAddress?.trim() || contract.rentedItemDescription;
   const terms = [
     `ผู้ให้เช่าตกลงให้เช่าและผู้เช่าตกลงเช่า “${item}”`,
-    `กำหนดระยะเวลาเช่าตั้งแต่วันที่ ${contract.startDate} ถึงวันที่ ${contract.endDate}`,
+    `กำหนดระยะเวลาเช่าตั้งแต่วันที่ ${formatYmdLocalThaiBE(contract.startDate)} ถึงวันที่ ${formatYmdLocalThaiBE(contract.endDate)}`,
     `ค่าเช่าเดือนละ ${money(contract.monthlyRentAmount)} บาท (${amountToThaiBahtText(contract.monthlyRentAmount)}) โดยครบกำหนดชำระวันที่ ${contract.paymentDayOfMonth} ของทุกเดือน${
       Number(contract.vatRatePercent) > 0
         ? ` พร้อมภาษีมูลค่าเพิ่มในอัตรา ${money(Number(contract.vatRatePercent))}% ของค่าเช่า`
@@ -125,7 +126,7 @@ function buildVehiclePrintHtml(contract: RentalContract, vendor: Vendor): string
       <p>ทั้งสองฝ่ายตกลงทำสัญญาเช่ารถยนต์ โดยมีข้อความดังต่อไปนี้</p>
       <p class="term"><strong>ข้อ 1.</strong> ผู้ให้เช่าตกลงให้เช่าและผู้เช่าตกลงเช่ารถยนต์ยี่ห้อ
         ${esc(brand)} เลขทะเบียน ${esc(plate)} เป็นระยะเวลา ${esc(months)} เดือน
-        นับตั้งแต่วันที่ ${esc(contract.startDate)} ถึงวันที่ ${esc(contract.endDate)}</p>
+        นับตั้งแต่วันที่ ${esc(formatYmdLocalThaiBE(contract.startDate))} ถึงวันที่ ${esc(formatYmdLocalThaiBE(contract.endDate))}</p>
       <p class="term"><strong>ข้อ 2.</strong> ผู้เช่าตกลงชำระค่าเช่าให้แก่ผู้ให้เช่าในอัตราเดือนละ
         ${esc(money(contract.monthlyRentAmount))} บาท (${esc(rentWords)})
         ${

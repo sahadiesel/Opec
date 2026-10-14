@@ -6,7 +6,7 @@ import { th } from 'date-fns/locale';
 import { Calendar as CalendarIcon } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { formatDateThaiBE } from '@/lib/date-thai';
+import { formatDateThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -125,7 +125,7 @@ export function DatePickerThaiBE({
           >
             วันนี้
           </Button>
-          {allowClear && onClear && (
+          {allowClear && onClear ? (
             <Button
               type="button"
               variant="ghost"
@@ -138,9 +138,33 @@ export function DatePickerThaiBE({
             >
               ล้าง
             </Button>
-          )}
+          ) : null}
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+type DatePickerYmdThaiBEProps = Omit<DatePickerThaiBEProps, 'value' | 'onChange' | 'onClear'> & {
+  /** yyyy-mm-dd (ค.ศ.) — ปี พ.ศ. ที่เก็บผิดจะถูกแปลงก่อนแสดง */
+  value: string;
+  onChange: (ymd: string) => void;
+};
+
+/** ผูก DatePicker ไทยกับสตริง yyyy-mm-dd ที่สัญญาเช่าเก็บใน Firestore */
+export function DatePickerYmdThaiBE({
+  value,
+  onChange,
+  allowClear = true,
+  ...rest
+}: DatePickerYmdThaiBEProps) {
+  return (
+    <DatePickerThaiBE
+      {...rest}
+      value={htmlDateValueToTimestampMs(value) ?? null}
+      onChange={(ms) => onChange(timestampToHtmlDateValue(ms))}
+      allowClear={allowClear}
+      onClear={allowClear ? () => onChange('') : undefined}
+    />
   );
 }

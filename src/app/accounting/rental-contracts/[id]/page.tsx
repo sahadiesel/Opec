@@ -37,6 +37,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useAppUser } from '@/hooks/use-app-user';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateTimeThaiBE, formatPayrollYearMonthMmYyyyThaiBE, formatYmdLocalThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
+import { DatePickerYmdThaiBE } from '@/components/date/date-picker-thai-be';
 import { useCollection, useDoc, useFirestore, useMemoFirebase } from '@/firebase';
 import { canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { isAccountingManager, isAccountingOfficer, isSystemAdmin } from '@/lib/permission-core';
@@ -902,18 +903,16 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
             </div>
             <div className="space-y-2">
               <Label>วันเริ่มสัญญา</Label>
-              <Input
-                type="date"
+              <DatePickerYmdThaiBE
                 value={editForm.startDate}
-                onChange={(e) => setEditForm((p) => ({ ...p, startDate: e.target.value }))}
+                onChange={(ymd) => setEditForm((p) => ({ ...p, startDate: ymd }))}
               />
             </div>
             <div className="space-y-2">
               <Label>วันสิ้นสุดสัญญา</Label>
-              <Input
-                type="date"
+              <DatePickerYmdThaiBE
                 value={editForm.endDate}
-                onChange={(e) => setEditForm((p) => ({ ...p, endDate: e.target.value }))}
+                onChange={(ymd) => setEditForm((p) => ({ ...p, endDate: ymd }))}
               />
             </div>
             {contract.leaseKind === 'VEHICLE' ? (
@@ -976,10 +975,9 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
             </div>
             <div className="space-y-2">
               <Label>วันที่ทำสัญญา</Label>
-              <Input
-                type="date"
+              <DatePickerYmdThaiBE
                 value={editForm.contractDate}
-                onChange={(e) => setEditForm((p) => ({ ...p, contractDate: e.target.value }))}
+                onChange={(ymd) => setEditForm((p) => ({ ...p, contractDate: ymd }))}
               />
             </div>
             <div className="space-y-2 sm:col-span-2">

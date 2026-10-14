@@ -36,6 +36,7 @@ import {
   rentalPayoutWorkflowLabel,
 } from '@/lib/services/rental-contract-service';
 import { formatYmdRangeThaiBE } from '@/lib/date-thai';
+import { DatePickerYmdThaiBE } from '@/components/date/date-picker-thai-be';
 import { useEffect } from 'react';
 
 function statusBadge(status: RentalContractStatus) {
@@ -363,7 +364,7 @@ export function LeaseContractsClient({ leaseKind }: { leaseKind: LeaseContractKi
             </div>
             <div className="space-y-2">
               <Label>วันที่ทำสัญญา</Label>
-              <Input type="date" value={contractDate} onChange={(e) => setContractDate(e.target.value)} />
+              <DatePickerYmdThaiBE value={contractDate} onChange={setContractDate} />
             </div>
             <div className="space-y-2 sm:col-span-2">
               <Label>ผู้ให้เช่า (เลือกจากคู่ค้า)</Label>
@@ -486,11 +487,11 @@ export function LeaseContractsClient({ leaseKind }: { leaseKind: LeaseContractKi
             ) : null}
             <div className="space-y-2">
               <Label>เริ่มเช่า</Label>
-              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              <DatePickerYmdThaiBE value={startDate} onChange={setStartDate} />
             </div>
             <div className="space-y-2">
               <Label>สิ้นสุด</Label>
-              <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              <DatePickerYmdThaiBE value={endDate} onChange={setEndDate} />
             </div>
             <div className="space-y-2">
               <Label>ครบกำหนดจ่ายวันที่ของทุกเดือน (1–31)</Label>

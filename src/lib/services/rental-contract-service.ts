@@ -32,6 +32,7 @@ import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { writeAuditLog } from '@/lib/services/audit-service';
 import { canExecuteBankCashbookPayments } from '@/lib/permissions';
 import { isAccountingManager, isAccountingOfficer, isSystemAdmin } from '@/lib/permission-core';
+import { normalizeStoredYmdToGregorian } from '@/lib/date-thai';
 import {
   buildWithholdingCertificateDraft,
   buildWhtElectronicDataFromDocument,
@@ -164,12 +165,14 @@ function ymd(year: number, monthIndex: number, day: number): string {
 
 /** วันครบกำหนดของเดือน — cap วัน 29/30/31 ตามวันสุดท้าย และไม่ให้อยู่นอกช่วงสัญญา */
 export function rentalDueDateForMonth(contract: RentalContract, periodMonth: string): string {
+  const startDate = normalizeStoredYmdToGregorian(contract.startDate);
+  const endDate = normalizeStoredYmdToGregorian(contract.endDate);
   const [year, month] = periodMonth.split('-').map(Number);
   const monthIndex = month - 1;
   const lastDay = new Date(year, monthIndex + 1, 0).getDate();
   let due = ymd(year, monthIndex, Math.min(lastDay, Math.max(1, contract.paymentDayOfMonth)));
-  if (periodMonth === contract.startDate.slice(0, 7) && due < contract.startDate) due = contract.startDate;
-  if (periodMonth === contract.endDate.slice(0, 7) && due > contract.endDate) due = contract.endDate;
+  if (periodMonth === startDate.slice(0, 7) && due < startDate) due = startDate;
+  if (periodMonth === endDate.slice(0, 7) && due > endDate) due = endDate;
   return due;
 }
 
@@ -179,8 +182,10 @@ export function listRentalContractMonths(startYmd: string, endYmd: string): stri
 }
 
 function monthsBetween(startYmd: string, endYmd: string): string[] {
-  const [sy, sm] = startYmd.slice(0, 7).split('-').map(Number);
-  const [ey, em] = endYmd.slice(0, 7).split('-').map(Number);
+  const start = normalizeStoredYmdToGregorian(startYmd);
+  const end = normalizeStoredYmdToGregorian(endYmd);
+  const [sy, sm] = start.slice(0, 7).split('-').map(Number);
+  const [ey, em] = end.slice(0, 7).split('-').map(Number);
   const rows: string[] = [];
   let y = sy;
   let m = sm;
@@ -234,7 +239,9 @@ export async function createRentalContract(
   }
   const monthlyRentAmount = roundMoney2(input.monthlyRentAmount);
   if (monthlyRentAmount <= 0) throw new Error('ค่าเช่าต่อเดือนต้องมากกว่า 0');
-  if (!input.startDate || !input.endDate || input.endDate < input.startDate) {
+  const startDate = normalizeStoredYmdToGregorian(input.startDate);
+  const endDate = normalizeStoredYmdToGregorian(input.endDate);
+  if (!startDate || !endDate || endDate < startDate) {
     throw new Error('ช่วงวันที่สัญญาไม่ถูกต้อง');
   }
   const paymentDayOfMonth = Math.trunc(input.paymentDayOfMonth);
@@ -271,8 +278,8 @@ export async function createRentalContract(
     tenantName,
     rentedItemDescription,
     monthlyRentAmount,
-    startDate: input.startDate,
-    endDate: input.endDate,
+    startDate,
+    endDate,
     paymentDayOfMonth,
     withholdingTaxRatePercent: rate,
     vatRatePercent,
@@ -281,7 +288,9 @@ export async function createRentalContract(
     status: 'DRAFT',
     revision: 0,
     ...(input.madeAtLocation?.trim() ? { madeAtLocation: input.madeAtLocation.trim() } : {}),
-    ...(input.contractDate?.trim() ? { contractDate: input.contractDate.trim() } : {}),
+    ...(input.contractDate?.trim()
+      ? { contractDate: normalizeStoredYmdToGregorian(input.contractDate.trim()) }
+      : {}),
     ...(input.propertyAddress?.trim() ? { propertyAddress: input.propertyAddress.trim() } : {}),
     ...(input.propertyCategory ? { propertyCategory: input.propertyCategory } : {}),
     ...(leaseKind === 'VEHICLE' && input.vehicleBrand?.trim()
@@ -993,7 +1002,6 @@ export async function updateRentalContract(
   }
   if (patch.startDate != null) next.startDate = patch.startDate;
   if (patch.endDate != null) next.endDate = patch.endDate;
-  if (next.endDate < next.startDate) throw new Error('ช่วงวันที่สัญญาไม่ถูกต้อง');
 
   const stringFields = [
     'notes',
@@ -1010,6 +1018,10 @@ export async function updateRentalContract(
       (next as unknown as Record<string, unknown>)[key] = raw || undefined;
     }
   }
+  next.startDate = normalizeStoredYmdToGregorian(next.startDate);
+  next.endDate = normalizeStoredYmdToGregorian(next.endDate);
+  if (next.contractDate) next.contractDate = normalizeStoredYmdToGregorian(next.contractDate);
+  if (next.endDate < next.startDate) throw new Error('ช่วงวันที่สัญญาไม่ถูกต้อง');
   if (patch.propertyCategory !== undefined) next.propertyCategory = patch.propertyCategory;
   if (patch.leaseDurationMonths !== undefined) {
     next.leaseDurationMonths = Math.max(0, Math.trunc(Number(patch.leaseDurationMonths) || 0));
@@ -1066,16 +1078,20 @@ export async function updateRentalContract(
     afterSubset[k] = after[k];
   }
 
-  await addDoc(collection(db, 'rental_contracts', contract.id, 'change_logs'), {
-    actionType: 'UPDATE_CONTRACT_HEADER',
-    changedFields,
-    beforeSummary: JSON.stringify(beforeSubset),
-    afterSummary: JSON.stringify(afterSubset),
-    actorUserId: user.id,
-    actorName: actor,
-    actorRoleKey: user.role || user.accessGroup || '',
-    eventAt: now,
-  });
+  try {
+    await addDoc(collection(db, 'rental_contracts', contract.id, 'change_logs'), {
+      actionType: 'UPDATE_CONTRACT_HEADER',
+      changedFields,
+      beforeSummary: JSON.stringify(beforeSubset),
+      afterSummary: JSON.stringify(afterSubset),
+      actorUserId: user.id,
+      actorName: actor,
+      actorRoleKey: user.role || user.accessGroup || '',
+      eventAt: now,
+    });
+  } catch (error) {
+    console.error('[rental-contract] change_logs write failed', error);
+  }
 
   await writeAuditLog(db, user, {
     actionType: 'UPDATE',
