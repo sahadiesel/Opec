@@ -180,7 +180,7 @@ export function buildWithholdingPayrollListPrintHtml(params: {
 <style>${WPL_PRINT_STYLES}</style>
 <div class="sd-list-report wpl-wrap">
   ${buildWplHeader({
-    title: 'รายการหัก ณ ที่จ่าย บุคลากร — ภ.ง.ด.1 / ภ.ง.ด.2',
+    title: 'รายการหัก ณ ที่จ่าย (ภงด.1)',
     scopeTitle,
     rowCount: rows.length,
     generatedAt,
@@ -219,7 +219,7 @@ export function buildWithholdingPayrollListPrintHtml(params: {
     <tbody>${tableRows}</tbody>
   </table>
   ${truncateNote}
-  <p class="wpl-foot">OPEC OpsFlow — หัก ณ ที่จ่ายบุคลากร</p>
+  <p class="wpl-foot">OPEC OpsFlow — หัก ณ ที่จ่าย (ภงด.1)</p>
 </div>`;
 }
 

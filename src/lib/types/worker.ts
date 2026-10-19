@@ -1,5 +1,6 @@
 import type { JobMode } from './rbac';
 import type { WaveMonthTimesheetPhotoAttachment } from './misc';
+import type { EmploymentEndReason, EmploymentTenure } from '@/lib/hr/employment-tenure';
 
 /** Domain types: worker (from master types.ts split). */
 
@@ -109,6 +110,14 @@ export interface Worker {
   currentPositionId: string;
   jobMode: JobMode;
   workerStatus: WorkerStatus;
+  /** วันเริ่มงานของรอบล่าสุด — รูปแบบเดียวกับพนักงานออฟฟิศ */
+  startDate?: string;
+  /** วันสิ้นสุดการทำงานของรอบล่าสุด */
+  employmentEndDate?: string;
+  employmentEndReason?: EmploymentEndReason | '';
+  employmentEndReasonNote?: string;
+  /** ประวัติทุกครั้งที่เริ่มงานและสิ้นสุดงาน */
+  employmentTenures?: EmploymentTenure[];
   readinessStatus: ReadinessStatus;
   /** HR ปิด «พร้อม» ชั่วคราว — เอกสารยังเขียวแต่ไม่ให้มอบหมายจนกว่าจะเปิดสวิตช์ */
   readinessManualHold?: boolean;

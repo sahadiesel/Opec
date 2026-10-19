@@ -117,7 +117,7 @@ function buildWvlHeader(params: {
   const scopeRight = params.periodLine ?? params.scopeRightNote;
   return `
   <div class="wvl-head-row">
-    <h1 class="wvl-title wvl-head-left">รายการหัก ณ ที่จ่าย (คู่ค้า)</h1>
+    <h1 class="wvl-title wvl-head-left">รายการหัก ณ ที่จ่าย (ภงด.3 / 53)</h1>
     <p class="wvl-head-right">${printedMeta}</p>
   </div>
   <div class="wvl-head-row">
@@ -214,7 +214,7 @@ export function buildWithholdingVendorListPrintHtml(params: {
     <tbody>${tableRows}</tbody>
   </table>
   ${truncateNote}
-  <p class="wvl-foot">OPEC OpsFlow — หัก ณ ที่จ่ายคู่ค้า (ภงด.53)</p>
+  <p class="wvl-foot">OPEC OpsFlow — หัก ณ ที่จ่ายคู่ค้า (ภงด.3 / ภงด.53)</p>
 </div>`;
 }
 

@@ -96,6 +96,7 @@ import { PoFilterContextBanner } from '@/components/ops/po-filter-context-banner
 import { resolvePoLineForWave } from '@/lib/ops/resolve-po-line';
 import {
   assignmentCountsTowardQuota,
+  assignmentHasUnassignedAtSet,
   buildPoFulfillmentByLine,
   findDuplicateQuotaMobilizationGroups,
 } from '@/lib/ops/po-fulfillment-read-model';
@@ -425,10 +426,8 @@ function AssignmentsPageContent() {
       if (filterPoLineId) list = list.filter((a) => a.poLineId === filterPoLineId);
     } else if (filterPoActiveBundleId) {
       const idSet = new Set(contractActivePOsForScope.map((p) => p.id));
-      list = list.filter((a) => idSet.has(a.poId));
-      /** ไม่แสดงแถวที่ปล่อยโควต้าแล้ว (Unassign / CLOSED / DEMOBILIZED) — ให้สอดคล้องคอลัมน์มอบหมาย/ว่าง */
-      list = list.filter((a) => assignmentCountsTowardQuota(a));
-      /** ชุด PO Active เดียวกัน: คนเดียวกันไม่ซ้อนหลายแถวจากหลาย wave */
+      list = list.filter((a) => idSet.has(a.poId) && !assignmentHasUnassignedAtSet(a));
+      /** ชุด PO Active เดียวกัน: คนเดียวกันไม่ซ้อนหลายแถว — รวมคนที่จบงานแล้วแต่ยังไม่ Unassign */
       list = pickRosterLinePerWorker(list);
     }
     if (!filterPoActiveBundleId) {
@@ -964,7 +963,7 @@ function AssignmentsPageContent() {
               <AlertDescription className="text-sm">
                 ระบบจะตรวจสอบ <b>ตำแหน่งงาน (Position)</b>, <b>สถานะความพร้อม (Readiness)</b> และ <b>คนงานยังถือสล็อต mobilization อยู่หรือไม่</b> — ห้ามมอบหมายซ้ำจนกว่าจะ Unassign / ปิดงานเดิม (ไม่บังคับระบุช่วงวันที่ที่หน้านี้)
                 <span className="block mt-2 text-amber-900/90">
-                  ตารางนี้แสดง <b>1 แถวต่อคน</b> (โควต้าตามบรรทัด PO) — วันเริ่มงานจริง / จบงานนับจากหน้า <b>Mobilization</b> (ยืนยัน mob · standby · จบงาน) ภายใน assignment เดียวกันสามารถเปิดรอบ mob ถัดไปได้หากยังไม่ unassign
+                  ตารางนี้แสดงคนที่ยังมอบหมายอยู่ในชุด PO Active นี้ <b>1 แถวต่อคน</b> รวมสถานะจบงานหรือปิดรายการที่ยังไม่ Unassign — วันเริ่มงานจริง / จบงานนับจากหน้า <b>Mobilization</b>
                 </span>
               </AlertDescription>
             </Alert>

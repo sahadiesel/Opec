@@ -1435,9 +1435,9 @@ export default function AccountingWithholdingPayrollHubPage() {
     <AppShell user={user} onLogout={() => {}}>
       <div className="w-full max-w-[min(100%,96rem)] mx-auto space-y-6 py-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">1. เอกสาร หัก ณ ที่จ่าย (บุคลากร)</h1>
+          <h1 className="text-2xl font-bold tracking-tight">1. เอกสาร หัก ณ ที่จ่าย (ภงด.1)</h1>
           <p className="text-muted-foreground mt-1">
-            รายการหนังสือรับรองหัก ณ ที่จ่าย (ภ.ง.ด.1 / ภ.ง.ด.2) รวมลูกจ้าง พนักงานออฟฟิศ และผู้บริหาร — จ่ายภาษีรวมทั้ง 3 ส่วนได้จากปุ่มด้านบน · คู่ค้า ภงด.53 อยู่เมนู 2
+            รายการหนังสือรับรองหัก ณ ที่จ่าย (ภ.ง.ด.1 / ภ.ง.ด.2) รวมลูกจ้าง พนักงานออฟฟิศ และผู้บริหาร — จ่ายภาษีรวมทั้ง 3 ส่วนได้จากปุ่มด้านบน · คู่ค้า ภงด.3 / 53 อยู่เมนู 2
           </p>
         </div>
 
@@ -1518,7 +1518,7 @@ export default function AccountingWithholdingPayrollHubPage() {
         <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>พิมพ์รายการหัก ณ ที่จ่าย (บุคลากร)</DialogTitle>
+              <DialogTitle>พิมพ์รายการหัก ณ ที่จ่าย (ภงด.1)</DialogTitle>
               <DialogDescription>
                 พิมพ์ใบรายการสรุป — เลือกเฉพาะบางคนได้ด้วยช่องติ๊กด้านซ้าย หรือกด「พิมพ์」ทีละคนเพื่อเปิดหนังสือรับรองรายบุคคล · สูงสุด 500 รายการต่อครั้ง
               </DialogDescription>
@@ -2173,7 +2173,7 @@ export default function AccountingWithholdingPayrollHubPage() {
         >
           <DialogContent className="max-w-2xl sm:max-w-2xl">
             <DialogHeader>
-              <DialogTitle>จ่ายภาษีหัก ณ ที่จ่าย (บุคลากร) — รวมทั้ง 3 ส่วน</DialogTitle>
+              <DialogTitle>จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) — รวมทั้ง 3 ส่วน</DialogTitle>
               <DialogDescription>
                 {payTaxStatusOnly
                   ? 'บันทึกสถานะ «จ่ายแล้ว» เท่านั้น — ไม่ตัดบัญชีธนาคารและไม่ลง cashbook'

@@ -28,6 +28,8 @@ import type { AssignedContractLaborQuote } from '@/lib/payroll/timesheet-labor-b
 import { deriveOtHourlyRatesFromDailyPackage } from '@/lib/commercial/package-hourly-rate';
 import { useActiveBankNameCatalog, useActiveSsoHospitalCatalog } from '@/hooks/use-hrm-name-catalogs';
 import { NameTitleSelect, NameTitleEnSelect, type EnNameTitle } from '@/components/hr/name-title-select';
+import { EmploymentTenureFields } from '@/components/hr/employment-tenure-fields';
+import type { EmploymentEndReason } from '@/lib/hr/employment-tenure';
 import { displayWorkerRegistryJobStatus, workerRegistryJobStatusBadgeProps } from '@/lib/ops/worker-effective-job-status';
 import {
   WORKER_NOT_READY_REASON_OPTIONS,
@@ -362,6 +364,25 @@ export function WorkerInfoTab({
             )}
           </CardHeader>
           <CardContent className="pt-6 space-y-6">
+            <EmploymentTenureFields
+              startDate={(isEditing ? editedWorker.startDate : worker.startDate) || ''}
+              endDate={(isEditing ? editedWorker.employmentEndDate : worker.employmentEndDate) || ''}
+              endReason={((isEditing ? editedWorker.employmentEndReason : worker.employmentEndReason) || '') as EmploymentEndReason | ''}
+              endReasonNote={(isEditing ? editedWorker.employmentEndReasonNote : worker.employmentEndReasonNote) || ''}
+              tenures={isEditing ? editedWorker.employmentTenures ?? worker.employmentTenures : worker.employmentTenures}
+              legacyStart={worker.startDate}
+              legacyEnd={worker.employmentEndDate}
+              disabled={!isEditing}
+              onChange={(patch) =>
+                setEditedWorker({
+                  ...editedWorker,
+                  startDate: patch.startDate,
+                  employmentEndDate: patch.endDate,
+                  employmentEndReason: patch.endReason,
+                  employmentEndReasonNote: patch.endReasonNote,
+                })
+              }
+            />
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="space-y-2">
                 <Label className="font-bold">รหัสคนงาน (Worker Code)</Label>

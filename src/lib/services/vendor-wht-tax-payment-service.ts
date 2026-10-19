@@ -7,6 +7,7 @@ import {
   isVendorWhtTaxRemitted,
 } from '@/lib/wht/vendor-wht-tax-payment-model';
 import type { User, WithholdingCertificateDocument, WhtTaxPaymentProofAttachment } from '@/lib/types';
+import { vendorCertificateFormBucket } from '@/lib/wht/vendor-wht-form';
 
 function mergeWhtTaxProofAttachments(
   existing: WhtTaxPaymentProofAttachment[] | undefined,
@@ -53,7 +54,8 @@ export async function recordVendorWhtTaxPayment(
 
   const vendor = (whtDoc.payee?.displayName || whtDoc.referenceVendorBillNo || whtDoc.id || '').trim() || 'คู่ค้า';
   const certNo = whtDoc.certificateNo?.trim() || whtDoc.id;
-  const description = `จ่ายภาษีหัก ณ ที่จ่าย (ภงด.53) คู่ค้า ${vendor} · ${certNo} · ตัดจากบัญชี ${bankCode}`;
+  const formLabel = vendorCertificateFormBucket(whtDoc) === 'PND3' ? 'ภงด.3' : 'ภงด.53';
+  const description = `จ่ายภาษีหัก ณ ที่จ่าย (${formLabel}) คู่ค้า ${vendor} · ${certNo} · ตัดจากบัญชี ${bankCode}`;
 
   const { cashbookEntryId, entryNo } = await recordCashbookMovementWithBalance(db, user, {
     bankAccountId,

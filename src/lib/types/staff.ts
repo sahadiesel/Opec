@@ -1,5 +1,7 @@
 /** Domain types: staff (from master types.ts split). */
 
+import type { EmploymentEndReason, EmploymentTenure } from '@/lib/hr/employment-tenure';
+
 export type OfficeStaffPayrollLineRef = {
   runCollection: 'office_payroll_runs' | 'executive_payroll_runs';
   runId: string;
@@ -42,8 +44,13 @@ export interface OfficeStaff {
   /** ไม่นำเข้างวดจ่ายเงินเดือนออฟฟิศอัตโนมัติ (เช่น ฝึกงาน / จ่ายนอกระบบ) */
   excludeFromPayrollRuns?: boolean;
   startDate: string;
-  /** วันสิ้นสุดการจ้าง (ถ้ามี) */
+  /** วันสิ้นสุดการจ้างของรอบล่าสุด (ถ้ามี) */
   employmentEndDate?: string;
+  /** เหตุผลของรอบล่าสุด เมื่อมีวันสิ้นสุด */
+  employmentEndReason?: EmploymentEndReason | '';
+  employmentEndReasonNote?: string;
+  /** ประวัติทุกครั้งที่เริ่มงานและสิ้นสุดงาน */
+  employmentTenures?: EmploymentTenure[];
   /** เลขบัตรประชาชน */
   nationalId?: string;
   address?: string;

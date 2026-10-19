@@ -643,7 +643,9 @@ service cloud.firestore {
       allow write: if blockExecutiveWrite() && rsHrPay();
     }
     match /hr_configuration/{docId} {
-      allow read: if rs11();
+      // พนักงานทุกคนอ่านโควตาวันลาของบริษัทได้ เพื่อเห็นสิทธิ์และวันคงเหลือใน My Profile
+      // เอกสารอื่นในคอลเลกชันนี้ยังอ่านได้เฉพาะบทบาท HR
+      allow read: if rs11() || (docId == 'office_leave_entitlements' && isSignedIn());
       allow write: if blockExecutiveWrite() && rs11();
     }
     // ===== Self / Overview - Match blocks =====

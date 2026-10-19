@@ -526,7 +526,7 @@ export function SelfLeavePanel({ firestore, currentUser, staff }: SelfLeavePanel
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-primary" /> สิทธิ์การลาของคุณ — ปี {currentYear}
+              <Sparkles className="h-5 w-5 text-primary" /> สิทธิ์การลาของคุณ — พ.ศ. {currentYear + 543}
             </CardTitle>
             <CardDescription>
               อายุงาน {tenure.toLocaleString('th-TH')} วัน
@@ -546,42 +546,40 @@ export function SelfLeavePanel({ firestore, currentUser, staff }: SelfLeavePanel
                 <span className="font-mono">/hr/settings</span>
               </p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>ประเภท</TableHead>
-                    <TableHead className="text-center">สิทธิ์/ปี</TableHead>
-                    <TableHead className="text-center">ลาแล้ว (อนุมัติ)</TableHead>
-                    <TableHead className="text-center">รออนุมัติ</TableHead>
-                    <TableHead className="text-center">คงเหลือ</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {(['SICK', 'PERSONAL', 'VACATION'] as OfficeLeaveType[]).map((t) => {
-                    const ent = summary.entitlement[t];
-                    const used = summary.approvedDays[t];
-                    const pending = summary.pendingDays[t];
-                    const remain = Math.max(0, ent - used - pending);
-                    const dimmed = t === 'VACATION' && !eligibleVac;
-                    return (
-                      <TableRow key={t} className={dimmed ? 'opacity-60' : ''}>
-                        <TableCell>
-                          {OFFICE_LEAVE_TYPE_LABELS[t]}
-                          {dimmed && (
-                            <Badge variant="outline" className="ml-2 text-[9px] h-4">
-                              ยังไม่เปิดสิทธิ์
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-center font-mono">{ent}</TableCell>
-                        <TableCell className="text-center font-mono">{used}</TableCell>
-                        <TableCell className="text-center font-mono text-amber-700">{pending}</TableCell>
-                        <TableCell className="text-center font-mono font-semibold">{remain}</TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {(['SICK', 'PERSONAL', 'VACATION'] as OfficeLeaveType[]).map((t) => {
+                  const ent = summary.entitlement[t];
+                  const used = summary.approvedDays[t];
+                  const pending = summary.pendingDays[t];
+                  const remain = Math.max(0, ent - used - pending);
+                  const dimmed = t === 'VACATION' && !eligibleVac;
+                  return (
+                    <div
+                      key={t}
+                      className={`rounded-lg border p-3 ${dimmed ? 'opacity-60' : ''}`}
+                    >
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        {OFFICE_LEAVE_TYPE_LABELS[t]}
+                        {dimmed && (
+                          <Badge variant="outline" className="text-[9px] h-4">
+                            ยังไม่เปิดสิทธิ์
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="mt-2 text-2xl font-semibold tabular-nums leading-none">
+                        {remain}
+                        <span className="ml-1 text-sm font-normal text-muted-foreground">วันเหลือ</span>
+                      </p>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        มีสิทธิ์ {ent} วัน
+                        {' · '}
+                        ลาแล้ว {used}
+                        {pending > 0 ? ` · รออนุมัติ ${pending}` : ''}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </CardContent>
         </Card>

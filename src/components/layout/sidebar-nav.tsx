@@ -163,13 +163,13 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
     items: [
       {
         key: 'withholding_tax_items',
-        title: '1. เอกสาร หัก ณ ที่จ่าย (บุคลากร)',
+        title: '1. หัก ณ ที่จ่าย (ภงด.1)',
         href: '/accounting/withholding-payroll',
         icon: FileText,
       },
       {
         key: 'withholding_tax_items',
-        title: '2. เอกสาร หัก ณ ที่จ่าย (คู่ค้า)',
+        title: '2. หัก ณ ที่จ่าย (ภงด.3 / 53)',
         href: '/accounting/withholding-vendor',
         icon: Building2,
       },
@@ -354,7 +354,7 @@ const navGroups: NavGroup[] = [
       },
       {
         key: 'withholding_tax_items',
-        title: 'หัก ณ ที่จ่าย (คู่ค้า)',
+        title: 'หัก ณ ที่จ่าย (ภงด.3 / 53)',
         href: '/accounting/withholding-vendor',
         icon: Percent,
       },
@@ -998,7 +998,7 @@ export function SidebarNav({
                         <SidebarMenuItem>
                           <CollapsibleTrigger asChild>
                             <SidebarMenuButton
-                              tooltip="คู่ค้า · PR · ใบสั่งซื้อ · รับวางบิล · หัก ณ ที่จ่ายคู่ค้า · คลัง"
+                              tooltip="คู่ค้า · PR · ใบสั่งซื้อ · รับวางบิล · หัก ณ ที่จ่าย (ภงด.3 / 53) · คลัง"
                               className="transition-all duration-200"
                             >
                               <Warehouse className="h-4 w-4 text-muted-foreground" />

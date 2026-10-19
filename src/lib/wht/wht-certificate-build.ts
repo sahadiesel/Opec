@@ -25,6 +25,7 @@ import type {
   WhtWithholdingFormType,
 } from '@/lib/types';
 import { stripUndefinedForFirestore as stripFirestoreUndefined } from '@/lib/firestore/strip-undefined-for-firestore';
+import { withholdingFormTypeForVendor } from '@/lib/wht/vendor-wht-form';
 import {
   whtCertificateEnglishLeadFromMixed,
   whtCertificateThaiAddressDisplay,
@@ -326,9 +327,10 @@ export function buildWithholdingCertificateDraft(params: BuildWhtDraftParams): O
     paymentIssueDateYmd,
     paymentMethod,
     taxCondition = 'WITHHOLDING',
-    withholdingFormType = 'PND53',
+    withholdingFormType: withholdingFormTypeInput,
     sourceWithholdingAtSourceItemId,
   } = params;
+  const withholdingFormType = withholdingFormTypeInput ?? withholdingFormTypeForVendor(vendor);
 
   const grossInclVat =
     milestone != null

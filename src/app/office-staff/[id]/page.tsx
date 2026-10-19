@@ -6,11 +6,13 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
+import { EmploymentTenureFields } from '@/components/hr/employment-tenure-fields';
+import { commitEmploymentTenure, officeStatusForEmploymentTenure } from '@/lib/hr/employment-tenure';
+import { isOfficeStaffRegistryOperable } from '@/lib/hr/registry-operable';
 import { Input } from '@/components/ui/input';
 import { NameTitleSelect } from '@/components/hr/name-title-select';
 import { composeStaffDisplayName, seedStaffNameFields } from '@/lib/payroll/sso-filing-name';
-import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatDateTimeThaiBE } from '@/lib/date-thai';
+import { timestampToHtmlDateValue, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { Label } from '@/components/ui/label';
 import { 
   ArrowLeft, 
@@ -120,6 +122,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
   const { data: staffData, isLoading: isStaffLoading } = useDoc<OfficeStaff>(staffRef as any);
 
   const canAdminUserLink = useMemo(() => !!currentUser && isSystemAdmin(currentUser), [currentUser]);
+  const registryFrozen = !isNew && !!staffData && !isOfficeStaffRegistryOperable(staffData);
 
   /** รายชื่อ users สำหรับ dropdown ผูกบัญชี — เฉพาะผู้ดูแลระบบ (ตามสเปค) */
   const usersQuery = useMemoFirebase(() => {
@@ -162,6 +165,9 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
     excludeFromPayrollRuns: false,
     startDate: timestampToHtmlDateValue(Date.now()),
     employmentEndDate: '',
+    employmentEndReason: '',
+    employmentEndReasonNote: '',
+    employmentTenures: [],
     nationalId: '',
     address: '',
     emergencyContactName: '',
@@ -236,11 +242,18 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
       lastName: staffData.lastName,
       fullName: staffData.fullName,
     });
+    const latestTenure = staffData.employmentTenures?.length
+      ? staffData.employmentTenures[staffData.employmentTenures.length - 1]
+      : undefined;
     setFormData({
       ...staffData,
       nameTitle: seeded.nameTitle,
       firstName: seeded.firstName,
       lastName: seeded.lastName,
+      startDate: latestTenure?.startDate || staffData.startDate,
+      employmentEndDate: latestTenure?.endDate || staffData.employmentEndDate || '',
+      employmentEndReason: latestTenure?.endReason || staffData.employmentEndReason || '',
+      employmentEndReasonNote: latestTenure?.endReasonNote || staffData.employmentEndReasonNote || '',
     });
   }, [staffData]);
 
@@ -270,10 +283,41 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
       });
       return;
     }
+    const tenure = commitEmploymentTenure({
+      existingTenures: formData.employmentTenures ?? staffData?.employmentTenures,
+      legacyStart: staffData?.startDate ?? formData.startDate,
+      legacyEnd: staffData?.employmentEndDate ?? formData.employmentEndDate,
+      startDate: formData.startDate,
+      endDate: formData.employmentEndDate,
+      endReason: formData.employmentEndReason,
+      endReasonNote: formData.employmentEndReasonNote,
+      actor: {
+        uid: currentUser.id,
+        name: currentUser.displayName || currentUser.email || currentUser.id,
+      },
+      now: Date.now(),
+    });
+    if (!tenure.ok) {
+      toast({ variant: 'destructive', title: 'ช่วงการจ้างไม่ถูกต้อง', description: tenure.error });
+      return;
+    }
     const resolvedPositionId = posById ? posById.id : formData.positionId;
 
     setIsSubmitting(true);
     const now = Date.now();
+    const tenureStatus = tenure.skipped
+      ? formData.status
+      : officeStatusForEmploymentTenure(tenure.employmentEndDate, tenure.endReason, formData.status);
+    const tenureFields = tenure.skipped
+      ? {}
+      : {
+          startDate: tenure.startDate,
+          employmentEndDate: tenure.employmentEndDate,
+          employmentEndReason: tenure.endReason,
+          employmentEndReasonNote: tenure.endReasonNote,
+          employmentTenures: tenure.tenures,
+          status: tenureStatus,
+        };
 
     const buildUserLinkFirestorePatch = (): Record<string, unknown> => {
       if (!isSystemAdmin(currentUser)) {
@@ -396,6 +440,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
             lastName: lastName || undefined,
             positionId: resolvedPositionId,
             positionTitle: resolvedPositionTitle,
+            ...tenureFields,
             createdAt: now,
             createdBy: currentUser.displayName,
             updatedAt: now,
@@ -420,6 +465,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
             supervisorId: deleteField(),
             positionId: resolvedPositionId,
             positionTitle: resolvedPositionTitle,
+            ...tenureFields,
             updatedAt: now,
             updatedBy: currentUser.id,
           })
@@ -467,6 +513,11 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
               <p className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
                 <Info className="h-4 w-4" /> <strong>Office Payroll</strong> — ฐานเงินเดือนรายเดือน ไม่ใช้ timesheet รายวัน
               </p>
+              {registryFrozen ? (
+                <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                  พนักงานไม่ได้สถานะทำงานอยู่ — แก้ข้อมูลอื่นไม่ได้ แก้ได้เฉพาะวันที่เริ่มงานและวันที่สิ้นสุดการทำงาน
+                </p>
+              ) : null}
             </div>
           </div>
           <Button
@@ -512,6 +563,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                 <CardDescription>รหัสพนักงานและรหัสตำแหน่งจากระบบ — ชื่อ แผนก และตำแหน่งงานจากทะเบียน</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6 pt-6">
+                <div inert={registryFrozen ? true : undefined} className={registryFrozen ? 'min-w-0 space-y-6 opacity-70' : 'min-w-0 space-y-6'}>
                 <div className="space-y-2">
                   <Label className="font-bold">รหัสพนักงาน (Staff Code) *</Label>
                   <Input
@@ -664,36 +716,29 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                     </Select>
                   </div>
                 </div>
+                </div>
+                <EmploymentTenureFields
+                  startDate={formData.startDate || ''}
+                  endDate={formData.employmentEndDate || ''}
+                  endReason={formData.employmentEndReason || ''}
+                  endReasonNote={formData.employmentEndReasonNote || ''}
+                  tenures={formData.employmentTenures}
+                  legacyStart={staffData?.startDate}
+                  legacyEnd={staffData?.employmentEndDate}
+                  disabled={isSubmitting || (isNew ? !canCreateOfficeStaff : !canEditOfficeStaff)}
+                  onChange={(patch) =>
+                    setFormData({
+                      ...formData,
+                      startDate: patch.startDate,
+                      employmentEndDate: patch.endDate,
+                      employmentEndReason: patch.endReason,
+                      employmentEndReasonNote: patch.endReasonNote,
+                      status: officeStatusForEmploymentTenure(patch.endDate, patch.endReason, formData.status),
+                    })
+                  }
+                />
+                <div inert={registryFrozen ? true : undefined} className={registryFrozen ? 'min-w-0 opacity-70' : 'min-w-0'}>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 items-end">
-                  <div className="space-y-2">
-                    <Label className="font-bold">วันที่เริ่มงาน</Label>
-                    <DatePickerThaiBE
-                      className="h-10"
-                      value={htmlDateValueToTimestampMs(formData.startDate)}
-                      onChange={(ms) => setFormData({ ...formData, startDate: timestampToHtmlDateValue(ms) })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label className="font-bold">วันที่สิ้นสุดการจ้าง</Label>
-                    <p className="text-[10px] text-muted-foreground leading-none">เว้นว่างได้ถ้ายังไม่มีวันสิ้นสุด</p>
-                    <DatePickerThaiBE
-                      className="h-10"
-                      placeholder="ยังไม่ระบุ"
-                      allowClear
-                      onClear={() => setFormData({ ...formData, employmentEndDate: '' })}
-                      value={
-                        formData.employmentEndDate
-                          ? htmlDateValueToTimestampMs(formData.employmentEndDate)
-                          : undefined
-                      }
-                      onChange={(ms) =>
-                        setFormData({
-                          ...formData,
-                          employmentEndDate: ms ? timestampToHtmlDateValue(ms) : '',
-                        })
-                      }
-                    />
-                  </div>
                   <div className="space-y-2">
                     <Label className="font-bold">สถานะ (Status)</Label>
                     <Select onValueChange={(v: StaffStatus) => setFormData({ ...formData, status: v })} value={formData.status}>
@@ -708,9 +753,11 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                     </Select>
                   </div>
                 </div>
+                </div>
               </CardContent>
             </Card>
 
+            <div inert={registryFrozen ? true : undefined} className={registryFrozen ? 'min-w-0 space-y-6 opacity-70' : 'min-w-0 space-y-6'}>
             <Card className="shadow-sm overflow-hidden">
               <CardHeader className="bg-muted/40 border-b">
                 <CardTitle className="text-base flex items-center gap-2">
@@ -793,9 +840,11 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                 />
               </CardContent>
             </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="financial" className="mt-6 space-y-6">
+            <div inert={registryFrozen ? true : undefined} className={registryFrozen ? 'min-w-0 space-y-6 opacity-70' : 'min-w-0 space-y-6'}>
             <Card className="shadow-sm overflow-hidden">
               <CardHeader className="bg-primary/5 border-b">
                 <CardTitle className="text-lg flex items-center gap-2 text-primary">
@@ -1027,6 +1076,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                 </div>
               </CardContent>
             </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="admin" className="mt-6">
@@ -1036,7 +1086,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                   <CardTitle className="text-lg flex items-center gap-2 text-primary">
                     <ShieldCheck className="h-5 w-5" /> การเชื่อมโยง (Integration)
                   </CardTitle>
-                  {canAdminUserLink ? (
+                  {canAdminUserLink && !registryFrozen ? (
                     <Button
                       type="button"
                       variant={integrationEditMode ? 'secondary' : 'outline'}

@@ -272,6 +272,7 @@ export default function PoActiveBundleDetailPage({
               bundleLines={bundleLines}
               allPositions={allPositions}
               allMobs={allMobs}
+              showSellPrice={false}
             />
           </>
         )}

@@ -49,6 +49,7 @@ import type {
 } from '@/lib/types';
 import { assignmentCountsTowardQuota } from '@/lib/ops/po-fulfillment-read-model';
 import { isMainContractEligibleForPoActiveWorkflow } from '@/lib/ops/po-active-eligibility';
+import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import { sortPositionRatesByDisplayName } from '@/lib/position-display';
 import { positionListPrimaryName, type PositionDoc } from '@/lib/position-display';
 import {
@@ -383,6 +384,8 @@ export interface PoActiveBundleLinesPanelProps {
   bundleLines: POLine[];
   allPositions: Position[] | null | undefined;
   allMobs: Assignment[] | null | undefined;
+  /** หน้า PO Active ไม่แสดงราคาขาย — หน้าใบ PO ยังแสดง */
+  showSellPrice?: boolean;
 }
 
 export function PoActiveBundleLinesPanel({
@@ -390,6 +393,7 @@ export function PoActiveBundleLinesPanel({
   bundleLines,
   allPositions,
   allMobs,
+  showSellPrice = true,
 }: PoActiveBundleLinesPanelProps) {
   const firestore = useFirestore();
   const { currentUser } = useAppUser();
@@ -826,7 +830,7 @@ export function PoActiveBundleLinesPanel({
               <TableHead className="text-center">โควต้า</TableHead>
               <TableHead className="text-center">มอบหมาย</TableHead>
               <TableHead className="text-center">ว่าง</TableHead>
-              <TableHead className="text-right">ราคาขาย</TableHead>
+              {showSellPrice && <TableHead className="text-right">ราคาขาย</TableHead>}
               <TableHead className="text-right pr-6">ดำเนินการ</TableHead>
             </TableRow>
           </TableHeader>
@@ -834,7 +838,7 @@ export function PoActiveBundleLinesPanel({
             {sortedLines.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={showPoColumn ? 10 : 9}
+                  colSpan={(showPoColumn ? 10 : 9) - (showSellPrice ? 0 : 1)}
                   className="text-center py-14 text-muted-foreground text-sm"
                 >
                   {showPoColumn
@@ -856,8 +860,11 @@ export function PoActiveBundleLinesPanel({
                   ).length ?? 0;
                 const vacant =
                   line.status === 'active' ? Math.max(0, line.quantity - assignedCount) : 0;
-                const q = encodeURIComponent(line.poId);
-                const rosterHref = `/assignments?poId=${q}&poLineId=${encodeURIComponent(line.id)}`;
+                const bundleKey = po ? resolvePoActiveBundleKeyForPo(po) : '';
+                const rosterHref =
+                  bundleKey && !bundleKey.startsWith('orphan:')
+                    ? `/assignments?poActiveBundleId=${encodeURIComponent(bundleKey)}`
+                    : `/assignments?poId=${encodeURIComponent(line.poId)}&poLineId=${encodeURIComponent(line.id)}`;
 
                 return (
                   <TableRow key={`${line.poId}-${line.id}`}>
@@ -898,6 +905,7 @@ export function PoActiveBundleLinesPanel({
                         <span className="text-muted-foreground text-xs">—</span>
                       )}
                     </TableCell>
+                    {showSellPrice && (
                     <TableCell className="text-right">
                       {(() => {
                         const poWorkMode = po?.poWorkMode ?? 'OFFSHORE';
@@ -925,6 +933,7 @@ export function PoActiveBundleLinesPanel({
                         );
                       })()}
                     </TableCell>
+                    )}
                     <TableCell className="text-right pr-6">
                       <div className="flex justify-end items-center gap-1 flex-wrap">
                         {canEditPo && po?.status !== 'closed' && (
@@ -962,12 +971,12 @@ export function PoActiveBundleLinesPanel({
                           variant="outline"
                           size="icon"
                           className="h-8 w-8 shrink-0"
-                          title="ดูรายการมอบหมายในบรรทัดนี้"
+                          title="ดูคนที่มอบหมายในชุด PO Active นี้"
                           asChild
                         >
                           <Link href={rosterHref}>
                             <ChevronRight className="h-4 w-4" aria-hidden />
-                            <span className="sr-only">ดูผู้ถูกมอบหมายในบรรทัดนี้</span>
+                            <span className="sr-only">ดูคนที่มอบหมายในชุด PO Active นี้</span>
                           </Link>
                         </Button>
                       </div>

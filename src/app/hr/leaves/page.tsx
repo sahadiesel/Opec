@@ -124,6 +124,7 @@ import {
 } from '@/lib/leaves/office-leave-request-firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Info } from 'lucide-react';
+import { officeStaffEmployedInLeaveFilterPeriod } from '@/lib/hr/office-staff-employed-in-period';
 
 const BE_YEAR_OFFSET = 543;
 
@@ -381,7 +382,25 @@ export default function HrLeavesManagementPage() {
   const { data: payrollRunsRaw } = useCollection<OfficePayrollRun>(payrollRunsQuery as any);
   const payrollRuns = payrollRunsRaw ?? [];
 
+  /** เดือนหลังวันสิ้นสุดการจ้างไม่ขึ้นชื่อ — เดือนที่ลาออกยังอยู่ */
+  const staffEmployedInPeriod = useMemo(
+    () =>
+      officeStaff.filter((s) => officeStaffEmployedInLeaveFilterPeriod(s, yearFilter, monthFilter)),
+    [officeStaff, yearFilter, monthFilter],
+  );
+
+  const staffEmployedInSelectedYear = useMemo(
+    () => officeStaff.filter((s) => officeStaffEmployedInLeaveFilterPeriod(s, yearFilter, 'ALL')),
+    [officeStaff, yearFilter],
+  );
+
+  const staffFilterForView =
+    staffFilter === 'ALL' || staffEmployedInPeriod.some((s) => s.id === staffFilter)
+      ? staffFilter
+      : 'ALL';
+
   const filteredLeaves = useMemo(() => {
+    const employedIds = new Set(staffEmployedInPeriod.map((s) => s.id));
     const rows = sortOfficeLeaveRequestsNewestFirst(leaves ?? []);
     return rows.filter((r) => {
       if (yearFilter !== 'ALL') {
@@ -389,12 +408,14 @@ export default function HrLeavesManagementPage() {
         if (!officeLeaveMatchesCalendarYear(r, ceYear)) return false;
       }
       if (!leaveMatchesMonthYearFilter(r, yearFilter, monthFilter)) return false;
+      const staffKnown = officeStaff.some((s) => s.id === r.staffId);
+      if (staffKnown && !employedIds.has(r.staffId)) return false;
       if (statusFilter !== 'ALL' && r.status !== statusFilter) return false;
       if (typeFilter !== 'ALL' && r.leaveType !== typeFilter) return false;
-      if (staffFilter !== 'ALL' && r.staffId !== staffFilter) return false;
+      if (staffFilterForView !== 'ALL' && r.staffId !== staffFilterForView) return false;
       return true;
     });
-  }, [leaves, yearFilter, monthFilter, statusFilter, typeFilter, staffFilter]);
+  }, [leaves, yearFilter, monthFilter, statusFilter, typeFilter, staffFilterForView, staffEmployedInPeriod, officeStaff]);
 
   const pendingCountAll = useMemo(
     () => (leaves ?? []).filter((r) => r.status === 'SUBMITTED').length,
@@ -402,13 +423,13 @@ export default function HrLeavesManagementPage() {
   );
 
   const summaryRows = useMemo(
-    () => buildLeaveSummaryRows(filteredLeaves, officeStaff, entCfg, staffFilter),
-    [filteredLeaves, officeStaff, entCfg, staffFilter],
+    () => buildLeaveSummaryRows(filteredLeaves, staffEmployedInPeriod, entCfg, staffFilterForView),
+    [filteredLeaves, staffEmployedInPeriod, entCfg, staffFilterForView],
   );
 
   const summaryRowsAll = useMemo(
-    () => buildLeaveSummaryRows(leaves ?? [], officeStaff, entCfg, 'ALL'),
-    [leaves, officeStaff, entCfg],
+    () => buildLeaveSummaryRows(leaves ?? [], staffEmployedInSelectedYear, entCfg, 'ALL'),
+    [leaves, staffEmployedInSelectedYear, entCfg],
   );
 
   const pendingCount = useMemo(
@@ -430,9 +451,9 @@ export default function HrLeavesManagementPage() {
   const [printBusy, setPrintBusy] = useState(false);
 
   const selectedStaffName = useMemo(() => {
-    if (staffFilter === 'ALL') return undefined;
-    return officeStaff.find((s) => s.id === staffFilter)?.fullName;
-  }, [staffFilter, officeStaff]);
+    if (staffFilterForView === 'ALL') return undefined;
+    return staffEmployedInPeriod.find((s) => s.id === staffFilterForView)?.fullName;
+  }, [staffFilterForView, staffEmployedInPeriod]);
 
   const printFilterLines = useMemo(
     () =>
@@ -442,10 +463,10 @@ export default function HrLeavesManagementPage() {
         yearFilter,
         statusFilter,
         typeFilter,
-        staffFilter,
+        staffFilter: staffFilterForView,
         staffName: selectedStaffName,
       }),
-    [monthFilter, yearFilter, statusFilter, typeFilter, staffFilter, selectedStaffName],
+    [monthFilter, yearFilter, statusFilter, typeFilter, staffFilterForView, selectedStaffName],
   );
 
   const runLeaveSummaryPrint = useCallback(
@@ -870,13 +891,13 @@ export default function HrLeavesManagementPage() {
               </div>
               <div className="space-y-1.5 min-w-[200px] flex-1">
                 <Label className="text-xs">พนักงาน</Label>
-                <Select value={staffFilter} onValueChange={setStaffFilter}>
+                <Select value={staffFilterForView} onValueChange={setStaffFilter}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="ALL">พนักงานทั้งหมด</SelectItem>
-                    {officeStaff.map((s) => (
+                    {staffEmployedInPeriod.map((s) => (
                       <SelectItem key={s.id} value={s.id}>
                         {s.fullName}
                       </SelectItem>
