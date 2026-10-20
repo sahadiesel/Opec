@@ -64,42 +64,6 @@ function inScanWindow(ms: number, startMinutes: number, endMinutes: number): boo
   return m >= startMinutes && m <= endMinutes;
 }
 
-export function buildEffectivePunchLists(
-  dayRow: AttendanceDayEffectiveRow,
-  dayPunches: AttendancePunchDoc[],
-): { ins: number[]; outs: number[] } {
-  if (dayRow.override?.correctionRequestId === 'admin_reset') {
-    return { ins: [], outs: [] };
-  }
-  if (dayRow.override && dayRow.override.correctionRequestId !== 'admin_reset') {
-    const four = fourSlotTimesFromOverride(dayRow.override);
-    if (four) {
-      const ins = [four.morningInAtMs, four.afternoonInAtMs].filter(
-        (ms): ms is number => ms != null && Number.isFinite(ms),
-      );
-      const outs = [four.morningOutAtMs, four.afternoonOutAtMs].filter(
-        (ms): ms is number => ms != null && Number.isFinite(ms),
-      );
-      ins.sort((a, b) => a - b);
-      outs.sort((a, b) => a - b);
-      return { ins, outs };
-    }
-    return {
-      ins: dayRow.effectiveInMs != null ? [dayRow.effectiveInMs] : [],
-      outs: dayRow.effectiveOutMs != null ? [dayRow.effectiveOutMs] : [],
-    };
-  }
-  const ins = dayPunches
-    .filter((p) => p.direction === 'IN')
-    .map((p) => p.punchedAt)
-    .sort((a, b) => a - b);
-  const outs = dayPunches
-    .filter((p) => p.direction === 'OUT')
-    .map((p) => p.punchedAt)
-    .sort((a, b) => a - b);
-  return { ins, outs };
-}
-
 function assignFourScanSlotsLegacy(ins: number[], outs: number[]): FourScanSlots {
   const [morningWin, middayWin, eveningWin] = ATTENDANCE_SHIFT_WINDOWS;
   const morningIns = ins.filter((ms) => inScanWindow(ms, morningWin.startMinutes, morningWin.endMinutes));
@@ -142,7 +106,8 @@ export function assignFourScanSlots(
   });
   const breakOuts = outs.filter((ms) => {
     const m = getBangkokMinutesOfDay(new Date(ms));
-    return m > bounds.morningEndMin && m <= bounds.afternoonStartMin;
+    // รวมนาทีที่ตรงกับจุดเริ่มพัก — สแกนออก 12:00 เมื่อพักเริ่ม 12:00 ต้องนับเป็นออกเที่ยง
+    return m >= bounds.morningEndMin && m <= bounds.afternoonStartMin;
   });
   const afternoonPeriodIns = ins.filter((ms) => {
     const m = getBangkokMinutesOfDay(new Date(ms));
@@ -174,6 +139,52 @@ export function assignFourScanSlots(
   }
 
   return { morningInMs, morningOutMs, afternoonInMs, afternoonOutMs };
+}
+
+const EMPTY_FOUR_SLOTS: FourScanSlots = {
+  morningInMs: null,
+  morningOutMs: null,
+  afternoonInMs: null,
+  afternoonOutMs: null,
+};
+
+function rawPunchLists(dayPunches: AttendancePunchDoc[]): { ins: number[]; outs: number[] } {
+  const ins = dayPunches
+    .filter((p) => p.direction === 'IN')
+    .map((p) => p.punchedAt)
+    .filter((ms) => Number.isFinite(ms))
+    .sort((a, b) => a - b);
+  const outs = dayPunches
+    .filter((p) => p.direction === 'OUT')
+    .map((p) => p.punchedAt)
+    .filter((ms) => Number.isFinite(ms))
+    .sort((a, b) => a - b);
+  return { ins, outs };
+}
+
+/**
+ * เวลาที่ใช้แสดงและคิดเงินเดือน
+ * ช่องที่คำขอแก้ไขกำหนดไว้ทับสแกนดิบ
+ * ช่องที่แก้ไขเว้นว่างยังใช้สแกน Kiosk — การเติมออกเที่ยงต้องไม่ลบเวลาเข้าที่สแกนไว้แล้ว
+ */
+export function resolveMergedFourScanSlots(input: {
+  dayRow: AttendanceDayEffectiveRow;
+  dayPunches: AttendancePunchDoc[];
+  bounds: OfficeShiftMinuteBounds | null;
+}): FourScanSlots {
+  if (input.dayRow.override?.correctionRequestId === 'admin_reset') return { ...EMPTY_FOUR_SLOTS };
+
+  const rawLists = rawPunchLists(input.dayPunches);
+  const raw = assignFourScanSlots(rawLists.ins, rawLists.outs, input.bounds);
+  const overrideFour = fourSlotTimesFromOverride(input.dayRow.override);
+  if (!overrideFour) return raw;
+
+  return {
+    morningInMs: overrideFour.morningInAtMs ?? raw.morningInMs,
+    morningOutMs: overrideFour.morningOutAtMs ?? raw.morningOutMs,
+    afternoonInMs: overrideFour.afternoonInAtMs ?? raw.afternoonInMs,
+    afternoonOutMs: overrideFour.afternoonOutAtMs ?? raw.afternoonOutMs,
+  };
 }
 
 function approvedLeaveOnYmd(
@@ -445,8 +456,7 @@ export function buildOfficeAttendanceGridDayCell(input: {
   const workingHalf = resolveWorkingHalf(leave);
   const bounds = officeShiftMinuteBounds(monthlyWorkNorm);
   const nowMinutes = getBangkokMinutesOfDay(now);
-  const { ins, outs } = buildEffectivePunchLists(dayRow, dayPunches);
-  const slots = assignFourScanSlots(ins, outs, bounds);
+  const slots = resolveMergedFourScanSlots({ dayRow, dayPunches, bounds });
   const scanPattern = detectScanPattern(slots);
 
   const leaveMorning =

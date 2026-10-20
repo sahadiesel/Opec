@@ -85,6 +85,47 @@ function bkkYearOfYmd(ymd: string): number {
   return Number(yStr.slice(0, 4));
 }
 
+const BE_YEAR_OFFSET = 543;
+
+const THAI_MONTH_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: 'มกราคม' },
+  { value: 2, label: 'กุมภาพันธ์' },
+  { value: 3, label: 'มีนาคม' },
+  { value: 4, label: 'เมษายน' },
+  { value: 5, label: 'พฤษภาคม' },
+  { value: 6, label: 'มิถุนายน' },
+  { value: 7, label: 'กรกฎาคม' },
+  { value: 8, label: 'สิงหาคม' },
+  { value: 9, label: 'กันยายน' },
+  { value: 10, label: 'ตุลาคม' },
+  { value: 11, label: 'พฤศจิกายน' },
+  { value: 12, label: 'ธันวาคม' },
+];
+
+function currentBeYear(): number {
+  return bkkYearOfYmd(todayYmdBkk()) + BE_YEAR_OFFSET;
+}
+
+/** ใบลาทับช่วงปี พ.ศ. และเดือนที่เลือก (เดือน ALL = ทั้งปี) */
+function leaveOverlapsYearMonth(
+  row: Pick<OfficeLeaveRequestDoc, 'startDate' | 'endDate'>,
+  yearBe: number,
+  month: 'ALL' | number,
+): boolean {
+  const start = String(row.startDate || '').slice(0, 10);
+  const end = String(row.endDate || row.startDate || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return false;
+  const ceYear = yearBe - BE_YEAR_OFFSET;
+  if (month === 'ALL') {
+    return start <= `${ceYear}-12-31` && end >= `${ceYear}-01-01`;
+  }
+  const m = String(month).padStart(2, '0');
+  const monthStart = `${ceYear}-${m}-01`;
+  const lastDay = new Date(ceYear, month, 0).getDate();
+  const monthEnd = `${ceYear}-${m}-${String(lastDay).padStart(2, '0')}`;
+  return start <= monthEnd && end >= monthStart;
+}
+
 interface SelfLeavePanelProps {
   firestore: Firestore;
   currentUser: User;
@@ -139,6 +180,24 @@ export function SelfLeavePanel({ firestore, currentUser, staff }: SelfLeavePanel
   const allowedTypes = useMemo(() => leaveTypesForStaff(staff), [staff]);
 
   const currentYear = useMemo(() => bkkYearOfYmd(todayYmdBkk()), []);
+  const [historyYearBe, setHistoryYearBe] = useState(() => currentBeYear());
+  const [historyMonth, setHistoryMonth] = useState<'ALL' | number>('ALL');
+  const historyYearOptions = useMemo(() => {
+    const years = new Set<number>();
+    const current = currentBeYear();
+    for (let i = 0; i < 8; i += 1) years.add(current - i);
+    years.add(historyYearBe);
+    for (const row of myLeaves ?? []) {
+      const ce = Number(String(row.startDate || '').slice(0, 4));
+      if (ce >= 2000 && ce <= 2100) years.add(ce + BE_YEAR_OFFSET);
+    }
+    return [...years].sort((a, b) => b - a);
+  }, [myLeaves, historyYearBe]);
+  const filteredHistory = useMemo(
+    () =>
+      (myLeaves ?? []).filter((row) => leaveOverlapsYearMonth(row, historyYearBe, historyMonth)),
+    [myLeaves, historyYearBe, historyMonth],
+  );
   const summary = useMemo(
     () => summarizeYear(staff, currentYear, (myLeaves ?? []) as OfficeLeaveRequestDoc[], entCfg),
     [staff, currentYear, myLeaves, entCfg],
@@ -585,9 +644,50 @@ export function SelfLeavePanel({ firestore, currentUser, staff }: SelfLeavePanel
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">ประวัติคำขอลาของคุณ</CardTitle>
-            <CardDescription>เรียงจากใหม่ → เก่า</CardDescription>
+          <CardHeader className="flex flex-col gap-3 space-y-0 sm:flex-row sm:items-end sm:justify-between">
+            <div className="space-y-1.5">
+              <CardTitle className="text-base">ประวัติคำขอลาของคุณ</CardTitle>
+              <CardDescription>เรียงจากใหม่ → เก่า</CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <div className="space-y-1 w-36">
+                <Label className="text-xs">ปี</Label>
+                <Select
+                  value={String(historyYearBe)}
+                  onValueChange={(v) => setHistoryYearBe(Number(v))}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {historyYearOptions.map((year) => (
+                      <SelectItem key={year} value={String(year)}>
+                        พ.ศ. {year}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1 w-36">
+                <Label className="text-xs">เดือน</Label>
+                <Select
+                  value={historyMonth === 'ALL' ? 'ALL' : String(historyMonth)}
+                  onValueChange={(v) => setHistoryMonth(v === 'ALL' ? 'ALL' : Number(v))}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">ทุกเดือน</SelectItem>
+                    {THAI_MONTH_OPTIONS.map((month) => (
+                      <SelectItem key={month.value} value={String(month.value)}>
+                        {month.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             {leavesLoading ? (
@@ -596,6 +696,8 @@ export function SelfLeavePanel({ firestore, currentUser, staff }: SelfLeavePanel
               </div>
             ) : (myLeaves ?? []).length === 0 ? (
               <p className="text-sm text-muted-foreground py-6 text-center">ยังไม่มีคำขอลา</p>
+            ) : filteredHistory.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-6 text-center">ไม่พบคำขอลาในช่วงที่เลือก</p>
             ) : (
               <Table>
                 <TableHeader>
@@ -609,7 +711,7 @@ export function SelfLeavePanel({ firestore, currentUser, staff }: SelfLeavePanel
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {(myLeaves ?? []).map((r) => (
+                  {filteredHistory.map((r) => (
                     <TableRow key={r.id}>
                       <TableCell className="text-xs whitespace-nowrap">
                         {formatDateThaiBE(r.startDate)}

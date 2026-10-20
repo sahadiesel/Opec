@@ -39,6 +39,7 @@ import type {
   Worker,
 } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
+import { formatDateTimeThaiBE } from '@/lib/date-thai';
 import { collection, query, where } from 'firebase/firestore';
 
 /**
@@ -373,6 +374,29 @@ export default function CashAdvanceDetailPage({ params }: { params: Promise<{ id
                 <p>
                   <span className="text-muted-foreground">เหตุผล:</span> {row.reason}
                 </p>
+                <div className="grid gap-3 pt-2 sm:grid-cols-3">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">ผู้ทำเรื่องเบิก</p>
+                    <p className="mt-1 font-medium tabular-nums">
+                      {formatDateTimeThaiBE(row.createdAt) || '—'}
+                    </p>
+                    <p className="text-sm">{row.createdByName?.trim() || '—'}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">ผู้อนุมัติ</p>
+                    <p className="mt-1 font-medium tabular-nums">
+                      {row.managerApprovedAt ? formatDateTimeThaiBE(row.managerApprovedAt) : '—'}
+                    </p>
+                    <p className="text-sm">{row.managerApprovedByName?.trim() || '—'}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-xs text-muted-foreground">ผู้ทำจ่าย</p>
+                    <p className="mt-1 font-medium tabular-nums">
+                      {row.paidAt ? formatDateTimeThaiBE(row.paidAt) : '—'}
+                    </p>
+                    <p className="text-sm">{row.paidByName?.trim() || '—'}</p>
+                  </div>
+                </div>
                 <p>
                   <span className="text-muted-foreground">แหล่งสร้าง:</span>{' '}
                   {row.origin === 'office' ? 'Office / HR' : 'ผู้ถือบัญชี'}

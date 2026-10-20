@@ -1,4 +1,4 @@
-import { assignFourScanSlots, buildEffectivePunchLists } from '@/lib/attendance/office-attendance-grid-day-cell';
+import { resolveMergedFourScanSlots } from '@/lib/attendance/office-attendance-grid-day-cell';
 import type { AttendanceDayEffectiveRow } from '@/lib/attendance/correction-merge';
 import { formatBangkokHmFromUtcMs, utcMsFromBangkokYmdAndHm } from '@/lib/attendance/bangkok-calendar';
 import type { AttendanceDayOverrideDoc, AttendanceCorrectionRequestDoc, AttendancePunchDoc } from '@/lib/attendance/types';
@@ -70,12 +70,12 @@ export function resolveFourScanSlotMs(input: {
   dayPunches: AttendancePunchDoc[];
   monthlyWorkNorm: MonthlyWorkNormPolicyConfig;
 }): AttendanceFourSlotTimesMs {
-  const overrideFour = fourSlotTimesFromOverride(input.dayRow.override);
-  if (overrideFour) return overrideFour;
-
-  const { ins, outs } = buildEffectivePunchLists(input.dayRow, input.dayPunches);
   const bounds = officeShiftMinuteBounds(input.monthlyWorkNorm);
-  const slots = assignFourScanSlots(ins, outs, bounds);
+  const slots = resolveMergedFourScanSlots({
+    dayRow: input.dayRow,
+    dayPunches: input.dayPunches,
+    bounds,
+  });
   return {
     morningInAtMs: slots.morningInMs,
     morningOutAtMs: slots.morningOutMs,
