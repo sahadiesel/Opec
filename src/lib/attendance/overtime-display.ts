@@ -17,7 +17,7 @@ const STATUS_RANK: Record<AttendanceOvertimeRequestStatus, number> = {
   SUPERSEDED: 0,
 };
 
-function overtimeRequestDayKey(subjectKey: string, workDateYmd: string): string {
+export function overtimeRequestDayKey(subjectKey: string, workDateYmd: string): string {
   return `${subjectKey}:${normalizeWorkDateYmd(workDateYmd)}`;
 }
 

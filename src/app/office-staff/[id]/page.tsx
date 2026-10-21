@@ -1216,6 +1216,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                 subjectId={id}
                 title="ประวัติการลงเวลา (Kiosk)"
                 description="บันทึกเข้า/ออกจากหน้ามือถือหลังสแกน QR ที่ Kiosk"
+                staff={staffData ?? null}
               />
             ) : null}
           </TabsContent>

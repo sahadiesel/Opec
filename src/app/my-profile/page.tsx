@@ -497,6 +497,7 @@ export default function MyProfilePage() {
                   subjectType={linked.kind === 'worker' ? 'worker' : 'office_staff'}
                   subjectId={linked.record.id}
                   title="ประวัติการลงเวลา"
+                  staff={linked.kind === 'office_staff' ? linked.record : null}
                 />
               ) : (
                 <Card>

@@ -71,7 +71,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
 import {
   Tooltip,
   TooltipContent,
@@ -95,6 +94,7 @@ import {
   type OfficeAttendanceMonthlyStaffPrintRow,
 } from '@/lib/documents/office-attendance-monthly-summary-list-print';
 import { AttendanceGridLineCell } from '@/components/attendance/attendance-grid-line-cell';
+import { AttendanceDayKindCell } from '@/components/attendance/attendance-day-kind-cell';
 import {
   buildAttendanceDayDetailHref,
 } from '@/lib/attendance/attendance-hr-navigation';
@@ -105,11 +105,11 @@ import { openStandardPrintWindow } from '@/lib/documents/standard-document-print
 import { cn } from '@/lib/utils';
 import {
   enumerateYmDsForMonth,
-  bangkokIsoWeekdayFromYmd,
   isBangkokWeeklyRestDayYmd,
   weeklyRestPatternLabelTh,
   type WeeklyRestPatternForCalendar,
 } from '@/lib/attendance/bangkok-calendar';
+import { leaveOverlapsPayrollMonth } from '@/lib/attendance/office-attendance-day-kind';
 import {
   attendanceInCorrectedByOverride,
   attendanceOutCorrectedByOverride,
@@ -187,51 +187,6 @@ function groupBySubject(rows: Array<AttendancePunchDoc & { id: string }>): Map<S
     arr.sort((a, b) => (b.punchedAt ?? 0) - (a.punchedAt ?? 0));
   }
   return m;
-}
-
-function dayTypeTags(
-  ymd: string,
-  weeklyRestPattern: WeeklyRestPatternForCalendar,
-  calendarHolidayLabel: string | null,
-): string[] {
-  const tags: string[] = [];
-  if (calendarHolidayLabel) tags.push(calendarHolidayLabel);
-  const iso = bangkokIsoWeekdayFromYmd(ymd);
-  /** ขึ้นป้าย "เสาร์/อาทิตย์" เฉพาะเมื่อตรงกับนโยบายวันหยุดประจำสัปดาห์ที่ตั้งไว้ใน HR Settings */
-  if (iso === 7 && (weeklyRestPattern === 'sat_sun' || weeklyRestPattern === 'sunday_only')) {
-    tags.push('วันอาทิตย์');
-  } else if (iso === 6 && weeklyRestPattern === 'sat_sun') {
-    tags.push('วันเสาร์');
-  }
-  return tags;
-}
-
-function leaveOverlapsPayrollMonth(r: OfficeLeaveRequestDoc, payrollMonth: string): boolean {
-  const monthStart = `${payrollMonth}-01`;
-  const [y, m] = payrollMonth.split('-').map(Number);
-  const lastDay = new Date(y, m, 0).getDate();
-  const monthEnd = `${payrollMonth}-${String(lastDay).padStart(2, '0')}`;
-  const start = r.startDate.slice(0, 10);
-  const end = r.endDate.slice(0, 10);
-  return start <= monthEnd && end >= monthStart;
-}
-
-function dayKindBadges(
-  ymd: string,
-  weeklyRestPattern: WeeklyRestPatternForCalendar,
-  calendarHolidayLabel: string | null,
-) {
-  const tags = dayTypeTags(ymd, weeklyRestPattern, calendarHolidayLabel);
-  if (tags.length === 0) return <span className="text-muted-foreground text-xs">วันทำงาน</span>;
-  return (
-    <div className="flex flex-wrap gap-1 justify-center">
-      {tags.map((t) => (
-        <Badge key={t} variant="outline" className="text-[10px] font-normal">
-          {t}
-        </Badge>
-      ))}
-    </div>
-  );
 }
 
 export function HrAttendanceManagePageContent() {
@@ -888,7 +843,11 @@ export function HrAttendanceManagePageContent() {
                                           {formatDateThaiBE(d.ymd)}
                                         </TableCell>
                                         <TableCell className="p-2 text-center align-middle">
-                                          {dayKindBadges(d.ymd, weeklyRestPattern, calendarHolidayLabel)}
+                                          <AttendanceDayKindCell
+                                            ymd={d.ymd}
+                                            weeklyRestPattern={weeklyRestPattern}
+                                            calendarHolidayLabel={calendarHolidayLabel}
+                                          />
                                         </TableCell>
                                         <TableCell className="p-1 font-mono text-center align-middle text-xs">
                                           {gridCell ? (
