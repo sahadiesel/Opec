@@ -4,6 +4,7 @@ import {
   type WeeklyRestPatternForCalendar,
 } from '@/lib/attendance/bangkok-calendar';
 import {
+  attendanceSlotCorrectedByOverride,
   punchesGroupedByBangkokYmd,
   type AttendanceDayEffectiveRow,
 } from '@/lib/attendance/correction-merge';
@@ -34,6 +35,8 @@ export type OfficeAttendanceGridLineTone = 'time' | 'leave' | 'absent' | 'waitin
 export type OfficeAttendanceGridLine = {
   label: string;
   tone: OfficeAttendanceGridLineTone;
+  /** ป้ายหลังแก้ — เฉพาะช่องที่เวลาต่างจากสแกน Kiosk */
+  corrected?: boolean;
 };
 
 export type OfficeAttendanceGridDayCell = {
@@ -184,6 +187,37 @@ export function resolveMergedFourScanSlots(input: {
     morningOutMs: overrideFour.morningOutAtMs ?? raw.morningOutMs,
     afternoonInMs: overrideFour.afternoonInAtMs ?? raw.afternoonInMs,
     afternoonOutMs: overrideFour.afternoonOutAtMs ?? raw.afternoonOutMs,
+  };
+}
+
+type FourSlotCorrectedFlags = Record<SlotKey, boolean>;
+
+const NO_SLOT_CORRECTED: FourSlotCorrectedFlags = {
+  morningIn: false,
+  morningOut: false,
+  afternoonIn: false,
+  afternoonOut: false,
+};
+
+function fourSlotCorrectedFlags(
+  override: AttendanceDayEffectiveRow['override'],
+  raw: FourScanSlots,
+): FourSlotCorrectedFlags {
+  if (!override || override.correctionRequestId === 'admin_reset') return NO_SLOT_CORRECTED;
+  const ovFour = fourSlotTimesFromOverride(override);
+  if (ovFour) {
+    return {
+      morningIn: attendanceSlotCorrectedByOverride(ovFour.morningInAtMs, raw.morningInMs),
+      morningOut: attendanceSlotCorrectedByOverride(ovFour.morningOutAtMs, raw.morningOutMs),
+      afternoonIn: attendanceSlotCorrectedByOverride(ovFour.afternoonInAtMs, raw.afternoonInMs),
+      afternoonOut: attendanceSlotCorrectedByOverride(ovFour.afternoonOutAtMs, raw.afternoonOutMs),
+    };
+  }
+  return {
+    morningIn: attendanceSlotCorrectedByOverride(override.effectiveInAtMs, raw.morningInMs),
+    morningOut: false,
+    afternoonIn: false,
+    afternoonOut: attendanceSlotCorrectedByOverride(override.effectiveOutAtMs, raw.afternoonOutMs),
   };
 }
 
@@ -456,7 +490,10 @@ export function buildOfficeAttendanceGridDayCell(input: {
   const workingHalf = resolveWorkingHalf(leave);
   const bounds = officeShiftMinuteBounds(monthlyWorkNorm);
   const nowMinutes = getBangkokMinutesOfDay(now);
+  const rawLists = rawPunchLists(dayPunches);
+  const rawSlots = assignFourScanSlots(rawLists.ins, rawLists.outs, bounds);
   const slots = resolveMergedFourScanSlots({ dayRow, dayPunches, bounds });
+  const correctedFlags = fourSlotCorrectedFlags(dayRow.override, rawSlots);
   const scanPattern = detectScanPattern(slots);
 
   const leaveMorning =
@@ -480,7 +517,7 @@ export function buildOfficeAttendanceGridDayCell(input: {
       && workingHalf !== 'NONE'
       && slotExpectsScan(slot, workingHalf, slots, scanPattern);
 
-    return resolveSlotLine({
+    const line = resolveSlotLine({
       slot,
       scanMs,
       leaveOnSlot,
@@ -494,6 +531,10 @@ export function buildOfficeAttendanceGridDayCell(input: {
       slots,
       pattern: scanPattern,
     });
+    if (correctedFlags[slot] && (line.tone === 'time' || line.tone === 'late')) {
+      return { ...line, corrected: true };
+    }
+    return line;
   };
 
   return {

@@ -44,8 +44,6 @@ import {
   overtimeRequestsForSubjectDay,
 } from '@/lib/attendance/office-attendance-day-detail';
 import {
-  attendanceInCorrectedByOverride,
-  attendanceOutCorrectedByOverride,
   buildAttendanceDayRows,
 } from '@/lib/attendance/correction-merge';
 import {
@@ -368,14 +366,7 @@ function AttendanceDayDetailPageContent() {
                       {gridCell ? (
                         <>
                           <TableCell className="text-center text-sm">
-                            <AttendanceGridLineCell
-                              line={gridCell.morningIn}
-                              showCorrectedBadge={
-                                !!dayRow
-                                && attendanceInCorrectedByOverride(dayRow)
-                                && gridCell.morningIn.tone === 'time'
-                              }
-                            />
+                            <AttendanceGridLineCell line={gridCell.morningIn} />
                           </TableCell>
                           <TableCell className="text-center text-sm">
                             <AttendanceGridLineCell line={gridCell.morningOut} />
@@ -384,14 +375,7 @@ function AttendanceDayDetailPageContent() {
                             <AttendanceGridLineCell line={gridCell.afternoonIn} />
                           </TableCell>
                           <TableCell className="text-center text-sm">
-                            <AttendanceGridLineCell
-                              line={gridCell.afternoonOut}
-                              showCorrectedBadge={
-                                !!dayRow
-                                && attendanceOutCorrectedByOverride(dayRow)
-                                && gridCell.afternoonOut.tone === 'time'
-                              }
-                            />
+                            <AttendanceGridLineCell line={gridCell.afternoonOut} />
                           </TableCell>
                         </>
                       ) : (

@@ -111,8 +111,6 @@ import {
 } from '@/lib/attendance/bangkok-calendar';
 import { leaveOverlapsPayrollMonth } from '@/lib/attendance/office-attendance-day-kind';
 import {
-  attendanceInCorrectedByOverride,
-  attendanceOutCorrectedByOverride,
   buildAttendanceDayRows,
   countDaysWithEffectiveRecord,
   punchesGroupedByBangkokYmd,
@@ -806,8 +804,6 @@ export function HrAttendanceManagePageContent() {
                                       isBangkokWeeklyRestDayYmd(d.ymd, weeklyRestPattern)
                                       || isHrSettingsCalendarHolidayYmd(d.ymd, calendarHolidays);
                                     const hasEffectiveTime = d.effectiveInMs != null || d.effectiveOutMs != null;
-                                    const inCorrectedBadge = attendanceInCorrectedByOverride(d);
-                                    const outCorrectedBadge = attendanceOutCorrectedByOverride(d);
                                     const resetKey = `${row.staffId}:${d.ymd}`;
                                     const resetBusy = resetBusyKey === resetKey;
                                     const dayKey = `${row.key}:${d.ymd}`;
@@ -825,7 +821,7 @@ export function HrAttendanceManagePageContent() {
                                         key={d.ymd}
                                         className={cn(
                                           'cursor-pointer hover:bg-muted/60',
-                                          weekendOrHol && 'bg-muted/40',
+                                          weekendOrHol && 'bg-red-50',
                                           d.override && 'border-l-2 border-l-primary',
                                         )}
                                         onClick={() => goToDayDetail(row.staffId, d.ymd)}
@@ -851,12 +847,7 @@ export function HrAttendanceManagePageContent() {
                                         </TableCell>
                                         <TableCell className="p-1 font-mono text-center align-middle text-xs">
                                           {gridCell ? (
-                                            <AttendanceGridLineCell
-                                              line={gridCell.morningIn}
-                                              showCorrectedBadge={
-                                                inCorrectedBadge && gridCell.morningIn.tone === 'time'
-                                              }
-                                            />
+                                            <AttendanceGridLineCell line={gridCell.morningIn} />
                                           ) : (
                                             <span className="text-muted-foreground">—</span>
                                           )}
@@ -877,12 +868,7 @@ export function HrAttendanceManagePageContent() {
                                         </TableCell>
                                         <TableCell className="p-1 font-mono text-center align-middle text-xs">
                                           {gridCell ? (
-                                            <AttendanceGridLineCell
-                                              line={gridCell.afternoonOut}
-                                              showCorrectedBadge={
-                                                outCorrectedBadge && gridCell.afternoonOut.tone === 'time'
-                                              }
-                                            />
+                                            <AttendanceGridLineCell line={gridCell.afternoonOut} />
                                           ) : (
                                             <span className="text-muted-foreground">—</span>
                                           )}

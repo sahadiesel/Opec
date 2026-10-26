@@ -1,4 +1,4 @@
-import { bangkokYmdFromUtcMs } from '@/lib/attendance/bangkok-calendar';
+import { bangkokYmdFromUtcMs, formatBangkokHmFromUtcMs } from '@/lib/attendance/bangkok-calendar';
 import type { DailyPunchSummary } from '@/lib/attendance/shift-windows';
 import type { AttendanceDayOverrideDoc, AttendancePunchDoc } from '@/lib/attendance/types';
 
@@ -93,22 +93,45 @@ function isAdminResetOverride(override: AttendanceDayOverrideDoc | null): boolea
   return override?.correctionRequestId === 'admin_reset';
 }
 
-/** แสดงป้าย "หลังแก้" เมื่อเวลาเข้ามาจาก override ที่อนุมัติแล้ว (ไม่ใช่สแกนดิบ) */
-export function attendanceInCorrectedByOverride(row: AttendanceDayEffectiveRow): boolean {
-  return (
-    !!row.override
-    && !isAdminResetOverride(row.override)
-    && row.override.effectiveInAtMs != null
-  );
+/** เทียบเฉพาะชั่วโมง:นาที — ฟอร์มแก้เวลาเก็บวินาทีเป็น 00 จึงไม่เทียบ epoch ตรง ๆ */
+export function attendanceClockHmEqual(
+  a: number | null | undefined,
+  b: number | null | undefined,
+): boolean {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return formatBangkokHmFromUtcMs(a) === formatBangkokHmFromUtcMs(b);
 }
 
-/** แสดงป้าย "หลังแก้" เมื่อเวลาออกถูกกำหนดใน override (ไม่ใช่ OUT จากสแกนหลังแก้ IN) */
+/**
+ * ช่องนี้ถูกแก้จริงเมื่อ override กำหนดเวลา และ HH:mm ต่างจากสแกนดิบ
+ * (คัดลอกเวลาเดิมในฟอร์มไม่นับว่าแก้)
+ */
+export function attendanceSlotCorrectedByOverride(
+  overrideMs: number | null | undefined,
+  rawMs: number | null | undefined,
+): boolean {
+  return overrideMs != null && !attendanceClockHmEqual(overrideMs, rawMs);
+}
+
+/** แสดงป้ายเมื่อเวลาเข้าถูกเปลี่ยนจากสแกนดิบ (ไม่ใช่แค่มี override ของวัน) */
+export function attendanceInCorrectedByOverride(row: AttendanceDayEffectiveRow): boolean {
+  if (!row.override || isAdminResetOverride(row.override)) return false;
+  const overrideIn =
+    row.override.effectiveMorningInAtMs != null
+      ? row.override.effectiveMorningInAtMs
+      : row.override.effectiveInAtMs;
+  return attendanceSlotCorrectedByOverride(overrideIn, row.rawFirstIn?.punchedAt ?? null);
+}
+
+/** แสดงป้ายเมื่อเวลาออกถูกเปลี่ยนจากสแกนดิบ */
 export function attendanceOutCorrectedByOverride(row: AttendanceDayEffectiveRow): boolean {
-  return (
-    !!row.override
-    && !isAdminResetOverride(row.override)
-    && row.override.effectiveOutAtMs != null
-  );
+  if (!row.override || isAdminResetOverride(row.override)) return false;
+  const overrideOut =
+    row.override.effectiveAfternoonOutAtMs != null
+      ? row.override.effectiveAfternoonOutAtMs
+      : row.override.effectiveOutAtMs;
+  return attendanceSlotCorrectedByOverride(overrideOut, row.rawLastOut?.punchedAt ?? null);
 }
 
 export type EffectiveAttendanceHistoryEntry = {

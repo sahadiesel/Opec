@@ -9,6 +9,7 @@ export function AttendanceGridLineCell({
   line: OfficeAttendanceGridLine;
   showCorrectedBadge?: boolean;
 }) {
+  const showBadge = showCorrectedBadge === true || line.corrected === true;
   if (!line.label && line.tone === 'off') {
     return <span className="text-muted-foreground/30 select-none">&nbsp;</span>;
   }
@@ -26,7 +27,7 @@ export function AttendanceGridLineCell({
       )}
     >
       {text}
-      {showCorrectedBadge ? (
+      {showBadge ? (
         <Badge variant="secondary" className="h-4 px-1 text-[8px] leading-none">
           หลังแก้
         </Badge>

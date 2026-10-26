@@ -669,7 +669,17 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   const runSkipPreMob = async () => {
     if (!firestore || !assignment || !currentUser?.id || !canEditMobilization) return;
+    const editing = clearanceFormEditing || clearanceEditMode === 1;
+    if (isFinalClearancePreMobDone(assignment) && !editing) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้าม Pre-Mob ไม่ได้',
+        description: 'กด «แก้ไข» ด้านบน แล้วค่อยกด «ไม่มี Pre-Mob» เพื่อลบวันที่บันทึกผิด',
+      });
+      return;
+    }
     const gate = canSaveFinalClearancePreMob(assignment, {
+      editingExisting: editing,
       drugOk: mobDrugOk,
       drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
       travelReady,
@@ -678,8 +688,61 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
       return;
     }
+    const prevPre = (assignment.mobPreMobDate || '').trim();
+    const alreadySkipped = assignment.mobPreMobSkipped === true && !/^\d{4}-\d{2}-\d{2}$/.test(prevPre);
+    if (alreadySkipped) {
+      toast({ title: 'ข้าม Pre-Mob อยู่แล้ว' });
+      return;
+    }
     setClearanceSavingStep(2);
     try {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(prevPre)) {
+        if (!canEditTimesheets) {
+          toast({
+            variant: 'destructive',
+            title: 'ไม่มีสิทธิ์',
+            description: 'ต้องมีสิทธิ์แก้ไข Timesheets เพื่อลบวัน Pre-Mob ที่บันทึกไว้',
+          });
+          return;
+        }
+        await deleteDraftMobFinalClearanceTimesheetsInRange(
+          firestore,
+          assignment.workerId,
+          assignment.id,
+          prevPre,
+          prevPre,
+        );
+        const workYmd = (assignment.mobWorkingStartDate || '').trim();
+        if (workYmd === prevPre && isFinalClearanceStep3Done(assignment) && po) {
+          let line = primaryPoLine;
+          if (!line && assignment.poId && assignment.poLineId) {
+            const snap = await getDoc(
+              doc(firestore, 'purchase_orders', assignment.poId, 'po_lines', assignment.poLineId),
+            );
+            if (snap.exists()) line = { id: snap.id, ...(snap.data() as object) } as POLine;
+          }
+          if (line?.id) {
+            await upsertMobClearanceDailyTimesheet(firestore, currentUser as AppUser, {
+              assignment,
+              po,
+              line,
+              workerDisplayName: workerTimesheetName || assignment.workerId,
+              kind: 'work_day',
+              dateYmd: workYmd,
+              bypassPoMonthLock: true,
+              overwriteConflictingEventType: true,
+            });
+          }
+        } else if (isFinalClearanceStep3Done(assignment)) {
+          try {
+            await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser, {
+              ignoreBundleAutoDisabled: true,
+            });
+          } catch (e) {
+            console.warn('[mob] auto daily after skip pre-mob', e);
+          }
+        }
+      }
       const now = Date.now();
       const mobRef = doc(firestore, 'mobilizations', id);
       await updateDoc(mobRef, {
@@ -693,9 +756,12 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       if (snap.exists()) {
         setAssignment({ id: snap.id, ...(snap.data() as object) } as Assignment);
       }
+      setPreMobDateDraft('');
       toast({
         title: 'ข้าม Pre-Mob แล้ว',
-        description: 'ไม่มีวัน Pre-Mob — ไปขั้น Mob ได้',
+        description: /^\d{4}-\d{2}-\d{2}$/.test(prevPre)
+          ? `ลบวัน Pre-Mob ${prevPre} แล้ว — ไม่มีวัน Standby · เริ่มที่วันทำงานได้`
+          : 'ไม่มีวัน Pre-Mob — ไปขั้น Mob ได้',
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -708,7 +774,17 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   /** ไม่มี Mob — ไม่บันทึกวัน M1 · ตารางเวลาจะเริ่มที่วันทำงานเลย */
   const runSkipMob = async () => {
     if (!firestore || !assignment || !currentUser?.id || !canEditMobilization) return;
+    const editing = clearanceFormEditing || clearanceEditMode === 2;
+    if (isFinalClearanceMobDone(assignment) && !editing) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้าม Mob ไม่ได้',
+        description: 'กด «แก้ไข» ด้านบน แล้วค่อยกด «ไม่มี Mob» เพื่อลบวัน M1 ที่บันทึกผิด',
+      });
+      return;
+    }
     const gate = canSaveFinalClearanceMob(assignment, {
+      editingExisting: editing,
       drugOk: mobDrugOk,
       drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
       travelReady,
@@ -717,8 +793,61 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
       return;
     }
+    const prevMob = (assignment.mobStandbyDate || '').trim();
+    const alreadySkipped = assignment.mobMobSkipped === true && !/^\d{4}-\d{2}-\d{2}$/.test(prevMob);
+    if (alreadySkipped) {
+      toast({ title: 'ข้าม Mob อยู่แล้ว' });
+      return;
+    }
     setClearanceSavingStep(2);
     try {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(prevMob)) {
+        if (!canEditTimesheets) {
+          toast({
+            variant: 'destructive',
+            title: 'ไม่มีสิทธิ์',
+            description: 'ต้องมีสิทธิ์แก้ไข Timesheets เพื่อลบวัน Mob ที่บันทึกไว้',
+          });
+          return;
+        }
+        await deleteDraftMobFinalClearanceTimesheetsInRange(
+          firestore,
+          assignment.workerId,
+          assignment.id,
+          prevMob,
+          prevMob,
+        );
+        const workYmd = (assignment.mobWorkingStartDate || '').trim();
+        if (workYmd === prevMob && isFinalClearanceStep3Done(assignment) && po) {
+          let line = primaryPoLine;
+          if (!line && assignment.poId && assignment.poLineId) {
+            const snap = await getDoc(
+              doc(firestore, 'purchase_orders', assignment.poId, 'po_lines', assignment.poLineId),
+            );
+            if (snap.exists()) line = { id: snap.id, ...(snap.data() as object) } as POLine;
+          }
+          if (line?.id) {
+            await upsertMobClearanceDailyTimesheet(firestore, currentUser as AppUser, {
+              assignment,
+              po,
+              line,
+              workerDisplayName: workerTimesheetName || assignment.workerId,
+              kind: 'work_day',
+              dateYmd: workYmd,
+              bypassPoMonthLock: true,
+              overwriteConflictingEventType: true,
+            });
+          }
+        } else if (isFinalClearanceStep3Done(assignment)) {
+          try {
+            await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser, {
+              ignoreBundleAutoDisabled: true,
+            });
+          } catch (e) {
+            console.warn('[mob] auto daily after skip mob', e);
+          }
+        }
+      }
       const now = Date.now();
       const mobRef = doc(firestore, 'mobilizations', id);
       await updateDoc(mobRef, {
@@ -736,9 +865,12 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       if (snap.exists()) {
         setAssignment({ id: snap.id, ...(snap.data() as object) } as Assignment);
       }
+      setStandbyDateDraft('');
       toast({
         title: 'ข้าม Mob แล้ว',
-        description: 'ไม่มีวัน M1 — ไปขั้น Start working day ได้เลย · ตารางเวลาจะเริ่มที่วันทำงาน',
+        description: /^\d{4}-\d{2}-\d{2}$/.test(prevMob)
+          ? `ลบวัน M1 ${prevMob} แล้ว — ตารางเวลาเริ่มที่วันทำงานเลย`
+          : 'ไม่มีวัน M1 — ไปขั้น Start working day ได้เลย · ตารางเวลาจะเริ่มที่วันทำงาน',
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1643,7 +1775,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           <AlertTriangle className="h-4 w-4 text-amber-800" />
                           <AlertTitle className="text-amber-950 dark:text-amber-100">โหมดแก้ไข Final Clearance</AlertTitle>
                           <AlertDescription className="text-xs text-amber-950/90 dark:text-amber-50/90">
-                            แก้สถานที่ · Pre-Mob · Mob · วันเริ่มงาน ได้ทั้งหมด แล้วกด «บันทึก» ด้านบน — ระบบจะอัปเดตตารางรายวัน/รายเดือนตามวันที่ใหม่
+                            แก้สถานที่หรือวันที่ แล้วกด «บันทึก» — หรือกด «ไม่มี Pre-Mob» / «ไม่มี Mob» เพื่อข้ามขั้นที่บันทึกผิด (ลบวัน SB/M1 ออกจากตาราง)
                           </AlertDescription>
                         </Alert>
                       ) : null}
@@ -1808,7 +1940,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     isMobUnassigned(assignment) ||
                                     clearanceSavingStep !== 0 ||
                                     clearanceFormSaving ||
-                                    isFinalClearancePreMobDone(assignment) ||
+                                    (!clearanceFormEditing &&
+                                      clearanceEditMode !== 1 &&
+                                      isFinalClearancePreMobDone(assignment)) ||
                                     !preMobSaveGate.ok
                                   }
                                   onClick={() => void runSkipPreMob()}
@@ -1818,8 +1952,12 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
-                              {isFinalClearancePreMobDone(assignment)
-                                ? 'บันทึก / ข้าม Pre-Mob แล้ว'
+                              {assignment.mobPreMobSkipped && !(assignment.mobPreMobDate || '').trim()
+                                ? 'ข้าม Pre-Mob อยู่แล้ว'
+                                : clearanceFormEditing && isFinalClearancePreMobDone(assignment)
+                                  ? 'ลบวัน Pre-Mob ที่บันทึกไว้ แล้วข้ามขั้นนี้ — ตารางเริ่มที่วันทำงานได้'
+                                : isFinalClearancePreMobDone(assignment)
+                                ? 'บันทึก Pre-Mob แล้ว — กด «แก้ไข» ด้านบน แล้วค่อยกด «ไม่มี Pre-Mob»'
                                 : !preMobSaveGate.ok
                                   ? preMobSaveGate.message
                                   : 'ข้ามวัน Pre-Mob — ไปขั้น Mob ได้เลย'}
@@ -1931,7 +2069,9 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     isMobUnassigned(assignment) ||
                                     clearanceSavingStep !== 0 ||
                                     clearanceFormSaving ||
-                                    isFinalClearanceMobDone(assignment) ||
+                                    (!clearanceFormEditing &&
+                                      clearanceEditMode !== 2 &&
+                                      isFinalClearanceMobDone(assignment)) ||
                                     !mobSaveGate.ok
                                   }
                                   onClick={() => void runSkipMob()}
@@ -1941,8 +2081,12 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
-                              {isFinalClearanceMobDone(assignment)
-                                ? 'บันทึก / ข้าม Mob แล้ว'
+                              {assignment.mobMobSkipped && !(assignment.mobStandbyDate || '').trim()
+                                ? 'ข้าม Mob อยู่แล้ว'
+                                : clearanceFormEditing && isFinalClearanceMobDone(assignment)
+                                  ? 'ลบวัน M1 ที่บันทึกไว้ แล้วข้ามขั้นนี้ — ตารางเริ่มที่วันทำงานเลย'
+                                : isFinalClearanceMobDone(assignment)
+                                ? 'บันทึก / ข้าม Mob แล้ว — กด «แก้ไข» ด้านบน แล้วค่อยกด «ไม่มี Mob»'
                                 : !mobSaveGate.ok
                                   ? mobSaveGate.message
                                   : 'ข้ามวัน Mob — ไม่บันทึกวัน M1 · ตารางเวลาเริ่มที่วันทำงานเลย'}

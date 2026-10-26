@@ -26,8 +26,6 @@ import { AttendanceDayKindCell } from '@/components/attendance/attendance-day-ki
 import { AttendanceGridLineCell } from '@/components/attendance/attendance-grid-line-cell';
 import { leaveOverlapsPayrollMonth } from '@/lib/attendance/office-attendance-day-kind';
 import {
-  attendanceInCorrectedByOverride,
-  attendanceOutCorrectedByOverride,
   buildAttendanceDayRows,
 } from '@/lib/attendance/correction-merge';
 import { buildStaffAttendanceGridCellsByYmd } from '@/lib/attendance/office-attendance-grid-day-cell';
@@ -302,14 +300,12 @@ export function SubjectAttendanceHistory(props: {
                   isBangkokWeeklyRestDayYmd(d.ymd, weeklyRestPattern)
                   || isHrSettingsCalendarHolidayYmd(d.ymd, calendarHolidays);
                 const gridCell = gridCellsByYmd[d.ymd];
-                const inCorrectedBadge = attendanceInCorrectedByOverride(d);
-                const outCorrectedBadge = attendanceOutCorrectedByOverride(d);
                 const otDisplay = attendanceOvertimeHoursForRequest(
                   overtimeBySubjectDay.get(overtimeRequestDayKey(subjectKey, d.ymd)),
                   monthlyWorkNorm,
                 );
                 return (
-                  <TableRow key={d.ymd} className={cn(weekendOrHol && 'bg-muted/40')}>
+                  <TableRow key={d.ymd} className={cn(weekendOrHol && 'bg-red-50')}>
                     <TableCell className="p-2 font-mono whitespace-nowrap text-center align-middle">
                       {formatDateThaiBE(d.ymd)}
                     </TableCell>
@@ -322,10 +318,7 @@ export function SubjectAttendanceHistory(props: {
                     </TableCell>
                     <TableCell className="p-1 font-mono text-center align-middle text-xs">
                       {gridCell ? (
-                        <AttendanceGridLineCell
-                          line={gridCell.morningIn}
-                          showCorrectedBadge={inCorrectedBadge && gridCell.morningIn.tone === 'time'}
-                        />
+                        <AttendanceGridLineCell line={gridCell.morningIn} />
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
@@ -346,10 +339,7 @@ export function SubjectAttendanceHistory(props: {
                     </TableCell>
                     <TableCell className="p-1 font-mono text-center align-middle text-xs">
                       {gridCell ? (
-                        <AttendanceGridLineCell
-                          line={gridCell.afternoonOut}
-                          showCorrectedBadge={outCorrectedBadge && gridCell.afternoonOut.tone === 'time'}
-                        />
+                        <AttendanceGridLineCell line={gridCell.afternoonOut} />
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}

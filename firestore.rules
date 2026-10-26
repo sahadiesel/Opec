@@ -647,6 +647,11 @@ service cloud.firestore {
       // เอกสารอื่นในคอลเลกชันนี้ยังอ่านได้เฉพาะบทบาท HR
       allow read: if rs11() || (docId == 'office_leave_entitlements' && isSignedIn());
       allow write: if blockExecutiveWrite() && rs11();
+      match /change_logs/{logId} {
+        allow read: if rs11();
+        allow create: if blockExecutiveWrite() && rs11();
+        allow update, delete: if isAdmin();
+      }
     }
     // ===== Self / Overview - Match blocks =====
     // [overview_dashboard] - :  Firestore path ( collection -  aggregate;  filter UI )

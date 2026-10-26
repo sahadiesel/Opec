@@ -342,7 +342,14 @@ export const MODULE_FIRESTORE_SPECS: ModuleFirestoreSpec[] = [
     label: 'ศูนย์กลาง HR (configuration)',
     domain: 'hr',
     fnPrefix: 'HrHub',
-    paths: [{ path: 'hr_configuration/{docId}', shape: 'crud' }],
+    paths: [
+      { path: 'hr_configuration/{docId}', shape: 'crud' },
+      {
+        path: 'hr_configuration/{docId}/change_logs/{logId}',
+        shape: 'append-only',
+        note: 'ประวัติแก้ไขตั้งค่า HR — ใครแก้ อะไรเปลี่ยน',
+      },
+    ],
   },
   {
     moduleKey: 'employee_self_profile',

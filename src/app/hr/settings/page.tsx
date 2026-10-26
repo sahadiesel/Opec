@@ -18,6 +18,8 @@ import {
   Scale,
   ShieldCheck,
   ClipboardList,
+  Download,
+  History,
   Save,
   Loader2,
   Plus,
@@ -36,8 +38,8 @@ import {
 import { isHRStaff } from '@/lib/permissions';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useRouter } from 'next/navigation';
-import { useFirestore } from '@/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { useCollection, useFirestore, useMemoFirebase } from '@/firebase';
+import { collection, doc, getDoc, limit, query, setDoc, where } from 'firebase/firestore';
 import { HR_CONFIGURATION_COLLECTION, HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID } from '@/lib/attendance/constants';
 import type { OfficeLeaveEntitlementsDoc } from '@/lib/attendance/types';
 import { loadPayrollPoliciesFromFirestore } from '@/lib/payroll/d8/policy-loader';
@@ -94,6 +96,15 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { escapeHtmlDoc, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import { formatDateTimeThaiBE } from '@/lib/date-thai';
+import {
+  diffHrSettingsSnapshots,
+  flattenHrSettingsSnapshot,
+  HR_SETTINGS_CHANGE_LOG_KIND,
+  hrSettingsSnapshotFromPolicyDocs,
+  persistHrSettingsChangeLog,
+  type HrSettingsChangeLogDoc,
+} from '@/lib/hr/hr-settings-change-log';
 
 const NO_PERM = 'คุณไม่มีสิทธ์ในการทำรายการ';
 
@@ -252,6 +263,23 @@ export default function HrSettingsPage() {
 
   const canViewPage = currentUser && isHRStaff(currentUser);
   const canEdit = canEditHrStatutoryPayrollSettings(currentUser);
+
+  const changeLogsQuery = useMemoFirebase(() => {
+    if (!firestore || !canViewPage) return null;
+    return query(
+      collection(firestore, HR_CONFIGURATION_COLLECTION),
+      where('kind', '==', HR_SETTINGS_CHANGE_LOG_KIND),
+      limit(100),
+    );
+  }, [firestore, canViewPage]);
+  const { data: changeLogDocs, isLoading: changeLogsLoading } = useCollection<HrSettingsChangeLogDoc>(
+    changeLogsQuery as any,
+  );
+  const changeLogs = useMemo(
+    () =>
+      [...(changeLogDocs ?? [])].sort((a, b) => (b.eventAt || 0) - (a.eventAt || 0)),
+    [changeLogDocs],
+  );
 
   const asOf = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
@@ -472,11 +500,13 @@ export default function HrSettingsPage() {
       const taxRef = doc(firestore, 'payroll_policies', HR_STATUTORY_POLICY_TAX_OFFICE_ID);
       const mwRef = doc(firestore, 'payroll_policies', HR_STATUTORY_POLICY_MONTHLY_WORK_ID);
       const wlRef = doc(firestore, 'payroll_policies', HR_WORKER_GLOBAL_LABOR_POLICY_ID);
-      const [ssoPrev, taxPrev, mwPrev, wlPrev] = await Promise.all([
+      const leaveRef = doc(firestore, HR_CONFIGURATION_COLLECTION, HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID);
+      const [ssoPrev, taxPrev, mwPrev, wlPrev, leavePrev] = await Promise.all([
         getDoc(ssoRef),
         getDoc(taxRef),
         getDoc(mwRef),
         getDoc(wlRef),
+        getDoc(leaveRef),
       ]);
       const ssoCreated =
         ssoPrev.exists() && typeof ssoPrev.data()?.createdAt === 'number'
@@ -584,13 +614,47 @@ export default function HrSettingsPage() {
         updatedAt: now,
         updatedByUid: currentUser.id,
       };
-      const leaveRef = doc(firestore, HR_CONFIGURATION_COLLECTION, HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID);
       await setDoc(leaveRef, leavePayload, { merge: true });
+
+      const beforeSnap = flattenHrSettingsSnapshot(
+        hrSettingsSnapshotFromPolicyDocs({
+          ssoData: ssoPrev.exists() ? (ssoPrev.data() as Record<string, unknown>) : null,
+          taxData: taxPrev.exists() ? (taxPrev.data() as Record<string, unknown>) : null,
+          monthlyWorkData: mwPrev.exists() ? (mwPrev.data() as Record<string, unknown>) : null,
+          workerLaborData: wlPrev.exists() ? (wlPrev.data() as Record<string, unknown>) : null,
+          leaveData: leavePrev.exists() ? (leavePrev.data() as Record<string, unknown>) : null,
+        }),
+      );
+      const afterSnap = flattenHrSettingsSnapshot({
+        ssoRate: rate,
+        ssoCeiling: ceiling,
+        assistanceFundRate: fundRate,
+        assistanceFundCeiling: fundCeiling,
+        annualAllowance: allowance,
+        pitBands: bandsOk,
+        monthlyWork: monthlyWorkCfg,
+        leavePersonal: leavePayload.personalDaysPerYear,
+        leaveSick: leavePayload.sickDaysPerYear,
+        leaveAnnual: leavePayload.annualVacationDaysPerYear,
+        workerLabor: workerLaborDraft,
+      });
+      const settingChanges = diffHrSettingsSnapshots(beforeSnap, afterSnap);
+      try {
+        await persistHrSettingsChangeLog({
+          firestore,
+          user: currentUser,
+          changes: settingChanges,
+        });
+      } catch (logErr) {
+        console.error('[hr-settings] change log write failed', logErr);
+      }
 
       toast({
         title: 'บันทึกตั้งค่าแล้ว',
         description:
-          'ภาษี ปสง. วันทำงานมาตรฐาน ตัวคูณ/ปฏิทินค่าจ้างลูกจ้าง และโควตาวันลาออฟฟิศ — งวดที่คำนวณใหม่จะใช้ชุดนี้ (บรรทัด snapshot เดิมไม่เปลี่ยน)',
+          settingChanges.length > 0
+            ? `บันทึกประวัติ ${settingChanges.length} รายการ โดย ${currentUser.displayName || currentUser.email}`
+            : 'ภาษี ปสง. วันทำงานมาตรฐาน ตัวคูณ/ปฏิทินค่าจ้างลูกจ้าง และโควตาวันลาออฟฟิศ — ไม่มีการเปลี่ยนแปลงจากค่าเดิม',
       });
       await load();
     } catch (e: unknown) {
@@ -1283,6 +1347,87 @@ export default function HrSettingsPage() {
                 }))
               }
             />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <History className="h-5 w-5" /> ประวัติการแก้ไขตั้งค่า
+              </CardTitle>
+              <CardDescription>
+                บันทึกอัตโนมัติเมื่อกดบันทึก — ใครแก้ วันเวลา และฟิลด์ที่เปลี่ยน (ดูได้ที่ประวัติกิจกรรมระบบด้วย)
+              </CardDescription>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-2 shrink-0"
+              disabled={!changeLogs?.length}
+              onClick={() => {
+                const rows = changeLogs ?? [];
+                if (!rows.length) return;
+                const header = ['วันเวลา', 'ผู้แก้ไข', 'บทบาท', 'รายการที่เปลี่ยน'];
+                const body = rows.map((log) => {
+                  const who = log.actorName || log.actorUserId || '';
+                  const detail = (log.lines || []).join(' | ');
+                  const cells = [formatDateTimeThaiBE(log.eventAt), who, log.actorRole || '', detail];
+                  return cells.map((v) => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)).join(',');
+                });
+                const csv = [header.join(','), ...body].join('\n');
+                const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = 'hr-settings-change-logs.csv';
+                a.click();
+                URL.revokeObjectURL(a.href);
+              }}
+            >
+              <Download className="h-4 w-4" /> ดาวน์โหลด CSV
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {changeLogsLoading ? (
+              <p className="text-sm text-muted-foreground flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" /> กำลังโหลดประวัติ…
+              </p>
+            ) : !changeLogs?.length ? (
+              <p className="text-sm text-muted-foreground">ยังไม่มีประวัติการแก้ไข</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[180px]">วันเวลา</TableHead>
+                    <TableHead className="w-[160px]">ผู้แก้ไข</TableHead>
+                    <TableHead>สิ่งที่แก้ไข</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {changeLogs.map((log) => (
+                    <TableRow key={log.id}>
+                      <TableCell className="align-top text-xs whitespace-nowrap">
+                        {formatDateTimeThaiBE(log.eventAt)}
+                      </TableCell>
+                      <TableCell className="align-top text-sm">
+                        <div className="font-medium">{log.actorName || log.actorUserId}</div>
+                        {log.actorRole ? (
+                          <div className="text-[11px] text-muted-foreground">{log.actorRole}</div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="align-top text-xs">
+                        <ul className="list-disc pl-4 space-y-0.5">
+                          {(log.lines || []).map((line) => (
+                            <li key={line}>{line}</li>
+                          ))}
+                        </ul>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
       </div>
