@@ -320,6 +320,8 @@ export interface PositionRate {
   notes?: string;
   /** Extended rate sheet (mob, standby, OT, M1/D1) — billing/payroll source when populated. */
   rateMatrix?: PositionRateMatrix;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface PurchaseOrder {

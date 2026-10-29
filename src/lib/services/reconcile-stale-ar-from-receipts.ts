@@ -12,6 +12,7 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import type { AccountsReceivable, MoneyReceipt, TaxInvoice } from '@/lib/types';
+import { asFirestoreUpdate } from '@/lib/firestore/as-update-data';
 import {
   buildCloseArFullyPatch,
   findCommercialAccountsReceivable,
@@ -86,7 +87,7 @@ export async function reconcileStaleCommercialArSupersededByTaxInvoice(db: Fires
     if (!taxSnap.exists()) continue;
     if ((taxSnap.data() as TaxInvoice).status !== 'ISSUED') continue;
 
-    await updateDoc(doc(db, 'accounts_receivable', ar.id), buildCloseArFullyPatch(ar, Date.now()));
+    await updateDoc(doc(db, 'accounts_receivable', ar.id), asFirestoreUpdate(buildCloseArFullyPatch(ar, Date.now())));
     fixedCount += 1;
   }
   return fixedCount;

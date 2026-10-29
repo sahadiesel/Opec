@@ -12,6 +12,7 @@ import {
   type DocumentReference,
   type Firestore,
 } from 'firebase/firestore';
+import { asFirestoreUpdate } from '@/lib/firestore/as-update-data';
 import type {
   Assignment,
   DailyTimesheet,
@@ -310,7 +311,7 @@ async function unlockOrphanLockedTimesheetsForPayroll(
       updatedAt: ts,
     };
     if (billingMode === 'MONTHLY') patch.readyForBilling = true;
-    batch.update(ref, patch);
+    batch.update(ref, asFirestoreUpdate(patch));
     updated++;
     n++;
     if (n >= FIRESTORE_BATCH_LIMIT) await flush();

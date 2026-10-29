@@ -6,6 +6,7 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import type { JobMode, POLine, Position, PositionRate, PurchaseOrder } from '@/lib/types';
+import { asFirestoreUpdate } from '@/lib/firestore/as-update-data';
 import {
   buildPoLineSellSnapshots,
   effectiveNormalWorkHoursOffshore,
@@ -127,7 +128,7 @@ export async function resyncPoLineRateSnapshotsForPo(
     const snapshot = buildPoLineRateSnapshotFromContract(rate, poWorkMode, position);
     await updateDoc(
       doc(db, 'purchase_orders', po.id, 'po_lines', lineDoc.id),
-      snapshot as Record<string, unknown>,
+      asFirestoreUpdate(snapshot as Record<string, unknown>),
     );
     updated += 1;
   }

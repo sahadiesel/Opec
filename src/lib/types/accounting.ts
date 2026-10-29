@@ -567,6 +567,8 @@ export interface CommercialInvoice {
   generationWarnings?: string[];
   timesheetCount?: number;
   notes?: string;
+  /** ลายเซ็นผู้มีอำนาจลงนาม — แนบโดยผู้จัดการ หรือหลังอนุมัติคำขอของ officer */
+  authorizedSignatory?: import('@/lib/types/document-signature').AuthorizedSignatoryMark;
   /** ใบกำกับภาษี / ใบเสร็จ (ร่างหรือออกแล้ว) ที่สร้างจากใบเรียกเก็บนี้ */
   linkedTaxInvoiceId?: string;
   /**

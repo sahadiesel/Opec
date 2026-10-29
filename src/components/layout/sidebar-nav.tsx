@@ -163,7 +163,7 @@ const ACCOUNTING_DOCUMENT_SUBSECTIONS: Array<{
     items: [
       {
         key: 'withholding_tax_items',
-        title: '1. หัก ณ ที่จ่าย (ภงด.1)',
+        title: '1. หัก ณ ที่จ่าย ( พนักงาน )',
         href: '/accounting/withholding-payroll',
         icon: FileText,
       },

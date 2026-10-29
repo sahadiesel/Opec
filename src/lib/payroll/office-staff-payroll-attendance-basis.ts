@@ -45,7 +45,7 @@ export function officeStaffAppliesScanTimeDeductions(
 
 /** แสดงช่องฐานคิดสาย/ขาด — เฉพาะรายเดือนที่ยังอ้างอิงเวลาเข้างาน */
 export function officeStaffShowsTimeDeductionBasisField(
-  staff: Pick<OfficeStaff, 'salaryType' | 'monthlyAttendanceExempt' | 'excludeFromPayrollRuns'>,
+  staff: Partial<Pick<OfficeStaff, 'salaryType' | 'monthlyAttendanceExempt' | 'excludeFromPayrollRuns'>>,
 ): boolean {
   if (staff.excludeFromPayrollRuns) return false;
   if (staff.salaryType !== 'MONTHLY') return false;

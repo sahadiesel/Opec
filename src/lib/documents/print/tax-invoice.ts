@@ -4,6 +4,7 @@ import type {
   CommercialInvoice,
   CommercialInvoiceLine,
   Customer,
+  DocumentPrintMarks,
   TaxInvoice,
 } from '@/lib/types';
 import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
@@ -86,6 +87,8 @@ export function buildTaxInvoicePrintHtml(params: {
    * ฝั่งลูกค้า/ผู้ใช้ทั่วไป: ใช้ค่าเริ่มต้น `['original']` เท่านั้น
    */
   sheets?: TaxInvoicePrintSheet[];
+  /** ลายเซ็นผู้มีอำนาจ / ตรายาง — ใส่เมื่อผู้ใช้เลือกตอนพิมพ์ */
+  printMarks?: DocumentPrintMarks;
 }): string {
   const { sheets, ...rest } = params;
   const sheetList: TaxInvoicePrintSheet[] = sheets?.length ? sheets : ['original'];
@@ -105,6 +108,7 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
   printedAtMs?: number;
   locale?: PrintDocumentLocale;
   sheetKind: TaxInvoicePrintSheet;
+  printMarks?: DocumentPrintMarks;
 }): string {
   const { company, invoice, billingNote, billingLines, customer, customerPartyNameOverride, printedAtMs } = params;
   const L = params.locale ?? 'th';
@@ -266,8 +270,18 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
     return '—';
   })();
   const footerHtml = buildStandardSignFooterHtml({
-    left: { roleLine: printT(L, 'signPreparedAccounting'), name: preparedAccountingName },
-    right: { roleLine: printT(L, 'signCustomerAuth'), name: '—' },
+    left: {
+      roleLine: printT(L, 'signPreparerDoc'),
+      name: preparedAccountingName,
+      imageUrl: params.printMarks?.preparerSignatureImageUrl,
+    },
+    middle: {
+      roleLine: printT(L, 'signAuthorizedCompany'),
+      name: (invoice.authorizedSignatory?.signerName || '').trim() || '—',
+      imageUrl: params.printMarks?.authorizedSignatureImageUrl,
+      stampUrl: params.printMarks?.stampImageUrl,
+    },
+    right: { roleLine: printT(L, 'signCustomerShort'), name: '—' },
     belowHtml: '',
   });
   let watermarkHtml = '';

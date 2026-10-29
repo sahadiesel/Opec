@@ -153,9 +153,9 @@ async function fetchOfficeLinesByDeterministicLineGet(
       const data = lineSnap.data() as OfficePayrollLine;
       if (data.staffId && data.staffId !== staffId) continue;
       out.push({
+        ...data,
         id: lineSnap.id,
         officePayrollRunId: runDoc.id,
-        ...data,
       });
     } catch {
       /* permission or missing line in this run */
@@ -182,9 +182,9 @@ async function fetchLinesByStaffIdCollectionGroup(
         const runId = data.officePayrollRunId || officeRunId || execRunId;
         if (!runId && !officeRunId && !execRunId) return null;
         return {
+          ...data,
           id: d.id,
           officePayrollRunId: runId,
-          ...data,
         } as OfficePayrollLine;
       })
       .filter((row): row is OfficePayrollLine => row != null);
@@ -205,9 +205,9 @@ async function fetchLinesByWorkerIdCollectionGroup(
       const data = d.data() as PayrollBatchLine;
       const batchId = d.ref.path.match(/payroll_batches\/([^/]+)\/lines\//)?.[1];
       return {
-        id: d.id,
-        payrollBatchId: data.payrollBatchId || batchId,
         ...data,
+        id: d.id,
+        payrollBatchId: data.payrollBatchId || batchId || data.payrollBatchId,
       } as PayrollBatchLine;
     });
   } catch {
@@ -225,7 +225,10 @@ async function fetchLinesBySubjectLinkedUserId(
       query(collectionGroup(firestore, 'lines'), where('subjectLinkedUserId', '==', linkedUserId)),
     );
     return snap.docs
-      .map((d) => ({ id: d.id, ...(d.data() as object) }))
+      .map((d): Record<string, unknown> => {
+        const data = d.data() as Record<string, unknown>;
+        return { ...data, id: d.id };
+      })
       .filter((row) => {
         if (filter.staffId && row.staffId !== filter.staffId) return false;
         if (filter.workerId && row.workerId !== filter.workerId) return false;
@@ -316,7 +319,7 @@ async function fetchSelfProfileOfficeLines(
   if (byLinkedUser.length > 0) {
     return {
       lines: byLinkedUser
-        .map((row) => row as OfficePayrollLine)
+        .map((row) => row as unknown as OfficePayrollLine)
         .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
         .slice(0, maxLines),
     };
@@ -474,7 +477,7 @@ async function fetchSelfProfileWorkerLines(
   const grouped = await fetchLinesBySubjectLinkedUserId(firestore, linkedUserId, { workerId });
   if (grouped.length > 0) {
     return grouped
-      .map((row) => row as PayrollBatchLine)
+      .map((row) => row as unknown as PayrollBatchLine)
       .sort((a, b) => (b.periodEndDate || '').localeCompare(a.periodEndDate || ''))
       .slice(0, maxLines);
   }

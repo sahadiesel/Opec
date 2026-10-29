@@ -95,6 +95,10 @@ import {
 } from '@/lib/payroll/labor-cost-model';
 import { WorkerInfoTab } from './_components/worker-info-tab';
 import {
+  LUMP_SUM_ENGAGEMENT_LOCKED_MESSAGE,
+  workerPayrollEngagementChangeBlocked,
+} from '@/lib/payroll/lump-sum-worker';
+import {
   loadAssignedContractLaborQuotes,
   type AssignedContractLaborQuote,
 } from '@/lib/payroll/timesheet-labor-base-cost';
@@ -457,6 +461,21 @@ function WorkerDetailContent({ id }: { id: string }) {
       return;
     }
     if (!workerRef || !worker || !currentUser) return;
+    const beforeKind = worker.payrollEngagementKind === 'LUMP_SUM' ? 'LUMP_SUM' : 'COMPANY';
+    const editedKind = editedWorker.payrollEngagementKind;
+    const afterKind =
+      editedKind === 'LUMP_SUM' ? 'LUMP_SUM' : editedKind === 'COMPANY' ? 'COMPANY' : beforeKind;
+    if (
+      afterKind !== beforeKind &&
+      workerPayrollEngagementChangeBlocked(worker, workerMobilizations)
+    ) {
+      toast({
+        variant: 'destructive',
+        title: 'เปลี่ยนประเภทลูกจ้างไม่ได้',
+        description: LUMP_SUM_ENGAGEMENT_LOCKED_MESSAGE,
+      });
+      return;
+    }
     const tenure = commitEmploymentTenure({
       existingTenures: editedWorker.employmentTenures ?? worker.employmentTenures,
       legacyStart: worker.startDate,

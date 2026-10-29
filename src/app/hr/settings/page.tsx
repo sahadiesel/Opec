@@ -50,12 +50,19 @@ import {
   HR_STATUTORY_POLICY_SSO_ID,
   HR_STATUTORY_POLICY_TAX_OFFICE_ID,
   HR_WORKER_GLOBAL_LABOR_POLICY_ID,
+  HR_LUMP_SUM_WORKER_LABOR_POLICY_ID,
 } from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import {
   DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT,
   type WorkerGlobalLaborContext,
   workerGlobalLaborContextFromPolicy,
 } from '@/lib/payroll/worker-global-labor-policy';
+import {
+  DEFAULT_LUMP_SUM_WORKER_LABOR_CONTEXT,
+  DEFAULT_LUMP_SUM_WHT_RATE_PERCENT,
+  lumpSumLaborContextFromPolicy,
+  lumpSumWithholdingRatePercentFromPolicy,
+} from '@/lib/payroll/lump-sum-worker';
 import { WEEKLY_REST_OPTIONS } from '@/lib/contract-position-rate-extras';
 import { CalendarHolidayEditor } from '@/app/main-contracts/[id]/_components/calendar-holiday-editor';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -255,6 +262,10 @@ export default function HrSettingsPage() {
   const [workerLaborDraft, setWorkerLaborDraft] = useState<WorkerGlobalLaborContext>(() => ({
     ...DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT,
   }));
+  const [lumpSumLaborDraft, setLumpSumLaborDraft] = useState<WorkerGlobalLaborContext>(() => ({
+    ...DEFAULT_LUMP_SUM_WORKER_LABOR_CONTEXT,
+  }));
+  const [lumpSumWhtRatePercent, setLumpSumWhtRatePercent] = useState(DEFAULT_LUMP_SUM_WHT_RATE_PERCENT);
 
   /** โควตาวันลาพนักงานออฟฟิศ (ใช้เมื่อมีเมนูจัดการวันลา) — เก็บที่ hr_configuration */
   const [officeLeavePersonal, setOfficeLeavePersonal] = useState(0);
@@ -332,6 +343,9 @@ export default function HrSettingsPage() {
       }
       const wlRec = policies.find((p) => p.id === HR_WORKER_GLOBAL_LABOR_POLICY_ID);
       setWorkerLaborDraft(workerGlobalLaborContextFromPolicy(wlRec ?? null));
+      const lsRec = policies.find((p) => p.id === HR_LUMP_SUM_WORKER_LABOR_POLICY_ID);
+      setLumpSumLaborDraft(lumpSumLaborContextFromPolicy(lsRec ?? null));
+      setLumpSumWhtRatePercent(lumpSumWithholdingRatePercentFromPolicy(lsRec ?? null));
 
       const leaveRef = doc(firestore, HR_CONFIGURATION_COLLECTION, HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID);
       const leaveSnap = await getDoc(leaveRef);
@@ -500,12 +514,14 @@ export default function HrSettingsPage() {
       const taxRef = doc(firestore, 'payroll_policies', HR_STATUTORY_POLICY_TAX_OFFICE_ID);
       const mwRef = doc(firestore, 'payroll_policies', HR_STATUTORY_POLICY_MONTHLY_WORK_ID);
       const wlRef = doc(firestore, 'payroll_policies', HR_WORKER_GLOBAL_LABOR_POLICY_ID);
+      const lsRef = doc(firestore, 'payroll_policies', HR_LUMP_SUM_WORKER_LABOR_POLICY_ID);
       const leaveRef = doc(firestore, HR_CONFIGURATION_COLLECTION, HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID);
-      const [ssoPrev, taxPrev, mwPrev, wlPrev, leavePrev] = await Promise.all([
+      const [ssoPrev, taxPrev, mwPrev, wlPrev, lsPrev, leavePrev] = await Promise.all([
         getDoc(ssoRef),
         getDoc(taxRef),
         getDoc(mwRef),
         getDoc(wlRef),
+        getDoc(lsRef),
         getDoc(leaveRef),
       ]);
       const ssoCreated =
@@ -523,6 +539,10 @@ export default function HrSettingsPage() {
       const wlCreated =
         wlPrev.exists() && typeof wlPrev.data()?.createdAt === 'number'
           ? (wlPrev.data()!.createdAt as number)
+          : now;
+      const lsCreated =
+        lsPrev.exists() && typeof lsPrev.data()?.createdAt === 'number'
+          ? (lsPrev.data()!.createdAt as number)
           : now;
 
       const ssoPolicy: PayrollPolicyRecord = {
@@ -602,10 +622,30 @@ export default function HrSettingsPage() {
         createdAt: wlCreated,
       };
 
+      const lumpRate = Math.max(0, Math.min(100, Number(lumpSumWhtRatePercent) || DEFAULT_LUMP_SUM_WHT_RATE_PERCENT));
+      const lumpSumLaborPolicy: PayrollPolicyRecord = {
+        id: HR_LUMP_SUM_WORKER_LABOR_POLICY_ID,
+        kind: 'lump_sum_worker_labor',
+        name: 'Lump-sum worker payroll — multipliers & 3% WHT (HR settings)',
+        effectiveFrom: '2000-01-01',
+        effectiveTo: null,
+        status: 'active',
+        appliesTo: 'worker',
+        config: {
+          costMultipliers: { ...lumpSumLaborDraft.cost },
+          weeklyRestPattern: lumpSumLaborDraft.weeklyRestPattern,
+          calendarHolidays: lumpSumLaborDraft.calendarHolidays,
+          withholdingRatePercent: lumpRate,
+        },
+        updatedAt: now,
+        createdAt: lsCreated,
+      };
+
       await setDoc(ssoRef, { ...ssoPolicy }, { merge: true });
       await setDoc(taxRef, { ...taxPolicy }, { merge: true });
       await setDoc(mwRef, { ...monthlyWorkPolicy }, { merge: true });
       await setDoc(wlRef, { ...workerLaborPolicy }, { merge: true });
+      await setDoc(lsRef, { ...lumpSumLaborPolicy }, { merge: true });
 
       const leavePayload: OfficeLeaveEntitlementsDoc = {
         personalDaysPerYear: Math.max(0, Math.round(Number(officeLeavePersonal) || 0)),
@@ -622,6 +662,7 @@ export default function HrSettingsPage() {
           taxData: taxPrev.exists() ? (taxPrev.data() as Record<string, unknown>) : null,
           monthlyWorkData: mwPrev.exists() ? (mwPrev.data() as Record<string, unknown>) : null,
           workerLaborData: wlPrev.exists() ? (wlPrev.data() as Record<string, unknown>) : null,
+          lumpSumLaborData: lsPrev.exists() ? (lsPrev.data() as Record<string, unknown>) : null,
           leaveData: leavePrev.exists() ? (leavePrev.data() as Record<string, unknown>) : null,
         }),
       );
@@ -637,6 +678,8 @@ export default function HrSettingsPage() {
         leaveSick: leavePayload.sickDaysPerYear,
         leaveAnnual: leavePayload.annualVacationDaysPerYear,
         workerLabor: workerLaborDraft,
+        lumpSumLabor: lumpSumLaborDraft,
+        lumpSumWhtRatePercent: lumpRate,
       });
       const settingChanges = diffHrSettingsSnapshots(beforeSnap, afterSnap);
       try {
@@ -1239,7 +1282,7 @@ export default function HrSettingsPage() {
               <CalendarDays className="h-5 w-5 text-primary shrink-0" /> ตั้งค่าวันหยุดและตัวคูณค่าจ้างลูกจ้าง (กลาง)
             </CardTitle>
             <CardDescription>
-              ใช้คำนวณ payroll ลูกจ้างทุกสัญญา (รวม OT / วันหยุดในปฏิทิน / เสาร์–อาทิตย์) — พนักงานออฟฟิศไม่ผ่านไดร์ฟ timesheet จึงไม่ใช้ชุดนี้ในการคิดเวลา
+              ใช้คำนวณ payroll ลูกจ้างบริษัททุกสัญญา (รวม OT / วันหยุดในปฏิทิน / เสาร์–อาทิตย์) — ไม่ใช้กับลูกจ้างแบบเหมา และไม่ใช้กับพนักงานออฟฟิศ
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 text-sm">
@@ -1342,6 +1385,132 @@ export default function HrSettingsPage() {
               holidays={workerLaborDraft.calendarHolidays}
               setHolidays={(fn) =>
                 setWorkerLaborDraft((d) => ({
+                  ...d,
+                  calendarHolidays: typeof fn === 'function' ? fn(d.calendarHolidays) : d.calendarHolidays,
+                }))
+              }
+            />
+          </CardContent>
+        </Card>
+
+        <Card className="border-amber-200/80">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-amber-700 shrink-0" /> ตั้งค่าตัวคูณค่าจ้างลูกจ้างแบบเหมา
+            </CardTitle>
+            <CardDescription>
+              ใช้เฉพาะคนที่ตั้งเป็นลูกจ้างแบบเหมาในทะเบียน — ไม่เปลี่ยนสูตรลูกจ้างบริษัท และการวางบิลลูกค้า
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6 text-sm">
+            <p className="flex gap-2 items-start leading-relaxed text-muted-foreground">
+              <Info className="h-4 w-4 shrink-0 mt-0.5" />
+              <span>
+                ค่าแรงยังมาจากสัญญาหรือค่าแรงที่กำหนดในทะเบียน × วันใน timesheet ตามเดิม ค่าเริ่มต้น: วันหยุด 1 เท่า · ไม่มีวันหยุดประจำสัปดาห์ · OT 1.5 · หัก ณ ที่จ่ายเหมา 3% (50ทวิ) ไม่หัก ปสง. และไม่หัก ภงด.1
+              </span>
+            </p>
+            <div className="space-y-2 max-w-xs">
+              <Label className="text-xs font-semibold">อัตราหัก ณ ที่จ่ายแบบเหมา (%)</Label>
+              <Input
+                type="number"
+                step="0.1"
+                min={0}
+                max={100}
+                disabled={loading || !canEdit}
+                className="font-mono h-9"
+                value={lumpSumWhtRatePercent}
+                onChange={(e) => setLumpSumWhtRatePercent(Number(e.target.value) || 0)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold text-foreground">ตัวคูณฝั่งต้นทุน (ลูกจ้างแบบเหมา)</Label>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                {(
+                  [
+                    ['otAfterShift', 'OT หลังกะ'],
+                    ['holiday', 'Holiday'],
+                    ['publicHoliday', 'นักขัตฤกษ์'],
+                    ['sunday', 'อาทิตย์'],
+                    ['sundayOt', 'อาทิตย์ OT'],
+                  ] as const
+                ).map(([key, hint]) => (
+                  <div key={key} className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">{hint}</Label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min={0}
+                      disabled={loading || !canEdit}
+                      className="font-mono h-9"
+                      value={lumpSumLaborDraft.cost[key]}
+                      onChange={(e) => {
+                        const v = Number(e.target.value) || 0;
+                        setLumpSumLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: v } }));
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold text-foreground">Standby / Mob / Demob / Travel</Label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {(
+                  [
+                    ['standby', 'Standby'],
+                    ['mobilization', 'Mob'],
+                    ['demobilization', 'Demob'],
+                    ['travel', 'Travel'],
+                  ] as const
+                ).map(([key, hint]) => (
+                  <div key={key} className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">{hint}</Label>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min={0}
+                      disabled={loading || !canEdit}
+                      className="font-mono h-9"
+                      value={lumpSumLaborDraft.cost[key]}
+                      onChange={(e) => {
+                        const v = Number(e.target.value) || 0;
+                        setLumpSumLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: v } }));
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2 max-w-xl">
+              <Label>รูปแบบวันหยุดประจำสัปดาห์ (ค่าจ้างแบบเหมา)</Label>
+              <Select
+                disabled={loading || !canEdit}
+                value={lumpSumLaborDraft.weeklyRestPattern}
+                onValueChange={(v) =>
+                  setLumpSumLaborDraft((d) => ({
+                    ...d,
+                    weeklyRestPattern: v as WorkerGlobalLaborContext['weeklyRestPattern'],
+                  }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WEEKLY_REST_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <CalendarHolidayEditor
+              title="วันหยุดในปฏิทินสำหรับลูกจ้างแบบเหมา"
+              disabled={loading || !canEdit}
+              holidays={lumpSumLaborDraft.calendarHolidays}
+              setHolidays={(fn) =>
+                setLumpSumLaborDraft((d) => ({
                   ...d,
                   calendarHolidays: typeof fn === 'function' ? fn(d.calendarHolidays) : d.calendarHolidays,
                 }))

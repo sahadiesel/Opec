@@ -14,6 +14,7 @@ import {
   deleteDoc,
   deleteField,
 } from 'firebase/firestore';
+import { asFirestoreUpdate } from '@/lib/firestore/as-update-data';
 import type {
   CommercialInvoice,
   CommercialInvoiceAttachment,
@@ -2586,7 +2587,7 @@ export async function regenerateCommercialDraftInvoiceFromTimesheets(
     }
   }
 
-  await updateDoc(ref, sanitizeFirestorePayload(payload) as Record<string, unknown>);
+  await updateDoc(ref, asFirestoreUpdate(sanitizeFirestorePayload(payload) as Record<string, unknown>));
 
   await writeAuditLog(db, actor, {
     actionType: 'UPDATE',

@@ -12,6 +12,11 @@ import {
   supplementalIncrementalPitBaht,
 } from './worker-statutory';
 import type { PayrollLineD8Snapshot } from '@/lib/types';
+import {
+  DEFAULT_LUMP_SUM_WHT_RATE_PERCENT,
+  LUMP_SUM_WHT_DEDUCTION_KEY,
+  lumpSumWithholdingBaht,
+} from '@/lib/payroll/lump-sum-worker';
 
 export type WorkerPayrollD8Input = {
   asOfDate: string;
@@ -25,6 +30,11 @@ export type WorkerPayrollD8Input = {
    * @deprecated ภงด. งวดตกเบิกไม่ใช้ฐานงวดปกติแล้ว — คง field ไว้เพื่อไม่พัง caller
    */
   priorPaidTaxableGross?: number;
+  /**
+   * ลูกจ้างแบบเหมา — ส่งอัตราหัก ณ ที่จ่าย (%) จะข้าม ปสง./ภงด.1 และหักเหมาแทน
+   * ไม่ส่ง = ลูกจ้างบริษัท (สูตรเดิม)
+   */
+  lumpSumWhtRatePercent?: number | null;
 };
 
 /**
@@ -41,12 +51,20 @@ export function computeWorkerPayrollLineD8(input: WorkerPayrollD8Input): {
   const gross = Math.max(0, input.grossFromTimesheets);
   const allowances = Number(input.earningsBreakdown?.hr_allowances) || 0;
   const isSupplemental = isSupplementalPayrollBatchType(input.batchType);
+  const lumpSumRate =
+    input.lumpSumWhtRatePercent != null && Number.isFinite(input.lumpSumWhtRatePercent)
+      ? Math.max(0, Number(input.lumpSumWhtRatePercent))
+      : null;
 
   let ss = 0;
   let fund = 0;
   let pit = 0;
 
-  if (isSupplemental) {
+  if (lumpSumRate != null) {
+    ss = 0;
+    fund = 0;
+    pit = 0;
+  } else if (isSupplemental) {
     ss = 0;
     fund = 0;
     pit = supplementalIncrementalPitBaht({
@@ -64,13 +82,22 @@ export function computeWorkerPayrollLineD8(input: WorkerPayrollD8Input): {
 
   const fixed = fixedDeductionsFromPolicy(input.policies.allowanceDeduction);
 
-  let deductionsBreakdown: Record<string, number> = {
-    social_security: ss,
-    ...(fund > 0 ? { employee_assistance_fund: fund } : {}),
-    pit_withholding: pit,
-    ...fixed,
-  };
-  if (isSupplemental) {
+  let deductionsBreakdown: Record<string, number> =
+    lumpSumRate != null
+      ? {
+          [LUMP_SUM_WHT_DEDUCTION_KEY]: lumpSumWithholdingBaht(
+            gross,
+            lumpSumRate ?? DEFAULT_LUMP_SUM_WHT_RATE_PERCENT,
+          ),
+          ...fixed,
+        }
+      : {
+          social_security: ss,
+          ...(fund > 0 ? { employee_assistance_fund: fund } : {}),
+          pit_withholding: pit,
+          ...fixed,
+        };
+  if (isSupplemental && lumpSumRate == null) {
     deductionsBreakdown = forceSupplementalNoSocialSecurity(deductionsBreakdown);
   }
 

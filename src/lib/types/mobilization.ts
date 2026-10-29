@@ -16,8 +16,8 @@ export interface MobilizationRequirementFulfillmentLine {
   storeItemId?: string;
   lastIssueSlipId?: string;
   lastIssueNo?: string;
-  waivedAt?: number;
-  waivedBy?: string;
+  waivedAt?: number | null;
+  waivedBy?: string | null;
   returnedAt?: number;
   updatedAt: number;
   updatedBy?: string;

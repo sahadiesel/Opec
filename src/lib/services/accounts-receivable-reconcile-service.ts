@@ -16,6 +16,7 @@ import {
 import type { AccountsReceivable, ARStatus, TaxInvoice } from '@/lib/types';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { sanitizeFirestorePayload } from '@/lib/utils';
+import { asFirestoreUpdate } from '@/lib/firestore/as-update-data';
 
 export async function findCommercialAccountsReceivable(
   db: Firestore,
@@ -164,7 +165,7 @@ export async function closeOpenCommercialArInBatch(
   const comAr = await findCommercialAccountsReceivable(db, cid);
   if (!comAr || !isArStillOpen(comAr)) return false;
 
-  batch.update(doc(db, 'accounts_receivable', comAr.id), buildCloseArFullyPatch(comAr, now));
+  batch.update(doc(db, 'accounts_receivable', comAr.id), asFirestoreUpdate(buildCloseArFullyPatch(comAr, now)));
   return true;
 }
 
@@ -178,7 +179,7 @@ export async function closeOpenCommercialArNow(
   const comAr = await findCommercialAccountsReceivable(db, cid);
   if (!comAr || !isArStillOpen(comAr)) return false;
 
-  await updateDoc(doc(db, 'accounts_receivable', comAr.id), buildCloseArFullyPatch(comAr, Date.now()));
+  await updateDoc(doc(db, 'accounts_receivable', comAr.id), asFirestoreUpdate(buildCloseArFullyPatch(comAr, Date.now())));
   return true;
 }
 
@@ -211,7 +212,7 @@ export async function reconcileOpenArForPaidTaxInvoice(
     const amt = roundMoney2(paidAmount > 0 ? paidAmount : Number(inv.totalAmount) || 0);
     batch.update(
       doc(db, 'accounts_receivable', taxAr.id),
-      buildApplyReceiptToTaxArPatch(taxAr, amt, now),
+      asFirestoreUpdate(buildApplyReceiptToTaxArPatch(taxAr, amt, now)),
     );
     fixedTaxAr = true;
     linkedArEntryId = taxAr.id;
@@ -223,7 +224,7 @@ export async function reconcileOpenArForPaidTaxInvoice(
   if (cid) {
     const comAr = await findCommercialAccountsReceivable(db, cid);
     if (comAr && isArStillOpen(comAr)) {
-      batch.update(doc(db, 'accounts_receivable', comAr.id), buildCloseArFullyPatch(comAr, now));
+      batch.update(doc(db, 'accounts_receivable', comAr.id), asFirestoreUpdate(buildCloseArFullyPatch(comAr, now)));
       fixedCommercialAr = true;
     }
   }
@@ -234,7 +235,7 @@ export async function reconcileOpenArForPaidTaxInvoice(
   }
 
   if (fixedTaxAr || fixedCommercialAr || taxPatch.arEntryId) {
-    batch.update(doc(db, 'tax_invoices', inv.id), sanitizeFirestorePayload(taxPatch));
+    batch.update(doc(db, 'tax_invoices', inv.id), asFirestoreUpdate(sanitizeFirestorePayload(taxPatch)));
     await batch.commit();
   }
 

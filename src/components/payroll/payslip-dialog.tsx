@@ -20,7 +20,7 @@ export function PayslipDialog({
   model,
   trigger,
   triggerClassName,
-  title = 'สลิปเงินเดือน',
+  title: titleProp,
 }: {
   model: PayslipViewModel;
   trigger?: ReactNode;
@@ -29,6 +29,8 @@ export function PayslipDialog({
   title?: string;
 }) {
   const printRef = useRef<HTMLDivElement>(null);
+
+  const title = titleProp || model.headingTh || 'สลิปเงินเดือน';
 
   const handlePrint = () => {
     const w = window.open('', '_blank', 'width=900,height=1200');
@@ -87,7 +89,7 @@ export function PayslipDialog({
       <DialogTrigger asChild>
         {trigger ?? (
           <Button type="button" variant="outline" size="sm" className={cn('gap-1', triggerClassName)}>
-            <Receipt className="h-3.5 w-3.5" /> สลิป
+            <Receipt className="h-3.5 w-3.5" /> {model.headingTh ? 'สลิปงาน' : 'สลิป'}
           </Button>
         )}
       </DialogTrigger>

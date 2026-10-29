@@ -213,7 +213,7 @@ export interface WithholdingCertificateDocument {
 
   /** อนุญาตออกเอกสารทางการแม้ไม่มีเลขผู้เสียภาษีคู่ค้า — เฉพาะแอดมิน + ระบุเหตุผล */
   payeeTaxIdMissingOverride?: boolean;
-  payeeTaxIdMissingReason?: string;
+  payeeTaxIdMissingReason?: string | null;
 
   whtElectronicData: WhtElectronicData;
 
@@ -317,6 +317,8 @@ export interface TaxInvoice {
   /** ภาษาเอกสารฉบับพิมพ์ ณ เวลาออกฉบับจริง (ISSUED) — ล็อกเพื่อให้พิมพ์ตรงกับลูกค้า/หน้าจอ (ไม่พึ่ง localStorage ฝ่ายเดียว) */
   printDocumentLocale?: 'th' | 'en';
   notes?: string;
+  /** ลายเซ็นผู้มีอำนาจลงนาม — แนบโดยผู้จัดการ หรือหลังอนุมัติคำขอของ officer */
+  authorizedSignatory?: import('@/lib/types/document-signature').AuthorizedSignatoryMark;
   /** ผู้สร้างร่างใบกำกับ (จากใบเรียกเก็บ / บัญชี) */
   createdByUid?: string;
   createdByName?: string;

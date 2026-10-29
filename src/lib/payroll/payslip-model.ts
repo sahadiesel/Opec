@@ -24,6 +24,7 @@ import {
   resolvePositionDisplayName,
 } from '@/lib/payroll/work-day-payslip-split';
 import type { SingleTimesheetGrossContext } from '@/lib/payroll/single-timesheet-gross';
+import { isLumpSumPayrollLine, laborContextForWorker } from '@/lib/payroll/lump-sum-worker';
 
 export const PAYSLIP_DEFAULT_COMPANY_TH = 'โอพีอีซี ออปส์โฟลว์';
 export const PAYSLIP_DEFAULT_COMPANY_EN = 'OPEC OpsFlow';
@@ -105,6 +106,8 @@ export type PayslipViewModel = {
   employeeName: string;
   periodLabel: string;
   payrollTypeLabel: string;
+  /** หัวเอกสาร — ลูกจ้างแบบเหมาใช้สลิปการทำงาน */
+  headingTh?: string;
   documentRef: string;
   /** แสดงเมื่องวดอนุมัติแล้วเท่านั้น (office) — ไม่ตั้งค่าก่อน HR อนุมัติ */
   paymentDateLabel?: string;
@@ -678,7 +681,7 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
         contractMap: ctx.contractMap,
         poContractById: ctx.poContractById,
         poWorkModeByPoId: ctx.poWorkModeByPoId,
-        workerGlobalLabor: ctx.workerGlobalLabor,
+        workerGlobalLabor: laborContextForWorker(wk, ctx.workerGlobalLabor, ctx.lumpSumLabor),
       });
       if (r.gross <= 0) continue;
 
@@ -725,7 +728,11 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
       workerById: ctx.workerById,
       posById: ctx.posById,
       contractMap: ctx.contractMap,
-      workerGlobalLabor: ctx.workerGlobalLabor,
+      workerGlobalLabor: laborContextForWorker(
+        ctx.workerById.get(group[0]?.workerId || ''),
+        ctx.workerGlobalLabor,
+        ctx.lumpSumLabor,
+      ),
     };
     const split = seg?.payslipWorkDaySplit ?? computeWorkDayPackagePayslipSplit(group, aggDeps, undefined);
     const positionSplits =
@@ -838,18 +845,24 @@ export function buildWorkerPayslipDeductionLines(
   const manual = line.hrLineAdjustments?.deductionItems ?? [];
   const out: PayslipLineItem[] = [];
 
-  /** งวดตกเบิก: ไม่หัก/ไม่แสดงประกันสังคมของงวดปกติที่จ่ายแล้ว */
-  const ss = isSupplemental ? 0 : round2(Number(d.social_security) || 0);
+  const lumpLine = isLumpSumPayrollLine(line);
+  /** งวดตกเบิก / ลูกจ้างแบบเหมา: ไม่แสดงประกันสังคม */
+  const ss = isSupplemental || lumpLine ? 0 : round2(Number(d.social_security) || 0);
   if (ss > 0.005) {
     out.push({ label: 'ประกันสังคม', amount: ss });
   }
 
-  const fund = round2(Number(d.employee_assistance_fund) || 0);
+  const fund = lumpLine ? 0 : round2(Number(d.employee_assistance_fund) || 0);
   if (fund > 0.005) {
     out.push({ label: 'กองทุนสงเคราะห์ลูกจ้าง', amount: fund });
   }
 
-  const pit = round2(Number(d.pit_withholding) || 0);
+  const lumpWht = round2(Number(d.lump_sum_wht) || 0);
+  if (lumpWht > 0.005) {
+    out.push({ label: 'หัก ณ ที่จ่ายแบบเหมา 3% (50ทวิ)', amount: lumpWht });
+  }
+
+  const pit = lumpLine ? 0 : round2(Number(d.pit_withholding) || 0);
   if (Math.abs(pit) > 0.005) {
     const periodYm = (line.periodEndDate || line.periodStartDate || '').slice(0, 7);
     const pitLabel = isSupplemental
@@ -874,6 +887,7 @@ export function buildWorkerPayslipDeductionLines(
     'social_security',
     'employee_assistance_fund',
     'pit_withholding',
+    'lump_sum_wht',
     PRIOR_PAID_RECOVERY_DEDUCTION_KEY,
   ]);
   manual.forEach((_, i) => known.add(`manual_ded_${i}`));
@@ -1189,9 +1203,14 @@ export function buildPayslipFromWorkerLine(
       companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
       employeeName: line.workerNameSnapshot || line.workerId,
       periodLabel,
-      payrollTypeLabel: isSupplemental
-        ? 'Worker Payroll · ตกเบิก (Supplemental)'
-        : 'Worker Payroll (Timesheet batch)',
+      payrollTypeLabel: isLumpSumPayrollLine(line)
+        ? isSupplemental
+          ? 'ลูกจ้างแบบเหมา · สลิปการทำงาน · ตกเบิก'
+          : 'ลูกจ้างแบบเหมา · สลิปการทำงาน'
+        : isSupplemental
+          ? 'Worker Payroll · ตกเบิก (Supplemental)'
+          : 'Worker Payroll (Timesheet batch)',
+      headingTh: isLumpSumPayrollLine(line) ? 'สลิปการทำงาน / Work slip' : undefined,
       documentRef: batch.id,
       paymentDateLabel: workerPaymentDateLabel(batch, line),
       isSupplemental,
@@ -1297,9 +1316,14 @@ export function buildPayslipFromWorkerLine(
     companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
     employeeName: line.workerNameSnapshot || line.workerId,
     periodLabel,
-    payrollTypeLabel: isSupplemental
-      ? 'Worker Payroll · ตกเบิก (Supplemental)'
-      : 'Worker Payroll (Timesheet batch)',
+    payrollTypeLabel: isLumpSumPayrollLine(line)
+      ? isSupplemental
+        ? 'ลูกจ้างแบบเหมา · สลิปการทำงาน · ตกเบิก'
+        : 'ลูกจ้างแบบเหมา · สลิปการทำงาน'
+      : isSupplemental
+        ? 'Worker Payroll · ตกเบิก (Supplemental)'
+        : 'Worker Payroll (Timesheet batch)',
+    headingTh: isLumpSumPayrollLine(line) ? 'สลิปการทำงาน / Work slip' : undefined,
     documentRef: batch.id,
     paymentDateLabel: workerPaymentDateLabel(batch, line),
     isSupplemental,

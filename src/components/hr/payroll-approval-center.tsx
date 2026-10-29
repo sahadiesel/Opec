@@ -80,6 +80,7 @@ import {
 } from 'lucide-react';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { buildPayslipFromOfficeLine, buildPayslipFromWorkerLine } from '@/lib/payroll/payslip-model';
+import { isLumpSumPayrollLine } from '@/lib/payroll/lump-sum-worker';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { cn } from '@/lib/utils';
 import { formatPayrollYearMonthEnAbbrev, formatPayrollYearMonthMmYyyyThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
@@ -1035,7 +1036,11 @@ export function PayrollApprovalCenterD6({
                                         {moneyTH(line.netAmount)}
                                       </TableCell>
                                       <TableCell className="text-right">
-                                        <PayslipDialog model={model} triggerClassName="h-7 gap-1 px-2 text-xs" />
+                                        <PayslipDialog
+                                          model={model}
+                                          triggerClassName="h-7 gap-1 px-2 text-xs"
+                                          title={isLumpSumPayrollLine(line) ? 'สลิปการทำงาน' : undefined}
+                                        />
                                       </TableCell>
                                     </TableRow>
                                   );

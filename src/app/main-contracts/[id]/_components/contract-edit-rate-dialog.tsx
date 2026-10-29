@@ -91,7 +91,7 @@ export function ContractEditRateDialog({
   useEffect(() => {
     if (!open || !rate) return;
     const initialForm = rateToFormState(rate);
-    const matrix = { ...initialForm.rateMatrix } || {};
+    const matrix = { ...(initialForm.rateMatrix ?? {}) };
 
     // 1. Sell side Working Day:
     const sell = { ...matrix.sell };

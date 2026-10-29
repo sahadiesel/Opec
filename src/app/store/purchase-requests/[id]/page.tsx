@@ -388,7 +388,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
 
   const submitForApproval = async () => {
     if (!okStore) return;
-    if (!firestore || !pr || !prRef) return;
+    if (!firestore || !pr || !prRef || !currentUser) return;
     if (pr.status !== 'DRAFT' && pr.status !== 'REJECTED') return;
     if (!validateSubmit(true)) return;
     setSaving(true);

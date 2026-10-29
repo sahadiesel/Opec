@@ -64,6 +64,19 @@ service cloud.firestore {
     function isAccountingManagerOrAdmin() {
       return isInternalUser() && userRole() in ['system_admin', 'accounting_manager'];
     }
+    /** ผู้จัดการหรือแอดมิน — อนุมัติลายเซ็นผู้มีอำนาจลงนามบนเอกสาร */
+    function canDecideDocumentSignature() {
+      return isInternalUser() && (
+        userRole() == 'system_admin' || userRole().matches('.*_manager')
+      );
+    }
+    /** แก้ได้เฉพาะฟิลด์ลายเซ็นผู้มีอำนาจ — officer ส่งคำขอ / ผู้จัดการอนุมัติ */
+    function authorizedSignatoryFieldUpdateOnly() {
+      return blockExecutiveWrite()
+        && isInternalUser()
+        && (canDecideDocumentSignature() || userRole().matches('.*_officer'))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['authorizedSignatory', 'updatedAt']);
+    }
     /** แก้หัวสัญญา + บันทึก change_logs — officer แก้ DRAFT/REJECTED/ACTIVE ได้ / ส่งขออนุมัติได้ */
     function canUpdateRentalContract() {
       return blockExecutiveWrite() && (
@@ -338,7 +351,8 @@ service cloud.firestore {
     match /quotations/{id} {
       allow read:   if rs1();
       allow create: if blockExecutiveWrite() && rs0();
-      allow update: if blockExecutiveWrite() && (rs0() || rs0());
+      allow update: if blockExecutiveWrite() && (rs0() || rs0())
+        || authorizedSignatoryFieldUpdateOnly();
       allow delete: if blockExecutiveWrite() && rs0();
     }
     match /quotations/{quotationId}/lines/{lineId} {
@@ -675,7 +689,8 @@ service cloud.firestore {
     match /tax_invoices/{id} {
       allow read:   if rs6() || portalAccountingDocReadOk();
       allow create: if blockExecutiveWrite() && canWriteCustomerArDocs();
-      allow update: if blockExecutiveWrite() && (rs6() || canWriteCustomerArDocs() || portalAccountingDocWriteOk());
+      allow update: if blockExecutiveWrite() && (rs6() || canWriteCustomerArDocs() || portalAccountingDocWriteOk())
+        || authorizedSignatoryFieldUpdateOnly();
       allow delete: if blockExecutiveWrite() && rs19();
     }
     match /tax_invoices/{taxInvoiceId}/{document=**} {
@@ -794,7 +809,8 @@ service cloud.firestore {
     match /commercial_invoices/{id} {
       allow read: if isInternalUser() || portalAccountingDocReadOk();
       allow create: if internalWriteOk();
-      allow update: if isInternalUser() || portalCommercialInvoiceCustomerActionOk();
+      allow update: if isInternalUser() || portalCommercialInvoiceCustomerActionOk()
+        || authorizedSignatoryFieldUpdateOnly();
       allow delete: if internalWriteOk();
     }
     // Client portal — รายงาน dispute / ต่อรอง (Open Dispute)
@@ -883,6 +899,14 @@ service cloud.firestore {
       allow read: if rs19();
       allow create, update: if isAccountingManagerOrAdmin()
         || (blockExecutiveWrite() && isInternalUser() && userRole() == 'accounting_officer');
+      allow delete: if isAdmin();
+    }
+    match /document_signature_requests/{id} {
+      allow read: if isInternalUser();
+      allow create: if blockExecutiveWrite() && isInternalUser()
+        && request.resource.data.status == 'PENDING'
+        && request.resource.data.requestedByUid == request.auth.uid;
+      allow update: if blockExecutiveWrite() && canDecideDocumentSignature();
       allow delete: if isAdmin();
     }
     match /users/{userId} {

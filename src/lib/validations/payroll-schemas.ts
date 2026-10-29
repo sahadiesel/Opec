@@ -109,6 +109,7 @@ export const PayrollBatchLineSchema = z.object({
   workerId: z.string().min(1),
   workerNameSnapshot: z.string().min(1),
   workerPaymentProfileSnapshot: z.record(z.any()),
+  payrollEngagementKind: z.enum(['COMPANY', 'LUMP_SUM']).optional(),
   assignmentIds: z.array(z.string()).default([]),
   sourceTimesheetIds: z.array(z.string()).default([]),
   periodStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),

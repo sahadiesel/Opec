@@ -1,4 +1,5 @@
 import type { PayrollBatch, PayrollBatchLine, PaymentMethod, Position, Worker } from '@/lib/types';
+import { isLumpSumPayrollLine, LUMP_SUM_WHT_DEDUCTION_KEY } from '@/lib/payroll/lump-sum-worker';
 import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
 import { buildWorkerPayslipDeductionLines, buildWorkerPayslipIncomeLines } from '@/lib/payroll/payslip-model';
 import { buildWorkerGroupWhtDocumentNo } from '@/lib/wht/wht-document-no';
@@ -99,6 +100,20 @@ export function workerPayrollLinePitAmount(line: PayrollBatchLine): number {
   return round2(Number.isFinite(v) ? v : 0);
 }
 
+/** ยอดหัก ณ ที่จ่ายแบบเหมา 3% (50ทวิ) */
+export function workerPayrollLineLumpSumWhtAmount(line: PayrollBatchLine): number {
+  const db = line.deductionsBreakdown || {};
+  const snap = line.d8Snapshot?.deductions || {};
+  const v = Number(db[LUMP_SUM_WHT_DEDUCTION_KEY] ?? snap[LUMP_SUM_WHT_DEDUCTION_KEY] ?? 0);
+  return round2(Number.isFinite(v) ? v : 0);
+}
+
+/** ยอดหักฯ ที่ใช้พิมพ์ใบรับรอง — ภงด.1 หรือเหมา 3% */
+export function workerPayrollLineWithholdingAmount(line: PayrollBatchLine): number {
+  if (isLumpSumPayrollLine(line)) return workerPayrollLineLumpSumWhtAmount(line);
+  return workerPayrollLinePitAmount(line);
+}
+
 function pitAmount(line: PayrollBatchLine): number {
   return workerPayrollLinePitAmount(line);
 }
@@ -137,6 +152,8 @@ export function buildPayrollWorkerWhtPrintVm(input: {
   yearToDateSocialSecurityBaht?: number;
   /** เงินสะสมกองทุนสงเคราะห์ลูกจ้างทั้งปี — ถ้าไม่ระบุ ใช้ยอดของบรรทัดงวดนี้แทน */
   yearToDateEmployeeAssistanceFundBaht?: number;
+  /** บังคับแบบ ภงด.1 ของลูกจ้างบริษัท — ใช้คู่กับใบหัก 50ทวิ ของงวดเหมา */
+  asCompanyEmployeeForm?: boolean;
 }): PayrollWorkerWhtPrintVm {
   const { batch, line, worker, position, company, periodLabel, issueDateYmd, paymentDateYmd } = input;
 
@@ -162,7 +179,8 @@ export function buildPayrollWorkerWhtPrintVm(input: {
 
   const totalDeductions = round2(sumDeductionsMap(line.deductionsBreakdown));
   const netPaidAmount = round2(Number(line.netAmount) || 0);
-  const wht = pitAmount(line);
+  const lumpSum = input.asCompanyEmployeeForm ? false : isLumpSumPayrollLine(line, worker);
+  const wht = lumpSum ? workerPayrollLineLumpSumWhtAmount(line) : pitAmount(line);
 
   const thaiId = (worker.thaiNationalId || '').trim();
   const passport = (worker.passportNo || '').trim();
@@ -195,7 +213,9 @@ export function buildPayrollWorkerWhtPrintVm(input: {
     paymentDateYmd: paymentDateYmd || issueDateYmd,
     payrollPeriodLabel: periodLabel,
     batchReference: batch.id,
-    subtitleTh: 'สำหรับเงินได้จากการจ้างงาน / ค่าแรงลูกจ้าง',
+    subtitleTh: lumpSum
+      ? 'หนังสือรับรองการหักภาษี ณ ที่จ่าย (แบบ 50 ทวิ) — ค่าจ้างเหมา'
+      : 'สำหรับเงินได้จากการจ้างงาน / ค่าแรงลูกจ้าง',
 
     payer: {
       legalNameTh: (company?.companyNameTh || '').trim() || '—',
@@ -222,9 +242,11 @@ export function buildPayrollWorkerWhtPrintVm(input: {
       bankAccountLast4: maskBankAccountLast4(worker.bankAccountNumber),
     },
 
-    incomeTypeCode: 'PAYROLL_WAGE',
-    incomeTypeNameTh: 'ค่าแรง / ค่าจ้าง / รายได้จากการทำงาน',
-    formTypeCode: 'PND1',
+    incomeTypeCode: lumpSum ? 'OTHER' : 'PAYROLL_WAGE',
+    incomeTypeNameTh: lumpSum
+      ? 'ค่าจ้างทำของ / ค่าบริการ (หัก ณ ที่จ่ายแบบเหมา 3%)'
+      : 'ค่าแรง / ค่าจ้าง / รายได้จากการทำงาน',
+    formTypeCode: lumpSum ? 'PND3' : 'PND1',
 
     earningsRows,
     deductionsRows,
@@ -235,7 +257,7 @@ export function buildPayrollWorkerWhtPrintVm(input: {
 
     taxableIncomeAmount,
     withholdingTaxAmount: wht,
-    withholdingTaxRateDisplayTh: 'ตามการคำนวณ Payroll',
+    withholdingTaxRateDisplayTh: lumpSum ? '3%' : 'ตามการคำนวณ Payroll',
     withholdingTaxWordsTh: amountToThaiBahtText(wht),
     pitZeroNote,
 
@@ -305,10 +327,11 @@ export function validatePayrollWorkerWhtPrint(input: {
   if (!line) {
     errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่พบข้อมูลสลิปเงินเดือนของลูกจ้าง');
   } else {
-    if (!line.d8Snapshot) {
+    const lump = isLumpSumPayrollLine(line, worker);
+    if (!line.d8Snapshot && !lump) {
       errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่พบข้อมูลสลิปเงินเดือนของลูกจ้าง');
     }
-    const gross = round2(Number(line.d8Snapshot?.gross) || 0);
+    const gross = round2(Number(line.d8Snapshot?.gross) || Number(line.grossAmount) || 0);
     if (gross <= 0) {
       errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ไม่มียอดรายได้รวมในงวดนี้');
     }
@@ -324,7 +347,7 @@ export function validatePayrollWorkerWhtPrint(input: {
       errors.push('ไม่สามารถออกใบหัก ณ ที่จ่ายได้: ยอดสุทธิไม่ตรงกับยอดรายได้หักรายการหัก');
     }
 
-    const wht = pitAmount(line);
+    const wht = lump ? workerPayrollLineLumpSumWhtAmount(line) : pitAmount(line);
     if (wht <= 0.005) {
       warnings.push('ไม่มีภาษีหัก ณ ที่จ่ายในงวดนี้ — แสดงยอดภาษีเป็น 0.00');
     }

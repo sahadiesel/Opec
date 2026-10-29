@@ -139,7 +139,7 @@ export default function AccountsReceivablePage() {
     () =>
       buildSupersededCommercialInvoiceIds({
         taxInvoices: issuedTaxInvoices,
-        commercialInvoices,
+        commercialInvoices: commercialInvoices ?? undefined,
       }),
     [issuedTaxInvoices, commercialInvoices],
   );

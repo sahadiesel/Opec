@@ -18,3 +18,4 @@ export * from './types/office-payroll';
 export * from './types/quotation';
 export * from './types/purchase';
 export * from './types/accounting';
+export * from './types/document-signature';

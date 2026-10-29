@@ -27,6 +27,8 @@ export interface MenuPermissionGroup {
   audience: 'internal' | 'admin' | 'accounting' | 'client';
   /** เมนูหลักในกลุ่มนี้ */
   items: MenuPermissionItem[];
+  /** กลุ่ม HR ที่ประกอบใน sidebar จาก hr-nav-items — สคริปต์เทียบเมทริกซ์ใช้ข้ามรายการขาย */
+  hrStructured?: boolean;
 }
 
 export const MENU_PERMISSION_GROUPS: MenuPermissionGroup[] = [

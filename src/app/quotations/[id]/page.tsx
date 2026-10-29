@@ -50,6 +50,10 @@ import { buildQuotationPrintHtml, openStandardPrintWindow } from '@/lib/document
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { DocumentShareButton } from '@/components/documents/document-share-controls';
+import { AuthorizedSignatoryActions } from '@/components/documents/authorized-signatory-actions';
+import { PrintMarksDialog } from '@/components/documents/print-marks-dialog';
+import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
+import { authorizedSignatureReady } from '@/lib/types/document-signature';
 import { QuotationPreviewTab } from './_components/quotation-preview-tab';
 import { QuotationHistoryTab } from './_components/quotation-history-tab';
 import { QuotationLineDialog } from './_components/quotation-line-dialog';
@@ -63,6 +67,7 @@ type CompanyDocumentProfile = {
   email?: string;
   addressLine1?: string;
   addressLine2?: string;
+  documentHeaderStampUrl?: string;
 };
 
 export default function QuotationDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -81,6 +86,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     [firestore, canViewQuotations, id]
   );
   const { data: quotation, isLoading: isQuoLoading, error: quotationLoadError } = useDoc<Quotation>(quotationRef as any);
+  const preparerSignatureUrl = useUserSignatureUrl(quotation?.createdByUid);
 
   const linesQuery = useMemoFirebase(
     () => (firestore && canViewQuotations ? collection(firestore, 'quotations', id, 'lines') : null),
@@ -103,6 +109,10 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   const { data: customerRow } = useDoc<Customer>(customerRef as any);
 
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
+  const [marksDialogOpen, setMarksDialogOpen] = useState(false);
+  const [includePreparerSignature, setIncludePreparerSignature] = useState(false);
+  const [includeAuthorizedSignature, setIncludeAuthorizedSignature] = useState(false);
+  const [includeStamp, setIncludeStamp] = useState(false);
 
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedHeader, setEditedHeader] = useState<Partial<Quotation>>({});
@@ -202,8 +212,23 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     return { subtotal, taxAmount, grandTotal, discountAmount, taxPercent };
   };
 
-  const handlePrintQuotation = async () => {
+  const handlePrintQuotation = async (
+    withPreparerSignature = false,
+    withAuthorizedSignature = false,
+    withStamp = false,
+  ) => {
     if (!quotation) return;
+    const authorizedReady = authorizedSignatureReady(quotation.authorizedSignatory);
+    const stampUrl = (companyProfile?.documentHeaderStampUrl || '').trim();
+    if (withPreparerSignature && !preparerSignatureUrl) {
+      toast({ title: 'ยังไม่มีลายเซ็นผู้จัดเตรียมเอกสาร', description: 'พิมพ์ช่องซ้ายโดยไม่มีรูปลายเซ็น' });
+    }
+    if (withAuthorizedSignature && !authorizedReady) {
+      toast({ title: 'ยังไม่มีลายเซ็นผู้มีอำนาจลงนาม', description: 'พิมพ์ช่องกลางโดยไม่มีรูปลายเซ็น' });
+    }
+    if (withStamp && !stampUrl) {
+      toast({ title: 'ยังไม่มีตรายาง', description: 'พิมพ์โดยไม่มีตรายาง — ตั้งได้ที่หัวเอกสารบริษัท' });
+    }
     const headerSlice = { ...quotation, ...editedHeader } as Quotation;
     const t = computeTotals(displayLines, headerSlice);
     const body = buildQuotationPrintHtml({
@@ -220,6 +245,13 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
       },
       printedAtMs: Date.now(),
       locale: printLocale,
+      printMarks: {
+        preparerSignatureImageUrl:
+          withPreparerSignature && preparerSignatureUrl ? preparerSignatureUrl : undefined,
+        authorizedSignatureImageUrl:
+          withAuthorizedSignature && authorizedReady ? quotation.authorizedSignatory?.signatureImageUrl : undefined,
+        stampImageUrl: withStamp && stampUrl ? stampUrl : undefined,
+      },
     });
     if (
       !(await openStandardPrintWindow({
@@ -651,7 +683,12 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
               variant="outline"
               type="button"
               className="gap-2 border-primary text-primary hover:bg-primary/5 h-11 px-6 shadow-sm"
-              onClick={() => handlePrintQuotation()}
+              onClick={() => {
+                setIncludePreparerSignature(false);
+                setIncludeAuthorizedSignature(false);
+                setIncludeStamp(false);
+                setMarksDialogOpen(true);
+              }}
             >
               <Printer className="h-4 w-4" /> พิมพ์เอกสาร (Print)
             </Button>
@@ -662,12 +699,42 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
               sharedWith={quotation.sharedWith}
               sharedWithUids={quotation.sharedWithUids}
             />
+            {currentUser && !['rejected', 'cancelled', 'expired'].includes(quotation.status) ? (
+              <AuthorizedSignatoryActions
+                sourceCollection="quotations"
+                sourceId={quotation.id}
+                documentNo={quotation.quotationNo}
+                documentLabel="ใบเสนอราคา"
+                mark={quotation.authorizedSignatory}
+                currentUser={currentUser}
+              />
+            ) : null}
             <Badge variant={isEditLocked ? "default" : "outline"} className={`py-1.5 px-4 font-bold uppercase ${isEditLocked ? "bg-slate-900 text-white" : "border-primary/20 bg-primary/5 text-primary"}`}>
               {isEditLocked && <Lock className="h-3 w-3 mr-2" />}
               STATUS: {statusDisplay}
             </Badge>
           </div>
         </div>
+
+        <PrintMarksDialog
+          open={marksDialogOpen}
+          onOpenChange={setMarksDialogOpen}
+          includePreparerSignature={includePreparerSignature}
+          includeAuthorizedSignature={includeAuthorizedSignature}
+          includeStamp={includeStamp}
+          onPreparerSignature={setIncludePreparerSignature}
+          onAuthorizedSignature={setIncludeAuthorizedSignature}
+          onStamp={setIncludeStamp}
+          preparerReady={Boolean(preparerSignatureUrl)}
+          preparerName={quotation.createdBy}
+          authorizedReady={authorizedSignatureReady(quotation.authorizedSignatory)}
+          authorizedName={quotation.authorizedSignatory?.signerName}
+          stampReady={Boolean((companyProfile?.documentHeaderStampUrl || '').trim())}
+          onConfirm={() => {
+            setMarksDialogOpen(false);
+            void handlePrintQuotation(includePreparerSignature, includeAuthorizedSignature, includeStamp);
+          }}
+        />
 
         <Tabs defaultValue="edit" className="w-full">
           <TabsList className="grid grid-cols-3 w-full md:w-fit h-auto p-1 bg-muted/50 print:hidden">

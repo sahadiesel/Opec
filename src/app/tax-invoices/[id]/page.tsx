@@ -96,6 +96,10 @@ import {
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { DocumentShareButton } from '@/components/documents/document-share-controls';
+import { AuthorizedSignatoryActions } from '@/components/documents/authorized-signatory-actions';
+import { PrintMarksChoices, PrintMarksDialog } from '@/components/documents/print-marks-dialog';
+import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
+import { authorizedSignatureReady } from '@/lib/types/document-signature';
 import { TaxInvoiceLinesTable } from '@/components/documents/tax-invoice-lines-table';
 import { Checkbox } from '@/components/ui/checkbox';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
@@ -144,6 +148,10 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const [notesDraft, setNotesDraft] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
   const [printPresetOpen, setPrintPresetOpen] = useState(false);
+  const [marksDialogOpen, setMarksDialogOpen] = useState(false);
+  const [includePreparerSignature, setIncludePreparerSignature] = useState(false);
+  const [includeAuthorizedSignature, setIncludeAuthorizedSignature] = useState(false);
+  const [includeStamp, setIncludeStamp] = useState(false);
   const [accountingPrintPreset, setAccountingPrintPreset] = useState<'p1' | 'p2' | 'p3' | 'p4'>('p1');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelReasonDraft, setCancelReasonDraft] = useState('');
@@ -154,6 +162,9 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const invRef = useMemoFirebase(() => (firestore ? doc(firestore, 'tax_invoices', id) : null), [firestore, id]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: invoice, isLoading: isInvLoading } = useDoc<TaxInvoice>(invRef as any);
+  const preparerUid = (invoice?.issuedByUid || invoice?.createdByUid || '').trim();
+  const preparerName = (invoice?.issuedByName || invoice?.createdByName || '').trim();
+  const preparerSignatureUrl = useUserSignatureUrl(preparerUid);
 
   const showWhtBlock = useMemo(() => {
     if (!invoice) return false;
@@ -215,6 +226,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     email?: string;
     addressLine1?: string;
     addressLine2?: string;
+    documentHeaderStampUrl?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }>(companyProfileRef as any);
 
@@ -630,6 +642,17 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
 
   const executeTaxInvoicePrint = async (sheets: TaxInvoicePrintSheet[]) => {
     if (!invoice) return;
+    const authorizedReady = authorizedSignatureReady(invoice.authorizedSignatory);
+    const stampUrl = (companyProfile?.documentHeaderStampUrl || '').trim();
+    if (includePreparerSignature && !preparerSignatureUrl) {
+      toast({ title: 'ยังไม่มีลายเซ็นผู้จัดเตรียมเอกสาร', description: 'พิมพ์ช่องซ้ายโดยไม่มีรูปลายเซ็น' });
+    }
+    if (includeAuthorizedSignature && !authorizedReady) {
+      toast({ title: 'ยังไม่มีลายเซ็นผู้มีอำนาจลงนาม', description: 'พิมพ์ช่องกลางโดยไม่มีรูปลายเซ็น' });
+    }
+    if (includeStamp && !stampUrl) {
+      toast({ title: 'ยังไม่มีตรายาง', description: 'พิมพ์โดยไม่มีตรายาง — ตั้งได้ที่หัวเอกสารบริษัท' });
+    }
     const body = buildTaxInvoicePrintHtml({
       company: companyProfile ?? undefined,
       invoice,
@@ -640,6 +663,15 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       printedAtMs: Date.now(),
       locale: printLocale,
       sheets,
+      printMarks: {
+        preparerSignatureImageUrl:
+          includePreparerSignature && preparerSignatureUrl ? preparerSignatureUrl : undefined,
+        authorizedSignatureImageUrl:
+          includeAuthorizedSignature && authorizedReady
+            ? invoice.authorizedSignatory?.signatureImageUrl
+            : undefined,
+        stampImageUrl: includeStamp && stampUrl ? stampUrl : undefined,
+      },
     });
     if (
       !(await openStandardPrintWindow({
@@ -665,12 +697,15 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
 
   const handlePrintTaxInvoice = () => {
     if (!invoice) return;
+    setIncludePreparerSignature(false);
+    setIncludeAuthorizedSignature(false);
+    setIncludeStamp(false);
     if (isAccountingActor) {
       setAccountingPrintPreset('p1');
       setPrintPresetOpen(true);
       return;
     }
-    void executeTaxInvoicePrint(['original']);
+    setMarksDialogOpen(true);
   };
 
   const handleConfirmAccountingPrint = () => {
@@ -1314,6 +1349,17 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                     เอกสารออกจริงแล้ว — ล็อกแก้ไขข้อความ · บันทึกลูกหนี้ (AR) และใบวางบิลเป็น INVOICED
                   </div>
                 )}
+                {invoice.status !== 'CANCELLED' && currentUser ? (
+                  <AuthorizedSignatoryActions
+                    tone="onDark"
+                    sourceCollection="tax_invoices"
+                    sourceId={invoice.id}
+                    documentNo={invoice.taxInvoiceNo || 'ร่างใบกำกับภาษี'}
+                    documentLabel="ใบกำกับภาษี"
+                    mark={invoice.authorizedSignatory}
+                    currentUser={currentUser}
+                  />
+                ) : null}
                 {(isAccountingActor || canEditTaxInvoiceDoc) && invoice.status === 'DRAFT' && (
                   <Button
                     variant="outline"
@@ -1690,6 +1736,26 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
           </DialogContent>
         </Dialog>
 
+        <PrintMarksDialog
+          open={marksDialogOpen}
+          onOpenChange={setMarksDialogOpen}
+          includePreparerSignature={includePreparerSignature}
+          includeAuthorizedSignature={includeAuthorizedSignature}
+          includeStamp={includeStamp}
+          onPreparerSignature={setIncludePreparerSignature}
+          onAuthorizedSignature={setIncludeAuthorizedSignature}
+          onStamp={setIncludeStamp}
+          preparerReady={Boolean(preparerSignatureUrl)}
+          preparerName={preparerName}
+          authorizedReady={authorizedSignatureReady(invoice.authorizedSignatory)}
+          authorizedName={invoice.authorizedSignatory?.signerName}
+          stampReady={Boolean((companyProfile?.documentHeaderStampUrl || '').trim())}
+          onConfirm={() => {
+            setMarksDialogOpen(false);
+            void executeTaxInvoicePrint(['original']);
+          }}
+        />
+
         <Dialog open={printPresetOpen} onOpenChange={setPrintPresetOpen}>
           <DialogContent className="max-w-lg">
             <DialogHeader>
@@ -1714,6 +1780,19 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 ),
               )}
             </RadioGroup>
+            <PrintMarksChoices
+              includePreparerSignature={includePreparerSignature}
+              includeAuthorizedSignature={includeAuthorizedSignature}
+              includeStamp={includeStamp}
+              onPreparerSignature={setIncludePreparerSignature}
+              onAuthorizedSignature={setIncludeAuthorizedSignature}
+              onStamp={setIncludeStamp}
+              preparerReady={Boolean(preparerSignatureUrl)}
+              preparerName={preparerName}
+              authorizedReady={authorizedSignatureReady(invoice.authorizedSignatory)}
+              authorizedName={invoice.authorizedSignatory?.signerName}
+              stampReady={Boolean((companyProfile?.documentHeaderStampUrl || '').trim())}
+            />
             <DialogFooter className="gap-2 sm:gap-0">
               <Button variant="outline" onClick={() => setPrintPresetOpen(false)}>
                 ยกเลิก

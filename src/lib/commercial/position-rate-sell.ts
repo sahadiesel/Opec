@@ -157,16 +157,21 @@ export function resolveBillingMatrixEventDayRate(
   for (const matrix of matrices) {
     const side = sellMatrixSide(matrix, ctx.workMode);
     if (!side) continue;
+    if (eventType === 'standby_day') {
+      const v = parsePositive(side.standbyDay);
+      if (v != null) return v;
+      continue;
+    }
+    /** M1/D1 มีเฉพาะฝั่ง offshore ใน rate sheet — onshore ไม่มีช่องนี้ จึงใช้สูตรวันทำงาน × ตัวคูณ (คืน null) */
+    if (ctx.workMode !== 'OFFSHORE') continue;
+    const offshore = matrix.sell?.offshore;
+    if (!offshore) continue;
     if (eventType === 'mobilization_day') {
-      const v = parsePositive(side.m1PerTrip) ?? parsePositive((side as PositionRateOffshoreSide).d1PerTrip);
+      const v = parsePositive(offshore.m1PerTrip) ?? parsePositive(offshore.d1PerTrip);
       if (v != null) return v;
     }
     if (eventType === 'demobilization_day') {
-      const v = parsePositive((side as PositionRateOffshoreSide).d1PerTrip) ?? parsePositive(side.m1PerTrip);
-      if (v != null) return v;
-    }
-    if (eventType === 'standby_day') {
-      const v = parsePositive(side.standbyDay);
+      const v = parsePositive(offshore.d1PerTrip) ?? parsePositive(offshore.m1PerTrip);
       if (v != null) return v;
     }
   }

@@ -17,6 +17,8 @@ import type {
   Worker,
 } from '@/lib/types';
 
+export type { LaborCostWorkMode };
+
 /** บทบาทที่เห็น/แก้ฐานต้นทุนแรง (ฝ่าย operations / HR / payroll) — ไม่รวม sales / ร้าน ฯลฯ */
 export const LABOR_COST_STAFF_ROLES = new Set<string>([
   'system_admin',

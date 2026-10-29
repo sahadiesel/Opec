@@ -38,6 +38,13 @@ import {
   type PayrollWorkerWhtPrintBaseOptions,
 } from '@/lib/payroll/payroll-worker-wht-print-html';
 import { auditPayrollWorkerWhtBatchPrint } from '@/lib/payroll/payroll-worker-wht-audit';
+import { isLumpSumPayrollLine } from '@/lib/payroll/lump-sum-worker';
+import {
+  buildLumpSumWorker50TwCertificate,
+  buildLumpSumWorker50TwPrintHtml,
+  lumpSumWorker50TwPrintBase,
+} from '@/lib/payroll/lump-sum-worker-50tw';
+import { openWithholdingCertificatePrintWindow } from '@/lib/documents/withholding-certificate-50-tw-print';
 
 const ALL_VARIANTS: WithholdingCertificateCopyVariant[] = [
   'COPY_PAYEE_TAX_RETURN',
@@ -142,20 +149,35 @@ export function WorkerPayrollWhtBatchDialog({
           paymentDateYmd: paymentYmd,
         });
         let vm = null;
+        let vendor50Tw = null as PayrollWorkerWhtLinePrep['vendor50Tw'];
+        const lump = isLumpSumPayrollLine(line, worker);
         if (worker && paymentYmd && validation.ok) {
           try {
-            vm = buildPayrollWorkerWhtPrintVm({
-              batch,
-              line,
-              worker,
-              position,
-              company: companyProfile,
-              periodLabel,
-              issueDateYmd: issueYmd,
-              paymentDateYmd: paymentYmd,
-            });
+            if (lump) {
+              vendor50Tw = buildLumpSumWorker50TwCertificate({
+                batch,
+                line,
+                worker,
+                company: companyProfile,
+                periodLabel,
+                issueDateYmd: issueYmd,
+                paymentDateYmd: paymentYmd,
+              });
+            } else {
+              vm = buildPayrollWorkerWhtPrintVm({
+                batch,
+                line,
+                worker,
+                position,
+                company: companyProfile,
+                periodLabel,
+                issueDateYmd: issueYmd,
+                paymentDateYmd: paymentYmd,
+              });
+            }
           } catch {
             vm = null;
+            vendor50Tw = null;
           }
         }
         return {
@@ -164,6 +186,7 @@ export function WorkerPayrollWhtBatchDialog({
           workerNameSnapshot: line.workerNameSnapshot,
           vm,
           validation,
+          vendor50Tw,
         };
       });
       setPrep(rows);
@@ -175,53 +198,73 @@ export function WorkerPayrollWhtBatchDialog({
   }, [open, firestore, linesSorted, batch, companyProfile, periodLabel, issueYmd, paymentYmd]);
 
   const summary = useMemo(() => {
+    const printable = (p: PayrollWorkerWhtLinePrep) => p.validation.ok && (!!p.vm || !!p.vendor50Tw);
     const total = prep.length;
-    const ok = prep.filter((p) => p.validation.ok && p.vm).length;
-    const warn = prep.filter((p) => p.validation.ok && p.vm && p.validation.warnings.length > 0).length;
-    const bad = prep.filter((p) => !p.validation.ok || !p.vm).length;
+    const ok = prep.filter(printable).length;
+    const warn = prep.filter((p) => printable(p) && p.validation.warnings.length > 0).length;
+    const bad = prep.filter((p) => !printable(p)).length;
     return { total, ok, warn, bad };
   }, [prep]);
 
-  const mergedPreviewHtml = useMemo(() => {
-    const opts = printOpts(currentUser, companyProfile);
-    const variantList = variantsForMode(copyMode);
-    const bodies: string[] = [];
-    let firstHead = '';
-    for (const row of prep) {
-      if (!row.vm) continue;
-      const full = buildPayrollWorkerWhtCertificateMultiHtml(row.vm, variantList, opts);
-      if (!firstHead) {
-        const headMatch = full.match(/<head[^>]*>([\s\S]*)<\/head>/i);
-        firstHead = headMatch ? headMatch[1] : '';
+  const rowPrintHtml = useCallback(
+    (row: PayrollWorkerWhtLinePrep, variantList: WithholdingCertificateCopyVariant[]) => {
+      const opts = printOpts(currentUser, companyProfile);
+      if (row.vendor50Tw) {
+        return buildLumpSumWorker50TwPrintHtml(
+          row.vendor50Tw,
+          variantList,
+          lumpSumWorker50TwPrintBase({
+            printedByName: opts.printedByName,
+            printedAtMs: Date.now(),
+            showSignatureImage: opts.showSignatureImage,
+            showCompanyStamp: opts.showCompanyStamp,
+            showSystemGeneratedNote: opts.showSystemGeneratedNote,
+          }),
+        );
       }
+      if (!row.vm) return '';
+      return buildPayrollWorkerWhtCertificateMultiHtml(row.vm, variantList, opts);
+    },
+    [currentUser, companyProfile],
+  );
+
+  const mergePrintPages = (pages: string[]) => {
+    const styles: string[] = [];
+    const bodies: string[] = [];
+    for (const full of pages) {
+      const styleTags = full.match(/<style[^>]*>[\s\S]*?<\/style>/gi) || [];
+      styles.push(...styleTags);
       const bodyMatch = full.match(/<body[^>]*>([\s\S]*)<\/body>/i);
       if (bodyMatch) bodies.push(bodyMatch[1]);
     }
-    return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"/>${firstHead}</head><body>${bodies.join('')}</body></html>`;
-  }, [prep, copyMode, currentUser, companyProfile]);
+    return `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"/>${styles.join('\n')}</head><body>${bodies.join('')}</body></html>`;
+  };
+
+  const mergedPreviewHtml = useMemo(() => {
+    const variantList = variantsForMode(copyMode);
+    const pages: string[] = [];
+    for (const row of prep) {
+      const full = rowPrintHtml(row, variantList);
+      if (full) pages.push(full);
+    }
+    return mergePrintPages(pages);
+  }, [prep, copyMode, rowPrintHtml]);
 
   const handlePrintAll = useCallback(async () => {
     if (!firestore) return;
-    const opts = printOpts(currentUser, companyProfile);
     const variantList = variantsForMode(copyMode);
-    const bodies: string[] = [];
-    let firstHead = '';
+    const pages: string[] = [];
     let printed = 0;
     for (const row of prep) {
-      if (!row.vm) continue;
-      const full = buildPayrollWorkerWhtCertificateMultiHtml(row.vm, variantList, opts);
-      if (!firstHead) {
-        const headMatch = full.match(/<head[^>]*>([\s\S]*)<\/head>/i);
-        firstHead = headMatch ? headMatch[1] : '';
-      }
-      const bodyMatch = full.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-      if (bodyMatch) {
-        bodies.push(bodyMatch[1]);
-        printed++;
-      }
+      const full = rowPrintHtml(row, variantList);
+      if (!full) continue;
+      pages.push(full);
+      printed++;
     }
-    const docHtml = `<!DOCTYPE html><html lang="th"><head><meta charset="utf-8"/>${firstHead}</head><body>${bodies.join('')}</body></html>`;
-    openPayrollWorkerWhtPrintWindow(docHtml);
+    const docHtml = mergePrintPages(pages);
+    const hasVendor = prep.some((p) => p.vendor50Tw);
+    if (hasVendor) openWithholdingCertificatePrintWindow(docHtml);
+    else openPayrollWorkerWhtPrintWindow(docHtml);
     try {
       await auditPayrollWorkerWhtBatchPrint(firestore, currentUser, {
         batchId: batch.id,
@@ -234,7 +277,7 @@ export function WorkerPayrollWhtBatchDialog({
     } catch {
       /* ignore */
     }
-  }, [firestore, prep, copyMode, currentUser, companyProfile, batch.id]);
+  }, [firestore, prep, copyMode, currentUser, companyProfile, batch.id, rowPrintHtml]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

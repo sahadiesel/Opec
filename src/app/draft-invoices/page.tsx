@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useState, useMemo, useCallback, useEffect } from 'react';
+import { Fragment, useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -283,6 +283,7 @@ export default function DraftInvoicesPage() {
     workers: InvoiceReadyWorker[];
     keys: Record<string, string>;
     decided: string[];
+    customerId: string;
     billingRetroChoices?: BillingRetroChoices;
   } | null>(null);
   const [customerId, setCustomerId] = useState<string>('');
@@ -315,6 +316,8 @@ export default function DraftInvoicesPage() {
     confirmLabel: string;
     run: (choices: BillingRetroChoices) => Promise<void>;
   } | null>(null);
+  /** กัน Radix ปิดไดอะล็อกสร้างใบเมื่อชั้น Mob/Demob ปิด — ถ้าปิดก่อนสร้าง ใบจะไม่ถูกบันทึก */
+  const invoiceCreateLockRef = useRef(false);
 
   const approvedReviewsQuery = useMemoFirebase(
     () =>
@@ -657,40 +660,51 @@ export default function DraftInvoicesPage() {
     picked: InvoiceReadyWorker[],
     keys: Record<string, string>,
     decided: string[],
-    billingRetroChoices?: BillingRetroChoices,
+    billingRetroChoices: BillingRetroChoices | undefined,
+    lockedCustomerId: string,
   ) => {
     if (!firestore || !currentUser) return;
-    const step = await nextTripMobLocationPrompt(firestore, picked, decided, keys);
-    if (!step.done) {
-      setTripMobPrompt({
-        batchId: step.batchId,
-        label: step.label,
-        options: step.options,
-        selectedKey: step.options[0]?.key ?? '',
+    if (!lockedCustomerId) throw new Error('เลือกลูกค้า');
+    invoiceCreateLockRef.current = true;
+    try {
+      const step = await nextTripMobLocationPrompt(firestore, picked, decided, keys);
+      if (!step.done) {
+        setTripMobPrompt({
+          batchId: step.batchId,
+          label: step.label,
+          options: step.options,
+          selectedKey: step.options[0]?.key ?? '',
+          workers: picked,
+          keys: step.keys,
+          decided,
+          customerId: lockedCustomerId,
+          billingRetroChoices,
+        });
+        setDialogOpen(true);
+        return;
+      }
+      const { id, invoiceNo } = await createCommercialInvoiceForReadyWorkers(firestore, {
+        customerId: lockedCustomerId,
         workers: picked,
-        keys: step.keys,
-        decided,
-        billingRetroChoices,
+        issueDate: timestampToHtmlDateValue(issueDateMs),
+        actor: currentUser,
+        tripMobDemobByBatch: step.keys,
+        billingReversalIncludeByWorkerId: billingRetroChoices?.reversalIncludeByWorkerId,
+        billingAddedDayIncludeByWorkerId: billingRetroChoices?.addedDayIncludeByWorkerId,
       });
-      return;
+      toast({
+        title: 'สร้างใบแจ้งหนี้แล้ว',
+        description: `เลขที่ ${invoiceNo} — รวม ${picked.length} คนในใบเดียว`,
+      });
+      invoiceCreateLockRef.current = false;
+      setTripMobPrompt(null);
+      setDialogOpen(false);
+      resetForm();
+      router.push(`/draft-invoices/${id}`);
+    } catch (err) {
+      invoiceCreateLockRef.current = false;
+      throw err;
     }
-    const { id, invoiceNo } = await createCommercialInvoiceForReadyWorkers(firestore, {
-      customerId,
-      workers: picked,
-      issueDate: timestampToHtmlDateValue(issueDateMs),
-      actor: currentUser,
-      tripMobDemobByBatch: step.keys,
-      billingReversalIncludeByWorkerId: billingRetroChoices?.reversalIncludeByWorkerId,
-      billingAddedDayIncludeByWorkerId: billingRetroChoices?.addedDayIncludeByWorkerId,
-    });
-    toast({
-      title: 'สร้างใบแจ้งหนี้แล้ว',
-      description: `เลขที่ ${invoiceNo} — รวม ${picked.length} คนในใบเดียว`,
-    });
-    setDialogOpen(false);
-    setTripMobPrompt(null);
-    resetForm();
-    router.push(`/draft-invoices/${id}`);
   };
 
   const promptsForMonthlyWorkers = async (picked: InvoiceReadyWorker[]): Promise<BillingRetroPromptSet> => {
@@ -767,13 +781,14 @@ export default function DraftInvoicesPage() {
       const picked = invoiceWorkers.filter((w) => selectedWorkerKeys.has(w.key));
       if (picked.length === 0) throw new Error('เลือกคนงานที่ส่งรอออกบิลแล้ว');
       setCreating(false);
+      const lockedCustomerId = customerId;
       await askReversalThen(
         () => promptsForMonthlyWorkers(picked),
         'สร้างใบแจ้งหนี้',
         async (decisions) => {
           setCreating(true);
           try {
-            await createTimesheetInvoice(picked, {}, [], decisions);
+            await createTimesheetInvoice(picked, {}, [], decisions, lockedCustomerId);
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'สร้างไม่สำเร็จ';
             toast({ variant: 'destructive', title: 'ไม่สามารถสร้างได้', description: msg });
@@ -1120,20 +1135,61 @@ export default function DraftInvoicesPage() {
             <Button type="button" variant="outline" className="h-10 shrink-0 gap-2 px-3" onClick={() => setPrintDialogOpen(true)}>
               <Printer className="h-4 w-4" /> พิมพ์รายการ
             </Button>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={(open) => {
+              if (!open && (creating || tripMobPrompt != null || invoiceCreateLockRef.current)) return;
+              setDialogOpen(open);
+              if (!open) setTripMobPrompt(null);
+            }}
+          >
             <DialogTrigger asChild>
               <Button className="h-10 shrink-0 gap-2" disabled={!canCreateDoc}>
                 <Plus className="h-4 w-4" />
                 สร้างใบแจ้งหนี้
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-lg">
+            <DialogContent
+              className="max-w-lg"
+              onInteractOutside={(e) => {
+                if (creating || tripMobPrompt != null || invoiceCreateLockRef.current) e.preventDefault();
+              }}
+              onEscapeKeyDown={(e) => {
+                if (creating || tripMobPrompt != null || invoiceCreateLockRef.current) e.preventDefault();
+              }}
+            >
               <DialogHeader>
-                <DialogTitle>สร้างใบแจ้งหนี้</DialogTitle>
+                <DialogTitle>
+                  {tripMobPrompt ? 'เลือกจุด Mob/Demob สำหรับค่า MOB' : 'สร้างใบแจ้งหนี้'}
+                </DialogTitle>
                 <DialogDescription>
-                  เลือกที่มาของบิล แล้วเลือกคนงานหรือ PO ของลูกค้ารายเดียวกัน — รวมในใบแจ้งหนี้เดียว ไม่แยกตาม PO line
+                  {tripMobPrompt
+                    ? `สัญญา Trip กำหนดให้คิดค่า Mob/Demob ไป-กลับต่อคน — เลือกจุดที่ตรงกับการเดินทาง${tripMobPrompt.label ? ` (${tripMobPrompt.label})` : ''}`
+                    : 'เลือกที่มาของบิล แล้วเลือกคนงานหรือ PO ของลูกค้ารายเดียวกัน — รวมในใบแจ้งหนี้เดียว ไม่แยกตาม PO line'}
                 </DialogDescription>
               </DialogHeader>
+              {tripMobPrompt ? (
+                <div className="space-y-2 py-2">
+                  <Label htmlFor="invoice-trip-mob-location">จุด Mob/Demob</Label>
+                  <Select
+                    value={tripMobPrompt.selectedKey}
+                    onValueChange={(key) =>
+                      setTripMobPrompt((prev) => (prev ? { ...prev, selectedKey: key } : null))
+                    }
+                  >
+                    <SelectTrigger id="invoice-trip-mob-location">
+                      <SelectValue placeholder="เลือกจุด" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {tripMobPrompt.options.map((opt) => (
+                        <SelectItem key={opt.key} value={opt.key}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
               <div className="space-y-4 py-2">
                 <div className="rounded-md bg-muted/50 px-3 py-2 text-xs font-mono text-muted-foreground">
                   เลขที่คาดการณ์: {getPreviewPattern('commercial_invoice')}
@@ -1290,7 +1346,51 @@ export default function DraftInvoicesPage() {
                   <DatePickerThaiBE value={issueDateMs} onChange={setIssueDateMs} />
                 </div>
               </div>
+              )}
               <DialogFooter>
+                {tripMobPrompt ? (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={creating}
+                      onClick={() => {
+                        invoiceCreateLockRef.current = false;
+                        setTripMobPrompt(null);
+                      }}
+                    >
+                      ยกเลิก
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={!tripMobPrompt.selectedKey || creating}
+                      onClick={() => {
+                        const prompt = tripMobPrompt;
+                        if (!prompt.selectedKey) return;
+                        setCreating(true);
+                        void createTimesheetInvoice(
+                          prompt.workers,
+                          { ...prompt.keys, [prompt.batchId]: prompt.selectedKey },
+                          [...prompt.decided, prompt.batchId],
+                          prompt.billingRetroChoices,
+                          prompt.customerId,
+                        )
+                          .catch((err: unknown) => {
+                            toast({
+                              variant: 'destructive',
+                              title: 'ไม่สามารถสร้างได้',
+                              description: err instanceof Error ? err.message : String(err),
+                            });
+                          })
+                          .finally(() => setCreating(false));
+                      }}
+                    >
+                      {creating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      สร้างใบแจ้งหนี้
+                    </Button>
+                  </>
+                ) : (
+                  <>
                 <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={creating}>
                   ยกเลิก
                 </Button>
@@ -1298,6 +1398,8 @@ export default function DraftInvoicesPage() {
                   {creating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                   สร้างใบแจ้งหนี้
                 </Button>
+                  </>
+                )}
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -1347,74 +1449,6 @@ export default function DraftInvoicesPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
-
-        <AlertDialog
-          open={tripMobPrompt != null}
-          onOpenChange={(open) => {
-            if (!open) setTripMobPrompt(null);
-          }}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>เลือกจุด Mob/Demob สำหรับค่า MOB</AlertDialogTitle>
-              <AlertDialogDescription>
-                สัญญา Trip กำหนดให้คิดค่า Mob/Demob ไป-กลับต่อคน — เลือกจุดที่ตรงกับการเดินทาง
-                {tripMobPrompt?.label ? ` (${tripMobPrompt.label})` : ''}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            {tripMobPrompt ? (
-              <div className="space-y-2 py-2">
-                <Label htmlFor="invoice-trip-mob-location">จุด Mob/Demob</Label>
-                <Select
-                  value={tripMobPrompt.selectedKey}
-                  onValueChange={(key) =>
-                    setTripMobPrompt((prev) => (prev ? { ...prev, selectedKey: key } : null))
-                  }
-                >
-                  <SelectTrigger id="invoice-trip-mob-location">
-                    <SelectValue placeholder="เลือกจุด" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {tripMobPrompt.options.map((opt) => (
-                      <SelectItem key={opt.key} value={opt.key}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={creating}>ยกเลิก</AlertDialogCancel>
-              <AlertDialogAction
-                disabled={!tripMobPrompt?.selectedKey || creating}
-                onClick={(e) => {
-                  e.preventDefault();
-                  if (!tripMobPrompt?.selectedKey) return;
-                  const prompt = tripMobPrompt;
-                  setTripMobPrompt(null);
-                  setCreating(true);
-                  void createTimesheetInvoice(
-                    prompt.workers,
-                    { ...prompt.keys, [prompt.batchId]: prompt.selectedKey },
-                    [...prompt.decided, prompt.batchId],
-                    prompt.billingRetroChoices,
-                  )
-                    .catch((err: unknown) => {
-                      toast({
-                        variant: 'destructive',
-                        title: 'ไม่สามารถสร้างได้',
-                        description: err instanceof Error ? err.message : String(err),
-                      });
-                    })
-                    .finally(() => setCreating(false));
-                }}
-              >
-                สร้างใบแจ้งหนี้
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
 
         {totalMissingInvoiceCount > 0 && (
           <Card className="border-primary/30 bg-primary/5">

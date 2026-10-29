@@ -30,6 +30,8 @@ export interface Quotation {
   contactPerson?: string;
   billingAddressSnapshot?: string;
   notes?: string;
+  /** ลายเซ็นผู้มีอำนาจลงนาม — แนบโดยผู้จัดการ หรือหลังอนุมัติคำขอของ officer */
+  authorizedSignatory?: import('@/lib/types/document-signature').AuthorizedSignatoryMark;
   internalNotes?: string;
   subtotal: number;
   discountAmount: number;

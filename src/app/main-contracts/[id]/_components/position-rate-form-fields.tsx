@@ -90,19 +90,16 @@ export function PositionRateFormFields({
               const hours = Number(v) as 8 | 12;
               const updatedRate = {
                 ...newRate,
-                normalWorkHoursOnshore: hours,
                 ...normalizeNormalWorkHoursFields({ ...newRate, normalWorkHoursOnshore: hours }),
               };
               const matrix = updatedRate.rateMatrix;
               if (matrix) {
-                // onshore sell
                 const onSellWd = matrix.sell?.onshore?.workingDay;
-                if (onSellWd) {
+                if (onSellWd && matrix.sell) {
                   matrix.sell.onshore = autoCalculateMatrixFields('onshore', onSellWd, hours, matrix.sell.onshore);
                 }
-                // onshore cost
                 const onCostWd = matrix.cost?.onshore?.workingDay;
-                if (onCostWd) {
+                if (onCostWd && matrix.cost) {
                   matrix.cost.onshore = autoCalculateMatrixFields('onshore', onCostWd, hours, matrix.cost.onshore);
                 }
               }
@@ -127,19 +124,16 @@ export function PositionRateFormFields({
               const hours = Number(v) as 8 | 12;
               const updatedRate = {
                 ...newRate,
-                normalWorkHoursOffshore: hours,
                 ...normalizeNormalWorkHoursFields({ ...newRate, normalWorkHoursOffshore: hours }),
               };
               const matrix = updatedRate.rateMatrix;
               if (matrix) {
-                // offshore sell
                 const offSellWd = matrix.sell?.offshore?.workingDay;
-                if (offSellWd) {
+                if (offSellWd && matrix.sell) {
                   matrix.sell.offshore = autoCalculateMatrixFields('offshore', offSellWd, hours, matrix.sell.offshore);
                 }
-                // offshore cost
                 const offCostWd = matrix.cost?.offshore?.workingDay;
-                if (offCostWd) {
+                if (offCostWd && matrix.cost) {
                   matrix.cost.offshore = autoCalculateMatrixFields('offshore', offCostWd, hours, matrix.cost.offshore);
                 }
               }
@@ -245,20 +239,18 @@ export function PositionRateFormFields({
       <PositionRateMatrixFields
         rateMatrix={newRate.rateMatrix}
         onChange={(rateMatrix) => {
-          setNewRate((prev) => {
-            const onshoreVal = rateMatrix.sell?.onshore?.workingDay;
-            const offshoreVal = rateMatrix.sell?.offshore?.workingDay;
-            return {
-              ...prev,
-              rateMatrix,
+          const onshoreVal = rateMatrix.sell?.onshore?.workingDay;
+          const offshoreVal = rateMatrix.sell?.offshore?.workingDay;
+          setNewRate({
+            ...newRate,
+            rateMatrix,
+            sellRateOnshore: onshoreVal,
+            sellRateOffshore: offshoreVal,
+            sellRate: legacySellRateMirror({
+              ...newRate,
               sellRateOnshore: onshoreVal,
               sellRateOffshore: offshoreVal,
-              sellRate: legacySellRateMirror({
-                ...prev,
-                sellRateOnshore: onshoreVal,
-                sellRateOffshore: offshoreVal,
-              }),
-            };
+            }),
           });
         }}
         mobDemobLocations={mobDemobLocations}

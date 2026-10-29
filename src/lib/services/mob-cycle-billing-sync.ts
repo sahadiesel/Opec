@@ -435,7 +435,7 @@ export async function syncMobCycleBillingReviewsForPo(
       }
       await setDoc(
         doc(db, REVIEW_COLLECTION, review.id),
-        sanitizeFirestorePayload(review as Record<string, unknown>),
+        sanitizeFirestorePayload(review as unknown as Record<string, unknown>),
         { merge: true },
       );
       syncedForAssignment.add(review.id);
@@ -573,7 +573,7 @@ async function syncTripBillingBatchesForPo(
 
     await setDoc(
       doc(db, BATCH_COLLECTION, batch.id),
-      sanitizeFirestorePayload(batch as Record<string, unknown>),
+      sanitizeFirestorePayload(batch as unknown as Record<string, unknown>),
       { merge: true },
     );
     batches.push(batch);

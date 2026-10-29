@@ -64,9 +64,9 @@ export interface PurchaseRequest {
    */
   supplierWithholdingEnabled?: boolean;
   /** ประเภทเงินได้สำหรับใบหัก ม.50 — คัดลอกไป PO / ใช้ตอนบัญชีทำจ่าย */
-  supplierWithholdingCategory?: VendorBillWhtPresetCategory;
+  supplierWithholdingCategory?: VendorBillWhtPresetCategory | null;
   /** อัตราหัก ณ ที่จ่าย เช่น 3 = 3% */
-  supplierWithholdingRatePercent?: number;
+  supplierWithholdingRatePercent?: number | null;
   status: PurchaseRequestStatus;
   requestedByUid?: string;
   requestedByName?: string;

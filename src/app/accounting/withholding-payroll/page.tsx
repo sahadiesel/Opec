@@ -77,7 +77,12 @@ import { canViewHrPayrollFlowSubsection } from '@/lib/navigation/nav-access';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { usePermissions } from '@/hooks/use-permissions';
-import { workerPayrollLinePitAmount, resolvePayrollWorkerWhtPaymentDateYmd } from '@/lib/payroll/payroll-worker-wht-model';
+import {
+  workerPayrollLinePitAmount,
+  workerPayrollLineLumpSumWhtAmount,
+  resolvePayrollWorkerWhtPaymentDateYmd,
+} from '@/lib/payroll/payroll-worker-wht-model';
+import { isLumpSumPayrollLine } from '@/lib/payroll/lump-sum-worker';
 import { officePayrollLineTaxAmount, resolveOfficePayrollWhtPaymentDateYmd } from '@/lib/payroll/payroll-office-wht-model';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -215,7 +220,7 @@ function buildWithholdingPayrollPrintRows(
   for (const { batch, line, pit, paid, paymentYmd } of workers) {
     const wagePaid = isWorkerPayrollWagePaid(batch, line);
     rows.push({
-      section: 'ลูกจ้าง',
+      section: isLumpSumPayrollLine(line) ? 'ลูกจ้างแบบเหมา' : 'ลูกจ้างบริษัท',
       wageStatus: workerWageStatusLabel(batch.status),
       taxStatus: whtTaxStatusLabel(wagePaid, isWorkerPayrollWhtTaxPaid(line)),
       batchLabel: batch.id,
@@ -418,7 +423,8 @@ export default function AccountingWithholdingPayrollHubPage() {
           const batch = list[i]!;
           snap.forEach((d) => {
             const line = { id: d.id, ...d.data() } as PayrollBatchLine;
-            const pit = workerPayrollLinePitAmount(line);
+            const lump = isLumpSumPayrollLine(line);
+            const pit = lump ? workerPayrollLineLumpSumWhtAmount(line) : workerPayrollLinePitAmount(line);
             if (pit <= 0.005) return;
             const payYmd = resolvePayrollWorkerWhtPaymentDateYmd(batch, line);
             rows.push({
@@ -617,6 +623,14 @@ export default function AccountingWithholdingPayrollHubPage() {
   const filteredWorker = useMemo(() => {
     return workerRowsBySearch.filter((r) => ymMatchesYearMonthScope(workerRowYm(r), yearFilterCe, monthScope));
   }, [workerRowsBySearch, yearFilterCe, monthScope]);
+  const filteredCompanyWorker = useMemo(
+    () => filteredWorker.filter((r) => !isLumpSumPayrollLine(r.line)),
+    [filteredWorker],
+  );
+  const filteredLumpSumWorker = useMemo(
+    () => filteredWorker.filter((r) => isLumpSumPayrollLine(r.line)),
+    [filteredWorker],
+  );
 
   const filteredOffice = useMemo(() => {
     return officeRowsBySearch.filter((r) => ymMatchesYearMonthScope(officeRowYm(r), yearFilterCe, monthScope));
@@ -647,7 +661,7 @@ export default function AccountingWithholdingPayrollHubPage() {
   };
 
   const workerWhtDisplayRows = useMemo((): WorkerWhtDisplay[] => {
-    const base = filteredWorker.map((r) => ({
+    const base = filteredCompanyWorker.map((r) => ({
       ...r,
       rowKey: workerRowKey(r.batch.id, r.line.id),
       personId: r.line.workerId,
@@ -679,7 +693,42 @@ export default function AccountingWithholdingPayrollHubPage() {
         _allTaxPaid: allTaxPaid,
       };
     });
-  }, [filteredWorker]);
+  }, [filteredCompanyWorker]);
+
+  const lumpSumWhtDisplayRows = useMemo((): WorkerWhtDisplay[] => {
+    const base = filteredLumpSumWorker.map((r) => ({
+      ...r,
+      rowKey: workerRowKey(r.batch.id, r.line.id),
+      personId: r.line.workerId,
+      periodYm: workerPeriodYmForGroup(r),
+      paymentYmd: r.paymentYmd,
+      recencyMs: Number(r.batch.updatedAt) || 0,
+      lineAmount: r.pit,
+    }));
+    const annotated = annotatePersonMonthGroups(base, 'worker_wht', (members) =>
+      resolveSharedMonthlyWithholdSum(members),
+    );
+    const byKey = new Map(annotated.map((a) => [a.rowKey, a]));
+    return annotated.map((a) => {
+      const members = (a.memberRowKeys || []).map((k) => byKey.get(k)).filter(Boolean) as typeof annotated;
+      const allWagePaid = members.every((m) => isWorkerPayrollWagePaid(m.batch, m.line));
+      const allTaxPaid = members.every((m) => isWorkerPayrollWhtTaxPaid(m.line));
+      return {
+        batch: a.batch,
+        line: a.line,
+        pit: a.pit,
+        paid: a.paid,
+        paymentYmd: a.paymentYmd,
+        rowKey: a.rowKey,
+        isGroupLeader: a.isGroupLeader,
+        groupSize: a.groupSize,
+        sharedPit: a.isGroupLeader ? a.sharedAmount : 0,
+        memberRowKeys: a.memberRowKeys,
+        _allWagePaid: allWagePaid,
+        _allTaxPaid: allTaxPaid,
+      };
+    });
+  }, [filteredLumpSumWorker]);
 
   const buildOfficeWhtDisplay = useCallback(
     (rows: OfficeWhtRow[], kind: 'office_wht' | 'executive_wht'): OfficeWhtDisplay[] => {
@@ -728,12 +777,23 @@ export default function AccountingWithholdingPayrollHubPage() {
     [buildOfficeWhtDisplay, filteredExecutive],
   );
 
-  const payableWorkerRows = useMemo(
+  const payableCompanyWorkerRows = useMemo(
     () =>
       workerWhtDisplayRows.filter(
         (r) => r.isGroupLeader && !!r._allWagePaid && !r._allTaxPaid && r.sharedPit > 0.005,
       ),
     [workerWhtDisplayRows],
+  );
+  const payableLumpSumWorkerRows = useMemo(
+    () =>
+      lumpSumWhtDisplayRows.filter(
+        (r) => r.isGroupLeader && !!r._allWagePaid && !r._allTaxPaid && r.sharedPit > 0.005,
+      ),
+    [lumpSumWhtDisplayRows],
+  );
+  const payableWorkerRows = useMemo(
+    () => [...payableCompanyWorkerRows, ...payableLumpSumWorkerRows],
+    [payableCompanyWorkerRows, payableLumpSumWorkerRows],
   );
   const payableOfficeRows = useMemo(
     () =>
@@ -846,6 +906,10 @@ export default function AccountingWithholdingPayrollHubPage() {
     () => workerWhtDisplayRows.filter((r) => r.isGroupLeader).reduce((sum, r) => sum + r.sharedPit, 0),
     [workerWhtDisplayRows],
   );
+  const lumpSumTotalWht = useMemo(
+    () => lumpSumWhtDisplayRows.filter((r) => r.isGroupLeader).reduce((sum, r) => sum + r.sharedPit, 0),
+    [lumpSumWhtDisplayRows],
+  );
   const officeTotalTax = useMemo(
     () => officeWhtDisplayRows.filter((r) => r.isGroupLeader).reduce((sum, r) => sum + r.sharedTax, 0),
     [officeWhtDisplayRows],
@@ -856,7 +920,7 @@ export default function AccountingWithholdingPayrollHubPage() {
   );
 
   /** รวมตามตัวกรองปัจจุบัน (ลูกจ้าง + ออฟฟิศ + ผู้บริหาร รวมกัน) */
-  const grandTotalPit = workerTotalPit + officeTotalTax + executiveTotalTax;
+  const grandTotalPit = workerTotalPit + lumpSumTotalWht + officeTotalTax + executiveTotalTax;
   const grandTotalPaid = useMemo(
     () =>
       filteredWorker.reduce((sum, { paid }) => sum + paid, 0) +
@@ -1435,9 +1499,9 @@ export default function AccountingWithholdingPayrollHubPage() {
     <AppShell user={user} onLogout={() => {}}>
       <div className="w-full max-w-[min(100%,96rem)] mx-auto space-y-6 py-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">1. เอกสาร หัก ณ ที่จ่าย (ภงด.1)</h1>
+          <h1 className="text-2xl font-bold tracking-tight">1. เอกสาร หัก ณ ที่จ่าย ( พนักงาน )</h1>
           <p className="text-muted-foreground mt-1">
-            รายการหนังสือรับรองหัก ณ ที่จ่าย (ภ.ง.ด.1 / ภ.ง.ด.2) รวมลูกจ้าง พนักงานออฟฟิศ และผู้บริหาร — จ่ายภาษีรวมทั้ง 3 ส่วนได้จากปุ่มด้านบน · คู่ค้า ภงด.3 / 53 อยู่เมนู 2
+            รายการหนังสือรับรองหัก ณ ที่จ่าย รวมลูกจ้างบริษัท (ภ.ง.ด.1) ลูกจ้างแบบเหมา (50ทวิ) พนักงานออฟฟิศ และผู้บริหาร — จ่ายภาษีรวมได้จากปุ่มด้านบน · คู่ค้า ภงด.3 / 53 อยู่เมนู 2
           </p>
         </div>
 
@@ -1518,7 +1582,7 @@ export default function AccountingWithholdingPayrollHubPage() {
         <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>พิมพ์รายการหัก ณ ที่จ่าย (ภงด.1)</DialogTitle>
+              <DialogTitle>พิมพ์รายการหัก ณ ที่จ่าย ( พนักงาน )</DialogTitle>
               <DialogDescription>
                 พิมพ์ใบรายการสรุป — เลือกเฉพาะบางคนได้ด้วยช่องติ๊กด้านซ้าย หรือกด「พิมพ์」ทีละคนเพื่อเปิดหนังสือรับรองรายบุคคล · สูงสุด 500 รายการต่อครั้ง
               </DialogDescription>
@@ -1591,7 +1655,7 @@ export default function AccountingWithholdingPayrollHubPage() {
               <div className="min-w-0 space-y-1.5">
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <Users className="h-5 w-5 shrink-0" />
-                  ลูกจ้าง / Worker payroll
+                  ลูกจ้างบริษัท / Worker payroll
                 </CardTitle>
                 <CardDescription>
                   แสดงเฉพาะบรรทัดที่มียอดหัก ภงด.1 ในงวด — ถ้าจ่ายหลายครั้งในเดือนเดียวกันจะเรียงคู่กัน
@@ -1614,9 +1678,9 @@ export default function AccountingWithholdingPayrollHubPage() {
               <div className="flex justify-center py-12">
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
               </div>
-            ) : filteredWorker.length === 0 ? (
+            ) : filteredCompanyWorker.length === 0 ? (
               <p className="text-sm text-muted-foreground py-8 text-center">
-                {workerRows.length === 0
+                {workerRows.filter((r) => !isLumpSumPayrollLine(r.line)).length === 0
                   ? 'ยังไม่มีบรรทัดที่มียอดหัก ภงด.1 ในงวดล่าสุด (หรือยังไม่มีข้อมูลชุดจ่าย)'
                   : 'ไม่พบรายการที่ตรงกับคำค้นหรือเดือนที่เลือก'}
               </p>
@@ -1630,19 +1694,21 @@ export default function AccountingWithholdingPayrollHubPage() {
                         <TableHead className="w-11 pl-3">
                           <Checkbox
                             checked={
-                              payableWorkerRows.length > 0 &&
-                              payableWorkerRows.every((r) =>
+                              payableCompanyWorkerRows.length > 0 &&
+                              payableCompanyWorkerRows.every((r) =>
                                 selectedWorkerKeys.has(workerRowKey(r.batch.id, r.line.id)),
                               )
                             }
                             onCheckedChange={(v) => {
-                              if (v === true) {
-                                setSelectedWorkerKeys(
-                                  new Set(payableWorkerRows.map((r) => workerRowKey(r.batch.id, r.line.id))),
-                                );
-                              } else {
-                                setSelectedWorkerKeys(new Set());
-                              }
+                              setSelectedWorkerKeys((prev) => {
+                                const next = new Set(prev);
+                                for (const r of payableCompanyWorkerRows) {
+                                  const k = workerRowKey(r.batch.id, r.line.id);
+                                  if (v === true) next.add(k);
+                                  else next.delete(k);
+                                }
+                                return next;
+                              });
                             }}
                             aria-label="เลือกทั้งหมดที่พร้อมจ่ายภาษี"
                           />
@@ -1764,6 +1830,173 @@ export default function AccountingWithholdingPayrollHubPage() {
                                 href={`/accounting/withholding-payroll/worker/${encodeURIComponent(batch.id)}/${encodeURIComponent(line.id)}`}
                                 className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
                                 title="พิมพ์หนังสือรับรองเฉพาะคนนี้"
+                              >
+                                <Printer className="h-3.5 w-3.5 shrink-0" />
+                                พิมพ์
+                              </Link>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 space-y-1.5">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Users className="h-5 w-5 shrink-0 text-amber-700" />
+                  ลูกจ้างแบบเหมา / Lump-sum (50ทวิ)
+                </CardTitle>
+                <CardDescription>
+                  สลิปการทำงาน + ใบหัก ณ ที่จ่าย 50ทวิ ชุดเดียวกับจัดซื้อ (หักเหมา 3%) — ไม่หัก ปสง./ภงด.1
+                </CardDescription>
+              </div>
+              {!loadingBatches && !loadingWorkerLines && !workerLinesErr ? (
+                <AccountingFilterToolbarStat
+                  label="ยอดหักรวม"
+                  value={fmtBaht(lumpSumTotalWht)}
+                  emphasize
+                />
+              ) : null}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {workerLinesErr ? (
+              <p className="text-sm text-destructive">{workerLinesErr}</p>
+            ) : loadingBatches || loadingWorkerLines ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : filteredLumpSumWorker.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-8 text-center">
+                {workerRows.filter((r) => isLumpSumPayrollLine(r.line)).length === 0
+                  ? 'ยังไม่มีบรรทัดลูกจ้างแบบเหมาที่มียอดหัก ณ ที่จ่ายในงวดล่าสุด'
+                  : 'ไม่พบรายการที่ตรงกับคำค้นหรือเดือนที่เลือก'}
+              </p>
+            ) : (
+              <div className="rounded-md border">
+                <Table className={cn('table-fixed w-full', COMPACT_LIST_TABLE)}>
+                  {WHT_PAYROLL_TABLE_COLGROUP(canPayWhtTax)}
+                  <TableHeader>
+                    <TableRow>
+                      {canPayWhtTax ? (
+                        <TableHead className="w-11 pl-3">
+                          <Checkbox
+                            checked={
+                              payableLumpSumWorkerRows.length > 0 &&
+                              payableLumpSumWorkerRows.every((r) =>
+                                selectedWorkerKeys.has(workerRowKey(r.batch.id, r.line.id)),
+                              )
+                            }
+                            onCheckedChange={(v) => {
+                              setSelectedWorkerKeys((prev) => {
+                                const next = new Set(prev);
+                                for (const r of payableLumpSumWorkerRows) {
+                                  const k = workerRowKey(r.batch.id, r.line.id);
+                                  if (v === true) next.add(k);
+                                  else next.delete(k);
+                                }
+                                return next;
+                              });
+                            }}
+                            aria-label="เลือกทั้งหมดลูกจ้างแบบเหมาที่พร้อมจ่ายภาษี"
+                          />
+                        </TableHead>
+                      ) : null}
+                      <TableHead>ชุดจ่าย / งวด</TableHead>
+                      <TableHead>ผู้มีเงินได้</TableHead>
+                      <TableHead className="whitespace-nowrap">วันที่จ่าย</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-right')}>ยอดจ่าย</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-center')}>สถานะจ่ายค่าจ้าง</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-right')}>ยอดหัก 3%</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-center')}>สถานะจ่ายภาษี</TableHead>
+                      <TableHead className={cn(WHT_EQUAL_COL_HEAD, 'text-center')}> </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {lumpSumWhtDisplayRows.map((disp) => {
+                      const { batch, line, paid, paymentYmd, rowKey, isGroupLeader, groupSize, sharedPit } = disp;
+                      const wagePaid = isWorkerPayrollWagePaid(batch, line);
+                      const wageLabel = workerWageStatusLabel(batch.status);
+                      const nid = resolveWorkerNationalId(line, nationalIdByWorkerId);
+                      return (
+                        <TableRow key={rowKey} className={isGroupLeader ? undefined : 'bg-muted/20'}>
+                          {canPayWhtTax ? (
+                            <TableCell className="w-11 pl-3">
+                              {isGroupLeader ? (
+                                <Checkbox
+                                  checked={selectedWorkerKeys.has(rowKey)}
+                                  disabled={!(disp._allWagePaid && !disp._allTaxPaid && sharedPit > 0.005)}
+                                  onCheckedChange={(v) => {
+                                    setSelectedWorkerKeys((prev) => {
+                                      const next = new Set(prev);
+                                      if (v === true) next.add(rowKey);
+                                      else next.delete(rowKey);
+                                      return next;
+                                    });
+                                  }}
+                                  aria-label={`เลือก ${line.workerNameSnapshot || line.workerId}`}
+                                />
+                              ) : (
+                                <span className="text-muted-foreground text-xs">—</span>
+                              )}
+                            </TableCell>
+                          ) : null}
+                          <TableCell className="font-mono text-xs">
+                            {batch.id}
+                            {groupSize > 1 ? (
+                              <span className="block text-[10px] text-muted-foreground">กลุ่ม {groupSize} ชุด</span>
+                            ) : null}
+                          </TableCell>
+                          <TableCell>
+                            <div className="font-medium">{line.workerNameSnapshot || '—'}</div>
+                            {nid ? <div className="text-[11px] text-muted-foreground font-mono">{nid}</div> : null}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">{paymentYmd}</TableCell>
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-right tabular-nums')}>
+                            {fmtBaht(paid)}
+                          </TableCell>
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
+                            {renderWageStatusBadge(wageLabel, wagePaid)}
+                          </TableCell>
+                          <TableCell
+                            className={cn(WHT_EQUAL_COL_CELL, 'text-right tabular-nums text-sm font-semibold text-primary')}
+                          >
+                            {isGroupLeader ? (
+                              fmtBaht(sharedPit)
+                            ) : (
+                              <span className="text-muted-foreground text-xs" title={`บนใบหัก: ${fmtBaht(disp.pit)}`}>
+                                —
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
+                            {isGroupLeader ? (
+                              renderTaxStatusBadge(!!disp._allWagePaid, !!disp._allTaxPaid)
+                            ) : (
+                              <span className="text-muted-foreground text-xs">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className={cn(WHT_EQUAL_COL_CELL, 'text-center')}>
+                            <div className="inline-flex flex-col items-center gap-1 sm:flex-row sm:justify-center">
+                              <Link
+                                href={`/accounting/withholding-payroll/worker/${encodeURIComponent(batch.id)}/${encodeURIComponent(line.id)}`}
+                                className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
+                              >
+                                เปิด
+                                <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                              </Link>
+                              <Link
+                                href={`/accounting/withholding-payroll/worker/${encodeURIComponent(batch.id)}/${encodeURIComponent(line.id)}`}
+                                className="inline-flex items-center justify-center gap-1 text-sm text-primary hover:underline"
+                                title="พิมพ์ใบหัก 50ทวิ"
                               >
                                 <Printer className="h-3.5 w-3.5 shrink-0" />
                                 พิมพ์
@@ -2173,7 +2406,7 @@ export default function AccountingWithholdingPayrollHubPage() {
         >
           <DialogContent className="max-w-2xl sm:max-w-2xl">
             <DialogHeader>
-              <DialogTitle>จ่ายภาษีหัก ณ ที่จ่าย (ภงด.1) — รวมทั้ง 3 ส่วน</DialogTitle>
+              <DialogTitle>จ่ายภาษีหัก ณ ที่จ่าย ( พนักงาน )</DialogTitle>
               <DialogDescription>
                 {payTaxStatusOnly
                   ? 'บันทึกสถานะ «จ่ายแล้ว» เท่านั้น — ไม่ตัดบัญชีธนาคารและไม่ลง cashbook'
@@ -2187,7 +2420,7 @@ export default function AccountingWithholdingPayrollHubPage() {
                     รายการที่เลือก {payTaxDialogRowCount} รายการ
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    ลูกจ้าง {selectedWorkerPayRows.length} · ออฟฟิศ {selectedOfficePayRows.length} · ผู้บริหาร {selectedExecutivePayRows.length}
+                    ลูกจ้างบริษัท/เหมา {selectedWorkerPayRows.length} · ออฟฟิศ {selectedOfficePayRows.length} · ผู้บริหาร {selectedExecutivePayRows.length}
                   </p>
                   <p className="text-muted-foreground">
                     ยอดภาษีหัก ณ ที่จ่ายรวม{' '}

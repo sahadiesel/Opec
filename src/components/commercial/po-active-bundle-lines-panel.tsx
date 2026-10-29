@@ -3,6 +3,7 @@
 import { useMemo, useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { collection, doc, addDoc, getDocs, updateDoc, deleteDoc } from 'firebase/firestore';
+import { asFirestoreUpdate } from '@/lib/firestore/as-update-data';
 import { useFirestore, useDoc, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canEdit, canDelete } from '@/lib/permissions';
@@ -689,7 +690,7 @@ export function PoActiveBundleLinesPanel({
       }
 
       const lineRef = doc(firestore, 'purchase_orders', editDraft.poId, 'po_lines', editDraft.id);
-      await updateDoc(lineRef, updatePayload);
+      await updateDoc(lineRef, asFirestoreUpdate(updatePayload));
       writeAuditLog(firestore, currentUser, {
         actionType: 'UPDATE',
         entityType: 'POLine',

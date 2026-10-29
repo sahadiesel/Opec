@@ -14,6 +14,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import type { MoneyReceipt, TaxInvoice, User } from '@/lib/types';
+import { asFirestoreUpdate } from '@/lib/firestore/as-update-data';
 import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { expectedMoneyReceiptAmountFromInvoice } from '@/lib/accounting/money-receipt-wht-amount';
 import {
@@ -181,7 +182,7 @@ export async function confirmPaymentAndIssueMoneyReceipt(
     updatedAt: now,
   });
   if (arUpdate) {
-    batch.update(arUpdate.ref, arUpdate.patch);
+    batch.update(arUpdate.ref, asFirestoreUpdate(arUpdate.patch));
   }
   await closeOpenCommercialArInBatch(db, batch, inv.sourceCommercialInvoiceId, now);
 

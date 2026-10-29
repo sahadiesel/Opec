@@ -11,6 +11,7 @@ import { useWorkerPayrollLines } from '@/lib/payroll/fetch-self-payroll-lines';
 import type { CompanyDocumentProfileNames } from '@/hooks/use-company-document-profile';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
+import { isLumpSumPayrollLine } from '@/lib/payroll/lump-sum-worker';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -46,6 +47,7 @@ function WorkerPayslipRow({
 
   const batchForPayslip = payrollBatchStubFromLine(line, batch ?? null);
   const model = buildPayslipFromWorkerLine(line, batchForPayslip, periodLabel, companyProfile ?? undefined);
+  const lump = isLumpSumPayrollLine(line);
 
   return (
     <TableRow>
@@ -54,7 +56,9 @@ function WorkerPayslipRow({
       <TableCell className="text-right tabular-nums">฿{line.netAmount.toLocaleString('th-TH')}</TableCell>
       <TableCell className="text-right">
         <div className="flex justify-end gap-2">
-          <PayslipDialog model={model} />
+          {model ? (
+            <PayslipDialog model={model} title={lump ? 'สลิปการทำงาน' : undefined} />
+          ) : null}
           {!selfProfileOnly ? (
             <Button variant="ghost" size="sm" asChild>
               <Link href={`/payroll/batches/${line.payrollBatchId}/print`}>งวดเต็ม</Link>
@@ -104,7 +108,7 @@ export function WorkerPayslipHistory({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>สลิปเงินเดือน (Worker Payroll)</CardTitle>
+          <CardTitle>สลิปเงินเดือน / สลิปการทำงาน</CardTitle>
         <CardDescription>
           {selfProfileOnly
             ? 'เฉพาะงวดของคุณจากทะเบียนที่ผูกบัญชี — กด «สลิป» เพื่อดู/พิมพ์'

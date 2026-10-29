@@ -19,6 +19,7 @@ import {
     type DocumentData,
     type QuerySnapshot,
 } from 'firebase/firestore';
+import { asFirestoreUpdate } from '@/lib/firestore/as-update-data';
 import { 
   PayrollBatch,
   PayrollBatchIncomeSegment,
@@ -97,6 +98,14 @@ import {
 } from '@/lib/payroll/timesheet-labor-base-cost';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
 import { fetchWorkerGlobalLaborContextFromFirestore, workerGlobalLaborToPayrollRestSchedule } from '@/lib/payroll/worker-global-labor-policy';
+import {
+  applyLumpSumStatutoryDeductions,
+  fetchLumpSumWorkerLaborContextFromFirestore,
+  fetchLumpSumWithholdingRatePercentFromFirestore,
+  isLumpSumPayrollLine,
+  isLumpSumWorker,
+  laborContextForWorker,
+} from '@/lib/payroll/lump-sum-worker';
 import {
   calendarYearMonthFromPeriodStart,
   hasApprovedMonthlyTimesheetForYearMonth,
@@ -329,6 +338,7 @@ export class PayrollService {
     const lines: PayrollBatchLine[] = [];
 
     const now = Date.now();
+    const lumpSumWhtRate = await fetchLumpSumWithholdingRatePercentFromFirestore(this.db);
     for (const [workerId, adjustments] of itemsByWorker) {
       // คำนวณยอดใหม่จาก rate matrix จริง (ไม่เชื่อ computedPayAmountBaht snapshot)
       console.log(`[Supplemental] คำนวณยอด retro ใหม่จาก rate matrix สำหรับ worker ${workerId} (${adjustments.length} รายการ)`);
@@ -338,6 +348,7 @@ export class PayrollService {
       
       const priorGross = priorGrossMap.get(workerId) || 0;
       
+      const profile = workerMap.get(workerId);
       const d8Line = computeWorkerPayrollLineD8({
         asOfDate: period.endDate,
         policies: resolvedPolicies,
@@ -345,7 +356,8 @@ export class PayrollService {
         rate: { summary: 'Supplemental Run', conditionIds: [], laborTermIds: [] },
         earningsBreakdown: {},
         batchType: 'SUPPLEMENTAL',
-        priorPaidTaxableGross: priorGross
+        priorPaidTaxableGross: priorGross,
+        ...(isLumpSumWorker(profile) ? { lumpSumWhtRatePercent: lumpSumWhtRate } : {}),
       });
 
       const lineNetAmount = Math.round(d8Line.netAmount * 100) / 100;
@@ -355,7 +367,6 @@ export class PayrollService {
       batchDeductions += lineDedTotal;
       batchNet += lineNetAmount;
 
-      const profile = workerMap.get(workerId);
       const payment = paymentMap.get(workerId);
 
       const lineId = `${batchId}_${workerId}`;
@@ -365,6 +376,7 @@ export class PayrollService {
         workerId,
         workerNameSnapshot: profile ? `${profile.firstName} ${profile.lastName}` : 'Unknown',
         workerPaymentProfileSnapshot: payment || {},
+        payrollEngagementKind: isLumpSumWorker(profile) ? 'LUMP_SUM' : 'COMPANY',
         assignmentIds: [],
         sourceTimesheetIds: [],
         periodStartDate: period.startDate,
@@ -618,7 +630,10 @@ export class PayrollService {
       timesheets,
     );
 
-    const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(this.db);
+    const [workerGlobalLabor, lumpSumLabor] = await Promise.all([
+      fetchWorkerGlobalLaborContextFromFirestore(this.db),
+      fetchLumpSumWorkerLaborContextFromFirestore(this.db),
+    ]);
 
     const workerTsMap: Record<string, DailyTimesheet[]> = {};
     timesheets.forEach((ts) => {
@@ -645,7 +660,7 @@ export class PayrollService {
           contractMap,
           poContractById,
           poWorkModeByPoId,
-          workerGlobalLabor,
+          workerGlobalLabor: laborContextForWorker(wk, workerGlobalLabor, lumpSumLabor),
         });
         if (r.gross > 0) {
           hasAnyRate = true;
@@ -826,7 +841,11 @@ export class PayrollService {
 
     const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, timesheets);
 
-    const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(this.db);
+    const [workerGlobalLabor, lumpSumLabor, lumpSumWhtRate] = await Promise.all([
+      fetchWorkerGlobalLaborContextFromFirestore(this.db),
+      fetchLumpSumWorkerLaborContextFromFirestore(this.db),
+      fetchLumpSumWithholdingRatePercentFromFirestore(this.db),
+    ]);
 
     // Aggregate by Worker — ใบที่ยังไม่ LOCKED (จะล็อกในงวดนี้)
     const workerMap: Record<string, DailyTimesheet[]> = {};
@@ -931,6 +950,8 @@ export class PayrollService {
       const ppSnapshot = ppSnap.empty ? { paymentMethod: 'CASH' as any } : ppSnap.docs[0].data();
 
       const liveSourceTimesheetIds = new Set(unpaidWorkerTs.map((t) => t.id).filter(Boolean));
+      const workerRec = workerById.get(workerId);
+      const laborForWorker = laborContextForWorker(workerRec, workerGlobalLabor, lumpSumLabor);
 
       const aggDeps = {
         poLineMaps,
@@ -939,7 +960,7 @@ export class PayrollService {
         workerById,
         posById,
         contractMap,
-        workerGlobalLabor,
+        workerGlobalLabor: laborForWorker,
         assignmentById,
         frozenTimesheetGrossById: priorPaidFrozen.byTimesheetId,
         priorPaidFrozen,
@@ -1026,6 +1047,7 @@ export class PayrollService {
           laborTermIds: [...laborTermIds],
         },
         earningsBreakdown,
+        ...(isLumpSumWorker(workerRec) ? { lumpSumWhtRatePercent: lumpSumWhtRate } : {}),
       });
 
       const recovery = await fetchWorkerCashAdvancesPendingSalaryRecovery(this.db, workerId);
@@ -1068,6 +1090,7 @@ export class PayrollService {
         workerId,
         workerNameSnapshot: workerTs[0].workerNameSnapshot || unpaidWorkerTs[0]?.workerNameSnapshot || workerId,
         workerPaymentProfileSnapshot: ppSnapshot,
+        payrollEngagementKind: isLumpSumWorker(workerRec) ? 'LUMP_SUM' : 'COMPANY',
         assignmentIds: Array.from(new Set(workerTs.map(ts => ts.assignmentId))),
         /** ล็อกเฉพาะวันที่ยังไม่จ่ายในรอบนี้ */
         sourceTimesheetIds: unpaidWorkerTs.map(ts => ts.id),
@@ -1078,7 +1101,7 @@ export class PayrollService {
         timesheetGrossById,
         dailyRowSnapshots: buildPayrollLineDailyRowSnapshots(workerTs, timesheetGrossById, {
           posById,
-          payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
+          payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(laborForWorker),
         }),
         deductionsBreakdown,
         grossAmount: workerGross,
@@ -1261,7 +1284,7 @@ export class PayrollService {
         if (Number.isFinite(amt) && amt > 0) {
           lockFields.payrollLockedGrossBaht = Math.round(amt * 100) / 100;
         }
-        lockWb.update(snap.ref, lockFields);
+        lockWb.update(snap.ref, asFirestoreUpdate(lockFields));
         ops++;
         locked++;
       }
@@ -1307,7 +1330,7 @@ export class PayrollService {
   ): Promise<string[]> {
     const tsIds: string[] = [];
     for (const d of linesSnap.docs) {
-      const line = d.data();
+      const line = d.data() as PayrollBatchLine;
       line.sourceTimesheetIds?.forEach((id) => tsIds.push(id));
     }
 
@@ -1918,11 +1941,19 @@ export class PayrollService {
       try {
         const tsList = await loadDailyTimesheetsByIds(this.db, ids);
         if (tsList.length === 0) continue;
-        const { posById } = await loadWorkersAndPositionsForPayroll(this.db, tsList);
-        const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(this.db);
+        const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, tsList);
+        const [workerGlobalLabor, lumpSumLabor] = await Promise.all([
+          fetchWorkerGlobalLaborContextFromFirestore(this.db),
+          fetchLumpSumWorkerLaborContextFromFirestore(this.db),
+        ]);
+        const laborForWorker = laborContextForWorker(
+          workerById.get(line.workerId),
+          workerGlobalLabor,
+          lumpSumLabor,
+        );
         const snaps = buildPayrollLineDailyRowSnapshots(tsList, line.timesheetGrossById, {
           posById,
-          payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
+          payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(laborForWorker),
         });
         if (!isUsableDailyRowSnapshots(snaps, line.grossAmount)) continue;
         await updateDoc(d.ref, {
@@ -2066,11 +2097,19 @@ export class PayrollService {
         assignmentById,
       );
       await ensurePositionsLoadedForTimesheets(this.db, workerTsForCalc, posById);
-      const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(this.db);
+      const [workerGlobalLabor, lumpSumLabor] = await Promise.all([
+        fetchWorkerGlobalLaborContextFromFirestore(this.db),
+        fetchLumpSumWorkerLaborContextFromFirestore(this.db),
+      ]);
       if (!gate.active) return 'mismatch';
 
       const liveSourceTimesheetIds = new Set(
         workerTsForCalc.map((t) => String(t.id || '').trim()).filter(Boolean),
+      );
+      const laborForWorker = laborContextForWorker(
+        workerById.get(workerId),
+        workerGlobalLabor,
+        lumpSumLabor,
       );
       const aggDeps = {
         poLineMaps,
@@ -2079,7 +2118,7 @@ export class PayrollService {
         workerById,
         posById,
         contractMap,
-        workerGlobalLabor,
+        workerGlobalLabor: laborForWorker,
         assignmentById,
         frozenTimesheetGrossById: {},
         priorPaidFrozen: emptyPrior,
@@ -2100,7 +2139,7 @@ export class PayrollService {
       const timesheetGrossById = mergedChunk.timesheetGrossById;
       const dailySnaps = buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById, {
         posById,
-        payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
+        payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(laborForWorker),
       });
       const daySum = round2Payroll(
         Object.values(timesheetGrossById || {}).reduce((s, n) => s + (Number(n) || 0), 0),
@@ -2496,7 +2535,11 @@ export class PayrollService {
     );
 
     const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, workerTs);
-    const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(this.db);
+    const [workerGlobalLabor, lumpSumLabor, lumpSumWhtRate] = await Promise.all([
+      fetchWorkerGlobalLaborContextFromFirestore(this.db),
+      fetchLumpSumWorkerLaborContextFromFirestore(this.db),
+      fetchLumpSumWithholdingRatePercentFromFirestore(this.db),
+    ]);
 
     const asgnIds = [...new Set(workerTs.map((t) => String(t.assignmentId || '').trim()).filter(Boolean))];
     if (!snapshotBackfill) {
@@ -2558,6 +2601,8 @@ export class PayrollService {
       ).filter(Boolean),
     );
 
+    const workerRec = workerById.get(workerId);
+    const laborForWorker = laborContextForWorker(workerRec, workerGlobalLabor, lumpSumLabor);
     const aggDeps = {
       poLineMaps,
       poContractById,
@@ -2565,7 +2610,7 @@ export class PayrollService {
       workerById,
       posById,
       contractMap,
-      workerGlobalLabor,
+      workerGlobalLabor: laborForWorker,
       assignmentById,
       frozenTimesheetGrossById: priorPaidFrozen.byTimesheetId,
       priorPaidFrozen,
@@ -2655,6 +2700,7 @@ export class PayrollService {
         laborTermIds: [...laborTermIds],
       },
       earningsBreakdown,
+      ...(isLumpSumPayrollLine(line, workerRec) ? { lumpSumWhtRatePercent: lumpSumWhtRate } : {}),
     });
 
     const hrStored: HrPayrollLineAdjustments | null | undefined = line.hrLineAdjustments;
@@ -2709,6 +2755,7 @@ export class PayrollService {
       },
       batchType: isSupplemental ? 'SUPPLEMENTAL' : 'NORMAL',
       priorPaidTaxableGross,
+      ...(isLumpSumPayrollLine(line, workerRec) ? { lumpSumWhtRatePercent: lumpSumWhtRate } : {}),
     });
 
     const pitOv = hrStored?.pitWithholdingOverride;
@@ -2722,20 +2769,24 @@ export class PayrollService {
           : 'auto_timesheet');
 
     let deductions: Record<string, number> = { ...d8WithAllowances.deductionsBreakdown };
-    deductions.pit_withholding = resolveWorkerPitWithholdingBaht({
-      mode,
-      effectiveGross,
-      policies: resolvedPolicies,
-      /** ฐาน ภงด. ต้องหักทั้ง ปสง. และกองทุนสงเคราะห์ลูกจ้างออกก่อน */
-      socialSecurityBaht: (Number(deductions.social_security) || 0) + (Number(deductions.employee_assistance_fund) || 0),
-      isSupplemental,
-      priorPaidTaxableGross,
-      pitWithholdingOverride: pitOv,
-      pitAutoSalaryBaseBaht: hrStored?.pitAutoSalaryBaseBaht,
-      maxMarginalRatePercent: mr != null && Number.isFinite(mr) ? Number(mr) : null,
-    });
-    if (isSupplemental) {
-      deductions = forceSupplementalNoSocialSecurity(deductions);
+    if (isLumpSumPayrollLine(line, workerRec)) {
+      deductions = applyLumpSumStatutoryDeductions(deductions, effectiveGross, lumpSumWhtRate);
+    } else {
+      deductions.pit_withholding = resolveWorkerPitWithholdingBaht({
+        mode,
+        effectiveGross,
+        policies: resolvedPolicies,
+        /** ฐาน ภงด. ต้องหักทั้ง ปสง. และกองทุนสงเคราะห์ลูกจ้างออกก่อน */
+        socialSecurityBaht: (Number(deductions.social_security) || 0) + (Number(deductions.employee_assistance_fund) || 0),
+        isSupplemental,
+        priorPaidTaxableGross,
+        pitWithholdingOverride: pitOv,
+        pitAutoSalaryBaseBaht: hrStored?.pitAutoSalaryBaseBaht,
+        maxMarginalRatePercent: mr != null && Number.isFinite(mr) ? Number(mr) : null,
+      });
+      if (isSupplemental) {
+        deductions = forceSupplementalNoSocialSecurity(deductions);
+      }
     }
     deductionItems.forEach((d, idx) => {
       deductions[`manual_ded_${idx}`] = Math.max(0, Number(d.amount) || 0);
@@ -2810,7 +2861,7 @@ export class PayrollService {
       const computedNet = round2Payroll(netAmount);
       const dailySnaps = buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById, {
         posById,
-        payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
+        payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(laborForWorker),
       });
       const daySum = round2Payroll(
         Object.values(timesheetGrossById || {}).reduce((s, n) => s + (Number(n) || 0), 0),
@@ -2868,6 +2919,7 @@ export class PayrollService {
 
     const patch: Record<string, unknown> = {
       workerPaymentProfileSnapshot: ppSnapshot,
+      payrollEngagementKind: isLumpSumPayrollLine(line, workerRec) ? 'LUMP_SUM' : 'COMPANY',
       assignmentIds: Array.from(new Set(workerTsForCalc.map((ts) => ts.assignmentId))),
       sourceTimesheetIds: workerTsForCalc.map((ts) => ts.id),
       periodStartDate: period.startDate,
@@ -2877,7 +2929,7 @@ export class PayrollService {
       timesheetGrossById,
       dailyRowSnapshots: buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById, {
         posById,
-        payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
+        payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(laborForWorker),
       }),
       grossAmount: isSupplemental ? effectiveGross : workerGross,
       deductionsBreakdown: deductions,
@@ -2965,6 +3017,7 @@ export class PayrollService {
 
     const batch = batchSnap.data() as PayrollBatch;
     const line = lineSnap.data() as PayrollBatchLine;
+    const lumpSumAdjRate = await fetchLumpSumWithholdingRatePercentFromFirestore(this.db);
 
     const blocked = ['PAID', 'LOCKED', 'FINANCE_PREPARED', 'PAYMENT_EXPORTED'] as const;
     if ((blocked as readonly string[]).includes(batch.status)) {
@@ -3034,6 +3087,7 @@ export class PayrollService {
       },
       batchType: isSupplemental ? 'SUPPLEMENTAL' : 'NORMAL',
       priorPaidTaxableGross,
+      ...(isLumpSumPayrollLine(line) ? { lumpSumWhtRatePercent: lumpSumAdjRate } : {}),
     });
 
     const pitOv = input.pitWithholdingOverride;
@@ -3043,20 +3097,24 @@ export class PayrollService {
       (mr != null && Number.isFinite(mr) ? 'auto_timesheet' : (pitOv != null && Number.isFinite(pitOv) ? 'manual_baht' : 'auto_timesheet'));
 
     let deductions: Record<string, number> = { ...d8Line.deductionsBreakdown };
-    deductions.pit_withholding = resolveWorkerPitWithholdingBaht({
-      mode,
-      effectiveGross,
-      policies: resolved,
-      /** ฐาน ภงด. ต้องหักทั้ง ปสง. และกองทุนสงเคราะห์ลูกจ้างออกก่อน */
-      socialSecurityBaht: (Number(deductions.social_security) || 0) + (Number(deductions.employee_assistance_fund) || 0),
-      isSupplemental,
-      priorPaidTaxableGross,
-      pitWithholdingOverride: pitOv,
-      pitAutoSalaryBaseBaht: input.pitAutoSalaryBaseBaht,
-      maxMarginalRatePercent: mr != null && Number.isFinite(mr) ? Number(mr) : null,
-    });
-    if (isSupplemental) {
-      deductions = forceSupplementalNoSocialSecurity(deductions);
+    if (isLumpSumPayrollLine(line)) {
+      deductions = applyLumpSumStatutoryDeductions(deductions, effectiveGross, lumpSumAdjRate);
+    } else {
+      deductions.pit_withholding = resolveWorkerPitWithholdingBaht({
+        mode,
+        effectiveGross,
+        policies: resolved,
+        /** ฐาน ภงด. ต้องหักทั้ง ปสง. และกองทุนสงเคราะห์ลูกจ้างออกก่อน */
+        socialSecurityBaht: (Number(deductions.social_security) || 0) + (Number(deductions.employee_assistance_fund) || 0),
+        isSupplemental,
+        priorPaidTaxableGross,
+        pitWithholdingOverride: pitOv,
+        pitAutoSalaryBaseBaht: input.pitAutoSalaryBaseBaht,
+        maxMarginalRatePercent: mr != null && Number.isFinite(mr) ? Number(mr) : null,
+      });
+      if (isSupplemental) {
+        deductions = forceSupplementalNoSocialSecurity(deductions);
+      }
     }
     input.deductionItems.forEach((d, idx) => {
       deductions[`manual_ded_${idx}`] = Math.max(0, Number(d.amount) || 0);

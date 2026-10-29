@@ -34,7 +34,9 @@ export type PayrollPolicyKind =
   | 'allowance_deduction'
   | 'monthly_work_norm'
   /** ตัวคูณ/ปฏิทินค่าจ้างลูกจ้างแบบกลาง — `payroll_policies/policy_worker_global_labor` */
-  | 'worker_global_labor';
+  | 'worker_global_labor'
+  /** ตัวคูณค่าจ้างลูกจ้างแบบเหมา — `payroll_policies/policy_lump_sum_worker_labor` */
+  | 'lump_sum_worker_labor';
 
 export type PayrollPolicyRecordStatus = 'draft' | 'active' | 'superseded' | 'archived';
 
@@ -232,6 +234,8 @@ export interface PayrollBatch {
   financeApprovedAt?: number;
   lockedBy?: string;
   lockedAt?: number;
+  /** วันที่จ่ายจริง (เอกสารเก่าบางงวดใช้ paidAt แทน financeApprovedAt) */
+  paidAt?: number;
   createdBy: string;
   updatedBy: string;
   createdAt: number;
@@ -327,7 +331,7 @@ export interface HrPayrollLineAdjustments {
    * (รายการเก่าบางรายอาจมีค่าโดยไม่มี workerPitMode ให้อนุมานเป็น auto_timesheet + จำกัด marginal)
    */
   pitWithholdingOverrideMaxMarginalRatePercent?: number | null;
-  notes?: string;
+  notes?: string | null;
   updatedAt?: number;
   updatedBy?: string;
 }
@@ -365,6 +369,12 @@ export interface PayrollBatchLine {
   workerId: string;
   workerNameSnapshot: string;
   workerPaymentProfileSnapshot: Partial<WorkerPaymentProfile>;
+  /**
+   * ชนิดการจ้าง ณ generate — COMPANY = สลิป+ปสง.+ภงด.1 ตามเดิม
+   * LUMP_SUM = สลิปการทำงาน + หัก ณ ที่จ่ายเหมา 3% (50ทวิ) ไม่หัก ปสง./ภงด.1
+   * ไม่ระบุ = ถือเป็นลูกจ้างบริษัท (งวดเก่า)
+   */
+  payrollEngagementKind?: 'COMPANY' | 'LUMP_SUM';
   assignmentIds: string[];
   sourceTimesheetIds: string[];
   periodStartDate: string;
@@ -440,6 +450,8 @@ export interface PayrollBatchLine {
   ssoEmployerContribPaidByUid?: string;
   ssoEmployerContribPaidByName?: string;
   ssoEmployerContribPaymentBankAccountId?: string;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 /**

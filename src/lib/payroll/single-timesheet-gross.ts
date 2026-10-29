@@ -2,7 +2,7 @@
  * คำนวณ gross รายใบ timesheet แบบเดียวกับ generatePayrollBatch (สำหรับแสดงรายวันในหน้า HR)
  */
 import { collection, doc, getDoc, getDocs, type Firestore } from 'firebase/firestore';
-import type { DailyTimesheet, JobMode, MainContract, Position, Worker } from '@/lib/types';
+import type { DailyTimesheet, JobMode, MainContract, Position, PositionRate, Worker } from '@/lib/types';
 import {
   loadWorkersAndPositionsForPayroll,
   collectPayrollContractIds,
@@ -16,6 +16,10 @@ import {
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
 import type { WorkerGlobalLaborContext } from '@/lib/payroll/worker-global-labor-policy';
 import { fetchWorkerGlobalLaborContextFromFirestore } from '@/lib/payroll/worker-global-labor-policy';
+import {
+  fetchLumpSumWorkerLaborContextFromFirestore,
+  laborContextForWorker,
+} from '@/lib/payroll/lump-sum-worker';
 
 export type SingleTimesheetGrossContext = {
   contractMap: Map<string, MainContract>;
@@ -25,6 +29,7 @@ export type SingleTimesheetGrossContext = {
   workerById: Map<string, Worker>;
   posById: Map<string, Position>;
   workerGlobalLabor: WorkerGlobalLaborContext;
+  lumpSumLabor: WorkerGlobalLaborContext;
 };
 
 /** Gross หนึ่งใบ — สอดคล้อง loop ใน PayrollService.generatePayrollBatch */
@@ -42,7 +47,7 @@ export function computeSingleTimesheetGrossLikeBatch(
     contractMap: ctx.contractMap,
     poContractById: ctx.poContractById,
     poWorkModeByPoId: ctx.poWorkModeByPoId,
-    workerGlobalLabor: ctx.workerGlobalLabor,
+    workerGlobalLabor: laborContextForWorker(wk, ctx.workerGlobalLabor, ctx.lumpSumLabor),
   });
   return r.gross > 0 ? r.gross : null;
 }
@@ -96,7 +101,19 @@ export async function buildSingleTimesheetGrossContext(
     }),
   );
 
-  const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(db);
+  const [workerGlobalLabor, lumpSumLabor] = await Promise.all([
+    fetchWorkerGlobalLaborContextFromFirestore(db),
+    fetchLumpSumWorkerLaborContextFromFirestore(db),
+  ]);
 
-  return { contractMap, poLineMaps, poContractById, poWorkModeByPoId, workerById, posById, workerGlobalLabor };
+  return {
+    contractMap,
+    poLineMaps,
+    poContractById,
+    poWorkModeByPoId,
+    workerById,
+    posById,
+    workerGlobalLabor,
+    lumpSumLabor,
+  };
 }

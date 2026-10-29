@@ -166,7 +166,7 @@ export function PayslipDocument({ model, className }: { model: PayslipViewModel;
           <div className="payslip-header-brand">
             <div className="payslip-brand-th">{model.companyNameTh}</div>
             <div className="payslip-brand-en">{model.companyNameEn}</div>
-            <h1 className="payslip-title">สลิปเงินเดือน / Payslip</h1>
+            <h1 className="payslip-title">{model.headingTh || 'สลิปเงินเดือน / Payslip'}</h1>
             <p className="payslip-sub">{model.payrollTypeLabel}</p>
           </div>
         </div>

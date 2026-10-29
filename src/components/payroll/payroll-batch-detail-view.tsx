@@ -27,6 +27,7 @@ import { usePoPartyLabels } from '@/hooks/use-po-party-labels';
 import { buildPayslipFromWorkerLine, normalizeIncomeSegments, isWorkerPayrollBatchSnapshotFrozen, payrollBatchChronologyMs } from '@/lib/payroll/payslip-model';
 import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
 import { lineDeductionsTotal } from '@/lib/payroll/payslip-deduction-display';
+import { isLumpSumPayrollLine } from '@/lib/payroll/lump-sum-worker';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
 import type { CompanyDocumentProfileForPayrollWht } from '@/lib/payroll/payroll-worker-wht-types';
 import { canPreviewWorkerPayrollWht } from '@/lib/payroll/payroll-worker-wht-permissions';
@@ -198,6 +199,14 @@ export function PayrollBatchDetailView({
     );
     return list;
   }, [lines]);
+  const companyPayrollLines = useMemo(
+    () => linesSorted.filter((l) => !isLumpSumPayrollLine(l)),
+    [linesSorted],
+  );
+  const lumpSumPayrollLines = useMemo(
+    () => linesSorted.filter((l) => isLumpSumPayrollLine(l)),
+    [linesSorted],
+  );
 
   const workersQuery = useMemoFirebase(
     () => (firestore && canViewBatch ? collection(firestore, 'workers') : null),
@@ -1176,7 +1185,7 @@ export function PayrollBatchDetailView({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {linesSorted.map((line) => {
+                    {companyPayrollLines.map((line) => {
                       const periodLabel = period?.label || batch.payrollPeriodId;
                       const slipModel = slipByLineId.get(line.id) ?? null;
                       return (
@@ -1274,6 +1283,131 @@ export function PayrollBatchDetailView({
                         <TableCell className="text-right align-middle py-[0.6rem] pr-2">
                           {canGenerateWorkerPayslips && slipModel ? (
                             <PayslipDialog model={slipModel} />
+                          ) : canGenerateWorkerPayslips && !slipModel ? (
+                            <Badge variant="destructive" className="text-[9px] whitespace-nowrap" title="สร้างสลิปไม่สำเร็จ">
+                              สลิป error
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[9px] whitespace-nowrap">
+                              รอเตรียม/อนุมัติ
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right align-middle py-[0.6rem] pr-3">
+                          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" asChild title="รายละเอียดรายคน · รายวัน · ปรับยอด">
+                            <Link href={`/payroll/batches/${id}/workers/${line.workerId}`}>
+                              <ChevronRight className="h-5 w-5" />
+                            </Link>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );})}
+                    {lumpSumPayrollLines.length > 0 ? (
+                      <TableRow className="bg-amber-50/80 hover:bg-amber-50/80 dark:bg-amber-950/20">
+                        <TableCell
+                          colSpan={showAccountingConfirm ? 11 : 10}
+                          className="py-2 pl-6 text-xs font-semibold text-amber-900 dark:text-amber-100"
+                        >
+                          ลูกจ้างแบบเหมา — สลิปการทำงาน (ไม่ใช่สลิปเงินเดือน) · หัก ณ ที่จ่าย 50ทวิ 3% ไม่หัก ปสง./ภงด.1
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                    {lumpSumPayrollLines.map((line) => {
+                      const periodLabel = period?.label || batch.payrollPeriodId;
+                      const slipModel = slipByLineId.get(line.id) ?? null;
+                      return (
+                      <TableRow key={line.id} className="hover:bg-muted/10">
+                        {showAccountingConfirm ? (
+                          <TableCell className="w-11 pl-4 align-middle py-[0.6rem]">
+                            {(line as PayrollBatchLine).financePayoutCashbookEntryId ? (
+                              <span className="text-muted-foreground text-xs tabular-nums" title="ตัดบัญชีแล้ว">
+                                ✓
+                              </span>
+                            ) : (
+                              <Checkbox
+                                checked={confirmLineIds.has(line.id)}
+                                onCheckedChange={(v) => {
+                                  const on = v === true;
+                                  setConfirmLineIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (on) next.add(line.id);
+                                    else next.delete(line.id);
+                                    return next;
+                                  });
+                                }}
+                                aria-label={`เลือก ${line.workerNameSnapshot || line.workerId}`}
+                              />
+                            )}
+                          </TableCell>
+                        ) : null}
+                        <TableCell className="pl-6 align-top py-[0.6rem] min-w-0 max-w-[300px]">
+                          <div className="flex flex-col gap-0.5 min-w-0">
+                            <span className="font-bold text-sm text-primary leading-snug break-words inline-flex flex-wrap items-center gap-1">
+                              {line.workerNameSnapshot}
+                              <Badge variant="outline" className="text-[9px] font-semibold shrink-0 border-amber-600 text-amber-900">
+                                แบบเหมา
+                              </Badge>
+                            </span>
+                            <span className="text-[10px] text-muted-foreground truncate">
+                              {workerPositionLabelByWorkerId.get(line.workerId) || '—'}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="align-middle py-[0.6rem] whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5 text-xs">
+                            <CreditCard className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span>{line.workerPaymentProfileSnapshot?.paymentMethod || 'CASH'}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="align-middle py-[0.6rem]">
+                          <Badge variant="outline" className="text-[9px] font-semibold whitespace-nowrap">
+                            {payrollLineExportStatusLabelTh(line.exportStatus)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="align-middle py-[0.6rem]">
+                          {(showAccountingConfirm || !!(line as PayrollBatchLine).financePayoutCashbookEntryId) &&
+                          (line as PayrollBatchLine).financePayoutCashbookEntryId ? (
+                            <Badge
+                              variant="default"
+                              className="text-[9px] bg-emerald-700 hover:bg-emerald-700 whitespace-nowrap font-semibold"
+                            >
+                              จ่ายแล้ว
+                            </Badge>
+                          ) : showAccountingConfirm ? (
+                            <Badge
+                              variant="outline"
+                              className="text-[9px] text-amber-900 border-amber-600 whitespace-nowrap font-semibold dark:text-amber-100"
+                            >
+                              รอตัด
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right text-xs font-medium tabular-nums align-middle py-[0.6rem]">
+                          ฿{safeNum(slipModel?.grossTotal ?? line.grossAmount).toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right text-xs text-red-600 tabular-nums align-middle py-[0.6rem]">
+                          ฿{safeNum(slipModel?.deductionsTotal ?? lineDeductionsTotal(line)).toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right font-black text-primary tabular-nums align-middle py-[0.6rem] text-sm">
+                          ฿{safeNum(slipModel?.netPay ?? line.netAmount).toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-center align-middle py-[0.6rem] px-1">
+                          <WorkerPayrollWhtSingleDialog
+                            firestore={firestore}
+                            batch={batch}
+                            line={line}
+                            periodLabel={periodLabel}
+                            companyProfile={companyProfileForWht ?? null}
+                            currentUser={currentUser as User}
+                            disabled={!canWhtPreview}
+                            disabledTitle={whtDisabledReason}
+                          />
+                        </TableCell>
+                        <TableCell className="text-right align-middle py-[0.6rem] pr-2">
+                          {canGenerateWorkerPayslips && slipModel ? (
+                            <PayslipDialog model={slipModel} title="สลิปการทำงาน" />
                           ) : canGenerateWorkerPayslips && !slipModel ? (
                             <Badge variant="destructive" className="text-[9px] whitespace-nowrap" title="สร้างสลิปไม่สำเร็จ">
                               สลิป error

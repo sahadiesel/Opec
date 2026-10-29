@@ -164,7 +164,7 @@ async function upsertWorkerClosure(
     workerName?: string;
     status: WorkerMonthClosureStatus;
     actor: User;
-    patch?: Partial<WorkerMonthTimesheetClosure>;
+    patch?: Record<string, unknown>;
   },
 ): Promise<WorkerMonthTimesheetClosure> {
   const now = Date.now();
@@ -185,7 +185,7 @@ async function upsertWorkerClosure(
       workerId: input.workerId,
       createdAt,
     }),
-    ...input.patch,
+    ...(input.patch as Partial<WorkerMonthTimesheetClosure> | undefined),
     id,
     poId: input.poId,
     yearMonth: input.yearMonth,

@@ -88,7 +88,7 @@ export default function AccountingDashboardPage() {
   const { data: issuedTaxForAr } = useCollection<TaxInvoice>(issuedTaxForArQuery as any);
 
   const visibleArItems = useMemo(() => {
-    const superseded = buildSupersededCommercialInvoiceIds({ taxInvoices: issuedTaxForAr });
+    const superseded = buildSupersededCommercialInvoiceIds({ taxInvoices: issuedTaxForAr ?? undefined });
     return filterSupersededCommercialArEntries(arItems ?? [], superseded);
   }, [arItems, issuedTaxForAr]);
 

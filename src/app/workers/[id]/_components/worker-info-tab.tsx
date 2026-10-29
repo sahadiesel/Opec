@@ -37,6 +37,10 @@ import {
   isWorkerNotReadyReasonCode,
   type WorkerNotReadyReasonCode,
 } from '@/lib/hr/worker-not-ready-reason';
+import {
+  LUMP_SUM_ENGAGEMENT_LOCKED_MESSAGE,
+  workerPayrollEngagementChangeBlocked,
+} from '@/lib/payroll/lump-sum-worker';
 
 interface WorkerInfoTabProps {
   worker: Worker;
@@ -101,6 +105,7 @@ export function WorkerInfoTab({
 
   const displayJobStatus = displayWorkerRegistryJobStatus(worker, openMobilizations ?? undefined);
   const jobBadge = workerRegistryJobStatusBadgeProps(displayJobStatus);
+  const engagementChangeLocked = workerPayrollEngagementChangeBlocked(worker, openMobilizations);
 
   const positionsSorted = useMemo(
     () => sortPositionsByDisplayName(allPositions ?? []),
@@ -251,6 +256,56 @@ export function WorkerInfoTab({
               <CardTitle className="text-lg flex items-center gap-2 text-primary">
                 <User className="h-5 w-5 shrink-0" /> ข้อมูลส่วนตัว (Personal Details)
               </CardTitle>
+              <div className="flex flex-col gap-1.5 min-w-0 max-w-xl">
+              <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                <span
+                  className={`text-xs font-semibold whitespace-nowrap ${
+                    (isEditing ? editedWorker.payrollEngagementKind ?? worker.payrollEngagementKind : worker.payrollEngagementKind) !==
+                    'LUMP_SUM'
+                      ? 'text-primary'
+                      : 'text-muted-foreground'
+                  }`}
+                >
+                  ลูกจ้างบริษัท
+                </span>
+                <Switch
+                  checked={
+                    (isEditing
+                      ? editedWorker.payrollEngagementKind ?? worker.payrollEngagementKind
+                      : worker.payrollEngagementKind) === 'LUMP_SUM'
+                  }
+                  disabled={!isEditing || engagementChangeLocked}
+                  title={engagementChangeLocked ? LUMP_SUM_ENGAGEMENT_LOCKED_MESSAGE : undefined}
+                  aria-label="ประเภทลูกจ้าง บริษัท หรือแบบเหมา"
+                  onCheckedChange={(on) => {
+                    if (engagementChangeLocked) return;
+                    setEditedWorker({
+                      ...editedWorker,
+                      payrollEngagementKind: on ? 'LUMP_SUM' : 'COMPANY',
+                    });
+                  }}
+                />
+                <span
+                  className={`text-xs font-semibold whitespace-nowrap ${
+                    (isEditing ? editedWorker.payrollEngagementKind ?? worker.payrollEngagementKind : worker.payrollEngagementKind) ===
+                    'LUMP_SUM'
+                      ? 'text-amber-800'
+                      : 'text-muted-foreground'
+                  }`}
+                >
+                  ลูกจ้างแบบเหมา
+                </span>
+              </div>
+              {engagementChangeLocked ? (
+                <p className="text-[11px] text-amber-800 leading-snug">
+                  {LUMP_SUM_ENGAGEMENT_LOCKED_MESSAGE}
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground leading-snug">
+                  เปลี่ยนได้เฉพาะเมื่อยังไม่ถูกมอบหมาย / ยังไม่ลงไซต์ — เพื่อไม่ให้สลิป หัก ณ ที่จ่าย และประกันสังคมปนกันในรอบงานเดียวกัน
+                </p>
+              )}
+              </div>
               <div className="flex flex-col items-stretch gap-2 sm:items-end shrink-0">
                 <div className="flex items-center gap-2 sm:gap-3">
                   <span

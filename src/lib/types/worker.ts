@@ -136,6 +136,8 @@ export interface Worker {
   drugPanelSummaryKind?: 'pending' | 'partial' | 'pass' | 'positive' | 'none_panel';
   drugPanelSummaryText?: string;
   drugPanelPassedCount?: number;
+  /** จำนวนรายการในแผงตรวจที่ใช้นับสรุป (อัปเดตจากหน้ารายละเอียดคนงาน) */
+  drugPanelTotalCount?: number;
   /** ผลตรวจสารเสพติด valid สำหรับ mob (อัปเดตจากหน้ารายละเอียดคนงาน) */
   drugPanelMobValid?: boolean;
   totalWorkedHours?: number;
@@ -155,6 +157,12 @@ export interface Worker {
   disciplinaryNotes?: string;
   /** เชื่อมบัญชี Firebase Auth สำหรับพอร์ทัลพนักงาน / เบิกล่วงหน้า */
   linkedUserId?: string;
+  /**
+   * ประเภทการจ้างฝั่งจ่ายค่าแรง (ลูกค้าไม่เห็น)
+   * ไม่ระบุหรือ COMPANY = ลูกจ้างบริษัท (ปสง. + ภงด.1 ตามเดิม)
+   * LUMP_SUM = ลูกจ้างแบบเหมา (หัก ณ ที่จ่าย 3% แบบ 50ทวิ ไม่หัก ปสง./ภงด.1)
+   */
+  payrollEngagementKind?: 'COMPANY' | 'LUMP_SUM';
   /**
    * ต้นทุนค่าแรง: `true` / undefined = ยึดเรทต้นทุนบนสัญญาของลูกค้าที่ assignment นั้นผูกไว้
    * `false` = ใช้ `laborCostCustom*` ที่กรอกในทะเบียนลูกจ้าง (ไม่บวกค่าตำแหน่ง ไม่ใช้เรทสัญญา)

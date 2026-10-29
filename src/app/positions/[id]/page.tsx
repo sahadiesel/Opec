@@ -1359,7 +1359,7 @@ export default function PositionDetailPage({ params }: { params: Promise<{ id: s
                           )}
                         </TableCell>
                         <TableCell className="text-xs font-medium text-muted-foreground">
-                          {positionToolItemTypeLabel(resolvePositionToolRequirementItemType(t, storeItems))}
+                          {positionToolItemTypeLabel(resolvePositionToolRequirementItemType(t, storeItems ?? undefined))}
                         </TableCell>
                         <TableCell className="text-sm font-bold">{t.quantityDefault} EA</TableCell>
                         <TableCell className="text-right pr-6">

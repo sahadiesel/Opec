@@ -4,7 +4,7 @@
  *
  * คนเดียวหลายสัญญาในเดือนเดียว: แต่ละใบใช้ contractId / PO ของตัวเอง → อัตราตามสัญญานั้น
  */
-import type { DailyTimesheet, JobMode, MainContract, Position, Worker, PositionRate } from '@/lib/types';
+import type { DailyTimesheet, JobMode, MainContract, Position, Worker, PositionRate, PositionRateMatrix } from '@/lib/types';
 import { computeWorkDayCostFromPackage, computeStandbyDayCostFromPackage, isPayrollCostStandbyPackageEvent } from '@/lib/payroll/package-labor-cost';
 import {
   resolveBaseCostForPayrollTimesheet,
@@ -264,7 +264,7 @@ export function computeRegistryWorkerTimesheetGross(
       hourlyDivisor: resolveOffshoreHourlyDivisor(
         'cost',
         contractPositionRate?.rateMatrix,
-        poLine.rateMatrixSnapshot,
+        poLine.rateMatrixSnapshot as PositionRateMatrix | undefined,
       ),
     });
     return {

@@ -11,7 +11,7 @@ import { collection, query, where } from 'firebase/firestore';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { canViewHrApprovalSubsection } from '@/lib/navigation/nav-access';
-import { CalendarCheck, CalendarOff, Clock, Coins, PackageSearch, ShieldCheck, Wallet } from 'lucide-react';
+import { CalendarCheck, CalendarOff, Clock, Coins, PackageSearch, PenLine, ShieldCheck, Wallet } from 'lucide-react';
 import type {
   CashAdvanceRequest,
   OfficePayrollRun,
@@ -21,6 +21,7 @@ import type {
   PurchaseRequest,
   User,
   WaveMonthTimesheetReview,
+  DocumentSignatureRequest,
 } from '@/lib/types';
 import { ATTENDANCE_CORRECTION_REQUESTS_COLLECTION, ATTENDANCE_OVERTIME_REQUESTS_COLLECTION } from '@/lib/attendance/constants';
 
@@ -192,6 +193,17 @@ export default function HrApprovalCenterPage() {
   const overtimePendingCount = overtimePendingRows?.length ?? 0;
   const attendanceQueuePendingCount = attendanceCorrectionPendingCount + overtimePendingCount;
   const leavePendingCount = leavePendingRows?.length ?? 0;
+
+  const signaturePendingQ = useMemoFirebase(
+    () =>
+      firestore && approvalGate
+        ? query(collection(firestore, 'document_signature_requests'), where('status', '==', 'PENDING'))
+        : null,
+    [firestore, approvalGate],
+  );
+  const { data: signaturePendingRows, isLoading: loadingSignature } =
+    useCollection<DocumentSignatureRequest>(signaturePendingQ as any);
+  const signaturePendingCount = signaturePendingRows?.length ?? 0;
 
   const canSee = approvalGate;
 
@@ -366,6 +378,30 @@ export default function HrApprovalCenterPage() {
               </Button>
               <Button variant="outline" size="sm" asChild>
                 <Link href="/hr/attendance">ไปสรุปลงเวลารายเดือน</Link>
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="relative flex h-full flex-col overflow-hidden rounded-xl border border-orange-500/25 bg-card shadow-sm ring-1 ring-black/[0.03] transition-shadow hover:shadow-md dark:ring-white/[0.06]">
+            <CardHeader className="relative pb-3 pr-28 pt-6 sm:pr-36">
+              <ApprovalSectionPendingBadge
+                count={signaturePendingCount}
+                loading={loadingSignature}
+                kindLabel="ลายเซ็นเอกสาร"
+              />
+              <CardTitle className="flex items-start gap-2.5 pr-0 text-lg leading-snug">
+                <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-orange-500/15 text-orange-800 dark:text-orange-300">
+                  <PenLine className="h-5 w-5" />
+                </span>
+                <span>รออนุมัติการเซ็นต์เอกสาร</span>
+              </CardTitle>
+              <CardDescription className="text-sm leading-relaxed">
+                Officer ขอใช้ลายเซ็นผู้มีอำนาจลงนามบนใบกำกับภาษี ใบแจ้งหนี้ หรือใบเสนอราคา — อนุมัติแล้วลายเซ็นของผู้จัดการจะอยู่บนเอกสารตอนพิมพ์
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              <Button asChild>
+                <Link href="/hr/approval-center/document-signatures">เปิดคิวรออนุมัติลายเซ็น</Link>
               </Button>
             </CardContent>
           </Card>

@@ -67,6 +67,15 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 
+function workerBatchLineLumpWhtBaht(line: PayrollBatchLine): number {
+  const br = line.deductionsBreakdown || {};
+  const v = Number(br.lump_sum_wht) || 0;
+  if (Number.isFinite(v) && v > 0) return v;
+  const snap = line.d8Snapshot?.deductions as Record<string, number> | undefined;
+  const s = Number(snap?.lump_sum_wht) || 0;
+  return Number.isFinite(s) && s > 0 ? s : 0;
+}
+
 function workerBatchLinePitBaht(line: PayrollBatchLine): number {
   const br = line.deductionsBreakdown || {};
   const direct =
@@ -960,7 +969,7 @@ export default function MyProfilePage() {
               {linked.kind === 'office_staff' && !isActiveOfficeStaffStatus(linked.record.status) ? (
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-base">ใบหัก ณ ที่จ่าย (ภงด.1)</CardTitle>
+                    <CardTitle className="text-base">ใบหัก ณ ที่จ่าย (ภงด.1 / 50ทวิ)</CardTitle>
                   </CardHeader>
                   <CardContent className="text-sm text-muted-foreground">
                     ทะเบียนพนักงานของคุณไม่ได้อยู่ในสถานะ ACTIVE — ไม่แสดงใบหัก ณ ที่จ่ายใน My Profile
@@ -969,9 +978,9 @@ export default function MyProfilePage() {
               ) : (
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">ใบหัก ณ ที่จ่าย (ภงด.1)</CardTitle>
+                  <CardTitle className="text-base">ใบหัก ณ ที่จ่าย (ภงด.1 และ 50ทวิ)</CardTitle>
                   <CardDescription>
-                    สรุปยอดภาษีหักจากบรรทัดงวดจ่ายของคุณ — ข้อมูลจากระบบ Payroll (หลัง HR คำนวณงวด)
+                    เก็บทั้งแบบลูกจ้างบริษัท (ภงด.1) และแบบเหมา (50ทวิ) ไว้ในโปรไฟล์ — เมื่อเปลี่ยนประเภทการจ้างยังดูเอกสารย้อนหลังได้ทั้งสองแบบ
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3 text-sm">
@@ -1001,7 +1010,10 @@ export default function MyProfilePage() {
                             <TableHead>งวด / ช่วง</TableHead>
                             <TableHead className="text-right">เงินได้รวม</TableHead>
                             <TableHead className="text-right">ภาษีหัก ณ ที่จ่าย</TableHead>
-                            <TableHead className="text-right whitespace-nowrap">ใบหัก ณ ที่จ่าย</TableHead>
+                            <TableHead className="text-right whitespace-nowrap">ภงด.1</TableHead>
+                            {linked.kind !== 'office_staff' ? (
+                              <TableHead className="text-right whitespace-nowrap">50ทวิ</TableHead>
+                            ) : null}
                             <TableHead className="text-right whitespace-nowrap">อัปเดตล่าสุด</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -1038,6 +1050,7 @@ export default function MyProfilePage() {
                             }
                             const wl = row as PayrollBatchLine & { id: string; createdAt?: number; updatedAt?: number };
                             const pit = workerBatchLinePitBaht(wl);
+                            const lumpWht = workerBatchLineLumpWhtBaht(wl);
                             const gross = Number(wl.grossAmount) || 0;
                             const spanLabel =
                               wl.periodStartDate && wl.periodEndDate
@@ -1051,13 +1064,24 @@ export default function MyProfilePage() {
                                   {gross.toLocaleString('th-TH', { maximumFractionDigits: 2 })}
                                 </TableCell>
                                 <TableCell className="text-right tabular-nums">
-                                  {pit.toLocaleString('th-TH', { maximumFractionDigits: 2 })}
+                                  {(lumpWht > 0 ? lumpWht : pit).toLocaleString('th-TH', {
+                                    maximumFractionDigits: 2,
+                                  })}
                                 </TableCell>
                                 <TableCell className="text-right">
                                   <SelfProfileWorkerWhtPrintButton
                                     line={wl}
                                     worker={linked.record}
                                     currentUser={currentUser}
+                                    certificateKind="pnd1"
+                                  />
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <SelfProfileWorkerWhtPrintButton
+                                    line={wl}
+                                    worker={linked.record}
+                                    currentUser={currentUser}
+                                    certificateKind="vendor_50tw"
                                   />
                                 </TableCell>
                                 <TableCell className="text-right text-xs text-muted-foreground whitespace-nowrap">
@@ -1069,7 +1093,7 @@ export default function MyProfilePage() {
                         </TableBody>
                       </Table>
                       <p className="text-xs text-muted-foreground">
-                        กด «ใบหักฯ» เพื่อดูตัวอย่างและพิมพ์ใบหัก ณ ที่จ่าย (สำเนาผู้ถูกหัก) — ข้อมูลจากงวดจ่ายที่คุณอยู่ในชุด payroll
+                        กด «ภงด.1» หรือ «50ทวิ» เพื่อดู/พิมพ์ใบหัก ณ ที่จ่ายของงวดนั้น — เก็บทั้งสองแบบไว้ในโปรไฟล์
                       </p>
                     </>
                   )}

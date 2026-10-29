@@ -16,6 +16,7 @@ import {
   limit,
   type DocumentData,
 } from 'firebase/firestore';
+import { asFirestoreUpdate } from '@/lib/firestore/as-update-data';
 import { 
   DailyTimesheet, 
   User, 
@@ -323,7 +324,7 @@ export class TimesheetService {
     const priorRemark = String(current.remark || '').trim();
     patch.remark = priorRemark ? `${priorRemark} · แก้ OT: ${reason}` : `แก้ OT: ${reason}`;
 
-    await updateDoc(docRef, patch);
+    await updateDoc(docRef, asFirestoreUpdate(patch));
     await writeAuditLog(this.db, user, {
       actionType: 'UPDATE',
       entityType: 'DailyTimesheet',

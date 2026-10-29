@@ -111,6 +111,8 @@ export interface User {
   lastLoginAt?: number;
   lastLogoutAt?: number;
   notes?: string;
+  /** รูปลายเซ็นที่ครอบในกรอบ 35×15 มม. แล้ว — ใช้เป็นผู้มีอำนาจลงนามบนเอกสารพิมพ์ */
+  signatureImageUrl?: string;
   mustResetPassword?: boolean;
   allowedContractIds?: string[];
   allowedPurchaseOrderIds?: string[];

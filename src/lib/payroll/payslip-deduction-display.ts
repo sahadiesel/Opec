@@ -33,17 +33,27 @@ export function deductionDisplayRows(
   const isSupplemental = opts?.isSupplemental === true;
   const d = line.deductionsBreakdown || {};
   const rows: Array<{ label: string; amount: number }> = [];
-  const ss = isSupplemental ? 0 : Number(d.social_security) || 0;
-  if (ss > 0.005 || !isSupplemental) {
+  const lumpWht = Number(d.lump_sum_wht) || 0;
+  const isLumpSumLine = Object.prototype.hasOwnProperty.call(d, 'lump_sum_wht') || lumpWht > 0.005;
+  const ss = isSupplemental || isLumpSumLine ? 0 : Number(d.social_security) || 0;
+  if (!isLumpSumLine && (ss > 0.005 || !isSupplemental)) {
     rows.push({ label: 'ประกันสังคม', amount: ss });
   }
+  if (isLumpSumLine) {
+    rows.push({
+      label: 'หัก ณ ที่จ่ายแบบเหมา 3% (50ทวิ)',
+      amount: lumpWht,
+    });
+  }
   const pit = Number(d.pit_withholding) || 0;
-  rows.push({
-    label: isSupplemental
-      ? 'ภาษี ณ ที่จ่าย (ภงด.) — การจ่ายตกเบิกครั้งนี้'
-      : 'ภาษี ณ ที่จ่าย (ภงด.)',
-    amount: pit,
-  });
+  if (!isLumpSumLine) {
+    rows.push({
+      label: isSupplemental
+        ? 'ภาษี ณ ที่จ่าย (ภงด.) — การจ่ายตกเบิกครั้งนี้'
+        : 'ภาษี ณ ที่จ่าย (ภงด.)',
+      amount: pit,
+    });
+  }
   const caAmt = Number(d[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]) || 0;
   if (caAmt > 0) {
     rows.push({
@@ -60,12 +70,16 @@ export function deductionDisplayRows(
   const known = new Set<string>([
     'social_security',
     'pit_withholding',
+    'lump_sum_wht',
     CASH_ADVANCE_PAYROLL_DEDUCTION_KEY,
     'prior_paid_recovery',
   ]);
   manual.forEach((_, idx) => known.add(`manual_ded_${idx}`));
   for (const [k, v] of Object.entries(d)) {
     if (known.has(k)) continue;
+    if (isLumpSumLine && (k === 'employee_assistance_fund' || k === 'social_security' || k === 'pit_withholding')) {
+      continue;
+    }
     if (isSupplemental && (/prior.?paid|หักยอดที่ชำระ|social.?security/i.test(k))) continue;
     const n = Number(v) || 0;
     if (n !== 0) rows.push({ label: k, amount: n });
@@ -77,6 +91,7 @@ export function deductionDisplayRows(
 export function snapshotDeductionLabel(key: string, line: LineWithHrAllowanceItems): string {
   if (key === 'social_security') return 'ประกันสังคม';
   if (key === 'pit_withholding') return 'ภาษี ณ ที่จ่าย (ภงด.)';
+  if (key === 'lump_sum_wht') return 'หัก ณ ที่จ่ายแบบเหมา 3% (50ทวิ)';
   if (key === 'pre_employment_deduction') return 'หักก่อนวันเริ่มงาน (เงินเดือนไม่เต็มเดือน)';
   if (key === 'post_employment_deduction') return 'หักหลังวันสิ้นสุดการจ้าง';
   if (key === 'late_deduction') return 'หักมาสาย';

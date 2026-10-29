@@ -186,6 +186,8 @@ export const SYSTEM_MODULES = [
   { group: 'HR & Payroll (บุคคล)', key: 'workers', label: 'ทะเบียนคนงาน (Workers)' },
   { group: 'HR & Payroll (บุคคล)', key: 'worker_documents', label: 'เอกสารบุคลากรกลาง (Worker document catalog)' },
   { group: 'HR & Payroll (บุคคล)', key: 'office_staff', label: 'พนักงานออฟฟิศ (Office Staff)' },
+  { group: 'HR & Payroll (บุคคล)', key: 'bank_registry', label: 'ทะเบียนธนาคาร (Bank names)' },
+  { group: 'HR & Payroll (บุคคล)', key: 'sso_hospital_registry', label: 'ทะเบียนโรงพยาบาล สปส.' },
   {
     group: 'HR & Payroll (บุคคล)',
     key: 'cash_advances',

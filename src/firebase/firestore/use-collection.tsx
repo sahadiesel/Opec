@@ -105,7 +105,8 @@ export function useCollection<T = any>(
           return;
         }
 
-        if (error.code !== 'permission-denied') {
+        const errCode = (error as FirestoreError | { code?: string }).code;
+        if (errCode !== 'permission-denied') {
           setError(error);
           return;
         }

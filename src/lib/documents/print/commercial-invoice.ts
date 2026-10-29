@@ -2,6 +2,7 @@ import type {
   CommercialInvoice,
   CommercialInvoiceLine,
   Customer,
+  DocumentPrintMarks,
   MainContract,
   PurchaseOrder,
   Quotation,
@@ -240,6 +241,8 @@ export function buildCommercialInvoicePrintHtml(params: {
   locale?: PrintDocumentLocale;
   /** รูปแบบเอกสาร (ค่าเริ่มต้น `invoice`) */
   printMode?: CommercialInvoicePrintMode;
+  /** ลายเซ็นผู้มีอำนาจ / ตรายาง — ใช้กับโหมดใบแจ้งหนี้ */
+  printMarks?: DocumentPrintMarks;
 }): string {
   const {
     company,
@@ -414,8 +417,18 @@ export function buildCommercialInvoicePrintHtml(params: {
   const footerHtml = isDelivery
     ? buildDeliverySignFooterHtml(L)
     : buildStandardSignFooterHtml({
-        left: { roleLine: printT(L, 'signPreparedBy'), name: invoice.createdByName || '—' },
-        right: { roleLine: printT(L, 'signCustomerConfirm'), name: rightSignName },
+        left: {
+          roleLine: printT(L, 'signPreparerDoc'),
+          name: invoice.createdByName || '—',
+          imageUrl: params.printMarks?.preparerSignatureImageUrl,
+        },
+        middle: {
+          roleLine: printT(L, 'signAuthorizedCompany'),
+          name: (invoice.authorizedSignatory?.signerName || '').trim() || '—',
+          imageUrl: params.printMarks?.authorizedSignatureImageUrl,
+          stampUrl: params.printMarks?.stampImageUrl,
+        },
+        right: { roleLine: printT(L, 'signCustomerShort'), name: rightSignName },
         belowHtml: confirmLine,
       });
   const isDraftPrint = invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER';

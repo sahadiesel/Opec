@@ -24,7 +24,7 @@ import type { BankNameCatalogItem, User } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
-import { getEffectiveAccessGroup, isSystemAdmin } from '@/lib/permissions';
+import { isHrManager, isSystemAdmin } from '@/lib/permissions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,7 +46,7 @@ export default function BankRegistryPage() {
   const canManage = useMemo(() => {
     if (!currentUser) return false;
     if (isSystemAdmin(currentUser)) return true;
-    return getEffectiveAccessGroup(currentUser) === 'hr';
+    return isHrManager(currentUser);
   }, [currentUser]);
 
   const [banks, setBanks] = useState<BankNameCatalogItem[] | null>(null);

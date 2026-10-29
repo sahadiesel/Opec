@@ -45,7 +45,7 @@ export type PayrollWhtElectronicPayload = {
   payeeAddress: string;
   incomeTypeCode: string;
   incomeTypeName: string;
-  formTypeCode: 'PND1' | 'PND2';
+  formTypeCode: 'PND1' | 'PND2' | 'PND3';
   withholdingTaxBase: number;
   withholdingTaxAmount: number;
   taxConditionCode: WhtTaxCondition;
@@ -94,7 +94,7 @@ export type PayrollWorkerWhtPrintVm = {
 
   incomeTypeCode: 'PAYROLL_WAGE' | 'MEETING_ALLOWANCE' | 'DIVIDEND' | 'OTHER';
   incomeTypeNameTh: string;
-  formTypeCode: 'PND1' | 'PND2';
+  formTypeCode: 'PND1' | 'PND2' | 'PND3';
 
   earningsRows: Array<{ label: string; amount: number }>;
   deductionsRows: Array<{ label: string; amount: number }>;
@@ -144,4 +144,6 @@ export type PayrollWorkerWhtLinePrep = {
   workerNameSnapshot: string;
   vm: PayrollWorkerWhtPrintVm | null;
   validation: PayrollWorkerWhtValidationResult;
+  /** ลูกจ้างแบบเหมา — ฟอร์ม 50ทวิ ชุดจัดซื้อ */
+  vendor50Tw?: import('@/lib/types').WithholdingCertificateDocument | null;
 };

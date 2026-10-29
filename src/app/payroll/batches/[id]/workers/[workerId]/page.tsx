@@ -47,6 +47,7 @@ import {
   retroAdjustmentsToPriorPeriodItemsWithPay,
 } from '@/lib/services/timesheet-retro-adjustment-service';
 import { PayrollService } from '@/lib/services/payroll-service';
+import { isLumpSumPayrollLine, LUMP_SUM_WHT_DEDUCTION_KEY } from '@/lib/payroll/lump-sum-worker';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
@@ -869,8 +870,8 @@ export default function PayrollBatchWorkerLinePage({
             (Number(d8Line.deductionsBreakdown.employee_assistance_fund) || 0),
           isSupplemental: !!isSupplemental,
           priorPaidTaxableGross,
-          pitWithholdingOverride: pitManualBaht,
-          pitAutoSalaryBaseBaht: pitAutoSalaryBase,
+          pitWithholdingOverride: Number(pitManualBaht) || 0,
+          pitAutoSalaryBaseBaht: Number(pitAutoSalaryBase) || 0,
           maxMarginalRatePercent: marg,
         });
         if (!cancelled) {
@@ -929,10 +930,7 @@ export default function PayrollBatchWorkerLinePage({
     [],
   );
   const canSaveAdjustments =
-    canEditHrAdjustments &&
-    batch &&
-    !blockedEditStatuses.includes(batch.status) &&
-    line;
+    Boolean(canEditHrAdjustments && batch && !blockedEditStatuses.includes(batch.status) && line);
 
   const handleSave = useCallback(async () => {
     if (!firestore || !currentUser || !canSaveAdjustments) return;
@@ -1771,6 +1769,17 @@ export default function PayrollBatchWorkerLinePage({
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
               <div className="space-y-4 min-w-0">
+            {isLumpSumPayrollLine(line) ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50/70 dark:bg-amber-950/30 p-4 space-y-2">
+              <Label className="text-base font-bold">ลูกจ้างแบบเหมา — หัก ณ ที่จ่าย 3% (50ทวิ)</Label>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                ไม่หักประกันสังคม และไม่หัก ภงด.1 — ยอดหักคำนวณอัตโนมัติจากค่าแรง × อัตราใน HR Settings (ค่าเริ่มต้น 3%) มีสลิปการทำงาน (ไม่ใช่สลิปเงินเดือน) และใบหัก ณ ที่จ่าย 50ทวิ ชุดเดียวกับจัดซื้อ
+              </p>
+              <p className="text-sm font-mono tabular-nums">
+                ยอดหักในงวดนี้ ฿{Number(line.deductionsBreakdown?.[LUMP_SUM_WHT_DEDUCTION_KEY] || 0).toLocaleString()}
+              </p>
+            </div>
+            ) : (
             <div className="space-y-3">
               <div>
                 <Label className="text-base font-bold">การหัก ภงด.1 (ภาษี ณ ที่จ่าย)</Label>
@@ -1938,6 +1947,7 @@ export default function PayrollBatchWorkerLinePage({
                 </p>
               </div>
             </div>
+            )}
 
             <div className="space-y-2">
               <Label>หมายเหตุ</Label>

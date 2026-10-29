@@ -15,6 +15,10 @@ import {
   workerGlobalLaborContextFromPolicy,
   type WorkerGlobalLaborContext,
 } from '@/lib/payroll/worker-global-labor-policy';
+import {
+  DEFAULT_LUMP_SUM_WORKER_LABOR_CONTEXT,
+  lumpSumLaborContextFromPolicy,
+} from '@/lib/payroll/lump-sum-worker';
 import { cloneDefaultPitBands, type PitProgressiveBand } from '@/lib/hr/pit-thailand';
 import { DEFAULT_ANNUAL_PERSONAL_ALLOWANCE } from '@/lib/payroll/employee-payroll-deductions';
 import {
@@ -49,6 +53,8 @@ export type HrSettingsSnapshotValues = {
   leaveSick: number;
   leaveAnnual: number;
   workerLabor: WorkerGlobalLaborContext;
+  lumpSumLabor: WorkerGlobalLaborContext;
+  lumpSumWhtRatePercent: number;
 };
 
 export type HrSettingsFieldChange = {
@@ -89,6 +95,18 @@ const LABELS: Record<string, string> = {
   cost_mobilization: 'ตัวคูณ Mob (ลูกจ้าง)',
   cost_demobilization: 'ตัวคูณ Demob (ลูกจ้าง)',
   cost_travel: 'ตัวคูณ Travel (ลูกจ้าง)',
+  lump_weeklyRestPattern: 'วันหยุดประจำสัปดาห์ (ลูกจ้างแบบเหมา)',
+  lump_calendarHolidays: 'วันหยุดในปฏิทิน (ลูกจ้างแบบเหมา)',
+  lump_cost_otAfterShift: 'ตัวคูณ OT หลังกะ (ลูกจ้างแบบเหมา)',
+  lump_cost_holiday: 'ตัวคูณวันหยุด (ลูกจ้างแบบเหมา)',
+  lump_cost_publicHoliday: 'ตัวคูณนักขัตฤกษ์ (ลูกจ้างแบบเหมา)',
+  lump_cost_sunday: 'ตัวคูณวันอาทิตย์ (ลูกจ้างแบบเหมา)',
+  lump_cost_sundayOt: 'ตัวคูณ OT วันอาทิตย์ (ลูกจ้างแบบเหมา)',
+  lump_cost_standby: 'ตัวคูณ Standby (ลูกจ้างแบบเหมา)',
+  lump_cost_mobilization: 'ตัวคูณ Mob (ลูกจ้างแบบเหมา)',
+  lump_cost_demobilization: 'ตัวคูณ Demob (ลูกจ้างแบบเหมา)',
+  lump_cost_travel: 'ตัวคูณ Travel (ลูกจ้างแบบเหมา)',
+  lumpSumWhtRatePercent: 'อัตราหัก ณ ที่จ่ายลูกจ้างแบบเหมา (%)',
 };
 
 function weeklyRestLabel(v: string): string {
@@ -123,6 +141,8 @@ function fmtHolidays(ctx: WorkerGlobalLaborContext): string {
 export function flattenHrSettingsSnapshot(v: HrSettingsSnapshotValues): Record<string, string> {
   const mw = v.monthlyWork;
   const c = v.workerLabor.cost;
+  const lc = (v.lumpSumLabor ?? DEFAULT_LUMP_SUM_WORKER_LABOR_CONTEXT).cost;
+  const lumpLabor = v.lumpSumLabor ?? DEFAULT_LUMP_SUM_WORKER_LABOR_CONTEXT;
   return {
     ssoRate: fmtNum(v.ssoRate),
     ssoCeiling: fmtNum(v.ssoCeiling),
@@ -154,6 +174,18 @@ export function flattenHrSettingsSnapshot(v: HrSettingsSnapshotValues): Record<s
     cost_mobilization: fmtNum(c.mobilization),
     cost_demobilization: fmtNum(c.demobilization),
     cost_travel: fmtNum(c.travel),
+    lump_weeklyRestPattern: weeklyRestLabel(lumpLabor.weeklyRestPattern),
+    lump_calendarHolidays: fmtHolidays(lumpLabor),
+    lump_cost_otAfterShift: fmtNum(lc.otAfterShift),
+    lump_cost_holiday: fmtNum(lc.holiday),
+    lump_cost_publicHoliday: fmtNum(lc.publicHoliday),
+    lump_cost_sunday: fmtNum(lc.sunday),
+    lump_cost_sundayOt: fmtNum(lc.sundayOt),
+    lump_cost_standby: fmtNum(lc.standby),
+    lump_cost_mobilization: fmtNum(lc.mobilization),
+    lump_cost_demobilization: fmtNum(lc.demobilization),
+    lump_cost_travel: fmtNum(lc.travel),
+    lumpSumWhtRatePercent: fmtNum(v.lumpSumWhtRatePercent ?? 3),
   };
 }
 
@@ -177,6 +209,7 @@ export function hrSettingsSnapshotFromStored(input: {
   taxConfig?: Record<string, unknown> | null;
   monthlyWorkConfig?: Record<string, unknown> | null;
   workerLaborPolicy?: PayrollPolicyRecord | null;
+  lumpSumLaborPolicy?: PayrollPolicyRecord | null;
   leave?: Partial<OfficeLeaveEntitlementsDoc> | null;
 }): HrSettingsSnapshotValues {
   const sso = input.ssoConfig || {};
@@ -202,6 +235,11 @@ export function hrSettingsSnapshotFromStored(input: {
     leaveSick: Number(leave.sickDaysPerYear ?? 0),
     leaveAnnual: Number(leave.annualVacationDaysPerYear ?? 0),
     workerLabor: workerGlobalLaborContextFromPolicy(input.workerLaborPolicy),
+    lumpSumLabor: lumpSumLaborContextFromPolicy(input.lumpSumLaborPolicy),
+    lumpSumWhtRatePercent: Number(
+      (input.lumpSumLaborPolicy?.config as { withholdingRatePercent?: number } | undefined)
+        ?.withholdingRatePercent ?? 3,
+    ),
   };
 }
 
@@ -215,6 +253,7 @@ export function hrSettingsSnapshotFromPolicyDocs(input: {
   taxData?: Record<string, unknown> | null;
   monthlyWorkData?: Record<string, unknown> | null;
   workerLaborData?: Record<string, unknown> | null;
+  lumpSumLaborData?: Record<string, unknown> | null;
   leaveData?: Record<string, unknown> | null;
 }): HrSettingsSnapshotValues {
   const wlRaw = input.workerLaborData;
@@ -222,11 +261,17 @@ export function hrSettingsSnapshotFromPolicyDocs(input: {
     wlRaw && typeof wlRaw === 'object'
       ? ({ id: 'policy_worker_global_labor', ...(wlRaw as object) } as PayrollPolicyRecord)
       : null;
+  const lsRaw = input.lumpSumLaborData;
+  const lumpSumLaborPolicy =
+    lsRaw && typeof lsRaw === 'object'
+      ? ({ id: 'policy_lump_sum_worker_labor', ...(lsRaw as object) } as PayrollPolicyRecord)
+      : null;
   return hrSettingsSnapshotFromStored({
     ssoConfig: asConfig(input.ssoData || undefined),
     taxConfig: asConfig(input.taxData || undefined),
     monthlyWorkConfig: asConfig(input.monthlyWorkData || undefined),
     workerLaborPolicy,
+    lumpSumLaborPolicy,
     leave: input.leaveData as Partial<OfficeLeaveEntitlementsDoc> | null,
   });
 }

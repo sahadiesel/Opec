@@ -101,6 +101,10 @@ import { printT, type PrintDocumentLocale } from '@/lib/documents/document-print
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { DocumentShareButton } from '@/components/documents/document-share-controls';
+import { AuthorizedSignatoryActions } from '@/components/documents/authorized-signatory-actions';
+import { PrintMarksDialog } from '@/components/documents/print-marks-dialog';
+import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
+import { authorizedSignatureReady } from '@/lib/types/document-signature';
 import {
   createTaxInvoiceDraftFromIssuedCommercial,
   updateLinkedInvoiceTermNotes,
@@ -213,6 +217,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     [firestore, canSee, id]
   );
   const { data: invoice, isLoading } = useDoc<CommercialInvoice>(invRef as any);
+  const preparerSignatureUrl = useUserSignatureUrl(invoice?.createdByUid);
 
   const bankListQ = useMemoFirebase(() => {
     if (!firestore || !isAccountingActor) return null;
@@ -264,6 +269,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     email?: string;
     addressLine1?: string;
     addressLine2?: string;
+    documentHeaderStampUrl?: string;
   }>(companyProfileRef as any);
 
   const poRef = useMemoFirebase(
@@ -300,6 +306,10 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
   const [printMode, setPrintMode] = useState<CommercialInvoicePrintMode>('invoice');
+  const [marksDialogOpen, setMarksDialogOpen] = useState(false);
+  const [includePreparerSignature, setIncludePreparerSignature] = useState(false);
+  const [includeAuthorizedSignature, setIncludeAuthorizedSignature] = useState(false);
+  const [includeStamp, setIncludeStamp] = useState(false);
 
   /** โหมด ENG ขณะแก้ไข — คงข้อความบรรทัดเป็นอังกฤษ (ไม่ต้องสลับไทย) */
   useEffect(() => {
@@ -357,8 +367,23 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       : { desc: 'รายละเอียด', qty: 'จำนวน', unit: 'ราคา/หน่วย', amt: 'จำนวนเงิน' };
   }, [printLocale]);
 
-  const handlePrintCommercial = async () => {
+  const handlePrintCommercial = async (
+    withPreparerSignature = false,
+    withAuthorizedSignature = false,
+    withStamp = false,
+  ) => {
     if (!invoice) return;
+    const authorizedReady = authorizedSignatureReady(invoice.authorizedSignatory);
+    const stampUrl = (companyProfile?.documentHeaderStampUrl || '').trim();
+    if (withPreparerSignature && !preparerSignatureUrl) {
+      toast({ title: 'ยังไม่มีลายเซ็นผู้จัดเตรียมเอกสาร', description: 'พิมพ์ช่องซ้ายโดยไม่มีรูปลายเซ็น' });
+    }
+    if (withAuthorizedSignature && !authorizedReady) {
+      toast({ title: 'ยังไม่มีลายเซ็นผู้มีอำนาจลงนาม', description: 'พิมพ์ช่องกลางโดยไม่มีรูปลายเซ็น' });
+    }
+    if (withStamp && !stampUrl) {
+      toast({ title: 'ยังไม่มีตรายาง', description: 'พิมพ์โดยไม่มีตรายาง — ตั้งได้ที่หัวเอกสารบริษัท' });
+    }
     const invoiceForPrint =
       invoice.status === 'DRAFT' && canAct ? { ...invoice, notes: notesDraft } : invoice;
     const body = buildCommercialInvoicePrintHtml({
@@ -375,6 +400,13 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       printedAtMs: Date.now(),
       locale: printLocale,
       printMode,
+      printMarks: {
+        preparerSignatureImageUrl:
+          withPreparerSignature && preparerSignatureUrl ? preparerSignatureUrl : undefined,
+        authorizedSignatureImageUrl:
+          withAuthorizedSignature && authorizedReady ? invoice.authorizedSignatory?.signatureImageUrl : undefined,
+        stampImageUrl: withStamp && stampUrl ? stampUrl : undefined,
+      },
     });
     if (
       !(await openStandardPrintWindow({
@@ -870,7 +902,16 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               size="sm"
               className="gap-1.5"
               type="button"
-              onClick={() => handlePrintCommercial()}
+              onClick={() => {
+                if (printMode !== 'invoice') {
+                  void handlePrintCommercial(false, false, false);
+                  return;
+                }
+                setIncludePreparerSignature(false);
+                setIncludeAuthorizedSignature(false);
+                setIncludeStamp(false);
+                setMarksDialogOpen(true);
+              }}
             >
               <Printer className="h-4 w-4" />
               พิมพ์
@@ -908,8 +949,37 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               </p>
             </PopoverContent>
           </Popover>
+          {invoice.status !== 'VOID' && currentUser ? (
+            <AuthorizedSignatoryActions
+              sourceCollection="commercial_invoices"
+              sourceId={invoice.id}
+              documentNo={invoice.invoiceNo}
+              documentLabel="ใบแจ้งหนี้"
+              mark={invoice.authorizedSignatory}
+              currentUser={currentUser}
+            />
+          ) : null}
           </div>
         </div>
+        <PrintMarksDialog
+          open={marksDialogOpen}
+          onOpenChange={setMarksDialogOpen}
+          includePreparerSignature={includePreparerSignature}
+          includeAuthorizedSignature={includeAuthorizedSignature}
+          includeStamp={includeStamp}
+          onPreparerSignature={setIncludePreparerSignature}
+          onAuthorizedSignature={setIncludeAuthorizedSignature}
+          onStamp={setIncludeStamp}
+          preparerReady={Boolean(preparerSignatureUrl)}
+          preparerName={invoice.createdByName}
+          authorizedReady={authorizedSignatureReady(invoice.authorizedSignatory)}
+          authorizedName={invoice.authorizedSignatory?.signerName}
+          stampReady={Boolean((companyProfile?.documentHeaderStampUrl || '').trim())}
+          onConfirm={() => {
+            setMarksDialogOpen(false);
+            void handlePrintCommercial(includePreparerSignature, includeAuthorizedSignature, includeStamp);
+          }}
+        />
 
         {invoice.status === 'REVISED' || supersededById ? (
           <Alert className="border-slate-300 bg-slate-50/90 dark:bg-slate-900/40">

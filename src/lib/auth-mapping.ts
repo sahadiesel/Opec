@@ -280,7 +280,7 @@ export function getFieldsForBusinessRole(roleKey: BusinessRoleKey): Partial<User
     userType,
     permissionProfileKey: profileKey,
     permissionProfileKeys: [profileKey],
-    roleIds: [profileKey],
+    roleIds: [profileKey as RoleType],
     ...(legacyRole ? { role: legacyRole } : {}),
     ...(portalRole ? { portalRole } : {}),
     updatedAt: Date.now(),

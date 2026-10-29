@@ -1198,7 +1198,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         updatedAt: now,
       };
       await updateDoc(doc(firestore, 'mobilizations', assignment.id), workPatch);
-      setAssignment((prev) => (prev ? ({ ...prev, ...workPatch } as Assignment) : null));
+      setAssignment((prev) => (prev ? ({ ...prev, ...workPatch } as unknown as Assignment) : null));
       if (firestore && assignment.workerId && assignment.customerId) {
         void ensureWorkerAssignedCustomerId(firestore, assignment.workerId, assignment.customerId).catch((e) =>
           console.error('[mob] assignedCustomerIds', e),

@@ -515,7 +515,39 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     break-inside: avoid;
     page-break-inside: avoid;
   }
-  .sd-sign-block { text-align: center; }
+  .sd-sign-block { text-align: center; position: relative; }
+  .sd-signatures--3 {
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+  }
+  .sd-sign-slot {
+    position: relative;
+    height: 15mm;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .sd-sign-img {
+    width: 35mm;
+    height: 15mm;
+    object-fit: contain;
+    object-position: center bottom;
+  }
+  .sd-sign-stamp {
+    position: absolute;
+    left: 50%;
+    bottom: -4mm;
+    width: 28mm;
+    height: 28mm;
+    transform: translateX(-50%);
+    object-fit: contain;
+    z-index: 2;
+    pointer-events: none;
+  }
+  .sd-signatures--3 .sd-sign-line,
+  .sd-page--commercial .sd-signatures--3 .sd-sign-line {
+    margin: 4px 8px 6px 8px;
+  }
   .sd-sign-line {
     border-top: 1px dotted #737373;
     margin: 48px 12px 8px 12px;
@@ -669,6 +701,9 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     }
     .sd-page--commercial .sd-sign-line {
       margin: 32px 10px 4px 10px;
+    }
+    .sd-page--commercial .sd-signatures--3 .sd-sign-line {
+      margin: 4px 8px 4px 8px;
     }
     .sd-page--commercial .sd-sign-footer {
       margin-top: 6mm;
@@ -968,25 +1003,47 @@ export function buildStandardTotalsWithNotesRowHtml(params: {
   </div>`;
 }
 
-/** ฟุตเตอร์ลายเซ็นสองฝั่ง + ข้อความกลาง (ถ้ามี) — ห้ามแยกออกจาก sd-sign-footer เมื่อแบ่งหน้า */
+export type StandardSignParty = {
+  roleLine: string;
+  name: string;
+  /** รูปลายเซ็นในกรอบ 35×15 มม. */
+  imageUrl?: string;
+  /** ตรายางบริษัท — วางทับช่องนี้ */
+  stampUrl?: string;
+};
+
+function standardSignBlockHtml(party: StandardSignParty, withSlot: boolean): string {
+  const img = party.imageUrl?.trim()
+    ? `<img class="sd-sign-img" src="${escapeHtmlDoc(party.imageUrl.trim())}" alt="" />`
+    : '';
+  const stamp = party.stampUrl?.trim()
+    ? `<img class="sd-sign-stamp" src="${escapeHtmlDoc(party.stampUrl.trim())}" alt="" />`
+    : '';
+  const slot = withSlot ? `<div class="sd-sign-slot">${img}${stamp}</div>` : '';
+  return `<div class="sd-sign-block">
+      ${slot}
+      <div class="sd-sign-line"></div>
+      <p class="sd-sign-role">${escapeHtmlDoc(party.roleLine)}</p>
+      <p class="sd-sign-name">${escapeHtmlDoc(party.name || '—')}</p>
+    </div>`;
+}
+
+/** ฟุตเตอร์ลายเซ็น — สองฝั่ง หรือสามฝั่งเมื่อส่ง middle — ห้ามแยกออกจาก sd-sign-footer เมื่อแบ่งหน้า */
 export function buildStandardSignFooterHtml(params: {
-  left: { roleLine: string; name: string };
-  right: { roleLine: string; name: string };
+  left: StandardSignParty;
+  middle?: StandardSignParty;
+  right: StandardSignParty;
   belowHtml?: string;
 }): string {
   const below = params.belowHtml ?? '';
+  const three = Boolean(params.middle);
+  const gridClass = three ? 'sd-signatures sd-signatures--3' : 'sd-signatures';
+  const middle = params.middle ? standardSignBlockHtml(params.middle, true) : '';
   return `<footer class="sd-sign-footer">
-  <div class="sd-signatures">
-    <div class="sd-sign-block">
-      <div class="sd-sign-line"></div>
-      <p class="sd-sign-role">${escapeHtmlDoc(params.left.roleLine)}</p>
-      <p class="sd-sign-name">${escapeHtmlDoc(params.left.name || '—')}</p>
-    </div>
-    <div class="sd-sign-block">
-      <div class="sd-sign-line"></div>
-      <p class="sd-sign-role">${escapeHtmlDoc(params.right.roleLine)}</p>
-      <p class="sd-sign-name">${escapeHtmlDoc(params.right.name || '—')}</p>
-    </div>
+  <div class="${gridClass}">
+    ${standardSignBlockHtml(params.left, three)}
+    ${middle}
+    ${standardSignBlockHtml(params.right, three)}
   </div>
   ${below}
   </footer>`;

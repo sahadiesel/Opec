@@ -1,5 +1,6 @@
 import type {
   Customer,
+  DocumentPrintMarks,
   Quotation,
   QuotationLine,
 } from '@/lib/types';
@@ -55,6 +56,7 @@ export function buildQuotationPrintHtml(params: {
   };
   printedAtMs?: number;
   locale?: PrintDocumentLocale;
+  printMarks?: DocumentPrintMarks;
 }): string {
   const { company, quotation, lines, totalsOverride, printedAtMs } = params;
   const L = params.locale ?? 'th';
@@ -178,8 +180,18 @@ export function buildQuotationPrintHtml(params: {
   ${tableHtml}
   ${totalsHtml}`;
   const footerHtml = buildStandardSignFooterHtml({
-    left: { roleLine: printT(L, 'signPreparedSales'), name: q.createdBy || '—' },
-    right: { roleLine: printT(L, 'quotationPartyFooter'), name: '—' },
+    left: {
+      roleLine: printT(L, 'signPreparerDoc'),
+      name: q.createdBy || '—',
+      imageUrl: params.printMarks?.preparerSignatureImageUrl,
+    },
+    middle: {
+      roleLine: printT(L, 'signAuthorizedCompany'),
+      name: (q.authorizedSignatory?.signerName || '').trim() || '—',
+      imageUrl: params.printMarks?.authorizedSignatureImageUrl,
+      stampUrl: params.printMarks?.stampImageUrl,
+    },
+    right: { roleLine: printT(L, 'signCustomerShort'), name: '—' },
     belowHtml: `<p class="sd-approval-notice">${escapeHtmlDoc(printT(L, 'signAcceptQuotation'))}</p>`,
   });
   return assembleStandardPrintPageHtml({

@@ -4,6 +4,7 @@ import type {
   PayslipWorkDaySplit,
   Position,
   PayrollBatchLineDailyRowSnapshot,
+  PositionRateMatrix,
 } from '@/lib/types';
 import type { PayrollTimesheetAggDeps } from '@/lib/payroll/aggregate-payroll-timesheet-chunks';
 import {
@@ -378,7 +379,7 @@ function workDayPartsForTimesheet(
     hourlyDivisor: resolveOffshoreHourlyDivisor(
       'cost',
       contractPositionRate?.rateMatrix,
-      poLine.rateMatrixSnapshot,
+      poLine.rateMatrixSnapshot as PositionRateMatrix | undefined,
     ),
   });
   if (!parts || parts.gross <= 0) return null;
@@ -813,7 +814,7 @@ export function buildPositionSplitsFromDailyRowSnapshots(
       continue;
     }
 
-    const D = round2(packageRate);
+    const D = round2(packageRate ?? 0);
     const labor = round2(D);
     /** OT = ยอดวันในงวด − แพ็กวัน — ชม.ตามใบงาน · อัตรา = OT÷ชม. (ใกล้ D/14×1.5) */
     const otPool = round2(Math.max(0, amount - labor));

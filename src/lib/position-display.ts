@@ -1,6 +1,7 @@
 import type { Position } from '@/lib/types';
 
-export type PositionDoc = Position & Record<string, unknown>;
+/** เอกสารตำแหน่งสำหรับแสดงชื่อ — รับ `Position` จาก Firestore ได้โดยตรง */
+export type PositionDoc = Position;
 
 /**
  * Firestore เก็บ `positionName` เป็น field หลัก

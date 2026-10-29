@@ -107,10 +107,13 @@ export function SelfProfileWorkerWhtPrintButton({
   line,
   worker,
   currentUser,
+  certificateKind = 'auto',
 }: {
   line: PayrollBatchLine;
   worker: Worker;
   currentUser: User;
+  /** auto = เหมาใช้ฟอร์มจัดซื้อ 50ทวิ · pnd1 = บังคับแบบ ภงด.1 · vendor_50tw = บังคับ 50ทวิ */
+  certificateKind?: 'auto' | 'pnd1' | 'vendor_50tw';
 }) {
   const [open, setOpen] = useState(false);
   const firestore = useFirestore();
@@ -144,12 +147,18 @@ export function SelfProfileWorkerWhtPrintButton({
           title={disabledTitle}
         >
           <FileText className="h-3.5 w-3.5 shrink-0" />
-          ใบหักฯ
+          {certificateKind === 'vendor_50tw' ? '50ทวิ' : certificateKind === 'pnd1' ? 'ภงด.1' : 'ใบหักฯ'}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-h-[92vh] overflow-y-auto w-[calc(100vw-1rem)] sm:max-w-5xl">
         <DialogHeader>
-          <DialogTitle>หนังสือรับรองการหักภาษี ณ ที่จ่าย (ลูกจ้าง)</DialogTitle>
+          <DialogTitle>
+            {certificateKind === 'vendor_50tw'
+              ? 'หนังสือรับรองหัก ณ ที่จ่าย (50 ทวิ)'
+              : certificateKind === 'pnd1'
+                ? 'หนังสือรับรองหัก ณ ที่จ่าย (ภงด.1)'
+                : 'หนังสือรับรองการหักภาษี ณ ที่จ่าย (ลูกจ้าง)'}
+          </DialogTitle>
           <DialogDescription>
             {[worker.firstName, worker.lastName].filter(Boolean).join(' ') || line.workerNameSnapshot} · {batch.id}
           </DialogDescription>
@@ -162,6 +171,8 @@ export function SelfProfileWorkerWhtPrintButton({
           periodLabel={periodLabel}
           companyProfile={companyProfile as CompanyDocumentProfileForPayrollWht | null}
           currentUser={currentUser}
+          forcePayrollPnd1={certificateKind === 'pnd1'}
+          forceVendor50Tw={certificateKind === 'vendor_50tw'}
         />
       </DialogContent>
     </Dialog>

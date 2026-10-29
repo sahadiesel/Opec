@@ -24,6 +24,13 @@ import { loadWorkerYearToDateStatutoryFunds } from '@/lib/payroll/payroll-wht-ye
 import { isSystemAdmin } from '@/lib/permission-core';
 import { isSimpleAccounting } from '@/lib/simple-tier-model';
 import { PayrollWhtCertificatePanelShell } from '@/components/payroll/payroll-wht-certificate-panel-shell';
+import { isLumpSumPayrollLine } from '@/lib/payroll/lump-sum-worker';
+import {
+  buildLumpSumWorker50TwCertificate,
+  buildLumpSumWorker50TwPrintHtml,
+  lumpSumWorker50TwPrintBase,
+} from '@/lib/payroll/lump-sum-worker-50tw';
+import { openWithholdingCertificatePrintWindow } from '@/lib/documents/withholding-certificate-50-tw-print';
 
 function buildPrintOpts(user: User, company: CompanyDocumentProfileForPayrollWht | null): PayrollWorkerWhtPrintBaseOptions {
   const disp = company?.whtCertificateDisplay;
@@ -46,6 +53,8 @@ export function PayrollWorkerWhtCertificatePanel({
   companyProfile,
   currentUser,
   toolbarHost = null,
+  forcePayrollPnd1 = false,
+  forceVendor50Tw = false,
 }: {
   active: boolean;
   firestore: Firestore | null;
@@ -55,6 +64,10 @@ export function PayrollWorkerWhtCertificatePanel({
   companyProfile: CompanyDocumentProfileForPayrollWht | null;
   currentUser: User;
   toolbarHost?: HTMLElement | null;
+  /** My Profile คอลัมน์ ภงด.1 — ไม่สลับไปฟอร์มจัดซื้อ 50ทวิ */
+  forcePayrollPnd1?: boolean;
+  /** My Profile คอลัมน์ 50ทวิ — ใช้ฟอร์มจัดซื้อแม้บรรทัดงวดจะเป็นลูกจ้างบริษัท */
+  forceVendor50Tw?: boolean;
 }) {
   const [loading, setLoading] = useState(false);
   const [worker, setWorker] = useState<Worker | null>(null);
@@ -97,6 +110,9 @@ export function PayrollWorkerWhtCertificatePanel({
       cancelled = true;
     };
   }, [active, firestore, line.workerId]);
+
+  const vendor50TwForm =
+    !forcePayrollPnd1 && (forceVendor50Tw || isLumpSumPayrollLine(line, worker));
 
   const paymentYmd = useMemo(() => resolvePayrollWorkerWhtPaymentDateYmd(batch, line), [batch, line]);
 
@@ -152,25 +168,82 @@ export function PayrollWorkerWhtCertificatePanel({
         paymentDateYmd: paymentYmd,
         yearToDateSocialSecurityBaht: ytdFunds?.sso,
         yearToDateEmployeeAssistanceFundBaht: ytdFunds?.assistanceFund,
+        asCompanyEmployeeForm: forcePayrollPnd1,
       });
     } catch {
       return null;
     }
-  }, [batch, line, worker, position, companyProfile, periodLabel, issueYmd, paymentYmd, ytdFunds]);
+  }, [batch, line, worker, position, companyProfile, periodLabel, issueYmd, paymentYmd, ytdFunds, forcePayrollPnd1]);
+
+  const vendorCert = useMemo(() => {
+    if (!vendor50TwForm || !worker) return null;
+    try {
+      return buildLumpSumWorker50TwCertificate({
+        batch,
+        line,
+        worker,
+        company: companyProfile,
+        periodLabel,
+        issueDateYmd: issueYmd,
+        paymentDateYmd: paymentYmd,
+      });
+    } catch {
+      return null;
+    }
+  }, [vendor50TwForm, worker, batch, line, companyProfile, periodLabel, issueYmd, paymentYmd]);
 
   const previewHtml = useMemo(() => {
-    if (!vm) return '';
     const opts = buildPrintOpts(currentUser, companyProfile);
+    if (vendor50TwForm && vendorCert) {
+      return buildLumpSumWorker50TwPrintHtml(vendorCert, ['COPY_PAYEE_TAX_RETURN'], {
+        ...lumpSumWorker50TwPrintBase({
+          printedByName: opts.printedByName,
+          printedAtMs: Date.now(),
+          showSignatureImage: opts.showSignatureImage,
+          showCompanyStamp: opts.showCompanyStamp,
+          showSystemGeneratedNote: opts.showSystemGeneratedNote,
+        }),
+      });
+    }
+    if (!vm) return '';
     return buildPayrollWorkerWhtCertificateHtml(vm, 'COPY_PAYEE_TAX_RETURN', {
       ...opts,
       printedAtMs: Date.now(),
     });
-  }, [vm, currentUser, companyProfile]);
+  }, [vendor50TwForm, vendorCert, vm, currentUser, companyProfile]);
 
   const handlePrint = useCallback(
     async (variants: WithholdingCertificateCopyVariant[]) => {
-      if (!firestore || !vm) return;
+      if (!firestore) return;
       const opts = buildPrintOpts(currentUser, companyProfile);
+      if (vendor50TwForm && vendorCert) {
+        const html = buildLumpSumWorker50TwPrintHtml(
+          vendorCert,
+          variants,
+          lumpSumWorker50TwPrintBase({
+            printedByName: opts.printedByName,
+            printedAtMs: Date.now(),
+            showSignatureImage: opts.showSignatureImage,
+            showCompanyStamp: opts.showCompanyStamp,
+            showSystemGeneratedNote: opts.showSystemGeneratedNote,
+          }),
+        );
+        openWithholdingCertificatePrintWindow(html);
+        try {
+          await auditPayrollWorkerWhtSinglePrint(firestore, currentUser, {
+            batchId: batch.id,
+            settlementLineId: line.id,
+            workerId: line.workerId,
+            documentNo: vendorCert.certificateNo || vendorCert.id,
+            copyVariant: variants.join('+'),
+            result: 'success',
+          });
+        } catch {
+          /* audit best-effort */
+        }
+        return;
+      }
+      if (!vm) return;
       const html =
         variants.length === 1
           ? buildPayrollWorkerWhtCertificateHtml(vm, variants[0], opts)
@@ -189,11 +262,33 @@ export function PayrollWorkerWhtCertificatePanel({
         /* audit best-effort */
       }
     },
-    [firestore, vm, currentUser, companyProfile, batch.id, line.id, line.workerId],
+    [firestore, vm, vendorCert, vendor50TwForm, currentUser, companyProfile, batch.id, line.id, line.workerId],
   );
 
   const handleXmlPayload = useCallback(async () => {
-    if (!firestore || !vm) return;
+    if (!firestore) return;
+    if (vendor50TwForm && vendorCert) {
+      const payload = vendorCert.whtElectronicData || {};
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${vendorCert.certificateNo || vendorCert.id}_xml-ready.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      try {
+        await auditPayrollWorkerWhtXmlGenerated(firestore, currentUser, {
+          batchId: batch.id,
+          settlementLineId: line.id,
+          workerId: line.workerId,
+          documentNo: vendorCert.certificateNo || vendorCert.id,
+        });
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    if (!vm) return;
     const payload = buildPayrollWhtElectronicDataFromVm(vm);
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -212,7 +307,7 @@ export function PayrollWorkerWhtCertificatePanel({
     } catch {
       /* ignore */
     }
-  }, [firestore, vm, currentUser, batch.id, line.id, line.workerId]);
+  }, [firestore, vm, vendorCert, vendor50TwForm, currentUser, batch.id, line.id, line.workerId]);
 
   const canXml = isSystemAdmin(currentUser) || isSimpleAccounting(currentUser);
 
@@ -224,7 +319,7 @@ export function PayrollWorkerWhtCertificatePanel({
       validation={validation}
       previewHtml={previewHtml}
       iframeTitle="payroll-wht-preview"
-      canPrint={!!vm && validation.ok}
+      canPrint={validation.ok && (vendor50TwForm ? !!vendorCert : !!vm)}
       canXml={canXml}
       onPrint={(variants) => void handlePrint(variants)}
       onXml={() => void handleXmlPayload()}

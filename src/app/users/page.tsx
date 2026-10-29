@@ -52,7 +52,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useUser, useFirebaseApp } from '@/firebase';
 import { collection, deleteField, doc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
@@ -73,6 +73,8 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { fixExecutiveSpelling } from '@/lib/executive-display-fix';
+import { SignatureFrameEditor } from '@/components/users/signature-frame-editor';
+import { uploadUserSignatureImage } from '@/lib/storage/user-signature';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getBusinessRoleKeysSortedForSelect, getRoleCatalogEntry } from '@/lib/roles/role-catalog';
 import {
@@ -83,6 +85,7 @@ export default function UsersPage() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const { isUserLoading } = useUser();
   const firestore = useFirestore();
+  const firebaseApp = useFirebaseApp();
   const { toast } = useToast();
 
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -102,6 +105,8 @@ export default function UsersPage() {
   const [editDisplayName, setEditDisplayName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const [signatureBlob, setSignatureBlob] = useState<Blob | null>(null);
+  const [clearSignature, setClearSignature] = useState(false);
   const [isSavingDetails, setIsSavingDetails] = useState(false);
   const [showDetailsConfirmCancel, setShowDetailsConfirmCancel] = useState(false);
 
@@ -177,15 +182,19 @@ export default function UsersPage() {
     return (
       editDisplayName.trim() !== (detailsEditUser.displayName || '').trim() ||
       editEmail.trim() !== (detailsEditUser.email || '').trim() ||
-      p1 !== p0
+      p1 !== p0 ||
+      signatureBlob != null ||
+      clearSignature
     );
-  }, [detailsEditUser, editDisplayName, editEmail, editPhone]);
+  }, [detailsEditUser, editDisplayName, editEmail, editPhone, signatureBlob, clearSignature]);
 
   const handleOpenDetailsEdit = (user: User) => {
     setDetailsEditUser(user);
     setEditDisplayName(fixExecutiveSpelling(user.displayName || ''));
     setEditEmail(user.email || '');
     setEditPhone(user.phone || '');
+    setSignatureBlob(null);
+    setClearSignature(false);
     setIsDetailsDialogOpen(true);
   };
 
@@ -206,7 +215,7 @@ export default function UsersPage() {
     setDetailsEditUser(null);
   };
 
-  const handleSaveDetails = () => {
+  const handleSaveDetails = async () => {
     if (!firestore || !detailsEditUser || !isUserAdmin) return;
     const dn = editDisplayName.trim();
     const em = editEmail.trim();
@@ -222,10 +231,17 @@ export default function UsersPage() {
     try {
       const userRef = doc(firestore, 'users', detailsEditUser.id);
       const phoneTrim = editPhone.trim();
+      let signatureImageUrl: string | ReturnType<typeof deleteField> | undefined;
+      if (signatureBlob && firebaseApp) {
+        signatureImageUrl = await uploadUserSignatureImage(firebaseApp, detailsEditUser.id, signatureBlob);
+      } else if (clearSignature) {
+        signatureImageUrl = deleteField();
+      }
       const payload = sanitizeFirestorePayload({
         displayName: fixExecutiveSpelling(dn),
         email: em,
         phone: phoneTrim ? phoneTrim : deleteField(),
+        ...(signatureImageUrl !== undefined ? { signatureImageUrl } : {}),
         updatedAt: Date.now(),
       });
       updateDocumentNonBlocking(userRef, payload);
@@ -236,7 +252,7 @@ export default function UsersPage() {
         toast({
           title: 'บันทึกข้อมูลผู้ใช้แล้ว',
           description:
-            'อัปเดตชื่อ อีเมล หรือเบอร์ในเอกสารผู้ใช้แล้ว — หากต้องการเปลี่ยนอีเมลสำหรับเข้าสู่ระบบจริง ให้ปรับที่ Firebase Authentication ด้วย',
+            'อัปเดตชื่อ อีเมล เบอร์ หรือลายเซ็นในเอกสารผู้ใช้แล้ว — หากต้องการเปลี่ยนอีเมลสำหรับเข้าสู่ระบบจริง ให้ปรับที่ Firebase Authentication ด้วย',
         });
       }, 150);
     } catch (err: any) {
@@ -530,7 +546,7 @@ export default function UsersPage() {
 
         {/* แก้ไขชื่อ / อีเมล / เบอร์ */}
         <Dialog open={isDetailsDialogOpen} onOpenChange={handleDetailsOpenChange}>
-          <DialogContent className="max-w-md border-t-8 border-t-primary">
+          <DialogContent className="max-w-lg border-t-8 border-t-primary max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-xl flex items-center gap-2">
                 <Pencil className="h-6 w-6 text-primary" />
@@ -578,6 +594,19 @@ export default function UsersPage() {
                   autoComplete="tel"
                 />
               </div>
+              <SignatureFrameEditor
+                key={detailsEditUser?.id || 'signature'}
+                existingUrl={detailsEditUser?.signatureImageUrl}
+                cleared={clearSignature}
+                onCroppedBlob={(blob) => {
+                  setSignatureBlob(blob);
+                  if (blob) setClearSignature(false);
+                }}
+                onClearExisting={() => {
+                  setClearSignature(true);
+                  setSignatureBlob(null);
+                }}
+              />
             </div>
             <DialogFooter className="gap-2 sm:gap-0">
               <Button variant="outline" onClick={() => handleDetailsOpenChange(false)} disabled={isSavingDetails}>
