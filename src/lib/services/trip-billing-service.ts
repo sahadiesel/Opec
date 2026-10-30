@@ -254,7 +254,7 @@ export async function isTripBatchCommercialInvoiceActive(
     );
     if (snap.exists()) {
       const inv = snap.data() as CommercialInvoice;
-      if (inv.status !== 'VOID') return true;
+      if (inv.status !== 'VOID' && inv.status !== 'REVISED') return true;
     }
   }
   const q = query(
@@ -264,9 +264,38 @@ export async function isTripBatchCommercialInvoiceActive(
   const snap = await getDocs(q);
   for (const d of snap.docs) {
     const inv = d.data() as CommercialInvoice;
-    if (inv.status !== 'VOID') return true;
+    if (inv.status !== 'VOID' && inv.status !== 'REVISED') return true;
   }
   return false;
+}
+
+/** ปลดทุกชุด Trip ที่ผูกใบนี้ — รวมใบหลาย PO ที่ไม่มี sourceTripBillingBatchId */
+export async function releaseTripBatchesLinkedToCommercialInvoice(
+  db: Firestore,
+  invoice: Pick<CommercialInvoice, 'id' | 'sourceTripBillingBatchId' | 'memberMobCycleIds'>,
+): Promise<void> {
+  const ids = new Set<string>();
+  const direct = String(invoice.sourceTripBillingBatchId || '').trim();
+  if (direct) ids.add(direct);
+  try {
+    const snap = await getDocs(
+      query(collection(db, BATCH_COLLECTION), where('sourceCommercialInvoiceId', '==', invoice.id)),
+    );
+    for (const d of snap.docs) ids.add(d.id);
+  } catch {
+    /* index อาจยังไม่มี */
+  }
+  for (const cycleId of invoice.memberMobCycleIds ?? []) {
+    const id = String(cycleId || '').trim();
+    if (!id) continue;
+    const reviewSnap = await getDoc(doc(db, REVIEW_COLLECTION, id));
+    if (!reviewSnap.exists()) continue;
+    const bid = String((reviewSnap.data() as MobCycleBillingReview).tripBillingBatchId || '').trim();
+    if (bid) ids.add(bid);
+  }
+  for (const batchId of ids) {
+    await releaseTripBillingBatchAfterInvoiceRemoved(db, batchId);
+  }
 }
 
 /**

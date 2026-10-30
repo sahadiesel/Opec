@@ -42,31 +42,33 @@ export function collapseSameLocationMobDemobLines<T extends MobDemobCollapsibleL
     const hit = indexByKey.get(key);
     if (hit == null) {
       indexByKey.set(key, out.length);
-      out.push({
+      const collapsed = {
         ...line,
         description: `ค่า Mob/Demob ไป-กลับ (${loc})`,
-        workerId: undefined,
-        workerName: undefined,
-        positionId: undefined as T['positionId'],
         quantity,
         unitPrice: price,
         amount: roundMoney(price * quantity),
-      });
+      };
+      delete (collapsed as { workerId?: string }).workerId;
+      delete (collapsed as { workerName?: string }).workerName;
+      delete (collapsed as { positionId?: string }).positionId;
+      out.push(collapsed);
       continue;
     }
     const prev = out[hit]!;
     const nextQty = (Number(prev.quantity) || 0) + quantity;
     const timesheetIds = [...(prev.timesheetIds ?? []), ...(line.timesheetIds ?? [])];
-    out[hit] = {
+    const merged = {
       ...prev,
       quantity: nextQty,
       unitPrice: price,
       amount: roundMoney(price * nextQty),
       timesheetIds: timesheetIds.length > 0 ? [...new Set(timesheetIds)] : prev.timesheetIds,
-      workerId: undefined,
-      workerName: undefined,
-      positionId: undefined as T['positionId'],
     };
+    delete (merged as { workerId?: string }).workerId;
+    delete (merged as { workerName?: string }).workerName;
+    delete (merged as { positionId?: string }).positionId;
+    out[hit] = merged;
   }
   return out;
 }

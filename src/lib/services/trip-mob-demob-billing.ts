@@ -8,6 +8,7 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import type {
+  Assignment,
   MainContract,
   MobCycleBillingReview,
   PositionRate,
@@ -23,6 +24,9 @@ export interface TripMobDemobMember {
   workerId: string;
   workerName: string;
   positionId: string;
+  assignmentId?: string;
+  /** จุดวางบิลจากหน้า Mob ขั้นที่ 2 — ถ้าทุกคนในชุดตรงกัน ไม่ต้องถามตอนออกบิล */
+  tripMobDemobLocationKey?: string;
 }
 
 export interface TripMobDemobLocationOption {
@@ -51,11 +55,25 @@ export async function loadTripMobDemobMembers(
     const review = snap.data() as MobCycleBillingReview;
     const positionId = String(review.positionId || '').trim();
     if (!positionId) continue;
+    const assignmentId = String(review.assignmentId || '').trim();
+    let tripMobDemobLocationKey = '';
+    if (assignmentId) {
+      const asgSnap = await getDoc(doc(db, 'mobilizations', assignmentId));
+      if (asgSnap.exists()) {
+        tripMobDemobLocationKey = String(
+          ((asgSnap.data() as Assignment).tripMobDemobLocationKey || '').trim(),
+        );
+      }
+    }
     members.push({
       mobCycleId,
       workerId: review.workerId,
       workerName: review.workerNameSnapshot || review.workerId,
       positionId,
+      ...(assignmentId ? { assignmentId } : {}),
+      ...(tripMobDemobLocationKey && !tripMobDemobLocationKey.startsWith('custom:')
+        ? { tripMobDemobLocationKey }
+        : {}),
     });
   }
   return members;
@@ -145,6 +163,18 @@ export async function resolveTripMobDemobLocationChoice(
   }
 
   return { kind: 'prompt', options };
+}
+
+/** จุด Mob/Demob ที่บันทึกตอน mob — ใช้ได้เมื่อทุกคนในชุดเลือกจุดเดียวกัน */
+export function unanimousStoredTripMobDemobKey(
+  members: readonly TripMobDemobMember[],
+): string | undefined {
+  if (members.length === 0) return undefined;
+  const keys = members.map((m) => String(m.tripMobDemobLocationKey || '').trim());
+  if (keys.some((k) => !k || k.startsWith('custom:'))) return undefined;
+  const unique = new Set(keys);
+  if (unique.size !== 1) return undefined;
+  return keys[0];
 }
 
 /** บรรทัดค่า Mob/Demob ไป-กลับ — จุดเดียวกันรวมหนึ่งบรรทัด ไม่แจงชื่อหรือตำแหน่ง */

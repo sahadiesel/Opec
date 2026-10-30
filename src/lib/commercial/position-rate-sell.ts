@@ -145,7 +145,23 @@ export function resolveBillingSellWorkingDayRate(ctx: BillingSellRateContext): n
     if (fromContract > 0) return fromContract;
   }
 
-  return sellSnapshotForWorkMode(ctx.poLine, ctx.workMode);
+  const snap = sellSnapshotForWorkMode(ctx.poLine, ctx.workMode);
+  if (snap > 0) return snap;
+
+  /** ช่อง offshore ว่างแต่ onshore มีราคา (หรือกลับกัน) — อย่าตัดวันทำงานทั้งแถว */
+  const otherMode: JobMode = ctx.workMode === 'OFFSHORE' ? 'ONSHORE' : 'OFFSHORE';
+  const fromPoOther = sellWorkingDayFromMatrix(ctx.poLine.rateMatrixSnapshot, otherMode);
+  if (fromPoOther != null) return fromPoOther;
+  if (ctx.contractRate) {
+    const fromContractOther = sellWorkingDayFromMatrix(ctx.contractRate.rateMatrix, otherMode);
+    if (fromContractOther != null) return fromContractOther;
+    const fromContractOtherFlat =
+      otherMode === 'OFFSHORE'
+        ? effectiveSellOffshore(ctx.contractRate)
+        : effectiveSellOnshore(ctx.contractRate);
+    if (fromContractOtherFlat > 0) return fromContractOtherFlat;
+  }
+  return sellSnapshotForWorkMode(ctx.poLine, otherMode);
 }
 
 /** ราคา flat ต่อวัน/ต่อ trip จาก matrix (M1/D1/SB) — null = ใช้ working-day snapshot × multiplier */

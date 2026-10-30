@@ -33,6 +33,8 @@ import {
 } from '@/lib/commercial/billing-reversal-days';
 import { normalizeTimesheetsForBillingLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 import { isDailyTimesheetPayableForWorkerPayroll } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
+import { isYmdInRemobGapBetweenCycles } from '@/lib/constants/timesheet-ui';
+import { shouldDeleteStalePoActiveAutoDailyRow } from '@/lib/timesheet/po-active-auto-daily-build';
 import {
   resolveBillingMatrixEventDayRate,
   resolveBillingMatrixOtTierHourlyRate,
@@ -46,9 +48,11 @@ import {
 import type { StatedPackageHours } from '@/lib/commercial/package-hourly-rate';
 import { resolveSellRestDay, type SellRestDayResolution } from '@/lib/commercial/sell-rest-day';
 import {
+  defaultPackageHoursForWorkMode,
   mobDayChargeKindToEventType,
   resolveTimesheetBillingCharge,
 } from '@/lib/ops/mob-day-charge';
+import { lastConsecutiveClusterStart } from '@/lib/commercial/trip-invoice-period';
 
 export interface GeneratedBillingLine {
   description: string;
@@ -69,6 +73,9 @@ export interface BillingLineGenerationResult {
   totalAmount: number;
   timesheetCount: number;
   warnings: string[];
+  /** ช่วงวันจริงที่วางบิล (Trip = M1 ถึง D1 หลังตัดวันรอ remob) */
+  billedPeriodStart?: string;
+  billedPeriodEnd?: string;
 }
 
 /** ตัวเลือกเพิ่มเติมสำหรับ `generateBillingLines` */
@@ -98,26 +105,99 @@ export interface GenerateBillingLinesOptions {
    * true = วางบิลลูกค้าเพิ่ม · false หรือไม่ส่ง = ไม่นำวันนั้นมาวางบิล
    */
   billingAddedDayIncludeByWorkerId?: Readonly<Record<string, boolean>> | null;
+  /**
+   * Trip หลาย PO ในใบเดียว — โหลด po_lines / โหมดงาน จาก PO เหล่านี้ด้วย
+   * (นอกเหนือจาก poId หลัก และ PO ที่ใบงาน / mob cycle ผูกไว้)
+   */
+  extraPoIds?: readonly string[] | null;
+}
+
+type BillingPoLineMaps = {
+  byPoAndId: Map<string, POLine>;
+  byId: Map<string, POLine>;
+  byPoPosition: Map<string, POLine>;
+  byPosition: Map<string, POLine>;
+};
+
+function uniqueNonEmptyIds(...groups: Array<string | readonly string[] | null | undefined>): string[] {
+  const out = new Set<string>();
+  for (const g of groups) {
+    if (!g) continue;
+    if (typeof g === 'string') {
+      const id = g.trim();
+      if (id) out.add(id);
+    } else {
+      for (const x of g) {
+        const id = String(x || '').trim();
+        if (id) out.add(id);
+      }
+    }
+  }
+  return [...out];
+}
+
+function preferActivePoLine(existing: POLine | undefined, next: POLine): POLine {
+  if (!existing) return next;
+  if (existing.status !== 'active' && next.status === 'active') return next;
+  return existing;
+}
+
+async function loadPoLinesForBilling(db: Firestore, poIds: readonly string[]): Promise<{
+  poLines: POLine[];
+  maps: BillingPoLineMaps;
+}> {
+  const maps: BillingPoLineMaps = {
+    byPoAndId: new Map(),
+    byId: new Map(),
+    byPoPosition: new Map(),
+    byPosition: new Map(),
+  };
+  const poLines: POLine[] = [];
+  await Promise.all(
+    poIds.map(async (parentPoId) => {
+      const snap = await getDocs(collection(db, 'purchase_orders', parentPoId, 'po_lines'));
+      for (const d of snap.docs) {
+        const raw = d.data() as POLine;
+        const line: POLine = {
+          ...raw,
+          id: d.id,
+          poId: String(raw.poId || parentPoId).trim() || parentPoId,
+        };
+        poLines.push(line);
+        maps.byPoAndId.set(`${line.poId}::${line.id}`, line);
+        maps.byId.set(line.id, preferActivePoLine(maps.byId.get(line.id), line));
+        const pos = String(line.positionId || '').trim();
+        if (pos) {
+          const poPosKey = `${line.poId}::${pos}`;
+          maps.byPoPosition.set(poPosKey, preferActivePoLine(maps.byPoPosition.get(poPosKey), line));
+          maps.byPosition.set(pos, preferActivePoLine(maps.byPosition.get(pos), line));
+        }
+      }
+    }),
+  );
+  return { poLines, maps };
 }
 
 /**
  * วางบิลตามบรรทัด PO ที่บันทึกบนใบงานวันนั้น
  * ไม่จับคู่ด้วยตำแหน่งทะเบียนที่แก้ทีหลัง — ถ้าใบงานไม่มี poLineId ค่อยถอยไปตำแหน่งบนใบงาน
+ * ใบ Trip หลาย PO: หาบรรทัดใน PO ของใบงานนั้น ไม่จำกัดแค่ PO หลักของ invoice
  */
 function resolvePoLineForBillingDay(
-  ts: Pick<DailyTimesheet, 'date' | 'positionId' | 'poLineId'>,
-  poLinesById: Map<string, POLine>,
-  poLinesByPosition: Map<string, POLine>,
+  ts: Pick<DailyTimesheet, 'date' | 'positionId' | 'poLineId' | 'purchaseOrderId'>,
+  maps: BillingPoLineMaps,
   warnings: string[],
   mismatchWarned: Set<string>,
 ): POLine | undefined {
   const lineId = String(ts.poLineId || '').trim();
   const tsPos = String(ts.positionId || '').trim();
+  const tsPo = String(ts.purchaseOrderId || '').trim();
   if (lineId) {
-    const byId = poLinesById.get(lineId);
+    const scoped = tsPo ? maps.byPoAndId.get(`${tsPo}::${lineId}`) : undefined;
+    const byId = scoped || maps.byId.get(lineId);
     if (byId) {
       if (tsPos && byId.positionId && tsPos !== byId.positionId) {
-        const key = `${lineId}|${tsPos}`;
+        const key = `${byId.poId}|${lineId}|${tsPos}`;
         if (!mismatchWarned.has(key)) {
           mismatchWarned.add(key);
           warnings.push(
@@ -128,7 +208,11 @@ function resolvePoLineForBillingDay(
       return byId;
     }
   }
-  return tsPos ? poLinesByPosition.get(tsPos) : undefined;
+  if (tsPo && tsPos) {
+    const byPoPos = maps.byPoPosition.get(`${tsPo}::${tsPos}`);
+    if (byPoPos) return byPoPos;
+  }
+  return tsPos ? maps.byPosition.get(tsPos) : undefined;
 }
 
 interface LineAcc {
@@ -172,6 +256,26 @@ function isUnpaidLeaveEvent(eventType: string | undefined | null): boolean {
   return String(eventType ?? '').trim() === 'unpaid_leave';
 }
 
+/**
+ * วางบิลตามประเภทวันบน timesheet / แก้ไขย้อนหลัง
+ * — เซลล์ Mob (MO) = เก็บเงิน M1 · เซลล์ D1 = เก็บเงิน D1
+ * — ไม่ใช้ mobBillingChargeKind ที่ค้างเป็น STANDBY ทับวัน M1
+ * — payroll ยังใช้ resolveTimesheetPayrollCharge คนละทาง
+ */
+function resolveCommercialInvoiceDayCharge(ts: DailyTimesheet) {
+  const charge = resolveTimesheetBillingCharge(ts);
+  const et = String(ts.eventType || '').trim();
+  if (et === 'mobilization_day') {
+    if (charge.kind === 'M1') return charge;
+    return { kind: 'M1' as const, hours: defaultPackageHoursForWorkMode(ts.workMode) };
+  }
+  if (et === 'demobilization_day') {
+    if (charge.kind === 'D1' || charge.kind === 'STANDBY') return charge;
+    return { kind: 'D1' as const, hours: defaultPackageHoursForWorkMode(ts.workMode) };
+  }
+  return charge;
+}
+
 /** ใบงานที่ payroll ล็อก/ปิดแล้ว แต่ยังไม่ได้ติด readyForBilling — ต้องนับถ้าวางบิลตาม timesheet */
 const RECORDED_TIMESHEET_STATUSES = new Set(['LOCKED', 'CLIENT_APPROVED', 'VERIFIED_PAPER']);
 
@@ -213,6 +317,71 @@ function isTripBillingTimesheetBillable(ts: DailyTimesheet): boolean {
   return false;
 }
 
+function isTripCycleActivityTimesheet(ts: DailyTimesheet): boolean {
+  const et = String(ts.eventType || '').trim();
+  return (
+    et === 'mobilization_day' ||
+    et === 'demobilization_day' ||
+    et === 'work_day' ||
+    et === 'standby_day'
+  );
+}
+
+/**
+ * รอบ Trip นับจาก M1 ถึง D1 — ตัด standby/auto ก่อนวัน M1 (รอ remob) ออกจากงวด
+ */
+export function trimTimesheetsToTripMobDemobWindow(
+  timesheets: readonly DailyTimesheet[],
+): { timesheets: DailyTimesheet[]; warnings: string[] } {
+  const warnings: string[] = [];
+  const m1DatesByWorker = new Map<string, string[]>();
+  for (const ts of timesheets) {
+    const wid = String(ts.workerId || '').trim();
+    const d = String(ts.date || '').slice(0, 10);
+    if (!wid || !d) continue;
+    if (ts.eventType !== 'mobilization_day') continue;
+    const list = m1DatesByWorker.get(wid) ?? [];
+    list.push(d);
+    m1DatesByWorker.set(wid, list);
+  }
+  const m1ByWorker = new Map<string, string>();
+  for (const [wid, days] of m1DatesByWorker) {
+    const start = lastConsecutiveClusterStart(days);
+    if (start) m1ByWorker.set(wid, start);
+  }
+  if (m1ByWorker.size === 0) {
+    return { timesheets: [...timesheets], warnings };
+  }
+  let droppedBeforeM1 = 0;
+  const out = timesheets.filter((ts) => {
+    const wid = String(ts.workerId || '').trim();
+    const d = String(ts.date || '').slice(0, 10);
+    const m1 = m1ByWorker.get(wid);
+    if (m1 && d < m1) {
+      droppedBeforeM1 += 1;
+      return false;
+    }
+    return true;
+  });
+  if (droppedBeforeM1 > 0) {
+    warnings.push(
+      `Trip billing: ตัด ${droppedBeforeM1} วันก่อน M1 (เช่น standby รอ remob) — ไม่นับในรอบเดินทางนี้`,
+    );
+  }
+  return { timesheets: out, warnings };
+}
+
+function billedPeriodFromTimesheets(
+  timesheets: readonly DailyTimesheet[],
+): { start?: string; end?: string } {
+  const days = timesheets
+    .map((ts) => String(ts.date || '').slice(0, 10))
+    .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    .sort();
+  if (days.length === 0) return {};
+  return { start: days[0], end: days[days.length - 1] };
+}
+
 /**
  * รวมชม. retro เข้า timesheet ชั่วคราวเพื่อคำนวณ **ใบแจ้งหนี้ลูกค้า (อัตราขาย)** เท่านั้น
  * — ไม่แก้ daily_timesheets ไม่กระทบ payroll (จ่ายลูกจ้างผ่าน priorPeriodAllowanceItems ในงวด applyPayrollYearMonth)
@@ -231,18 +400,57 @@ function mergeRetroDeltasIntoTimesheets(
     byTsId.set(sid, list);
   }
 
+  const byWorkerDate = new Map<string, TimesheetRetroAdjustment[]>();
+  for (const r of retros) {
+    if (r.status === 'void') continue;
+    const wid = String(r.workerId || '').trim();
+    const d = String(r.workDateYmd || '').slice(0, 10);
+    if (!wid || !d) continue;
+    const k = `${wid}|${d}`;
+    const list = byWorkerDate.get(k) ?? [];
+    list.push(r);
+    byWorkerDate.set(k, list);
+  }
+
   return timesheets.map((ts) => {
-    const adj = byTsId.get(ts.id);
-    if (!adj?.length) return ts;
+    const adj = [
+      ...(byTsId.get(ts.id) ?? []),
+      ...((() => {
+        const k = `${String(ts.workerId || '').trim()}|${String(ts.date || '').slice(0, 10)}`;
+        const rows = byWorkerDate.get(k) ?? [];
+        const seen = new Set((byTsId.get(ts.id) ?? []).map((x) => x.id));
+        return rows.filter((x) => !seen.has(x.id));
+      })()),
+    ];
+    if (!adj.length) return ts;
     let o15 = Math.max(0, Number(ts.ot15Hours) || 0);
     let o20 = Math.max(0, Number(ts.ot20Hours) || 0);
     let o30 = Math.max(0, Number(ts.ot30Hours) || 0);
+    let eventType = ts.eventType;
+    let billingKind = ts.mobBillingChargeKind;
     for (const r of adj) {
       o15 += Math.max(0, Number(r.addedOt15Hours) || 0);
       o20 += Math.max(0, Number(r.addedOt20Hours) || 0);
       o30 += Math.max(0, Number(r.addedOt30Hours) || 0);
+      const retroEv = String(r.retroEventType || '').trim();
+      if (retroEv === 'mobilization_day' || (Number(r.addedM1Trips) || 0) > 0) {
+        eventType = 'mobilization_day';
+        billingKind = 'M1';
+      } else if (retroEv === 'demobilization_day' || (Number(r.addedD1Trips) || 0) > 0) {
+        eventType = 'demobilization_day';
+        billingKind = 'D1';
+      } else if (retroEv) {
+        eventType = retroEv as DailyTimesheet['eventType'];
+      }
     }
-    return { ...ts, ot15Hours: o15, ot20Hours: o20, ot30Hours: o30 };
+    return {
+      ...ts,
+      eventType,
+      ...(billingKind ? { mobBillingChargeKind: billingKind } : {}),
+      ot15Hours: o15,
+      ot20Hours: o20,
+      ot30Hours: o30,
+    };
   });
 }
 
@@ -323,7 +531,6 @@ async function enrichTimesheetsForRetroSources(
     const ts = { id: snap.id, ...(snap.data() as object) } as DailyTimesheet;
     const d = String(ts.date || '').slice(0, 10);
     if (d < periodStart || d > periodEnd) continue;
-    if (ts.eventType !== 'work_day') continue;
     byId.set(ts.id, ts);
   }
   return [...byId.values()];
@@ -337,17 +544,27 @@ async function enrichTimesheetsForRetroSources(
  * ไม่ตัดวันที่มีชั่วโมงปกติเพียงเพราะไม่มี OT / เป็นแถว auto —
  * ค่าแรงรายวันต้องวางบิลตามงานจริง (OT เป็นรายการแยก)
  */
+function ymdInOptionalRange(d: string, rangeStart?: string, rangeEnd?: string): boolean {
+  if (rangeStart && d < rangeStart) return false;
+  if (rangeEnd && d > rangeEnd) return false;
+  return true;
+}
+
 export function filterTimesheetsForTripMobCycleBilling(
   timesheets: readonly DailyTimesheet[],
+  opts?: { includeDaysAfterD1?: boolean; rangeStartYmd?: string; rangeEndYmd?: string },
 ): { timesheets: DailyTimesheet[]; warnings: string[] } {
   const warnings: string[] = [];
   const mobDaysByWorker = new Map<string, Set<string>>();
   const d1DaysByWorker = new Map<string, Set<string>>();
+  const rangeStart = String(opts?.rangeStartYmd || '').slice(0, 10);
+  const rangeEnd = String(opts?.rangeEndYmd || '').slice(0, 10);
 
   for (const ts of timesheets) {
     const wid = String(ts.workerId || '').trim();
     const d = String(ts.date || '').slice(0, 10);
     if (!wid || !d) continue;
+    if (!ymdInOptionalRange(d, rangeStart || undefined, rangeEnd || undefined)) continue;
     if (ts.eventType === 'mobilization_day') {
       const set = mobDaysByWorker.get(wid) ?? new Set<string>();
       set.add(d);
@@ -358,6 +575,12 @@ export function filterTimesheetsForTripMobCycleBilling(
       set.add(d);
       d1DaysByWorker.set(wid, set);
     }
+  }
+
+  const d1CutoffByWorker = new Map<string, string>();
+  for (const [wid, days] of d1DaysByWorker) {
+    const cutoff = lastConsecutiveClusterStart([...days]);
+    if (cutoff) d1CutoffByWorker.set(wid, cutoff);
   }
 
   let droppedMobOverlap = 0;
@@ -374,8 +597,12 @@ export function filterTimesheetsForTripMobCycleBilling(
       return false;
     }
 
-    const firstD1 = [...(d1DaysByWorker.get(wid) ?? [])].sort()[0];
-    if (firstD1 && d >= firstD1) {
+    if (d1DaysByWorker.get(wid)?.has(d)) {
+      droppedAfterD1++;
+      return false;
+    }
+    const d1Cutoff = d1CutoffByWorker.get(wid);
+    if (!opts?.includeDaysAfterD1 && d1Cutoff && d > d1Cutoff) {
       droppedAfterD1++;
       return false;
     }
@@ -634,7 +861,7 @@ function billingNonWorkDayFromPoAndContract(
 ) {
   if (isUnpaidLeaveEvent(ts.eventType)) return;
 
-  const billingCharge = resolveTimesheetBillingCharge(ts);
+  const billingCharge = resolveCommercialInvoiceDayCharge(ts);
   if (
     (billingCharge.kind === 'M1' || billingCharge.kind === 'D1') &&
     billingCharge.m1AmountOverride != null &&
@@ -793,6 +1020,18 @@ export async function generateBillingLines(
   const mobCycleFilter = (options?.mobCycleIds ?? [])
     .map((x) => String(x).trim())
     .filter(Boolean);
+  const relatedPoIds = new Set<string>(uniqueNonEmptyIds(poId, options?.extraPoIds));
+  const dateRanges = (options?.dateRanges ?? []).filter(
+    (r) => r.startYmd && r.endYmd && r.startYmd <= r.endYmd,
+  );
+  const billingWindowStart =
+    dateRanges.length > 0
+      ? dateRanges.reduce((m, r) => (r.startYmd < m ? r.startYmd : m), dateRanges[0]!.startYmd)
+      : periodStart;
+  const billingWindowEnd =
+    dateRanges.length > 0
+      ? dateRanges.reduce((m, r) => (r.endYmd > m ? r.endYmd : m), dateRanges[0]!.endYmd)
+      : periodEnd;
 
   let mainContract: MainContract | undefined;
   if (po.contractId) {
@@ -850,8 +1089,8 @@ export async function generateBillingLines(
       const byId = new Map<string, DailyTimesheet>();
       const addTs = (raw: DailyTimesheet) => {
         const ts = raw;
-        if (!isTripBillingTimesheetBillable(ts)) return;
-        if (ts.date >= periodStart && ts.date <= periodEnd) byId.set(ts.id, ts);
+        if (!isTripCycleActivityTimesheet(ts) && !isTripBillingTimesheetBillable(ts)) return;
+        byId.set(ts.id, ts);
       };
 
       const { loadTimesheetsForMobCycleBilling } = await import(
@@ -862,6 +1101,7 @@ export async function generateBillingLines(
       );
 
       const allRetro: TimesheetRetroAdjustment[] = [];
+      const reviewWorkerIds = new Set<string>();
 
       for (const mobCycleId of mobCycleFilter) {
         const reviewSnap = await getDoc(doc(db, 'mob_cycle_billing_reviews', mobCycleId));
@@ -870,31 +1110,75 @@ export async function generateBillingLines(
           id: reviewSnap.id,
           ...(reviewSnap.data() as object),
         } as MobCycleBillingReview;
+        const reviewPo = String(review.poId || '').trim();
+        if (reviewPo) relatedPoIds.add(reviewPo);
+        const reviewWorker = String(review.workerId || '').trim();
+        if (reviewWorker) reviewWorkerIds.add(reviewWorker);
 
-        const segmentTs = await loadTimesheetsForMobCycleBilling(db, review);
+        const segmentTs = await loadTimesheetsForMobCycleBilling(db, review, {
+          windowStartYmd: billingWindowStart,
+          windowEndYmd: billingWindowEnd,
+        });
         for (const ts of segmentTs) addTs(ts);
 
-        const start = String(review.tripStartDate || periodStart).slice(0, 10);
-        const end = String(review.tripEndDate || periodEnd).slice(0, 10);
+        const start = String(review.tripStartDate || billingWindowStart).slice(0, 10);
+        const end = String(review.tripEndDate || billingWindowEnd).slice(0, 10);
         const aid = String(review.assignmentId || '').trim();
-        if (aid && start && end) {
+        const retroFrom = billingWindowStart || start;
+        const retroTo = billingWindowEnd || end;
+        if (aid && retroFrom && retroTo) {
           const months = new Set<string>();
+          months.add(retroFrom.slice(0, 7));
+          months.add(retroTo.slice(0, 7));
           months.add(start.slice(0, 7));
           months.add(end.slice(0, 7));
           for (const ym of months) {
+            if (!/^\d{4}-\d{2}$/.test(ym)) continue;
             const rows = await loadTimesheetRetroAdjustmentsForMonth(db, ym);
             for (const r of rows) {
-              if (r.assignmentId !== aid) continue;
+              const retroWorker = String(r.workerId || '').trim();
+              if (r.assignmentId !== aid && !(reviewWorker && retroWorker === reviewWorker)) continue;
               const d = String(r.workDateYmd || '').slice(0, 10);
-              if (d < start || d > end) continue;
+              if (d < retroFrom || d > retroTo) continue;
               allRetro.push(r);
             }
           }
         }
       }
 
+      if (
+        /^\d{4}-\d{2}-\d{2}$/.test(billingWindowStart) &&
+        /^\d{4}-\d{2}-\d{2}$/.test(billingWindowEnd)
+      ) {
+        const poIdsForWindow = [...relatedPoIds];
+        await Promise.all(
+          poIdsForWindow.map(async (windowPoId) => {
+            const snap = await getDocs(
+              query(
+                collection(db, 'daily_timesheets'),
+                where('purchaseOrderId', '==', windowPoId),
+                where('date', '>=', billingWindowStart),
+                where('date', '<=', billingWindowEnd),
+              ),
+            );
+            for (const d of snap.docs) {
+              const ts = { id: d.id, ...(d.data() as object) } as DailyTimesheet;
+              const wid = String(ts.workerId || '').trim();
+              if (reviewWorkerIds.size > 0 && wid && !reviewWorkerIds.has(wid)) continue;
+              addTs(ts);
+            }
+          }),
+        );
+      }
+
       let list = [...byId.values()];
-      list = await applyRetroHoursForCommercialBilling(db, list, allRetro, periodStart, periodEnd);
+      list = await applyRetroHoursForCommercialBilling(
+        db,
+        list,
+        allRetro,
+        billingWindowStart || periodStart,
+        billingWindowEnd || periodEnd,
+      );
       tripCommercialRetroAdjustments = allRetro;
       return list;
     }
@@ -939,28 +1223,40 @@ export async function generateBillingLines(
     return list;
   };
 
-  const [poLinesSnap, timesheetsRaw, mobSnap] = await Promise.all([
-    getDocs(
-      query(
-        collection(db, 'purchase_orders', poId, 'po_lines'),
-        where('status', '==', 'active'),
+  const timesheetsRaw = await fetchTimesheets();
+  for (const ts of timesheetsRaw) {
+    const tsPo = String(ts.purchaseOrderId || '').trim();
+    if (tsPo) relatedPoIds.add(tsPo);
+  }
+  const billingPoIdList = [...relatedPoIds];
+  const extraPoIdsToLoad = billingPoIdList.filter((id) => id !== poId);
+
+  const [loadedLines, extraPoSnaps, mobSnaps] = await Promise.all([
+    loadPoLinesForBilling(db, billingPoIdList),
+    Promise.all(extraPoIdsToLoad.map((id) => getDoc(doc(db, 'purchase_orders', id)))),
+    Promise.all(
+      billingPoIdList.map((id) =>
+        getDocs(query(collection(db, 'mobilizations'), where('poId', '==', id))),
       ),
     ),
-    fetchTimesheets(),
-    getDocs(query(collection(db, 'mobilizations'), where('poId', '==', poId))),
   ]);
 
-  const poLines = poLinesSnap.docs.map(
-    (d) => ({ ...d.data(), id: d.id } as POLine),
-  );
-  const poLinesById = new Map<string, POLine>();
-  const poLinesByPosition = new Map<string, POLine>();
-  for (const pl of poLines) {
-    poLinesById.set(pl.id, pl);
-    if (!poLinesByPosition.has(pl.positionId)) poLinesByPosition.set(pl.positionId, pl);
-  }
+  const poLines = loadedLines.poLines;
+  const poLineMaps = loadedLines.maps;
   const billingLineMismatchWarned = new Set<string>();
+  const posForWorkMode: PurchaseOrder[] = [po];
+  const extraContractIds = new Set<string>();
+  for (const s of extraPoSnaps) {
+    if (!s.exists()) continue;
+    const extraPo = { ...s.data(), id: s.id } as PurchaseOrder;
+    posForWorkMode.push(extraPo);
+    const cid = String(extraPo.contractId || '').trim();
+    if (cid && cid !== String(po.contractId || '').trim()) extraContractIds.add(cid);
+  }
 
+  let billedPeriodStart: string | undefined;
+  let billedPeriodEnd: string | undefined;
+  const userTripRange = mobCycleFilter.length > 0 && dateRanges.length > 0;
   if (mobCycleFilter.length > 0) {
     warnings.push(
       `วางบิลตามรอบเดินทาง — ${mobCycleFilter.length} mob cycle · ช่วง ${periodStart} ถึง ${periodEnd}`,
@@ -974,8 +1270,10 @@ export async function generateBillingLines(
   }
 
   const mobById = new Map<string, Assignment>();
-  for (const d of mobSnap.docs) {
-    mobById.set(d.id, { ...(d.data() as Assignment), id: d.id });
+  for (const snap of mobSnaps) {
+    for (const d of snap.docs) {
+      mobById.set(d.id, { ...(d.data() as Assignment), id: d.id });
+    }
   }
 
   /** อย่าใช้ normalize แบบ payroll (W ทับ SB คน+วัน) — จะทำให้บรรทัด standby หาย */
@@ -992,13 +1290,48 @@ export async function generateBillingLines(
   let addedIncluded = 0;
   let addedExcluded = 0;
   let addedSheetExcluded = 0;
+  let droppedAutoStandby = 0;
   const matchedAddedIds = new Set<string>();
+  const firstM1InWindowByWorker = new Map<string, string>();
+  for (const ts of normalized) {
+    const ymd = String(ts.date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) continue;
+    if (ymd < billingWindowStart || ymd > billingWindowEnd) continue;
+    const isM1 =
+      ts.eventType === 'mobilization_day' || resolveCommercialInvoiceDayCharge(ts).kind === 'M1';
+    if (!isM1) continue;
+    const wid = String(ts.workerId || '').trim();
+    if (!wid) continue;
+    const prev = firstM1InWindowByWorker.get(wid);
+    if (!prev || ymd < prev) firstM1InWindowByWorker.set(wid, ymd);
+  }
   /**
    * นับวันตามใบงานที่ payroll จ่าย — วัน W ที่ลงไว้ในช่วง remob ไม่ใช่วันว่าง
    * วันหักเงินคืนและวันจ่ายเพิ่ม ใส่หรือตัดตามที่ยืนยันตอนสร้างใบ
    * แถว auto หลังวันจบไซต์ที่ไม่มีรายการเหล่านี้ ยังไม่นับ
    */
   const inAttendance = normalized.filter((ts) => {
+    const ymdEarly = String(ts.date || '').slice(0, 10);
+    const widEarly = String(ts.workerId || '').trim();
+    const billingKind = resolveCommercialInvoiceDayCharge(ts).kind;
+    if (
+      billingKind === 'STANDBY' &&
+      ts.poActiveAutoDaily === true &&
+      widEarly &&
+      /^\d{4}-\d{2}-\d{2}$/.test(ymdEarly)
+    ) {
+      const firstM1 = firstM1InWindowByWorker.get(widEarly);
+      const aidEarly = String(ts.assignmentId || '').trim();
+      const asgnEarly = aidEarly ? mobById.get(aidEarly) : undefined;
+      if (asgnEarly && isYmdInRemobGapBetweenCycles(asgnEarly, ymdEarly)) {
+        droppedAutoStandby += 1;
+        return false;
+      }
+      if (firstM1 && ymdEarly >= firstM1) {
+        droppedAutoStandby += 1;
+        return false;
+      }
+    }
     const reversal = matchWorkDayReversal(ts, reversals);
     if (reversal) {
       const include = includeReversalByWorker[String(ts.workerId || '').trim()] === true;
@@ -1017,7 +1350,32 @@ export async function generateBillingLines(
       }
       return include;
     }
-    return isDailyTimesheetPayableForWorkerPayroll(ts, mobById);
+    if (isDailyTimesheetPayableForWorkerPayroll(ts, mobById)) return true;
+    if (
+      userTripRange &&
+      isTripCycleActivityTimesheet(ts) &&
+      dateRanges.some((r) => {
+        const ymd = String(ts.date || '').slice(0, 10);
+        return ymd >= r.startYmd && ymd <= r.endYmd;
+      })
+    ) {
+      const ymd = String(ts.date || '').slice(0, 10);
+      const aid = String(ts.assignmentId || '').trim();
+      const asgn = aid ? mobById.get(aid) : undefined;
+      if (ts.poActiveAutoDaily === true) {
+        if (asgn && shouldDeleteStalePoActiveAutoDailyRow(asgn, ymd)) return false;
+        if (asgn && isYmdInRemobGapBetweenCycles(asgn, ymd)) return false;
+        if (ts.eventType === 'standby_day') {
+          const firstM1 = firstM1InWindowByWorker.get(String(ts.workerId || '').trim());
+          if (firstM1 && ymd >= firstM1) {
+            droppedAutoStandby += 1;
+            return false;
+          }
+        }
+      }
+      return true;
+    }
+    return false;
   });
   const addedExtras: DailyTimesheet[] = [];
   for (const retro of addedDays) {
@@ -1055,14 +1413,39 @@ export async function generateBillingLines(
   if (addedExcluded > 0) {
     warnings.push(`ไม่นำ ${addedExcluded} วันที่มีจ่ายเพิ่มมาวางบิล ตามที่ยืนยัน`);
   }
+  if (droppedAutoStandby > 0) {
+    warnings.push(
+      `ไม่นับ Standby อัตโนมัติ ${droppedAutoStandby} วัน — ตาราง timesheet ไม่ได้ลง SB (ช่องว่างระหว่าง M1 / รอ remob)`,
+    );
+  }
   const beforeBillingDedupe = inAttendance.length + addedExtras.length;
   let timesheets = dedupeTimesheetsForBilling([...inAttendance, ...addedExtras]);
   const billingDeduped = beforeBillingDedupe - timesheets.length;
 
   if (mobCycleFilter.length > 0) {
-    const tripFiltered = filterTimesheetsForTripMobCycleBilling(timesheets);
+    const d1Sorted = timesheets
+      .filter((ts) => ts.eventType === 'demobilization_day')
+      .map((ts) => String(ts.date || '').slice(0, 10))
+      .filter(Boolean)
+      .sort();
+    const lastD1InSheet = d1Sorted[d1Sorted.length - 1];
+    const rangeEnd = dateRanges.reduce((m, r) => (r.endYmd > m ? r.endYmd : m), '');
+    const includeDaysAfterD1 = Boolean(
+      userTripRange && lastD1InSheet && rangeEnd && rangeEnd > lastD1InSheet,
+    );
+    const tripFiltered = filterTimesheetsForTripMobCycleBilling(timesheets, {
+      includeDaysAfterD1,
+      ...(userTripRange
+        ? { rangeStartYmd: billingWindowStart, rangeEndYmd: billingWindowEnd }
+        : {}),
+    });
     timesheets = tripFiltered.timesheets;
     warnings.push(...tripFiltered.warnings);
+    if (!userTripRange) {
+      const trimmed = trimTimesheetsToTripMobDemobWindow(timesheets);
+      timesheets = trimmed.timesheets;
+      warnings.push(...trimmed.warnings);
+    }
   }
 
   const allowWorkers = normalizeWorkerIdSet(options?.workerIds ?? []);
@@ -1084,9 +1467,6 @@ export async function generateBillingLines(
     }
   }
 
-  const dateRanges = (options?.dateRanges ?? []).filter(
-    (r) => r.startYmd && r.endYmd && r.startYmd <= r.endYmd,
-  );
   if (dateRanges.length > 0) {
     const before = timesheets.length;
     timesheets = timesheets.filter((ts) => {
@@ -1096,6 +1476,23 @@ export async function generateBillingLines(
     const dropped = before - timesheets.length;
     if (dropped > 0) {
       warnings.push(`จำกัดวันที่ตามช่วงที่ส่งออกบิล — ตัด ${dropped} แถว`);
+    }
+  }
+
+  if (mobCycleFilter.length > 0) {
+    if (userTripRange) {
+      billedPeriodStart = dateRanges.reduce((m, r) => (r.startYmd < m ? r.startYmd : m), dateRanges[0]!.startYmd);
+      billedPeriodEnd = dateRanges.reduce((m, r) => (r.endYmd > m ? r.endYmd : m), dateRanges[0]!.endYmd);
+    } else {
+      const billed = billedPeriodFromTimesheets(timesheets);
+      billedPeriodStart = billed.start;
+      billedPeriodEnd = billed.end;
+    }
+    if (billedPeriodStart && billedPeriodEnd) {
+      const next = `วางบิลตามรอบเดินทาง — ${mobCycleFilter.length} mob cycle · ช่วง ${billedPeriodStart} ถึง ${billedPeriodEnd}`;
+      const idx = warnings.findIndex((w) => w.startsWith('วางบิลตามรอบเดินทาง'));
+      if (idx >= 0) warnings[idx] = next;
+      else warnings.push(next);
     }
   }
 
@@ -1126,6 +1523,8 @@ export async function generateBillingLines(
       totalAmount: 0,
       timesheetCount: 0,
       warnings: [...new Set(warnings)].filter((w) => !shouldOmitCommercialInvoiceGenerationWarning(w)),
+      ...(billedPeriodStart ? { billedPeriodStart } : {}),
+      ...(billedPeriodEnd ? { billedPeriodEnd } : {}),
     };
   }
 
@@ -1136,18 +1535,39 @@ export async function generateBillingLines(
   }
 
   const contractRatesByPosition = new Map<string, PositionRate>();
-  if (po.contractId) {
-    const ratesSnap = await getDocs(
-      collection(db, 'main_contracts', po.contractId, 'position_rates'),
-    );
+  const contractRatesByContractPosition = new Map<string, PositionRate>();
+  const contractsById = new Map<string, MainContract>();
+  if (mainContract) contractsById.set(mainContract.id, mainContract);
+
+  const loadContractRates = async (contractId: string) => {
+    const cid = String(contractId || '').trim();
+    if (!cid) return;
+    const ratesSnap = await getDocs(collection(db, 'main_contracts', cid, 'position_rates'));
     for (const d of ratesSnap.docs) {
       const rate = { id: d.id, ...(d.data() as object) } as PositionRate;
       if (rate.active === false) continue;
-      contractRatesByPosition.set(rate.positionId, rate);
+      contractRatesByContractPosition.set(`${cid}::${rate.positionId}`, rate);
+      if (!contractRatesByPosition.has(rate.positionId)) {
+        contractRatesByPosition.set(rate.positionId, rate);
+      }
     }
+  };
+
+  await loadContractRates(String(po.contractId || '').trim());
+  const extraContractsToHydrate = [...extraContractIds].filter((cid) => !contractsById.has(cid));
+  if (extraContractsToHydrate.length > 0) {
+    const extraMcSnaps = await Promise.all(
+      extraContractsToHydrate.map((cid) => getDoc(doc(db, 'main_contracts', cid))),
+    );
+    for (const s of extraMcSnaps) {
+      if (!s.exists()) continue;
+      contractsById.set(s.id, { ...(s.data() as MainContract), id: s.id });
+    }
+    await Promise.all(extraContractsToHydrate.map((cid) => loadContractRates(cid)));
   }
 
-  const poWorkModeMap = buildPoWorkModeMapFromPurchaseOrders([po]);
+  const poWorkModeMap = buildPoWorkModeMapFromPurchaseOrders(posForWorkMode);
+  const poByIdForLabel = new Map(posForWorkMode.map((p) => [p.id, p]));
 
   const positionLabels = await loadPositionLabels(db, [
     ...poLines.map((pl) => pl.positionId),
@@ -1157,18 +1577,32 @@ export async function generateBillingLines(
   const accMap = new Map<string, LineAcc>();
 
   for (const ts of timesheets) {
-    const poLine = resolvePoLineForBillingDay(ts, poLinesById, poLinesByPosition, warnings, billingLineMismatchWarned);
+    const poLine = resolvePoLineForBillingDay(ts, poLineMaps, warnings, billingLineMismatchWarned);
     const workMode = resolveEffectivePayrollJobMode(ts, poWorkModeMap);
-    const contractRate = contractRatesByPosition.get(ts.positionId);
+    const tsContractId = String(
+      ts.contractId || poByIdForLabel.get(String(ts.purchaseOrderId || '').trim())?.contractId || po.contractId || '',
+    ).trim();
+    const contractRate =
+      (tsContractId
+        ? contractRatesByContractPosition.get(`${tsContractId}::${ts.positionId}`)
+        : undefined) || contractRatesByPosition.get(ts.positionId);
+    const billingContract = (tsContractId ? contractsById.get(tsContractId) : undefined) || mainContract;
 
     if (!poLine) {
       if (!isUnpaidLeaveEvent(ts.eventType)) {
-        warnings.push(`ข้าม ${ts.date} (${ts.eventType}) — ไม่มี PO line สำหรับตำแหน่ง`);
+        const poLabel =
+          poByIdForLabel.get(String(ts.purchaseOrderId || '').trim())?.poCode ||
+          String(ts.purchaseOrderId || '').trim() ||
+          po.poCode ||
+          po.id;
+        warnings.push(
+          `ข้าม ${ts.date} (${ts.eventType}) — ไม่พบบรรทัดราคาตำแหน่งใน ${poLabel}`,
+        );
       }
       continue;
     }
 
-    const billingCharge = resolveTimesheetBillingCharge(ts);
+    const billingCharge = resolveCommercialInvoiceDayCharge(ts);
     const effectiveEvent = mobDayChargeKindToEventType(billingCharge.kind);
     if (ts.eventType === 'standby_day' && billingCharge.kind === 'WORKING') {
       warnings.push(
@@ -1192,14 +1626,14 @@ export async function generateBillingLines(
         warnings.push(`ข้าม work_day ${ts.date} — ราคาขายใน PO line เป็น 0`);
         continue;
       }
-      workDayFromDayRateBilling(projected, poLine, mainContract, accMap, workMode, contractRate);
+      workDayFromDayRateBilling(projected, poLine, billingContract, accMap, workMode, contractRate);
       continue;
     }
 
     billingNonWorkDayFromPoAndContract(
       projected,
       poLine,
-      mainContract,
+      billingContract,
       accMap,
       warnings,
       workMode,
@@ -1240,6 +1674,8 @@ export async function generateBillingLines(
     totalAmount,
     timesheetCount: timesheets.length,
     warnings: [...new Set(warnings)].filter((w) => !shouldOmitCommercialInvoiceGenerationWarning(w)),
+    ...(billedPeriodStart ? { billedPeriodStart } : {}),
+    ...(billedPeriodEnd ? { billedPeriodEnd } : {}),
   };
 }
 
@@ -1252,7 +1688,11 @@ export async function generateBillingLinesForMobCycles(
   periodEnd: string,
   options?: Pick<
     GenerateBillingLinesOptions,
-    'tripMobDemobLocationKey' | 'billingReversalIncludeByWorkerId' | 'billingAddedDayIncludeByWorkerId'
+    | 'tripMobDemobLocationKey'
+    | 'billingReversalIncludeByWorkerId'
+    | 'billingAddedDayIncludeByWorkerId'
+    | 'dateRanges'
+    | 'extraPoIds'
   >,
 ): Promise<BillingLineGenerationResult> {
   const ids = mobCycleIds.map((x) => String(x).trim()).filter(Boolean);
@@ -1264,10 +1704,13 @@ export async function generateBillingLinesForMobCycles(
       warnings: ['ไม่มี mob cycle ในชุดวางบิล'],
     };
   }
+  const extraPoIds = uniqueNonEmptyIds(poId, options?.extraPoIds);
   const base = await generateBillingLines(db, poId, periodStart, periodEnd, undefined, {
     mobCycleIds: ids,
     billingReversalIncludeByWorkerId: options?.billingReversalIncludeByWorkerId,
     billingAddedDayIncludeByWorkerId: options?.billingAddedDayIncludeByWorkerId,
+    ...(options?.dateRanges && options.dateRanges.length > 0 ? { dateRanges: options.dateRanges } : {}),
+    ...(extraPoIds.length > 1 ? { extraPoIds } : {}),
   });
 
   const poSnap = await getDoc(doc(db, 'purchase_orders', poId));
@@ -1334,6 +1777,8 @@ export async function generateBillingLinesForMobCycles(
       totalAmount: 0,
       timesheetCount: base.timesheetCount,
       warnings: [...new Set([...base.warnings, ...mobGen.warnings])],
+      ...(base.billedPeriodStart ? { billedPeriodStart: base.billedPeriodStart } : {}),
+      ...(base.billedPeriodEnd ? { billedPeriodEnd: base.billedPeriodEnd } : {}),
     };
   }
 
@@ -1346,6 +1791,8 @@ export async function generateBillingLinesForMobCycles(
     warnings: [...new Set([...base.warnings, ...mobGen.warnings])].filter(
       (w) => !shouldOmitCommercialInvoiceGenerationWarning(w),
     ),
+    ...(base.billedPeriodStart ? { billedPeriodStart: base.billedPeriodStart } : {}),
+    ...(base.billedPeriodEnd ? { billedPeriodEnd: base.billedPeriodEnd } : {}),
   };
 }
 

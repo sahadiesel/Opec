@@ -58,7 +58,9 @@ import { billingModeLabel } from '@/lib/commercial/resolve-billing-mode';
 import { syncTripBillingForPo, finalizeStandbyOnlyTripBatch, isStandbyOnlyClosedTripBatch } from '@/lib/services/trip-billing-service';
 import { ensureCommercialDraftInvoiceForTripBatch } from '@/lib/services/commercial-invoice-service';
 import {
+  loadTripMobDemobMembers,
   resolveTripMobDemobLocationChoice,
+  unanimousStoredTripMobDemobKey,
   type TripMobDemobLocationOption,
 } from '@/lib/services/trip-mob-demob-billing';
 
@@ -236,6 +238,12 @@ export default function TripBillingPage() {
     try {
       if (await isStandbyOnlyClosedTripBatch(firestore, batch.memberMobCycleIds)) {
         await doCreateInvoice(batch, undefined);
+        return;
+      }
+      const members = await loadTripMobDemobMembers(firestore, batch.memberMobCycleIds);
+      const storedKey = unanimousStoredTripMobDemobKey(members);
+      if (storedKey) {
+        await doCreateInvoice(batch, storedKey);
         return;
       }
       const choice = await resolveTripMobDemobLocationChoice(

@@ -108,7 +108,7 @@ import {
 import { buildMobDayChargeBahtPreviewRates } from '@/lib/ops/mob-day-charge-baht-preview';
 import { MobDayChargeSideEditors } from '@/components/timesheet/mob-day-charge-side-editors';
 import { resolveBillingSellWorkingDayRate } from '@/lib/commercial/position-rate-sell';
-import { resolveMatrixCostRate } from '@/lib/commercial/position-rate-matrix';
+import { getEffectiveMobDemobLocations, resolveMatrixCostRate } from '@/lib/commercial/position-rate-matrix';
 import {
   Dialog,
   DialogContent,
@@ -186,6 +186,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     defaultMobDayCharges('MOB').payroll,
   );
   const [locationCustomDraft, setLocationCustomDraft] = useState('');
+  const [tripMobDemobLocationDraft, setTripMobDemobLocationDraft] = useState('');
   const [locationSaving, setLocationSaving] = useState(false);
   const [viewingCert, setViewingCert] = useState<WorkerCertificate | null>(null);
   const certPreviewIframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -273,6 +274,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   const contractRef = useMemoFirebase(() => (firestore && assignment?.contractId ? doc(firestore, 'main_contracts', assignment.contractId) : null), [firestore, assignment?.contractId]);
   const { data: contract } = useDoc<MainContract>(contractRef as any);
+  const billingMobLocations = useMemo(() => getEffectiveMobDemobLocations(contract), [contract]);
+  const showTripMobDemobSelect = Boolean(contract?.tripBillMobDemobFee) && billingMobLocations.length > 0;
 
   const positionRatesQuery = useMemoFirebase(
     () =>
@@ -348,7 +351,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     if (!assignment) return;
     if (clearanceFormEditing) return;
     setLocationCustomDraft((assignment.workLocation || '').trim());
-  }, [assignment?.id, assignment?.workLocation, clearanceFormEditing]);
+    setTripMobDemobLocationDraft((assignment.tripMobDemobLocationKey || '').trim());
+  }, [assignment?.id, assignment?.workLocation, assignment?.tripMobDemobLocationKey, clearanceFormEditing]);
 
   /** เมื่อสถานที่บันทึกแล้วและ checklist 1–4 ผ่านทีหลัง — stamp READY_TO_MOB อัตโนมัติ */
   useEffect(() => {
@@ -407,6 +411,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         setStandbyDateDraft(thailandTodayYmd());
         setWorkingStartDateDraft(addDaysToYmd(thailandTodayYmd(), 1));
         setLocationCustomDraft('');
+        setTripMobDemobLocationDraft('');
         setClearanceEditMode(0);
         toast({
           title: 'เริ่มรอบ Mobilization ใหม่',
@@ -479,6 +484,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   const syncClearanceDraftsFromAssignment = (a: Assignment) => {
     setLocationCustomDraft((a.workLocation || '').trim());
+    setTripMobDemobLocationDraft((a.tripMobDemobLocationKey || '').trim());
     // Prefer saved ymd; fall back to today only when the step has no saved date yet
     // (matches the non-edit draft init effect — avoids empty pickers after «แก้ไข»).
     const pre = (a.mobPreMobDate || '').trim();
@@ -1257,11 +1263,13 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     try {
       const now = Date.now();
       const alreadyPastTravel = isFinalClearanceStep1Done(assignment);
+      const billingKey = tripMobDemobLocationDraft.trim();
       const patch: Record<string, unknown> = {
         mobLocationKey: `custom:${custom.slice(0, 200)}`,
         workLocation: custom.slice(0, 500),
         workLocationUpdatedAt: now,
         workLocationUpdatedByUserId: currentUser.id,
+        ...(billingKey ? { tripMobDemobLocationKey: billingKey } : {}),
       };
       // อย่าทับเฟส ACTIVE / MOBILIZING เมื่อแก้สถานที่หลังเดินทางแล้ว
       if (!alreadyPastTravel || !isFinalClearanceMobDone(assignment)) {
@@ -1276,6 +1284,15 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         patch.deploymentStatus = 'READY_TO_MOB';
       }
       patchMobilization(patch);
+      if (!billingKey) {
+        updateDocumentNonBlocking(doc(firestore, 'mobilizations', assignment.id), {
+          tripMobDemobLocationKey: deleteField(),
+          updatedAt: now,
+        });
+        setAssignment((prev) =>
+          prev ? ({ ...prev, tripMobDemobLocationKey: undefined } as Assignment) : null,
+        );
+      }
       if (!opts?.quiet) {
         toast({
           title: 'บันทึกสถานที่แล้ว',
@@ -1300,6 +1317,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     const isYmd = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
     const locDraft = locationCustomDraft.trim();
     const prevLoc = (assignment.workLocation || '').trim();
+    const billDraft = tripMobDemobLocationDraft.trim();
+    const prevBill = (assignment.tripMobDemobLocationKey || '').trim();
     const preDraft = (preMobDateDraft || '').trim();
     const prevPre = (assignment.mobPreMobDate || '').trim();
     const mobDraft = (standbyDateDraft || '').trim();
@@ -1307,7 +1326,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     const workDraft = (workingStartDateDraft || '').trim();
     const prevWork = (assignment.mobWorkingStartDate || '').trim();
 
-    const locDirty = locDraft !== prevLoc;
+    const locDirty = locDraft !== prevLoc || billDraft !== prevBill;
     // Pre-Mob: dirty when draft ymd differs from saved date (already saved, not skipped).
     // Un-skip: skipped + user picked a date in bulk edit → save date (clears skipped in runSavePreMob).
     // Do not require location/Mob/work-start to also be dirty.
@@ -1830,10 +1849,12 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
                       <Separator />
 
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         <p className="text-xs font-bold text-muted-foreground uppercase">ขั้น 2 · กรุณาระบุสถานที่ที่จะ MOB งานนี้</p>
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="mob-work-location">2.1 สถานที่ปฏิบัติงาน</Label>
                           <Input
+                            id="mob-work-location"
                             className="h-11 flex-1 min-w-0"
                             value={locationCustomDraft}
                             onChange={(e) => setLocationCustomDraft(e.target.value)}
@@ -1846,9 +1867,47 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                             }
                           />
                         </div>
+                        {showTripMobDemobSelect ? (
+                          <div className="space-y-1.5">
+                            <Label htmlFor="mob-trip-demob-location">2.2 จุด Mob/Demob สำหรับวางบิล</Label>
+                            <Select
+                              value={tripMobDemobLocationDraft || '__none__'}
+                              onValueChange={(v) =>
+                                setTripMobDemobLocationDraft(v === '__none__' ? '' : v)
+                              }
+                              disabled={
+                                !canEditMobilization ||
+                                isMobUnassigned(assignment) ||
+                                clearanceFormSaving ||
+                                (!clearanceFormEditing && Boolean((assignment.tripMobDemobLocationKey || '').trim()))
+                              }
+                            >
+                              <SelectTrigger id="mob-trip-demob-location" className="h-11">
+                                <SelectValue placeholder="เลือกจุดตามสัญญา" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__none__">— ยังไม่ระบุ (ถามตอนออกบิล) —</SelectItem>
+                                {billingMobLocations.map((loc) => (
+                                  <SelectItem key={loc.key} value={loc.key}>
+                                    {loc.label || loc.key}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground">
+                              ถ้าบันทึกจุดนี้แล้ว ตอนสร้างใบแจ้งหนี้จะไม่ถามซ้ำ (งานเก่าที่ยังไม่ระบุยังถามตอนวางบิลได้)
+                            </p>
+                          </div>
+                        ) : null}
                         {(assignment.workLocation || '').trim() ? (
                           <p className="text-xs text-muted-foreground">
                             ปัจจุบัน: <strong>{assignment.workLocation}</strong>
+                            {(assignment.tripMobDemobLocationKey || '').trim()
+                              ? ` · วางบิล ${
+                                  billingMobLocations.find((l) => l.key === assignment.tripMobDemobLocationKey)
+                                    ?.label || assignment.tripMobDemobLocationKey
+                                }`
+                              : ''}
                             {!clearanceFormEditing ? ' · กด «แก้ไข» ด้านบนเพื่อเปลี่ยน' : null}
                           </p>
                         ) : (

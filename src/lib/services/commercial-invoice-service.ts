@@ -64,15 +64,23 @@ import {
 import {
   approveTripBillingBatch,
   isStandbyOnlyClosedTripBatch,
+  isTripBatchCommercialInvoiceActive,
   markTripBatchInvoiced,
+  releaseTripBatchesLinkedToCommercialInvoice,
   releaseTripBillingBatchAfterInvoiceRemoved,
 } from '@/lib/services/trip-billing-service';
 import {
   loadTripMobDemobMembers,
   resolveTripMobDemobLocationChoice,
+  unanimousStoredTripMobDemobKey,
   type TripMobDemobLocationOption,
 } from '@/lib/services/trip-mob-demob-billing';
 import { collapseSameLocationMobDemobLines } from '@/lib/commercial/mob-demob-invoice-lines';
+import {
+  assertTripInvoicePeriodAllowed,
+  previewTripInvoicePeriodForInvoice,
+} from '@/lib/services/trip-invoice-period';
+import { asIsoYmd, plausibleBillingYmd } from '@/lib/commercial/trip-invoice-period';
 import { generateNextDocumentCode, releaseSequenceSlotIfLastIssued } from '@/lib/services/numbering-service';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 
@@ -120,20 +128,23 @@ function computeCommercialInvoiceVatTotals(
 function mapGeneratedBillingLinesToInvoiceLines(
   lines: GeneratedBillingLine[],
 ): CommercialInvoiceLine[] {
-  return collapseSameLocationMobDemobLines(lines).map((l, idx) => ({
-    id: newLineId(),
-    displayOrder: idx,
-    description: l.description,
-    ...(l.workerId ? { workerId: l.workerId } : {}),
-    ...(l.workerName ? { workerName: l.workerName } : {}),
-    positionId: l.positionId,
-    eventType: l.eventType,
-    timesheetIds: l.timesheetIds,
-    quantity: l.quantity,
-    unitPrice: l.unitPrice,
-    amount: l.amount,
-    lineSource: 'timesheet' as const,
-  }));
+  return collapseSameLocationMobDemobLines(lines).map((l, idx) => {
+    const line: CommercialInvoiceLine = {
+      id: newLineId(),
+      displayOrder: idx,
+      description: l.description,
+      quantity: l.quantity,
+      unitPrice: l.unitPrice,
+      amount: l.amount,
+      lineSource: 'timesheet',
+    };
+    if (l.workerId) line.workerId = l.workerId;
+    if (l.workerName) line.workerName = l.workerName;
+    if (l.positionId) line.positionId = l.positionId;
+    if (l.eventType) line.eventType = l.eventType;
+    if (l.timesheetIds?.length) line.timesheetIds = l.timesheetIds;
+    return line;
+  });
 }
 
 /** Caller-prepared draft body — core fills invoiceNo / DRAFT / created* / updatedAt */
@@ -677,6 +688,7 @@ async function tripWorkersFromReviews(
         r.workerId === person.workerId &&
         r.status !== 'void' &&
         r.status !== 'invoiced' &&
+        r.status !== 'open' &&
         !!r.tripBillingBatchId &&
         reviewOverlapsYearMonth(r, yearMonth),
     );
@@ -809,13 +821,27 @@ export async function listWorkersReadyForInvoice(
       readyClosures.push(c);
     }
     if (billingMode === 'TRIP') {
-      if (readyClosures.length > 0) {
-        const tripRows = await tripWorkersFromReviews(
-          db,
-          po,
-          ym,
-          readyClosures.map((c) => ({ workerId: c.workerId, workerName: c.workerName || c.workerId })),
-        );
+      const people = new Map<string, { workerId: string; workerName: string }>();
+      for (const c of readyClosures) {
+        people.set(c.workerId, { workerId: c.workerId, workerName: c.workerName || c.workerId });
+      }
+      try {
+        const reviews = await loadMobReviewsForPo(db, po.id);
+        for (const r of reviews) {
+          if (r.status === 'void') continue;
+          if (!reviewOverlapsYearMonth(r, ym)) continue;
+          const workerId = String(r.workerId || '').trim();
+          if (!workerId || people.has(workerId)) continue;
+          people.set(workerId, {
+            workerId,
+            workerName: r.workerNameSnapshot || workerId,
+          });
+        }
+      } catch {
+        /* ใช้รายจาก closure ถ้ามี */
+      }
+      if (people.size > 0) {
+        const tripRows = await tripWorkersFromReviews(db, po, ym, [...people.values()]);
         for (const row of tripRows) {
           if (!out.some((w) => w.key === row.key)) out.push(row);
         }
@@ -849,14 +875,24 @@ export async function listWorkersReadyForInvoice(
 
   try {
     const tripSnap = await getDocs(
-      query(collection(db, 'trip_billing_batches'), where('customerId', '==', cid), where('status', '==', 'approved')),
+      query(collection(db, 'trip_billing_batches'), where('customerId', '==', cid)),
     );
     for (const d of tripSnap.docs) {
-      const batch = { id: d.id, ...(d.data() as object) } as TripBillingBatch;
+      let batch = { id: d.id, ...(d.data() as object) } as TripBillingBatch;
+      if (batch.status === 'invoiced') {
+        const stillActive = await isTripBatchCommercialInvoiceActive(db, batch);
+        if (!stillActive) {
+          await releaseTripBillingBatchAfterInvoiceRemoved(db, batch.id);
+          batch = { ...batch, status: 'approved', sourceCommercialInvoiceId: undefined };
+        }
+      }
       if (batch.sourceCommercialInvoiceId) continue;
+      if (batch.status !== 'approved' && batch.status !== 'ready') continue;
       const start = String(batch.periodStart || '').slice(0, 7);
       const end = String(batch.periodEnd || batch.periodStart || '').slice(0, 7);
-      if (start !== ym && end !== ym) continue;
+      const overlapsYm =
+        (start && start <= ym && (!end || end >= ym)) || start === ym || end === ym;
+      if (!overlapsYm) continue;
       const po = pos.find((p) => p.id === batch.poId);
       if (modeByPoId.get(batch.poId) !== 'TRIP') continue;
       const ids = batch.memberWorkerIds ?? [];
@@ -887,6 +923,9 @@ export async function listWorkersReadyForInvoice(
     for (const d of invSnap.docs) {
       const inv = d.data() as CommercialInvoice;
       if (inv.status === 'VOID' || inv.status === 'REVISED') continue;
+      if (isCommercialInvoiceSuperseded(inv)) continue;
+      /** ใบตรวจภายในไม่บล็อกรายชื่อ — ให้สร้างใหม่ได้ถ้าใบเก่าถูกลบจากลิสต์ / ชุดค้าง invoiced */
+      if (inv.status !== 'ISSUED' && inv.status !== 'PENDING_CUSTOMER') continue;
       const ps = String(inv.periodStart || '').slice(0, 7);
       const pe = String(inv.periodEnd || '').slice(0, 7);
       if (ps > ym || pe < ym) continue;
@@ -929,6 +968,7 @@ export async function nextTripMobLocationPrompt(
     const members = await loadTripMobDemobMembers(db, batch.memberMobCycleIds);
     const cycleIds = members.filter((m) => selected.has(m.workerId)).map((m) => m.mobCycleId);
     const ids = cycleIds.length > 0 ? cycleIds : batch.memberMobCycleIds;
+    const selectedMembers = members.filter((m) => selected.has(m.workerId));
     if (await isStandbyOnlyClosedTripBatch(db, ids)) {
       decided.add(batchId);
       continue;
@@ -936,6 +976,14 @@ export async function nextTripMobLocationPrompt(
     const poSnap = await getDoc(doc(db, 'purchase_orders', batch.poId));
     const contractId = poSnap.exists() ? String((poSnap.data() as PurchaseOrder).contractId || '') : '';
     if (!contractId) {
+      decided.add(batchId);
+      continue;
+    }
+    const storedKey = unanimousStoredTripMobDemobKey(
+      selectedMembers.length > 0 ? selectedMembers : members,
+    );
+    if (storedKey) {
+      nextKeys[batchId] = storedKey;
       decided.add(batchId);
       continue;
     }
@@ -969,6 +1017,15 @@ export async function createCommercialInvoiceForReadyWorkers(
     /** true = วางบิลวันที่หักเงินคืนของคนนั้น */
     billingReversalIncludeByWorkerId?: Record<string, boolean>;
     billingAddedDayIncludeByWorkerId?: Record<string, boolean>;
+    /** งวด Trip ที่ผู้ใช้กำหนดเอง (ค่าเริ่มต้น M1–D1) */
+    tripPeriod?: {
+      startYmd: string;
+      endYmd: string;
+      suggestedStart?: string;
+      suggestedEnd?: string;
+      lastD1?: string;
+      acknowledgeWarnings?: boolean;
+    };
   },
 ): Promise<{ id: string; invoiceNo: string }> {
   const workersInput = params.workers;
@@ -1074,14 +1131,38 @@ export async function createCommercialInvoiceForReadyWorkers(
   const tripCycleIds: string[] = [];
   let tripLocationKey: string | undefined;
   let singleTripBatchId: string | undefined;
+  const tripPeriod = params.tripPeriod;
+  const tripPeriodStart = plausibleBillingYmd(tripPeriod?.startYmd);
+  const tripPeriodEnd = plausibleBillingYmd(tripPeriod?.endYmd);
+  if (trip.length > 0 && tripPeriodStart && tripPeriodEnd) {
+    const previewCycles: string[] = [];
+    for (const [batchId, group] of byBatch) {
+      const snap = await getDoc(doc(db, 'trip_billing_batches', batchId));
+      if (!snap.exists()) continue;
+      const batch = { id: snap.id, ...(snap.data() as object) } as TripBillingBatch;
+      const selected = new Set(group.map((g) => g.workerId));
+      const members = await loadTripMobDemobMembers(db, batch.memberMobCycleIds);
+      const cycleIds = members.filter((m) => selected.has(m.workerId)).map((m) => m.mobCycleId);
+      previewCycles.push(...(cycleIds.length > 0 ? cycleIds : batch.memberMobCycleIds));
+    }
+    await assertTripInvoicePeriodAllowed(db, {
+      startYmd: tripPeriodStart,
+      endYmd: tripPeriodEnd,
+      poIds,
+      workerIds: trip.map((w) => w.workerId),
+      suggestedStart: tripPeriod?.suggestedStart,
+      suggestedEnd: tripPeriod?.suggestedEnd,
+      lastD1: tripPeriod?.lastD1,
+      mobCycleIds: previewCycles,
+      acknowledgeWarnings: tripPeriod?.acknowledgeWarnings,
+    });
+  }
   for (const [batchId, group] of byBatch) {
     const snap = await getDoc(doc(db, 'trip_billing_batches', batchId));
     if (!snap.exists()) throw new Error('ไม่พบชุดวางบิล Trip');
     const batch = { id: snap.id, ...(snap.data() as object) } as TripBillingBatch;
     const start = batch.periodStart;
     const end = batch.periodEnd || batch.periodStart;
-    if (start < periodStart) periodStart = start;
-    if (end > periodEnd) periodEnd = end;
     const selected = new Set(group.map((g) => g.workerId));
     const members = await loadTripMobDemobMembers(db, batch.memberMobCycleIds);
     const cycleIds = members.filter((m) => selected.has(m.workerId)).map((m) => m.mobCycleId);
@@ -1090,6 +1171,14 @@ export async function createCommercialInvoiceForReadyWorkers(
     const standbyOnly = await isStandbyOnlyClosedTripBatch(db, ids);
     if (!standbyOnly) {
       const contractId = poById.get(batch.poId)?.contractId || '';
+      if (!locationKey) {
+        const storedKey = unanimousStoredTripMobDemobKey(
+          members.filter((m) => selected.has(m.workerId)).length > 0
+            ? members.filter((m) => selected.has(m.workerId))
+            : members,
+        );
+        if (storedKey) locationKey = storedKey;
+      }
       if (contractId && !locationKey) {
         const choice = await resolveTripMobDemobLocationChoice(db, contractId, ids);
         if (choice.kind === 'error') throw new Error(choice.message);
@@ -1101,12 +1190,16 @@ export async function createCommercialInvoiceForReadyWorkers(
       db,
       batch.poId,
       ids,
-      start,
-      end,
+      tripPeriodStart || start,
+      tripPeriodEnd || end,
       {
         ...(locationKey ? { tripMobDemobLocationKey: locationKey } : {}),
         billingReversalIncludeByWorkerId: params.billingReversalIncludeByWorkerId,
         billingAddedDayIncludeByWorkerId: params.billingAddedDayIncludeByWorkerId,
+        extraPoIds: poIds,
+        ...(tripPeriodStart && tripPeriodEnd
+          ? { dateRanges: [{ startYmd: tripPeriodStart, endYmd: tripPeriodEnd }] }
+          : {}),
       },
     );
     if (gen.lines.length === 0 && gen.warnings.some((w) => w.includes('Mob/Demob') || w.includes('ค่า MOB'))) {
@@ -1117,6 +1210,10 @@ export async function createCommercialInvoiceForReadyWorkers(
     }
     warnings.push(...gen.warnings);
     timesheetCount += gen.timesheetCount;
+    const billedStart = gen.billedPeriodStart || tripPeriodStart || start;
+    const billedEnd = gen.billedPeriodEnd || tripPeriodEnd || end;
+    if (billedStart < periodStart) periodStart = billedStart;
+    if (billedEnd > periodEnd) periodEnd = billedEnd;
     tripCycleIds.push(...ids);
     if (locationKey) tripLocationKey = tripLocationKey && tripLocationKey !== locationKey ? undefined : locationKey;
     singleTripBatchId = singleTripBatchId === undefined ? batchId : '';
@@ -2267,18 +2364,29 @@ export async function confirmCommercialInvoiceBilling(
 
 function normalizeDraftLines(lines: CommercialInvoiceLine[]): CommercialInvoiceLine[] {
   return lines.map((l, idx) => {
-    const id = l.id || newLineId();
     const qty = roundMoney(Number(l.quantity) || 0);
     const unit = roundMoney(Number(l.unitPrice) || 0);
-    const amount = roundMoney(qty * unit);
-    return {
-      ...l,
-      id,
-      displayOrder: idx,
+    const row: CommercialInvoiceLine = {
+      id: l.id || newLineId(),
+      description: String(l.description || '').trim() || '—',
       quantity: qty,
       unitPrice: unit,
-      amount,
+      amount: roundMoney(qty * unit),
+      displayOrder: idx,
     };
+    const workerId = String(l.workerId || '').trim();
+    const workerName = String(l.workerName || '').trim();
+    const positionId = String(l.positionId || '').trim();
+    const eventType = String(l.eventType || '').trim();
+    const lineSource = l.lineSource;
+    const timesheetIds = (l.timesheetIds ?? []).map((x) => String(x || '').trim()).filter(Boolean);
+    if (workerId) row.workerId = workerId;
+    if (workerName) row.workerName = workerName;
+    if (positionId) row.positionId = positionId;
+    if (eventType) row.eventType = eventType;
+    if (lineSource) row.lineSource = lineSource;
+    if (timesheetIds.length > 0) row.timesheetIds = timesheetIds;
+    return row;
   });
 }
 
@@ -2356,9 +2464,7 @@ export async function voidCommercialInvoice(
     });
   }
 
-  if (cur.sourceTripBillingBatchId) {
-    await releaseTripBillingBatchAfterInvoiceRemoved(db, cur.sourceTripBillingBatchId);
-  }
+  await releaseTripBatchesLinkedToCommercialInvoice(db, cur);
 
   const poIds = [...new Set([...(cur.sourcePoIds ?? []), cur.poId].map((id) => String(id || '').trim()).filter(Boolean))];
   const yearMonths = yearMonthsCovering(cur.periodStart, cur.periodEnd);
@@ -2404,9 +2510,7 @@ export async function deleteCommercialInvoice(
   if (!snap.exists()) throw new Error('ไม่พบใบแจ้งหนี้');
   const cur = snap.data() as CommercialInvoice;
 
-  if (cur.sourceTripBillingBatchId) {
-    await releaseTripBillingBatchAfterInvoiceRemoved(db, cur.sourceTripBillingBatchId);
-  }
+  await releaseTripBatchesLinkedToCommercialInvoice(db, cur);
 
   const baseNo = parseCommercialInvoiceBaseNo(cur.invoiceNo) || String(cur.invoiceNo || '').trim();
   await deleteDoc(ref);
@@ -2436,6 +2540,14 @@ export async function regenerateCommercialDraftInvoiceFromTimesheets(
   options?: {
     billingReversalIncludeByWorkerId?: Record<string, boolean>;
     billingAddedDayIncludeByWorkerId?: Record<string, boolean>;
+    tripPeriod?: {
+      startYmd: string;
+      endYmd: string;
+      suggestedStart?: string;
+      suggestedEnd?: string;
+      lastD1?: string;
+      acknowledgeWarnings?: boolean;
+    };
   },
 ): Promise<{ lineCount: number; timesheetCount: number }> {
   const ref = doc(db, 'commercial_invoices', invoiceId);
@@ -2492,16 +2604,55 @@ export async function regenerateCommercialDraftInvoiceFromTimesheets(
         );
       }
     }
+    const regenPoIds = [...new Set([cur.poId, ...(cur.sourcePoIds ?? [])].map((id) => String(id || '').trim()).filter(Boolean))];
+    let regenWorkerIds = normalizeWorkerIdSet(cur.coveredWorkerIds ?? []);
+    if (regenWorkerIds.length === 0) {
+      regenWorkerIds = [...(await resolveTripCommercialInvoiceWorkerIds(db, cur))];
+    }
+    const previewWindow = await previewTripInvoicePeriodForInvoice(db, {
+      mobCycleIds,
+      workerIds: regenWorkerIds,
+      poIds: regenPoIds,
+    });
+    const tripPeriodStart =
+      plausibleBillingYmd(options?.tripPeriod?.startYmd) ||
+      plausibleBillingYmd(options?.tripPeriod?.suggestedStart) ||
+      plausibleBillingYmd(cur.periodStart) ||
+      previewWindow?.range.startYmd ||
+      '';
+    const tripPeriodEnd =
+      plausibleBillingYmd(options?.tripPeriod?.endYmd) ||
+      plausibleBillingYmd(options?.tripPeriod?.suggestedEnd) ||
+      plausibleBillingYmd(cur.periodEnd) ||
+      previewWindow?.range.endYmd ||
+      '';
+    const useUserRange = Boolean(tripPeriodStart && tripPeriodEnd);
+    if (useUserRange) {
+      await assertTripInvoicePeriodAllowed(db, {
+        startYmd: tripPeriodStart,
+        endYmd: tripPeriodEnd,
+        poIds: regenPoIds,
+        workerIds: regenWorkerIds,
+        suggestedStart: options?.tripPeriod?.suggestedStart || previewWindow?.range.startYmd,
+        suggestedEnd: options?.tripPeriod?.suggestedEnd || previewWindow?.range.endYmd,
+        lastD1: options?.tripPeriod?.lastD1 || previewWindow?.lastD1,
+        mobCycleIds,
+        ignoreInvoiceId: invoiceId,
+        acknowledgeWarnings: options?.tripPeriod?.acknowledgeWarnings,
+      });
+    }
     gen = await generateBillingLinesForMobCycles(
       db,
       cur.poId,
       mobCycleIds,
-      cur.periodStart,
-      cur.periodEnd,
+      tripPeriodStart || cur.periodStart,
+      tripPeriodEnd || cur.periodEnd,
       {
         ...(tripMobDemobLocationKey ? { tripMobDemobLocationKey } : {}),
         billingReversalIncludeByWorkerId: options?.billingReversalIncludeByWorkerId,
         billingAddedDayIncludeByWorkerId: options?.billingAddedDayIncludeByWorkerId,
+        extraPoIds: regenPoIds,
+        ...(useUserRange ? { dateRanges: [{ startYmd: tripPeriodStart, endYmd: tripPeriodEnd }] } : {}),
       },
     );
   } else {
@@ -2568,6 +2719,10 @@ export async function regenerateCommercialDraftInvoiceFromTimesheets(
     payload.waveCode = 'PO+งวด (รวม wave)';
   }
   if (isTrip) {
+    const savedStart = plausibleBillingYmd(options?.tripPeriod?.startYmd) || gen.billedPeriodStart;
+    const savedEnd = plausibleBillingYmd(options?.tripPeriod?.endYmd) || gen.billedPeriodEnd;
+    if (savedStart) payload.periodStart = savedStart;
+    if (savedEnd) payload.periodEnd = savedEnd;
     if (tripMobDemobLocationKey) {
       payload.tripMobDemobLocationKey = tripMobDemobLocationKey;
     }
@@ -2709,7 +2864,6 @@ export async function saveCommercialDraftInvoiceAsNewRevision(
     vatAmount,
     totalAmount,
     notes: extra && 'notes' in extra ? (extra.notes ?? '').trim() : cur.notes,
-    attachments: cur.attachments ? [...cur.attachments] : undefined,
     createdAt: now,
     createdByUid: actor.id,
     createdByName: actorName,
@@ -2717,6 +2871,10 @@ export async function saveCommercialDraftInvoiceAsNewRevision(
     updatedByUid: actor.id,
     updatedByName: actorName,
   };
+  if (cur.attachments && cur.attachments.length > 0) {
+    payload.attachments = cur.attachments.map((a) => ({ ...a }));
+  }
+  delete (payload as { id?: string }).id;
   delete (payload as { supersededByInvoiceId?: string }).supersededByInvoiceId;
   delete (payload as { customerRevisionRequestedAt?: number }).customerRevisionRequestedAt;
   delete (payload as { customerRevisionRequestNote?: string }).customerRevisionRequestNote;

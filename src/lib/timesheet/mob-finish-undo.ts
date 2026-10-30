@@ -77,6 +77,7 @@ export function buildMobRemobClearanceDeleteFields(deleteFieldSentinel: unknown)
     mobWorkingStartedAt: del,
     mobWorkingStartedByUserId: del,
     mobLocationKey: del,
+    tripMobDemobLocationKey: del,
     workLocation: del,
     mobLocationPhase: del,
     poActiveAutoWorkSuspended: del,

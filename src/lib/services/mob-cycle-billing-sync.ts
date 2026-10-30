@@ -235,6 +235,7 @@ function filterTimesheetsForCycle(
 export async function loadTimesheetsForMobCycleBilling(
   db: Firestore,
   review: MobCycleBillingReview,
+  options?: { windowStartYmd?: string; windowEndYmd?: string },
 ): Promise<DailyTimesheet[]> {
   const assignmentId = String(review.assignmentId || '').trim();
   if (!assignmentId) return [];
@@ -267,6 +268,23 @@ export async function loadTimesheetsForMobCycleBilling(
   for (const d of taggedSnap.docs) {
     if (!byId.has(d.id)) {
       byId.set(d.id, { id: d.id, ...(d.data() as object) } as DailyTimesheet);
+    }
+  }
+
+  /**
+   * ใบงาน PO Active มักไม่มี mobCycleId และอาจอยู่นอกรอบ D1 ที่ derive ผิด
+   * — รวมวันในหน้าต่างวางบิลของ assignment นี้ด้วย (W/OT ตามตารางรายเดือน)
+   */
+  const windowStart = String(options?.windowStartYmd || start).slice(0, 10);
+  const windowEnd = String(options?.windowEndYmd || end).slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(windowStart) && /^\d{4}-\d{2}-\d{2}$/.test(windowEnd)) {
+    for (const ts of all) {
+      const d = String(ts.date || '').slice(0, 10);
+      if (!d || d < windowStart || d > windowEnd) continue;
+      if (!isTripActivityTimesheet(ts) && ts.readyForBilling !== true && ts.status !== 'LOCKED') {
+        continue;
+      }
+      byId.set(ts.id, ts);
     }
   }
 
@@ -315,12 +333,22 @@ function buildReviewFromTimesheets(
 
   let tripAnchorStartDate = mobDays[0] || '';
 
-  // รอบที่ไม่มี M1 (เช่น work_day หลัง D1 จาก auto) — ใช้วันแรกของรอบนี้
-  // ห้าม fallback ไป mobStandby/start ของ assignment เพราะจะไปชน batch รอบที่ปิด D1 แล้ว
-  if (!tripAnchorStartDate && timesheets.length > 0) {
-    tripAnchorStartDate = [...timesheets.map((t) => String(t.date || '').slice(0, 10))]
-      .filter(Boolean)
-      .sort()[0] || '';
+  // รอบที่ไม่มี M1 — ใช้วันทำงานแรก ไม่ใช้ standby รอ remob (จะดึงงวดไปวันก่อน M1)
+  if (!tripAnchorStartDate) {
+    tripAnchorStartDate =
+      timesheets
+        .filter((t) => t.eventType === 'work_day')
+        .map((t) => String(t.date || '').slice(0, 10))
+        .filter(Boolean)
+        .sort()[0] || '';
+  }
+  if (!tripAnchorStartDate) {
+    tripAnchorStartDate =
+      timesheets
+        .filter((t) => t.poActiveAutoDaily !== true)
+        .map((t) => String(t.date || '').slice(0, 10))
+        .filter(Boolean)
+        .sort()[0] || '';
   }
 
   if (!tripAnchorStartDate) {

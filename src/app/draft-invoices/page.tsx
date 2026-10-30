@@ -103,7 +103,13 @@ import {
   type BillingRetroPromptSet,
 } from '@/lib/commercial/billing-reversal-days';
 import { BillingReversalConfirmDialog } from '@/components/commercial/billing-reversal-confirm-dialog';
-import { timestampToHtmlDateValue } from '@/lib/date-thai';
+import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { TripBillingPeriodEditor } from '@/components/commercial/trip-billing-period-editor';
+import {
+  evaluateTripInvoicePeriod,
+  previewTripInvoicePeriodForReadyWorkers,
+} from '@/lib/services/trip-invoice-period';
+import { plausibleBillingYmd } from '@/lib/commercial/trip-invoice-period';
 import Link from 'next/link';
 import { resolvePoActiveBundleKeyForPo } from '@/lib/ops/po-active-bundle';
 import {
@@ -285,6 +291,14 @@ export default function DraftInvoicesPage() {
     decided: string[];
     customerId: string;
     billingRetroChoices?: BillingRetroChoices;
+    tripPeriod?: {
+      startYmd: string;
+      endYmd: string;
+      suggestedStart?: string;
+      suggestedEnd?: string;
+      lastD1?: string;
+      acknowledgeWarnings?: boolean;
+    };
   } | null>(null);
   const [customerId, setCustomerId] = useState<string>('');
   const [poId, setPoId] = useState<string>('');
@@ -298,6 +312,20 @@ export default function DraftInvoicesPage() {
   const [invoiceWorkersLoading, setInvoiceWorkersLoading] = useState(false);
   const [selectedWorkerKeys, setSelectedWorkerKeys] = useState<Set<string>>(() => new Set());
   const [selectedQuotationPoIds, setSelectedQuotationPoIds] = useState<Set<string>>(() => new Set());
+  const [tripBillStartMs, setTripBillStartMs] = useState<number | null>(null);
+  const [tripBillEndMs, setTripBillEndMs] = useState<number | null>(null);
+  const [tripBillMeta, setTripBillMeta] = useState<{
+    suggestedStart: string;
+    suggestedEnd: string;
+    lastD1: string;
+    poIds: string[];
+    workerIds: string[];
+  } | null>(null);
+  const [tripBillPreviewLoading, setTripBillPreviewLoading] = useState(false);
+  const [tripPeriodConfirm, setTripPeriodConfirm] = useState<{
+    messages: string[];
+    run: () => Promise<void>;
+  } | null>(null);
   const [syncRowId, setSyncRowId] = useState<string | null>(null);
   const [partialSyncId, setPartialSyncId] = useState<string | null>(null);
   const [syncingBulk, setSyncingBulk] = useState(false);
@@ -624,6 +652,49 @@ export default function DraftInvoicesPage() {
     [pos],
   );
 
+  const quotationCustomerIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of allPos ?? []) {
+      if (p.status === 'active' && (p.poType || 'contract') === 'quotation' && p.customerId) {
+        ids.add(p.customerId);
+      }
+    }
+    return ids;
+  }, [allPos]);
+
+  const timesheetCustomerIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of allPos ?? []) {
+      if ((p.poType || 'contract') === 'quotation') continue;
+      const cid = String(p.customerId || '').trim();
+      if (cid) ids.add(cid);
+    }
+    return ids;
+  }, [allPos]);
+
+  const createDialogCustomers = useMemo(() => {
+    const all = [...(customers ?? [])].sort((a, b) =>
+      (a.name || a.id).localeCompare(b.name || b.id, 'th', { sensitivity: 'base' }),
+    );
+    if (createSource === 'quotation') {
+      return all.filter((c) => quotationCustomerIds.has(c.id));
+    }
+    if (allPos == null) return all;
+    return all.filter((c) => timesheetCustomerIds.has(c.id));
+  }, [customers, createSource, quotationCustomerIds, timesheetCustomerIds, allPos]);
+
+  useEffect(() => {
+    if (!dialogOpen) return;
+    if (!customerId) return;
+    const allowed = new Set(createDialogCustomers.map((c) => c.id));
+    if (createDialogCustomers.length === 0) return;
+    if (!allowed.has(customerId)) {
+      setCustomerId('');
+      setSelectedWorkerKeys(new Set());
+      setSelectedQuotationPoIds(new Set());
+    }
+  }, [dialogOpen, customerId, createDialogCustomers]);
+
   useEffect(() => {
     if (!dialogOpen || createSource !== 'timesheet' || !firestore || !customerId || !/^\d{4}-\d{2}$/.test(createYm)) {
       setInvoiceWorkers([]);
@@ -646,6 +717,50 @@ export default function DraftInvoicesPage() {
     };
   }, [dialogOpen, createSource, firestore, customerId, createYm]);
 
+  const selectedTripWorkers = useMemo(
+    () => invoiceWorkers.filter((w) => w.kind === 'trip' && selectedWorkerKeys.has(w.key)),
+    [invoiceWorkers, selectedWorkerKeys],
+  );
+  const selectedTripWorkerKey = useMemo(
+    () => selectedTripWorkers.map((w) => w.key).sort().join('|'),
+    [selectedTripWorkers],
+  );
+
+  useEffect(() => {
+    if (!dialogOpen || createSource !== 'timesheet' || !firestore || selectedTripWorkers.length === 0) {
+      setTripBillMeta(null);
+      return;
+    }
+    let cancelled = false;
+    setTripBillPreviewLoading(true);
+    void previewTripInvoicePeriodForReadyWorkers(firestore, selectedTripWorkers)
+      .then((preview) => {
+        if (cancelled) return;
+        if (!preview) {
+          setTripBillMeta(null);
+          return;
+        }
+        setTripBillMeta({
+          suggestedStart: preview.range.startYmd,
+          suggestedEnd: preview.range.endYmd,
+          lastD1: preview.lastD1,
+          poIds: preview.poIds,
+          workerIds: preview.workerIds,
+        });
+        setTripBillStartMs(htmlDateValueToTimestampMs(preview.range.startYmd) ?? null);
+        setTripBillEndMs(htmlDateValueToTimestampMs(preview.range.endYmd) ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setTripBillMeta(null);
+      })
+      .finally(() => {
+        if (!cancelled) setTripBillPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dialogOpen, createSource, firestore, selectedTripWorkerKey]);
+
   const resetForm = () => {
     setCustomerId('');
     setPoId('');
@@ -654,6 +769,10 @@ export default function DraftInvoicesPage() {
     setPeriodStartMs(n);
     setPeriodEndMs(n);
     setIssueDateMs(n);
+    setTripBillStartMs(null);
+    setTripBillEndMs(null);
+    setTripBillMeta(null);
+    setSelectedWorkerKeys(new Set());
   };
 
   const createTimesheetInvoice = async (
@@ -662,6 +781,14 @@ export default function DraftInvoicesPage() {
     decided: string[],
     billingRetroChoices: BillingRetroChoices | undefined,
     lockedCustomerId: string,
+    tripPeriod?: {
+      startYmd: string;
+      endYmd: string;
+      suggestedStart?: string;
+      suggestedEnd?: string;
+      lastD1?: string;
+      acknowledgeWarnings?: boolean;
+    },
   ) => {
     if (!firestore || !currentUser) return;
     if (!lockedCustomerId) throw new Error('เลือกลูกค้า');
@@ -679,6 +806,7 @@ export default function DraftInvoicesPage() {
           decided,
           customerId: lockedCustomerId,
           billingRetroChoices,
+          tripPeriod,
         });
         setDialogOpen(true);
         return;
@@ -691,6 +819,7 @@ export default function DraftInvoicesPage() {
         tripMobDemobByBatch: step.keys,
         billingReversalIncludeByWorkerId: billingRetroChoices?.reversalIncludeByWorkerId,
         billingAddedDayIncludeByWorkerId: billingRetroChoices?.addedDayIncludeByWorkerId,
+        ...(tripPeriod ? { tripPeriod } : {}),
       });
       toast({
         title: 'สร้างใบแจ้งหนี้แล้ว',
@@ -780,6 +909,80 @@ export default function DraftInvoicesPage() {
       }
       const picked = invoiceWorkers.filter((w) => selectedWorkerKeys.has(w.key));
       if (picked.length === 0) throw new Error('เลือกคนงานที่ส่งรอออกบิลแล้ว');
+      const tripPicked = picked.filter((w) => w.kind === 'trip');
+      let tripPeriod:
+        | {
+            startYmd: string;
+            endYmd: string;
+            suggestedStart?: string;
+            suggestedEnd?: string;
+            lastD1?: string;
+            acknowledgeWarnings?: boolean;
+          }
+        | undefined;
+      if (tripPicked.length > 0) {
+        const startYmd =
+          plausibleBillingYmd(timestampToHtmlDateValue(tripBillStartMs)) ||
+          plausibleBillingYmd(tripBillMeta?.suggestedStart);
+        const endYmd =
+          plausibleBillingYmd(timestampToHtmlDateValue(tripBillEndMs)) ||
+          plausibleBillingYmd(tripBillMeta?.suggestedEnd);
+        if (!startYmd || !endYmd) {
+          throw new Error('กำหนดวันเริ่มต้นและวันสิ้นสุดของงวด Trip');
+        }
+        const evaluation = await evaluateTripInvoicePeriod(firestore, {
+          startYmd,
+          endYmd,
+          poIds: tripBillMeta?.poIds?.length ? tripBillMeta.poIds : [...new Set(tripPicked.map((w) => w.poId))],
+          workerIds: tripBillMeta?.workerIds?.length
+            ? tripBillMeta.workerIds
+            : tripPicked.map((w) => w.workerId),
+          suggestedStart: tripBillMeta?.suggestedStart || startYmd,
+          suggestedEnd: tripBillMeta?.suggestedEnd || endYmd,
+          lastD1: tripBillMeta?.lastD1 || '',
+        });
+        if (evaluation.blockMessage) throw new Error(evaluation.blockMessage);
+        tripPeriod = {
+          startYmd,
+          endYmd,
+          suggestedStart: evaluation.suggestedStart,
+          suggestedEnd: evaluation.suggestedEnd,
+          lastD1: evaluation.lastD1,
+        };
+        if (evaluation.confirmMessages.length > 0) {
+          setCreating(false);
+          const lockedCustomerId = customerId;
+          const pendingPeriod = { ...tripPeriod, acknowledgeWarnings: true };
+          setTripPeriodConfirm({
+            messages: evaluation.confirmMessages,
+            run: async () => {
+              await askReversalThen(
+                () => promptsForMonthlyWorkers(picked),
+                'สร้างใบแจ้งหนี้',
+                async (decisions) => {
+                  setCreating(true);
+                  try {
+                    await createTimesheetInvoice(
+                      picked,
+                      {},
+                      [],
+                      decisions,
+                      lockedCustomerId,
+                      pendingPeriod,
+                    );
+                  } catch (e: unknown) {
+                    const msg = e instanceof Error ? e.message : 'สร้างไม่สำเร็จ';
+                    toast({ variant: 'destructive', title: 'ไม่สามารถสร้างได้', description: msg });
+                  } finally {
+                    setCreating(false);
+                  }
+                },
+              );
+            },
+          });
+          return;
+        }
+      }
       setCreating(false);
       const lockedCustomerId = customerId;
       await askReversalThen(
@@ -788,7 +991,7 @@ export default function DraftInvoicesPage() {
         async (decisions) => {
           setCreating(true);
           try {
-            await createTimesheetInvoice(picked, {}, [], decisions, lockedCustomerId);
+            await createTimesheetInvoice(picked, {}, [], decisions, lockedCustomerId, tripPeriod);
           } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : 'สร้างไม่สำเร็จ';
             toast({ variant: 'destructive', title: 'ไม่สามารถสร้างได้', description: msg });
@@ -1096,6 +1299,33 @@ export default function DraftInvoicesPage() {
           if (run) void run(decisions);
         }}
       />
+      <AlertDialog open={tripPeriodConfirm != null} onOpenChange={(open) => !open && setTripPeriodConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>ยืนยันช่วงงวด Trip?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                {tripPeriodConfirm?.messages.map((m) => (
+                  <p key={m}>{m}</p>
+                ))}
+                <p>ระบบจะไม่ทับวันที่ออกบิลยืนยันแล้ว (สถานะยืนยันแล้ว)</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const run = tripPeriodConfirm?.run;
+                setTripPeriodConfirm(null);
+                if (run) void run();
+              }}
+            >
+              ยืนยันช่วงวันที่
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div className="mx-auto w-full min-w-0 max-w-[1600px] space-y-6 p-4 md:p-6">
         <div className="flex items-center gap-3 overflow-x-auto">
           <h1 className="flex min-w-0 shrink items-center gap-2 text-xl font-bold tracking-tight text-primary whitespace-nowrap">
@@ -1227,11 +1457,19 @@ export default function DraftInvoicesPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— เลือก —</SelectItem>
-                      {(customers ?? []).map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name || c.id}
+                      {createDialogCustomers.length === 0 ? (
+                        <SelectItem value="__empty__" disabled>
+                          {createSource === 'quotation'
+                            ? 'ไม่มีลูกค้าที่มี PO ใบเสนอราคาที่ Active'
+                            : 'ไม่มีลูกค้าที่มี PO ในระบบ'}
                         </SelectItem>
-                      ))}
+                      ) : (
+                        createDialogCustomers.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name || c.id}
+                          </SelectItem>
+                        ))
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1264,10 +1502,14 @@ export default function DraftInvoicesPage() {
                       </div>
                       <div className="max-h-52 overflow-y-auto rounded-md border">
                         {invoiceWorkersLoading ? (
-                          <p className="p-3 text-sm text-muted-foreground">กำลังโหลดรายชื่อ…</p>
+                          <p className="p-3 text-sm text-muted-foreground">กำลังตรวจคนพร้อมวางบิล…</p>
+                        ) : !customerId ? (
+                          <p className="p-3 text-sm text-muted-foreground">
+                            เลือกลูกค้าก่อน แล้วระบบจะตรวจว่ามีคนพร้อมวางบิลในเดือนนี้หรือไม่
+                          </p>
                         ) : invoiceWorkers.length === 0 ? (
                           <p className="p-3 text-sm text-muted-foreground">
-                            ยังไม่มีคนที่พร้อมออกบิลในเดือนนี้ — สัญญารายเดือนต้องปิดงวดแล้ว สัญญา Trip ต้องมีชุดวางบิลที่อนุมัติแล้ว
+                            ยังไม่มีคนที่พร้อมออกบิลในเดือนนี้ — สัญญารายเดือนต้องปิดงวดแล้ว สัญญา Trip ต้องมีรอบที่จบ D1 (ชุดวางบิลพร้อมหรืออนุมัติแล้ว)
                           </p>
                         ) : (
                           invoiceWorkers.map((w) => (
@@ -1302,6 +1544,33 @@ export default function DraftInvoicesPage() {
                         {' · '}งานสัญญา Trip คำนวณแบบ Trip และถามจุด Mob/Demob ถ้าสัญญากำหนดค่า MOB
                       </p>
                     </div>
+                    {selectedTripWorkers.length > 0 ? (
+                      tripBillPreviewLoading ? (
+                        <p className="text-xs text-muted-foreground">กำลังคำนวณงวด Trip จาก M1–D1…</p>
+                      ) : (
+                        <TripBillingPeriodEditor
+                          editing
+                          startMs={tripBillStartMs}
+                          endMs={tripBillEndMs}
+                          onStart={setTripBillStartMs}
+                          onEnd={setTripBillEndMs}
+                          displayStartYmd={tripBillMeta?.suggestedStart}
+                          displayEndYmd={tripBillMeta?.suggestedEnd}
+                          suggestedStart={tripBillMeta?.suggestedStart}
+                          suggestedEnd={tripBillMeta?.suggestedEnd}
+                          lastD1={tripBillMeta?.lastD1}
+                          disabled={creating}
+                          onResetSuggested={
+                            tripBillMeta
+                              ? () => {
+                                  setTripBillStartMs(htmlDateValueToTimestampMs(tripBillMeta.suggestedStart));
+                                  setTripBillEndMs(htmlDateValueToTimestampMs(tripBillMeta.suggestedEnd));
+                                }
+                              : undefined
+                          }
+                        />
+                      )
+                    ) : null}
                   </>
                 ) : (
                   <div className="space-y-2">
@@ -1374,6 +1643,7 @@ export default function DraftInvoicesPage() {
                           [...prompt.decided, prompt.batchId],
                           prompt.billingRetroChoices,
                           prompt.customerId,
+                          prompt.tripPeriod,
                         )
                           .catch((err: unknown) => {
                             toast({

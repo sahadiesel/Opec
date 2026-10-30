@@ -42,7 +42,13 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { canCreate, canEdit, canView, isSystemAdmin } from '@/lib/permissions';
 import { isSimpleAccounting, isSimpleAdmin } from '@/lib/simple-tier-model';
 import { collection, doc, query, where } from 'firebase/firestore';
-import { formatDateTimeThaiBE, formatStoredDateThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { formatDateTimeThaiBE, formatStoredDateThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
+import { TripBillingPeriodEditor } from '@/components/commercial/trip-billing-period-editor';
+import {
+  evaluateTripInvoicePeriod,
+  previewTripInvoicePeriodForInvoice,
+} from '@/lib/services/trip-invoice-period';
+import { isPlausibleBillingYmd, plausibleBillingYmd } from '@/lib/commercial/trip-invoice-period';
 import { shouldOmitCommercialInvoiceGenerationWarning } from '@/lib/services/billing-line-generator';
 import {
   listBillingRetroPrompts,
@@ -175,6 +181,18 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const [voidBusy, setVoidBusy] = useState(false);
   const [regenerateBusy, setRegenerateBusy] = useState(false);
   const [regenConfirmOpen, setRegenConfirmOpen] = useState(false);
+  const [tripBillStartMs, setTripBillStartMs] = useState<number | null>(null);
+  const [tripBillEndMs, setTripBillEndMs] = useState<number | null>(null);
+  const [tripBillMeta, setTripBillMeta] = useState<{
+    suggestedStart: string;
+    suggestedEnd: string;
+    lastD1: string;
+  } | null>(null);
+  const [tripPeriodConfirm, setTripPeriodConfirm] = useState<{ messages: string[] } | null>(null);
+  const [tripPeriodEditing, setTripPeriodEditing] = useState(false);
+  const tripPeriodAckRef = useRef(false);
+  const tripPeriodSaveRef = useRef(false);
+  const tripPeriodOverrideRef = useRef<{ startYmd: string; endYmd: string } | null>(null);
   const [retroPrompts, setRetroPrompts] = useState<BillingRetroPromptSet | null>(null);
   const [taxFromComBusy, setTaxFromComBusy] = useState(false);
   const [offerTaxDialogOpen, setOfferTaxDialogOpen] = useState(false);
@@ -335,6 +353,55 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     if (!invoice || !canAct || invoice.status !== 'DRAFT') return false;
     return invoice.waveId !== QUOTATION_PO_WAVE_PLACEHOLDER;
   }, [invoice, canAct]);
+
+  const isTripInvoice = Boolean(
+    invoice &&
+      (invoice.billingMode === 'TRIP' ||
+        invoice.sourceTripBillingBatchId ||
+        (invoice.memberMobCycleIds?.length ?? 0) > 0),
+  );
+
+  useEffect(() => {
+    if (!invoice || !isTripInvoice || tripPeriodEditing) return;
+    if (!isPlausibleBillingYmd(invoice.periodStart) || !isPlausibleBillingYmd(invoice.periodEnd)) {
+      return;
+    }
+    setTripBillStartMs(htmlDateValueToTimestampMs(invoice.periodStart) ?? null);
+    setTripBillEndMs(htmlDateValueToTimestampMs(invoice.periodEnd) ?? null);
+  }, [invoice?.id, invoice?.periodStart, invoice?.periodEnd, isTripInvoice, tripPeriodEditing]);
+
+  useEffect(() => {
+    if (!firestore || !invoice || !isTripInvoice) {
+      setTripBillMeta(null);
+      return;
+    }
+    let cancelled = false;
+    void previewTripInvoicePeriodForInvoice(firestore, {
+      mobCycleIds: invoice.memberMobCycleIds ?? [],
+      workerIds: invoice.coveredWorkerIds ?? [],
+      poIds: [invoice.poId, ...(invoice.sourcePoIds ?? [])],
+    })
+      .then((preview) => {
+        if (cancelled || !preview) return;
+        setTripBillMeta({
+          suggestedStart: preview.range.startYmd,
+          suggestedEnd: preview.range.endYmd,
+          lastD1: preview.lastD1,
+        });
+        const storedOk =
+          isPlausibleBillingYmd(invoice.periodStart) && isPlausibleBillingYmd(invoice.periodEnd);
+        if (!storedOk) {
+          setTripBillStartMs(htmlDateValueToTimestampMs(preview.range.startYmd) ?? null);
+          setTripBillEndMs(htmlDateValueToTimestampMs(preview.range.endYmd) ?? null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setTripBillMeta(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, invoice?.id, isTripInvoice, invoice?.memberMobCycleIds, invoice?.coveredWorkerIds, invoice?.poId]);
 
   const docEn = printLocale === 'en';
   const moneyLoc = docEn ? 'en-GB' : 'th-TH';
@@ -674,24 +741,94 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     }
   };
 
-  const beginRegenerate = async () => {
+  const displayTripStartYmd =
+    plausibleBillingYmd(invoice?.periodStart) || tripBillMeta?.suggestedStart || '';
+  const displayTripEndYmd =
+    plausibleBillingYmd(invoice?.periodEnd) || tripBillMeta?.suggestedEnd || '';
+
+  const seedTripPeriodPickers = (startYmd: string, endYmd: string) => {
+    setTripBillStartMs(startYmd ? htmlDateValueToTimestampMs(startYmd) ?? null : null);
+    setTripBillEndMs(endYmd ? htmlDateValueToTimestampMs(endYmd) ?? null : null);
+  };
+
+  const tripPeriodPayload = (acknowledgeWarnings?: boolean) => {
+    if (!isTripInvoice) return undefined;
+    const startYmd =
+      plausibleBillingYmd(tripPeriodOverrideRef.current?.startYmd) ||
+      plausibleBillingYmd(timestampToHtmlDateValue(tripBillStartMs)) ||
+      plausibleBillingYmd(displayTripStartYmd) ||
+      plausibleBillingYmd(tripBillMeta?.suggestedStart);
+    const endYmd =
+      plausibleBillingYmd(tripPeriodOverrideRef.current?.endYmd) ||
+      plausibleBillingYmd(timestampToHtmlDateValue(tripBillEndMs)) ||
+      plausibleBillingYmd(displayTripEndYmd) ||
+      plausibleBillingYmd(tripBillMeta?.suggestedEnd);
+    if (!startYmd || !endYmd) return undefined;
+    return {
+      startYmd,
+      endYmd,
+      suggestedStart: tripBillMeta?.suggestedStart,
+      suggestedEnd: tripBillMeta?.suggestedEnd,
+      lastD1: tripBillMeta?.lastD1,
+      acknowledgeWarnings,
+    };
+  };
+
+  const beginRegenerate = async (
+    acknowledgeTripPeriod = false,
+    opts?: { applyImmediately?: boolean },
+  ) => {
     if (!firestore || !currentUser || !canAct || !invoice || !canRegenerateFromTimesheets) return;
     setRegenerateBusy(true);
     try {
+      if (isTripInvoice) {
+        const startYmd =
+          plausibleBillingYmd(tripPeriodOverrideRef.current?.startYmd) ||
+          plausibleBillingYmd(timestampToHtmlDateValue(tripBillStartMs)) ||
+          plausibleBillingYmd(displayTripStartYmd) ||
+          plausibleBillingYmd(tripBillMeta?.suggestedStart);
+        const endYmd =
+          plausibleBillingYmd(tripPeriodOverrideRef.current?.endYmd) ||
+          plausibleBillingYmd(timestampToHtmlDateValue(tripBillEndMs)) ||
+          plausibleBillingYmd(displayTripEndYmd) ||
+          plausibleBillingYmd(tripBillMeta?.suggestedEnd);
+        if (!startYmd || !endYmd) {
+          throw new Error('กำหนดวันเริ่มต้นและวันสิ้นสุดของงวด Trip');
+        }
+        const evaluation = await evaluateTripInvoicePeriod(firestore, {
+          startYmd,
+          endYmd,
+          poIds: [invoice.poId, ...(invoice.sourcePoIds ?? [])],
+          workerIds: invoice.coveredWorkerIds ?? [],
+          suggestedStart: tripBillMeta?.suggestedStart || invoice.periodStart,
+          suggestedEnd: tripBillMeta?.suggestedEnd || invoice.periodEnd,
+          lastD1: tripBillMeta?.lastD1 || '',
+          ignoreInvoiceId: invoice.id,
+        });
+        if (evaluation.blockMessage) throw new Error(evaluation.blockMessage);
+        if (evaluation.confirmMessages.length > 0 && !acknowledgeTripPeriod) {
+          tripPeriodAckRef.current = false;
+          setTripPeriodConfirm({ messages: evaluation.confirmMessages });
+          return;
+        }
+        tripPeriodAckRef.current = acknowledgeTripPeriod || evaluation.confirmMessages.length === 0;
+      }
       const poId = String(invoice.poId || '').trim();
       if (!poId) {
         setRegenConfirmOpen(true);
         return;
       }
+      const period = tripPeriodPayload(tripPeriodAckRef.current);
       const covered = (invoice.coveredWorkerIds ?? []).map((id) => id.trim()).filter(Boolean);
       const prompts = await listBillingRetroPrompts(
         firestore,
         poId,
-        invoice.periodStart,
-        invoice.periodEnd,
+        period?.startYmd || invoice.periodStart,
+        period?.endYmd || invoice.periodEnd,
         covered.length > 0 ? covered : undefined,
       );
       if (prompts.reversals.length > 0 || prompts.addedDays.length > 0) setRetroPrompts(prompts);
+      else if (opts?.applyImmediately) await handleRegenerateFromTimesheets();
       else setRegenConfirmOpen(true);
     } catch (e: unknown) {
       toast({
@@ -708,21 +845,28 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     if (!firestore || !currentUser || !canAct || !invoice || !canRegenerateFromTimesheets) return;
     setRegenerateBusy(true);
     try {
+      const tripPeriod = tripPeriodPayload(tripPeriodAckRef.current);
       const res = await regenerateCommercialDraftInvoiceFromTimesheets(
         firestore,
         invoice.id,
         currentUser,
-        choices
-          ? {
-              billingReversalIncludeByWorkerId: choices.reversalIncludeByWorkerId,
-              billingAddedDayIncludeByWorkerId: choices.addedDayIncludeByWorkerId,
-            }
-          : undefined,
+        {
+          ...(choices
+            ? {
+                billingReversalIncludeByWorkerId: choices.reversalIncludeByWorkerId,
+                billingAddedDayIncludeByWorkerId: choices.addedDayIncludeByWorkerId,
+              }
+            : {}),
+          ...(tripPeriod ? { tripPeriod } : {}),
+        },
       );
       toast({
-        title: 'ดึงรายการใหม่แล้ว',
-        description: `${res.lineCount} บรรทัด (จาก ${res.timesheetCount} แถว timesheet) — บรรทัดส่วนลด/ค่าเพิ่มที่เพิ่มเองยังอยู่`,
+        title: tripPeriodSaveRef.current ? 'บันทึกช่วงวันที่แล้ว' : 'ดึงรายการใหม่แล้ว',
+        description: `${res.lineCount} บรรทัด (จาก ${res.timesheetCount} แถว timesheet) — ค่าแรงคำนวณตามช่วงวันที่ที่บันทึก`,
       });
+      setTripPeriodEditing(false);
+      tripPeriodSaveRef.current = false;
+      tripPeriodOverrideRef.current = null;
     } catch (e: unknown) {
       toast({
         variant: 'destructive',
@@ -1203,7 +1347,10 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
 
         <div
           className={
-            visibleGenerationWarnings.length > 0
+            visibleGenerationWarnings.length > 0 ||
+            canEditAttachments ||
+            invoiceAttachments.length > 0 ||
+            (invoice.status === 'DRAFT' && isLatestRevision)
               ? 'grid gap-4 items-start lg:grid-cols-[minmax(0,1fr)_minmax(17rem,22rem)]'
               : 'grid gap-4 items-start'
           }
@@ -1222,15 +1369,62 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               <div className="text-muted-foreground text-xs">{printT(docL, 'docDate')}</div>
               <div>{formatStoredDateThaiBE(invoice.issueDate)}</div>
             </div>
-            <div>
+            <div className={isTripInvoice && canRegenerateFromTimesheets ? 'sm:col-span-2' : undefined}>
               <div className="text-muted-foreground text-xs">
                 {invoice.waveId === QUOTATION_PO_WAVE_PLACEHOLDER
                   ? printT(docL, 'billingPeriod')
                   : printT(docL, 'timesheetPeriod')}
               </div>
-              <div>
-                {formatStoredDateThaiBE(invoice.periodStart)} — {formatStoredDateThaiBE(invoice.periodEnd)}
-              </div>
+              {isTripInvoice && canRegenerateFromTimesheets ? (
+                <div className="mt-1">
+                  <TripBillingPeriodEditor
+                    editing={tripPeriodEditing}
+                    canEdit
+                    saving={regenerateBusy}
+                    startMs={tripBillStartMs}
+                    endMs={tripBillEndMs}
+                    onStart={setTripBillStartMs}
+                    onEnd={setTripBillEndMs}
+                    displayStartYmd={displayTripStartYmd}
+                    displayEndYmd={displayTripEndYmd}
+                    suggestedStart={tripBillMeta?.suggestedStart}
+                    suggestedEnd={tripBillMeta?.suggestedEnd}
+                    lastD1={tripBillMeta?.lastD1}
+                    disabled={saveBusy || actionBusy || linesEditing}
+                    onEdit={() => {
+                      seedTripPeriodPickers(displayTripStartYmd, displayTripEndYmd);
+                      setTripPeriodEditing(true);
+                    }}
+                    onCancel={() => {
+                      setTripPeriodEditing(false);
+                      tripPeriodSaveRef.current = false;
+                      tripPeriodOverrideRef.current = null;
+                    }}
+                    onSave={() => {
+                      const startYmd =
+                        plausibleBillingYmd(timestampToHtmlDateValue(tripBillStartMs)) ||
+                        plausibleBillingYmd(displayTripStartYmd);
+                      const endYmd =
+                        plausibleBillingYmd(timestampToHtmlDateValue(tripBillEndMs)) ||
+                        plausibleBillingYmd(displayTripEndYmd);
+                      tripPeriodOverrideRef.current =
+                        startYmd && endYmd ? { startYmd, endYmd } : null;
+                      tripPeriodSaveRef.current = true;
+                      void beginRegenerate(false, { applyImmediately: true });
+                    }}
+                    onResetSuggested={
+                      tripBillMeta
+                        ? () =>
+                            seedTripPeriodPickers(tripBillMeta.suggestedStart, tripBillMeta.suggestedEnd)
+                        : undefined
+                    }
+                  />
+                </div>
+              ) : (
+                <div>
+                  {formatStoredDateThaiBE(invoice.periodStart)} — {formatStoredDateThaiBE(invoice.periodEnd)}
+                </div>
+              )}
             </div>
             <div>
               <div className="text-muted-foreground text-xs">Wave</div>
@@ -1347,6 +1541,34 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                     )}
                     ดึงจาก timesheet ใหม่
                   </Button>
+                  <AlertDialog
+                    open={tripPeriodConfirm != null}
+                    onOpenChange={(open) => !open && setTripPeriodConfirm(null)}
+                  >
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>ยืนยันช่วงงวด Trip?</AlertDialogTitle>
+                        <AlertDialogDescription asChild>
+                          <div className="space-y-2 text-sm text-muted-foreground">
+                            {tripPeriodConfirm?.messages.map((m) => (
+                              <p key={m}>{m}</p>
+                            ))}
+                          </div>
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => {
+                          setTripPeriodConfirm(null);
+                          void beginRegenerate(true, {
+                            applyImmediately: tripPeriodSaveRef.current,
+                          });
+                        }}>
+                          ยืนยันช่วงวันที่
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                   <AlertDialog open={regenConfirmOpen} onOpenChange={setRegenConfirmOpen}>
                     <AlertDialogContent>
                       <AlertDialogHeader>
@@ -1419,35 +1641,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 </AlertDialog>
               )}
             </div>
-            <CommercialInvoiceAttachmentsPanel
-              attachments={invoiceAttachments}
-              canEdit={canEditAttachments}
-              uploading={attachUploading}
-              removingId={attachRemovingId}
-              inputRef={attachInputRef}
-              onPick={() => attachInputRef.current?.click()}
-              onFileChange={(e) => void handleAttachFiles(e)}
-              onRemove={(att) => void handleRemoveAttachment(att)}
-              layout="horizontal"
-            />
           </div>
         )}
-
-        {invoice.status === 'DRAFT' && !isLatestRevision && invoiceAttachments.length > 0 ? (
-          <div className="print:hidden">
-            <CommercialInvoiceAttachmentsPanel
-              attachments={invoiceAttachments}
-              canEdit={false}
-              uploading={false}
-              removingId={null}
-              inputRef={attachInputRef}
-              onPick={() => undefined}
-              onFileChange={() => undefined}
-              onRemove={() => undefined}
-              layout="horizontal"
-            />
-          </div>
-        ) : null}
 
         {invoice.status === 'DRAFT' && isLatestRevision && !canAct && canAdminVoid ? (
           <div className="print:hidden space-y-3">
@@ -1478,17 +1673,6 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 </AlertDialogContent>
               </AlertDialog>
             </div>
-            <CommercialInvoiceAttachmentsPanel
-              attachments={invoiceAttachments}
-              canEdit={false}
-              uploading={false}
-              removingId={null}
-              inputRef={attachInputRef}
-              onPick={() => undefined}
-              onFileChange={() => undefined}
-              onRemove={() => undefined}
-              layout="horizontal"
-            />
           </div>
         ) : null}
 
@@ -1542,52 +1726,43 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               )}
             </AlertDescription>
           </Alert>
-          <CommercialInvoiceAttachmentsPanel
-            attachments={invoiceAttachments}
-            canEdit={canEditAttachments}
-            uploading={attachUploading}
-            removingId={attachRemovingId}
-            inputRef={attachInputRef}
-            onPick={() => attachInputRef.current?.click()}
-            onFileChange={(e) => void handleAttachFiles(e)}
-            onRemove={(att) => void handleRemoveAttachment(att)}
-            layout="horizontal"
-          />
           </div>
         )}
 
-        {invoice.status !== 'DRAFT' &&
-          invoice.status !== 'PENDING_CUSTOMER' &&
-          invoiceAttachments.length > 0 && (
-            <div className="print:hidden">
-              <CommercialInvoiceAttachmentsPanel
-                attachments={invoiceAttachments}
-                canEdit={false}
-                uploading={false}
-                removingId={null}
-                inputRef={attachInputRef}
-                onPick={() => undefined}
-                onFileChange={() => undefined}
-                onRemove={() => undefined}
-                layout="horizontal"
-              />
-            </div>
-          )}
-
           </div>
 
-          {visibleGenerationWarnings.length > 0 ? (
+          {visibleGenerationWarnings.length > 0 ||
+          canEditAttachments ||
+          invoiceAttachments.length > 0 ||
+          (invoice.status === 'DRAFT' && isLatestRevision) ? (
             <aside className="print:hidden space-y-4 lg:sticky lg:top-4">
-              <Alert className="border-amber-200 bg-amber-50/80">
-                <AlertTitle>คำเตือนตอนคำนวณ</AlertTitle>
-                <AlertDescription>
-                  <ul className="list-disc pl-4 text-sm space-y-1">
-                    {visibleGenerationWarnings.map((w, i) => (
-                      <li key={i}>{w}</li>
-                    ))}
-                  </ul>
-                </AlertDescription>
-              </Alert>
+              {visibleGenerationWarnings.length > 0 ? (
+                <Alert className="border-amber-200 bg-amber-50/80">
+                  <AlertTitle>คำเตือนตอนคำนวณ</AlertTitle>
+                  <AlertDescription>
+                    <ul className="list-disc pl-4 text-sm space-y-1">
+                      {visibleGenerationWarnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              {canEditAttachments ||
+              invoiceAttachments.length > 0 ||
+              (invoice.status === 'DRAFT' && isLatestRevision) ? (
+                <CommercialInvoiceAttachmentsPanel
+                  attachments={invoiceAttachments}
+                  canEdit={canEditAttachments}
+                  uploading={attachUploading}
+                  removingId={attachRemovingId}
+                  inputRef={attachInputRef}
+                  onPick={() => attachInputRef.current?.click()}
+                  onFileChange={(e) => void handleAttachFiles(e)}
+                  onRemove={(att) => void handleRemoveAttachment(att)}
+                  layout="vertical"
+                />
+              ) : null}
             </aside>
           ) : null}
         </div>

@@ -177,6 +177,11 @@ export interface Assignment {
    * เฟส 1 จะผูก dropdown เลือกไซต์ตอน mob
    */
   mobLocationKey?: string;
+  /**
+   * จุด Mob/Demob สำหรับวางบิล (คีย์จากสัญญา `mobDemobLocations`)
+   * บันทึกที่ขั้น 2 ของหน้า Mobilization — ถ้ามีครบทั้งชุด Trip จะไม่ถามซ้ำตอนสร้างใบแจ้งหนี้
+   */
+  tripMobDemobLocationKey?: string;
   /** สถานะไซต์ปัจจุบันต่อรอบ — optional เพื่อไม่ทับข้อมูลเก่า */
   mobLocationPhase?: MobLocationPhase;
   /** Final clearance ขั้น 1 — ยืนยันพร้อมเดินทาง */
