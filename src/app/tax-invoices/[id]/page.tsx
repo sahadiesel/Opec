@@ -141,6 +141,9 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const [payConfirmAmountStr, setPayConfirmAmountStr] = useState('');
   const [payConfirmEntryDate, setPayConfirmEntryDate] = useState('');
   const [payConfirmBankId, setPayConfirmBankId] = useState('');
+  const [payConfirmIncludeSignature, setPayConfirmIncludeSignature] = useState(false);
+  const [payConfirmIncludeStamp, setPayConfirmIncludeStamp] = useState(false);
+  const issuerSignatureUrl = useUserSignatureUrl(currentUser?.id);
   const [editInvoiceOpen, setEditInvoiceOpen] = useState(false);
   const [editShowWht, setEditShowWht] = useState(false);
   const [savingInvoiceEdit, setSavingInvoiceEdit] = useState(false);
@@ -749,6 +752,8 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     setPayConfirmAmountStr(String(expectedMoneyReceiptAmount(invoice)));
     setPayConfirmEntryDate(timestampToHtmlDateValue(Date.now()));
     setPayConfirmBankId('');
+    setPayConfirmIncludeSignature(false);
+    setPayConfirmIncludeStamp(false);
     setPayConfirmOpen(true);
   };
 
@@ -778,6 +783,12 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
           bankAccountId: payConfirmBankId.trim(),
           amount,
           entryDate: payConfirmEntryDate.trim(),
+          receiverSignatureImageUrl:
+            payConfirmIncludeSignature && issuerSignatureUrl ? issuerSignatureUrl : undefined,
+          companyStampImageUrl:
+            payConfirmIncludeStamp && (companyProfile?.documentHeaderStampUrl || '').trim()
+              ? companyProfile?.documentHeaderStampUrl
+              : undefined,
         },
       );
       setPayConfirmOpen(false);
@@ -1689,6 +1700,40 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 {receiveBankOptions.length === 0 ? (
                   <p className="text-xs text-destructive">ไม่มีบัญชี ACTIVE — ตั้งค่าที่เมนูบัญชีธนาคารก่อน</p>
                 ) : null}
+              </div>
+              <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                <p className="text-sm font-medium">แนบลงใบเสร็จหรือไม่?</p>
+                <p className="text-xs text-muted-foreground">เลือกได้อย่างใดอย่างหนึ่ง หรือทั้งสองอย่าง — แก้เพิ่มหรือเอาออกทีหลังได้ที่หน้าใบเสร็จ</p>
+                <label className="flex items-start gap-2 text-sm">
+                  <Checkbox
+                    checked={payConfirmIncludeSignature}
+                    onCheckedChange={(v) => setPayConfirmIncludeSignature(v === true)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="font-medium">ลายเซ็นผู้รับเงิน (บัญชี)</span>
+                    <span className="block text-xs text-muted-foreground">
+                      ช่องเหนือชื่อผู้รับเงิน
+                      {issuerSignatureUrl ? ' · มีลายเซ็นในโปรไฟล์' : ' · ยังไม่มีลายเซ็น — ถ้าเลือกไว้จะไม่วางรูป'}
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm">
+                  <Checkbox
+                    checked={payConfirmIncludeStamp}
+                    onCheckedChange={(v) => setPayConfirmIncludeStamp(v === true)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="font-medium">ตรายางบริษัท</span>
+                    <span className="block text-xs text-muted-foreground">
+                      ช่องว่างก่อนผู้มีอำนาจลงนาม (ลูกค้า)
+                      {(companyProfile?.documentHeaderStampUrl || '').trim()
+                        ? ' · จากหัวเอกสารบริษัท'
+                        : ' · ยังไม่มีรูปตรายาง'}
+                    </span>
+                  </span>
+                </label>
               </div>
             </div>
             <DialogFooter className="gap-2 sm:gap-0">

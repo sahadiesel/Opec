@@ -34,6 +34,10 @@ export type ConfirmTaxInvoicePaymentParams = {
   amount: number;
   /** วันที่รับเงิน / วันที่ลง cashbook (YYYY-MM-DD) */
   entryDate: string;
+  /** ลายเซ็นผู้รับเงิน (บัญชี) ที่อัปโหลดในโปรไฟล์ — ว่าง = ไม่วางบนใบเสร็จ */
+  receiverSignatureImageUrl?: string;
+  /** ตรายางบริษัทจากหัวเอกสาร — ว่าง = ไม่วางบนใบเสร็จ */
+  companyStampImageUrl?: string;
 };
 
 export async function recordTaxInvoicePaymentNotification(
@@ -145,6 +149,12 @@ export async function confirmPaymentAndIssueMoneyReceipt(
     updatedAt: now,
     createdByUid: actor.id,
     createdByName: actor.displayName,
+    ...(params.receiverSignatureImageUrl?.trim()
+      ? { receiverSignatureImageUrl: params.receiverSignatureImageUrl.trim() }
+      : {}),
+    ...(params.companyStampImageUrl?.trim()
+      ? { companyStampImageUrl: params.companyStampImageUrl.trim() }
+      : {}),
   };
 
   const cashbookRow = {

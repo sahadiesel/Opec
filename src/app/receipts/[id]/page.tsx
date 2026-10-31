@@ -13,11 +13,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { AlertTriangle, ArrowLeft, Loader2, Printer, Wrench } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase } from '@/firebase';
-import { doc } from 'firebase/firestore';
+import { deleteField, doc, updateDoc } from 'firebase/firestore';
 import type { Customer, MoneyReceipt, TaxInvoice, User } from '@/lib/types';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
@@ -34,6 +35,7 @@ import {
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { DocumentShareButton } from '@/components/documents/document-share-controls';
+import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
 import { detectMoneyReceiptWhtUndercharge } from '@/lib/accounting/money-receipt-wht-amount';
 import { fixMoneyReceiptWhtAmount } from '@/lib/services/money-receipt-wht-fix-service';
 import Link from 'next/link';
@@ -58,6 +60,14 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
   const [receiptPrintPreset, setReceiptPrintPreset] = useState<'p1' | 'p2' | 'p3'>('p1');
   const [fixOpen, setFixOpen] = useState(false);
   const [fixLoading, setFixLoading] = useState(false);
+  const [marksSaving, setMarksSaving] = useState(false);
+  const [marksDraft, setMarksDraft] = useState<{
+    id: string;
+    signature: boolean;
+    stamp: boolean;
+    savedSignature: boolean;
+    savedStamp: boolean;
+  } | null>(null);
 
   const allowed = Boolean(currentUser && canView(currentUser, 'receipts'));
   const canFixReceipt = Boolean(
@@ -69,6 +79,7 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
     [firestore, id, allowed],
   );
   const { data: receipt, isLoading } = useDoc<MoneyReceipt>(rRef as any);
+  const receiverSignatureUrl = useUserSignatureUrl(receipt?.createdByUid);
 
   const tRef = useMemoFirebase(
     () => (firestore && receipt ? doc(firestore, 'tax_invoices', receipt.taxInvoiceId) : null),
@@ -99,14 +110,36 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
     email?: string;
     addressLine1?: string;
     addressLine2?: string;
+    documentHeaderStampUrl?: string;
   }>(companyRef as any);
+  const stampUrl = (companyProfile?.documentHeaderStampUrl || '').trim();
+  const savedSignature = Boolean((receipt?.receiverSignatureImageUrl || '').trim());
+  const savedStamp = Boolean((receipt?.companyStampImageUrl || '').trim());
+  const marksMatch =
+    marksDraft != null &&
+    marksDraft.id === receipt?.id &&
+    marksDraft.savedSignature === savedSignature &&
+    marksDraft.savedStamp === savedStamp;
+  const showSignature = marksMatch ? marksDraft.signature : savedSignature;
+  const showStamp = marksMatch ? marksDraft.stamp : savedStamp;
+
+  const marksDirty = showSignature !== savedSignature || showStamp !== savedStamp;
+
+  const previewReceipt = useMemo(() => {
+    if (!receipt) return null;
+    return {
+      ...receipt,
+      receiverSignatureImageUrl: showSignature && receiverSignatureUrl ? receiverSignatureUrl : undefined,
+      companyStampImageUrl: showStamp && stampUrl ? stampUrl : undefined,
+    };
+  }, [receipt, showSignature, showStamp, receiverSignatureUrl, stampUrl]);
 
   const executeReceiptPrint = useCallback(
     async (sheets: TaxInvoicePrintSheet[]) => {
-      if (!receipt || !taxInv) return;
+      if (!previewReceipt || !taxInv) return;
       const body = buildMoneyReceiptPrintHtml({
         company: companyProfile ?? undefined,
-        receipt,
+        receipt: previewReceipt,
         taxInvoice: taxInv,
         customer: customer ?? undefined,
         printedAtMs: Date.now(),
@@ -115,7 +148,7 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
       });
       if (
         !(await openStandardPrintWindow({
-          windowTitle: receipt.receiptNo,
+          windowTitle: previewReceipt.receiptNo,
           bodyInnerHtml: body,
           htmlLang: printLocale,
         }))
@@ -127,23 +160,23 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
         });
       }
     },
-    [receipt, taxInv, companyProfile, customer, printLocale, toast],
+    [previewReceipt, taxInv, companyProfile, customer, printLocale, toast],
   );
 
   /** พรีวิวหน้าจอ — รูปแบบเดียวกับตอนพิมพ์ (ต้นฉบับ 1 แผ่น) */
   const previewHtml = useMemo(() => {
-    if (!receipt || !taxInv) return '';
+    if (!previewReceipt || !taxInv) return '';
     const body = buildMoneyReceiptPrintHtml({
       company: companyProfile ?? undefined,
-      receipt,
+      receipt: previewReceipt,
       taxInvoice: taxInv,
       customer: customer ?? undefined,
-      printedAtMs: Date.now(),
+      printedAtMs: previewReceipt.updatedAt || previewReceipt.createdAt,
       locale: printLocale,
       sheets: ['original'],
     });
-    return wrapStandardPrintDocument(receipt.receiptNo, body, { lang: printLocale });
-  }, [receipt, taxInv, companyProfile, customer, printLocale]);
+    return wrapStandardPrintDocument(previewReceipt.receiptNo, body, { lang: printLocale });
+  }, [previewReceipt, taxInv, companyProfile, customer, printLocale]);
 
   const handlePrint = useCallback(() => {
     if (!receipt || !taxInv) return;
@@ -156,6 +189,44 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
     void executeReceiptPrint(preset.sheets);
     setPrintPresetOpen(false);
   }, [receiptPrintPreset, executeReceiptPrint]);
+
+  const handleSaveMarks = useCallback(async () => {
+    if (!firestore || !receipt || !canFixReceipt) return;
+    if (showSignature && !receiverSignatureUrl) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่มีลายเซ็นผู้รับเงิน',
+        description: 'อัปโหลดลายเซ็นในหน้าจัดการผู้ใช้งานของผู้ที่ออกใบเสร็จนี้ก่อน',
+      });
+      return;
+    }
+    if (showStamp && !stampUrl) {
+      toast({
+        variant: 'destructive',
+        title: 'ยังไม่มีตรายาง',
+        description: 'อัปโหลดตรายางที่หัวเอกสารบริษัทก่อน',
+      });
+      return;
+    }
+    setMarksSaving(true);
+    try {
+      await updateDoc(doc(firestore, 'receipts', receipt.id), {
+        receiverSignatureImageUrl: showSignature ? receiverSignatureUrl : deleteField(),
+        companyStampImageUrl: showStamp ? stampUrl : deleteField(),
+        updatedAt: Date.now(),
+      });
+      toast({ title: 'บันทึกลายเซ็นและตรายางบนใบเสร็จแล้ว' });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : 'ลองใหม่',
+      });
+    } finally {
+      setMarksSaving(false);
+    }
+  }, [firestore, receipt, canFixReceipt, showSignature, showStamp, receiverSignatureUrl, stampUrl, toast]);
 
   const handleApplyWhtFix = useCallback(async () => {
     if (!firestore || !receipt || !taxInv || !currentUser || !whtFixPreview) return;
@@ -304,6 +375,67 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
             )}
           </CardContent>
         </Card>
+
+        {canFixReceipt ? (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">ลายเซ็นและตรายาง</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                ติ๊กเพื่อวางหรือเอาออกบนใบเสร็จที่ออกแล้ว — พรีวิวด้านล่างเปลี่ยนทันที กดบันทึกเพื่อเก็บลงเอกสาร
+              </p>
+              <label className="flex items-start gap-2 text-sm">
+                <Checkbox
+                  checked={showSignature}
+                  onCheckedChange={(v) =>
+                    setMarksDraft({
+                      id: receipt.id,
+                      signature: v === true,
+                      stamp: showStamp,
+                      savedSignature,
+                      savedStamp,
+                    })
+                  }
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">ลายเซ็นผู้รับเงิน (บัญชี)</span>
+                  <span className="block text-xs text-muted-foreground">
+                    ช่องเหนือชื่อ {receipt.createdByName || 'ผู้รับเงิน'}
+                    {receiverSignatureUrl ? ' · มีลายเซ็นในโปรไฟล์' : ' · ยังไม่มีลายเซ็น'}
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <Checkbox
+                  checked={showStamp}
+                  onCheckedChange={(v) =>
+                    setMarksDraft({
+                      id: receipt.id,
+                      signature: showSignature,
+                      stamp: v === true,
+                      savedSignature,
+                      savedStamp,
+                    })
+                  }
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">ตรายางบริษัท</span>
+                  <span className="block text-xs text-muted-foreground">
+                    ช่องว่างก่อนผู้มีอำนาจลงนาม (ลูกค้า)
+                    {stampUrl ? ' · จากหัวเอกสารบริษัท' : ' · ยังไม่มีรูปตรายาง'}
+                  </span>
+                </span>
+              </label>
+              <Button type="button" disabled={!marksDirty || marksSaving} onClick={() => void handleSaveMarks()}>
+                {marksSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                บันทึกบนเอกสาร
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader className="pb-2">

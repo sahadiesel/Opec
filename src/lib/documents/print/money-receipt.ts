@@ -94,8 +94,13 @@ function buildMoneyReceiptPrintHtmlSinglePage(params: {
     <p class="sd-words">${escapeHtmlDoc(amountWords)}</p>
   </div>`;
   const footerHtml = buildStandardSignFooterHtml({
-    left: { roleLine: L === 'en' ? 'Receiver (Accounting)' : 'ผู้รับเงิน (บัญชี)', name: receipt.createdByName || '—' },
+    left: {
+      roleLine: L === 'en' ? 'Receiver (Accounting)' : 'ผู้รับเงิน (บัญชี)',
+      name: receipt.createdByName || '—',
+      imageUrl: receipt.receiverSignatureImageUrl,
+    },
     right: { roleLine: printT(L, 'signCustomerAuth'), name: '—' },
+    gapStampUrl: receipt.companyStampImageUrl,
   });
   return assembleStandardPrintPageHtml({
     printedAtMs,

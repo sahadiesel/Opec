@@ -753,6 +753,10 @@ export interface MoneyReceipt {
   updatedAt: number;
   createdByUid?: string;
   createdByName?: string;
+  /** รูปลายเซ็นผู้รับเงิน (บัญชี) — ช่องเหนือชื่อผู้รับเงิน ว่าง = ไม่แสดง */
+  receiverSignatureImageUrl?: string;
+  /** ตรายางบริษัท — ช่องว่างก่อนผู้มีอำนาจลงนาม (ลูกค้า) ว่าง = ไม่แสดง */
+  companyStampImageUrl?: string;
   /** แชร์ให้ officer ที่ระบุ — ดูได้แม้ไม่ได้เป็นผู้สร้าง */
   sharedWith?: { uid: string; displayName: string; roleKey?: string }[];
   sharedWithUids?: string[];

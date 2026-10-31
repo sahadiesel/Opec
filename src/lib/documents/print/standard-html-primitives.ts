@@ -544,6 +544,23 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     z-index: 2;
     pointer-events: none;
   }
+  .sd-sign-block--slot .sd-sign-line {
+    margin: 2px 12px 8px 12px;
+  }
+  .sd-sign-footer--receipt { position: relative; }
+  .sd-sign-footer--receipt .sd-signatures { align-items: end; }
+  .sd-receipt-gap-stamp {
+    position: absolute;
+    left: 50%;
+    bottom: 3mm;
+    width: 36mm;
+    height: 36mm;
+    object-fit: contain;
+    transform: translateX(-50%);
+    opacity: 0.55;
+    z-index: 2;
+    pointer-events: none;
+  }
   .sd-signatures--3 .sd-sign-line,
   .sd-page--commercial .sd-signatures--3 .sd-sign-line {
     margin: 4px 8px 6px 8px;
@@ -1020,7 +1037,8 @@ function standardSignBlockHtml(party: StandardSignParty, withSlot: boolean): str
     ? `<img class="sd-sign-stamp" src="${escapeHtmlDoc(party.stampUrl.trim())}" alt="" />`
     : '';
   const slot = withSlot ? `<div class="sd-sign-slot">${img}${stamp}</div>` : '';
-  return `<div class="sd-sign-block">
+  const blockClass = withSlot ? 'sd-sign-block sd-sign-block--slot' : 'sd-sign-block';
+  return `<div class="${blockClass}">
       ${slot}
       <div class="sd-sign-line"></div>
       <p class="sd-sign-role">${escapeHtmlDoc(party.roleLine)}</p>
@@ -1034,17 +1052,25 @@ export function buildStandardSignFooterHtml(params: {
   middle?: StandardSignParty;
   right: StandardSignParty;
   belowHtml?: string;
+  /** ตรายางวางช่องว่างระหว่างสองลายเซ็น (ใบเสร็จ) — ไม่ทับลายเซ็นผู้รับเงิน */
+  gapStampUrl?: string;
 }): string {
   const below = params.belowHtml ?? '';
   const three = Boolean(params.middle);
   const gridClass = three ? 'sd-signatures sd-signatures--3' : 'sd-signatures';
   const middle = params.middle ? standardSignBlockHtml(params.middle, true) : '';
-  return `<footer class="sd-sign-footer">
+  const leftSlot = three || Boolean(params.left.imageUrl?.trim());
+  const gapStamp = params.gapStampUrl?.trim()
+    ? `<img class="sd-receipt-gap-stamp" src="${escapeHtmlDoc(params.gapStampUrl.trim())}" alt="" />`
+    : '';
+  const footerClass = gapStamp ? 'sd-sign-footer sd-sign-footer--receipt' : 'sd-sign-footer';
+  return `<footer class="${footerClass}">
   <div class="${gridClass}">
-    ${standardSignBlockHtml(params.left, three)}
+    ${standardSignBlockHtml(params.left, leftSlot)}
     ${middle}
-    ${standardSignBlockHtml(params.right, three)}
+    ${standardSignBlockHtml(params.right, leftSlot)}
   </div>
+  ${gapStamp}
   ${below}
   </footer>`;
 }
