@@ -341,14 +341,14 @@ function HrCashAdvancesPageContent() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>เลขที่</TableHead>
-                      <TableHead>วันที่</TableHead>
-                      <TableHead>ผู้เบิก</TableHead>
-                      <TableHead>ประเภท</TableHead>
-                      <TableHead className="text-right">จำนวนเงิน</TableHead>
-                      <TableHead>แหล่งสร้าง</TableHead>
-                      <TableHead>สถานะ</TableHead>
-                      <TableHead className="w-[100px]" />
+                      <TableHead className="h-10 px-3 py-2">เลขที่</TableHead>
+                      <TableHead className="h-10 px-3 py-2">วันที่</TableHead>
+                      <TableHead className="h-10 px-3 py-2">ผู้เบิก</TableHead>
+                      <TableHead className="h-10 px-3 py-2">ประเภท</TableHead>
+                      <TableHead className="h-10 px-3 py-2 text-right">จำนวนเงิน</TableHead>
+                      <TableHead className="h-10 px-3 py-2">แหล่งสร้าง</TableHead>
+                      <TableHead className="h-10 px-3 py-2">สถานะ</TableHead>
+                      <TableHead className="h-10 w-[72px] px-3 py-2" />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -358,17 +358,17 @@ function HrCashAdvancesPageContent() {
                         className="cursor-pointer hover:bg-muted/40"
                         onClick={() => router.push(`/hr/cash-advances/${r.id}`)}
                       >
-                        <TableCell className="font-mono text-xs font-semibold">{r.requestNo}</TableCell>
-                        <TableCell className="whitespace-nowrap text-sm">{formatDateThaiBE(r.createdAt)}</TableCell>
-                        <TableCell>{r.subjectNameSnapshot}</TableCell>
-                        <TableCell>{subjectTypeLabel(r.subjectType)}</TableCell>
-                        <TableCell className="text-right font-medium">
+                        <TableCell className="px-3 py-2.5 font-mono text-xs font-semibold">{r.requestNo}</TableCell>
+                        <TableCell className="whitespace-nowrap px-3 py-2.5 text-sm">{formatDateThaiBE(r.createdAt)}</TableCell>
+                        <TableCell className="px-3 py-2.5">{r.subjectNameSnapshot}</TableCell>
+                        <TableCell className="px-3 py-2.5">{subjectTypeLabel(r.subjectType)}</TableCell>
+                        <TableCell className="px-3 py-2.5 text-right font-medium">
                           ฿{Number(r.amountBaht || 0).toLocaleString('th-TH')}
                         </TableCell>
-                        <TableCell>{originLabel(r.origin)}</TableCell>
-                        <TableCell>{statusBadge(r.status)}</TableCell>
-                        <TableCell>
-                          <Button variant="ghost" size="sm" asChild>
+                        <TableCell className="px-3 py-2.5">{originLabel(r.origin)}</TableCell>
+                        <TableCell className="px-3 py-2.5">{statusBadge(r.status)}</TableCell>
+                        <TableCell className="px-3 py-2.5">
+                          <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
                             <Link href={`/hr/cash-advances/${r.id}`}>
                               <ChevronRight className="h-4 w-4" />
                             </Link>

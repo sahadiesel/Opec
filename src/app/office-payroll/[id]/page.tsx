@@ -459,13 +459,27 @@ function OfficePayrollDetailPageInner({ params }: { params: Promise<{ id: string
           </div>
         </div>
 
-        <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
-          <ShieldAlert className="h-5 w-5 text-blue-600" />
-          <AlertTitle className="font-bold">ระบบจ่ายเงินพนักงานภายใน (Internal Staff Payroll)</AlertTitle>
-          <AlertDescription className="text-sm">
-            งวดนี้เฉพาะพนักงานที่ <b>ไม่ใช่ผู้บริหาร</b> (ผู้บริหารอยู่เมนูบัญชี) — หักภาษีประมาณการจากฐานรายได้รายเดือน × 12 หักลดหย่อน 60,000 บ./ปี แล้วใช้ขั้นบันได หาร 12 ต่อเดือน; ประกันสังคมตามเพดานใน HR settings
-          </AlertDescription>
-        </Alert>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm min-w-0 h-full">
+            <ShieldAlert className="h-4 w-4 text-blue-600" />
+            <AlertTitle className="font-bold text-sm">ระบบจ่ายเงินพนักงานภายใน (Internal Staff Payroll)</AlertTitle>
+            <AlertDescription className="text-xs leading-snug">
+              งวดนี้เฉพาะพนักงานที่ <b>ไม่ใช่ผู้บริหาร</b> (ผู้บริหารอยู่เมนูบัญชี) — หักภาษีประมาณการจากฐานรายได้รายเดือน × 12 หักลดหย่อน 60,000 บ./ปี แล้วใช้ขั้นบันได หาร 12 ต่อเดือน; ประกันสังคมตามเพดานใน HR settings
+            </AlertDescription>
+          </Alert>
+          <Alert className="shadow-sm min-w-0 h-full">
+            <Info className="h-4 w-4" />
+            <AlertTitle className="font-bold text-sm">เฉพาะงวดนี้ (ไม่รวมงวดอื่นในเดือนเดียวกัน)</AlertTitle>
+            <AlertDescription className="text-xs leading-snug">
+              รายชื่อและยอดบนหน้านี้คือ <strong>งวด {run.payrollRunNo}</strong> เท่านั้น — หากมีหลายงวดแยกใน {formatPayrollYearMonthEnAbbrev(run.payrollMonth)} (
+              {run.payrollMonth}) ให้ดูยอดรวมและรายชื่อ unique ทุกงวดได้ที่{' '}
+              <Link className="font-medium underline" href={`/office-payroll/month/${encodeURIComponent(run.payrollMonth)}`}>
+                มุมมองรวมรายเดือน
+              </Link>
+              หรือ <Link className="font-medium underline" href="/office-payroll">รายการงวดจ่าย</Link>
+            </AlertDescription>
+          </Alert>
+        </div>
         {!canMutate && (
           <Alert>
             <Info className="h-4 w-4" />
@@ -474,20 +488,7 @@ function OfficePayrollDetailPageInner({ params }: { params: Promise<{ id: string
           </Alert>
         )}
 
-        <Alert>
-          <Info className="h-4 w-4" />
-          <AlertTitle>เฉพาะงวดนี้ (ไม่รวมงวดอื่นในเดือนเดียวกัน)</AlertTitle>
-          <AlertDescription className="text-xs sm:text-sm">
-            รายชื่อและยอดบนหน้านี้คือ <strong>งวด {run.payrollRunNo}</strong> เท่านั้น — หากมีหลายงวดแยกใน {formatPayrollYearMonthEnAbbrev(run.payrollMonth)} (
-            {run.payrollMonth}) ให้ดูยอดรวมและรายชื่อ unique ทุกงวดได้ที่{' '}
-            <Link className="font-medium underline" href={`/office-payroll/month/${encodeURIComponent(run.payrollMonth)}`}>
-              มุมมองรวมรายเดือน
-            </Link>
-            หรือ <Link className="font-medium underline" href="/office-payroll">รายการงวดจ่าย</Link>
-          </AlertDescription>
-        </Alert>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
           <StatCard
             title="จำนวนพนักงาน"
             value={`${run.staffCount} คน`}
@@ -596,14 +597,14 @@ function OfficePayrollDetailPageInner({ params }: { params: Promise<{ id: string
                 <Table className="table-fixed w-full">
                   <TableHeader className="bg-muted/30">
                     <TableRow>
-                      <TableHead className="w-[24%]">พนักงาน & ตำแหน่ง</TableHead>
-                      <TableHead className="w-[13%] text-center">ฐานเงินเดือน</TableHead>
-                      <TableHead className="w-[13%] text-center">ยอดรวม (Gross)</TableHead>
-                      <TableHead className="w-[13%] text-center">รายการหัก</TableHead>
-                      <TableHead className="w-[13%] text-center font-bold">สุทธิ (Net)</TableHead>
-                      <TableHead className="w-[8%] text-center px-1">ใบหักฯ</TableHead>
-                      <TableHead className="w-[8%] text-center">สลิป</TableHead>
-                      <TableHead className="w-[8%] text-center">จัดการ</TableHead>
+                      <TableHead className="h-10 w-[24%] px-3 py-2">พนักงาน & ตำแหน่ง</TableHead>
+                      <TableHead className="h-10 w-[13%] px-3 py-2 text-center">ฐานเงินเดือน</TableHead>
+                      <TableHead className="h-10 w-[13%] px-3 py-2 text-center">ยอดรวม (Gross)</TableHead>
+                      <TableHead className="h-10 w-[13%] px-3 py-2 text-center">รายการหัก</TableHead>
+                      <TableHead className="h-10 w-[13%] px-3 py-2 text-center font-bold">สุทธิ (Net)</TableHead>
+                      <TableHead className="h-10 w-[8%] px-1 py-2 text-center">ใบหักฯ</TableHead>
+                      <TableHead className="h-10 w-[8%] px-3 py-2 text-center">สลิป</TableHead>
+                      <TableHead className="h-10 w-[8%] px-3 py-2 text-center">จัดการ</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -620,27 +621,27 @@ function OfficePayrollDetailPageInner({ params }: { params: Promise<{ id: string
                         const slipModel = buildPayslipFromOfficeLine(line, run, companyProfile ?? undefined);
                         return (
                           <TableRow key={line.id} className="hover:bg-muted/20">
-                            <TableCell className="align-middle">
-                              <div className="flex flex-col">
+                            <TableCell className="px-3 py-2.5 align-middle">
+                              <div className="flex flex-col leading-tight">
                                 <span className="font-bold text-sm text-primary">{line.staffName}</span>
                                 <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                                   <Building2 className="h-2.5 w-2.5 shrink-0" /> {line.department} | {line.positionTitle}
                                 </span>
                               </div>
                             </TableCell>
-                            <TableCell className="text-center align-middle tabular-nums">
+                            <TableCell className="px-3 py-2.5 text-center align-middle tabular-nums">
                               <span className="text-sm font-medium">฿{line.baseSalary.toLocaleString()}</span>
                             </TableCell>
-                            <TableCell className="text-center align-middle tabular-nums font-medium">
+                            <TableCell className="px-3 py-2.5 text-center align-middle tabular-nums font-medium">
                               ฿{line.grossPay.toLocaleString()}
                             </TableCell>
-                            <TableCell className="text-center align-middle tabular-nums text-red-600">
+                            <TableCell className="px-3 py-2.5 text-center align-middle tabular-nums text-red-600">
                               -฿{line.deductions.toLocaleString()}
                             </TableCell>
-                            <TableCell className="text-center align-middle tabular-nums font-black text-green-700">
+                            <TableCell className="px-3 py-2.5 text-center align-middle tabular-nums font-black text-green-700">
                               ฿{line.netPay.toLocaleString()}
                             </TableCell>
-                            <TableCell className="text-center align-middle px-1">
+                            <TableCell className="px-1 py-2.5 text-center align-middle">
                               <div className="flex justify-center">
                                 {firestore && run ? (
                                   <OfficePayrollWhtSingleDialog
@@ -658,14 +659,14 @@ function OfficePayrollDetailPageInner({ params }: { params: Promise<{ id: string
                                 )}
                               </div>
                             </TableCell>
-                            <TableCell className="text-center align-middle">
+                            <TableCell className="px-3 py-2.5 text-center align-middle">
                               <div className="flex justify-center">
                                 <PayslipDialog model={slipModel} />
                               </div>
                             </TableCell>
-                            <TableCell className="text-center align-middle">
+                            <TableCell className="px-3 py-2.5 text-center align-middle">
                               <div className="flex justify-center">
-                                <Button variant="ghost" size="icon" asChild title="รายละเอียดรายคน">
+                                <Button variant="ghost" size="icon" className="h-8 w-8" asChild title="รายละเอียดรายคน">
                                 <Link
                                   href={withOfficePayrollFromQuery(
                                     `/office-payroll/${id}/staff/${encodeURIComponent(line.staffId)}`,
@@ -936,14 +937,14 @@ function OfficePayrollDetailPageInner({ params }: { params: Promise<{ id: string
 
 function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {
   return (
-    <Card className={`hover:shadow-md transition-all border-l-8 ${colorClass} shadow-sm`}>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+    <Card className={`hover:shadow-md transition-all border-l-4 ${colorClass} shadow-sm`}>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 px-3 py-2 pb-0.5">
         <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
-        <Icon className="h-4 w-4 opacity-50 text-primary" />
+        <Icon className="h-3.5 w-3.5 opacity-50 text-primary" />
       </CardHeader>
-      <CardContent>
-        <div className="text-xl font-black text-primary truncate">{value}</div>
-        <p className="text-[10px] font-medium text-muted-foreground mt-1">{sub}</p>
+      <CardContent className="px-3 pb-2.5 pt-0">
+        <div className="text-lg font-black leading-tight text-primary truncate">{value}</div>
+        <p className="text-[10px] font-medium text-muted-foreground mt-0.5 leading-tight">{sub}</p>
       </CardContent>
     </Card>
   );

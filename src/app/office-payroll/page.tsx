@@ -19,6 +19,7 @@ import {
   Trash2,
   Users,
   Send,
+  CheckCircle2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -598,36 +599,43 @@ export default function OfficePayrollPage() {
           </Alert>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm">
-            <Info className="h-5 w-5 text-blue-600" />
-            <AlertTitle className="font-bold">นโยบายสายงาน (Workflow Policy)</AlertTitle>
-            <AlertDescription className="text-xs">
-              Payroll/HR คำนวณและส่งอนุมัติ → ผู้จัดการ/HR อนุมัติรายการ → <strong>บัญชี</strong>อนุมัติเบิกจ่ายและลงบัญชี (ลำดับนี้ ห้ามข้าม)
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Alert className="bg-blue-50 border-blue-200 text-blue-800 shadow-sm min-w-0 h-full">
+            <Info className="h-4 w-4 text-blue-600" />
+            <AlertTitle className="font-bold text-sm">นโยบายสายงาน</AlertTitle>
+            <AlertDescription className="text-xs leading-snug">
+              Payroll/HR คำนวณและส่งอนุมัติ (ห้ามข้ามลำดับ)
             </AlertDescription>
           </Alert>
-          <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm">
-            <AlertTriangle className="h-5 w-5 text-amber-600" />
-            <AlertTitle className="font-bold">การล็อกข้อมูล (Data Locking)</AlertTitle>
-            <AlertDescription className="text-xs">
-              เมื่อสถานะเป็น LOCKED ข้อมูลจะถูก Snapshot ถาวรเพื่อใช้ในการปิดงบการเงิน
+          {!accountingPayoutQueueOnly && canOfficerSendForReview && calculatedRunsAwaitingSubmit.length > 0 ? (
+            <Alert className="border-blue-300 bg-blue-50/90 shadow-sm min-w-0 h-full">
+              <Send className="h-4 w-4 text-blue-700" />
+              <AlertTitle className="font-bold text-sm">
+                มี {calculatedRunsAwaitingSubmit.length} งวดที่คำนวณแล้วแต่ยังไม่ส่งอนุมัติ
+              </AlertTitle>
+              <AlertDescription className="text-xs leading-snug">
+                กดปุ่ม <strong>ส่งอนุมัติ</strong> ในแต่ละแถว (หรือจากหน้ารายละเอียดงวด) เพื่อส่งไป{' '}
+                <strong>ศูนย์อนุมัติ Payroll</strong> ให้ผู้จัดการปฏิบัติการอนุมัติ — สถานะจะเปลี่ยนเป็น{' '}
+                <span className="font-mono">HR_REVIEW</span>
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <Alert className="bg-sky-50 border-sky-200 text-sky-900 shadow-sm min-w-0 h-full">
+              <CheckCircle2 className="h-4 w-4 text-sky-700" />
+              <AlertTitle className="font-bold text-sm">การอนุมัติเบิกจ่าย</AlertTitle>
+              <AlertDescription className="text-xs leading-snug">
+                ผู้จัดการ/HR อนุมัติรายการ → <strong>บัญชี</strong>อนุมัติเบิกจ่ายและลงบัญชี
+              </AlertDescription>
+            </Alert>
+          )}
+          <Alert className="bg-amber-50 border-amber-200 text-amber-800 shadow-sm min-w-0 h-full">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            <AlertTitle className="font-bold text-sm">การล็อกข้อมูล</AlertTitle>
+            <AlertDescription className="text-xs leading-snug">
+              สถานะ LOCKED = Snapshot ถาวรสำหรับปิดงบการเงิน
             </AlertDescription>
           </Alert>
         </div>
-
-        {!accountingPayoutQueueOnly && canOfficerSendForReview && calculatedRunsAwaitingSubmit.length > 0 ? (
-          <Alert className="border-blue-300 bg-blue-50/90">
-            <Send className="h-4 w-4 text-blue-700" />
-            <AlertTitle className="font-bold">
-              มี {calculatedRunsAwaitingSubmit.length} งวดที่คำนวณแล้วแต่ยังไม่ส่งอนุมัติ
-            </AlertTitle>
-            <AlertDescription className="text-sm">
-              กดปุ่ม <strong>ส่งอนุมัติ</strong> ในแต่ละแถว (หรือจากหน้ารายละเอียดงวด) เพื่อส่งไป{' '}
-              <strong>ศูนย์อนุมัติ Payroll</strong> ให้ผู้จัดการปฏิบัติการอนุมัติ — สถานะจะเปลี่ยนเป็น{' '}
-              <span className="font-mono">HR_REVIEW</span>
-            </AlertDescription>
-          </Alert>
-        ) : null}
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
           <div className="flex items-center gap-3 flex-1">
@@ -923,14 +931,14 @@ export default function OfficePayrollPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4">เลขที่งวด (Run No.)</TableHead>
-                    <TableHead className="font-bold">ประจำเดือน (Month)</TableHead>
-                    <TableHead className="font-bold">ช่วงเวลา (Period)</TableHead>
-                    <TableHead className="font-bold text-center">จำนวนคน</TableHead>
-                    <TableHead className="font-bold text-right">ยอดสุทธิ (Net)</TableHead>
-                    <TableHead className="font-bold">สถานะ</TableHead>
-                    <TableHead className="text-right pr-4">ดำเนินการ</TableHead>
-                    <TableHead className="text-right pr-6">จัดการ</TableHead>
+                    <TableHead className="h-10 px-3 py-2 font-bold">เลขที่งวด (Run No.)</TableHead>
+                    <TableHead className="h-10 px-3 py-2 font-bold">ประจำเดือน (Month)</TableHead>
+                    <TableHead className="h-10 px-3 py-2 font-bold">ช่วงเวลา (Period)</TableHead>
+                    <TableHead className="h-10 px-3 py-2 font-bold text-center">จำนวนคน</TableHead>
+                    <TableHead className="h-10 px-3 py-2 font-bold text-right">ยอดสุทธิ (Net)</TableHead>
+                    <TableHead className="h-10 px-3 py-2 font-bold">สถานะ</TableHead>
+                    <TableHead className="h-10 px-3 py-2 text-right">ดำเนินการ</TableHead>
+                    <TableHead className="h-10 px-3 py-2 text-right pr-5">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -949,21 +957,21 @@ export default function OfficePayrollPage() {
                         );
                       }}
                     >
-                      <TableCell className="py-4 font-bold text-primary font-mono">{run.payrollRunNo}</TableCell>
-                      <TableCell className="font-medium">
+                      <TableCell className="px-3 py-2.5 font-bold text-primary font-mono">{run.payrollRunNo}</TableCell>
+                      <TableCell className="px-3 py-2.5 font-medium">
                         {formatPayrollYearMonthEnAbbrev(run.payrollMonth)}
                         <span className="ml-1 text-xs text-muted-foreground">({run.payrollMonth})</span>
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{run.payrollPeriodStart} ถึง {run.payrollPeriodEnd}</TableCell>
-                      <TableCell className="text-center font-bold">{run.staffCount} คน</TableCell>
-                      <TableCell className="text-right font-black text-primary">
+                      <TableCell className="px-3 py-2.5 text-xs text-muted-foreground">{run.payrollPeriodStart} ถึง {run.payrollPeriodEnd}</TableCell>
+                      <TableCell className="px-3 py-2.5 text-center font-bold">{run.staffCount} คน</TableCell>
+                      <TableCell className="px-3 py-2.5 text-right font-black text-primary">
                         ฿{run.netAmount.toLocaleString()}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="px-3 py-2.5">
                         <OfficePayrollRunStatusBadge status={run.status} flavor="office" />
                       </TableCell>
                       <TableCell
-                        className="text-right pr-2"
+                        className="px-3 py-2.5 text-right"
                         onClick={(e) => e.stopPropagation()}
                       >
                         {run.status === 'CALCULATED' && canOfficerSendForReview ? (
@@ -987,7 +995,7 @@ export default function OfficePayrollPage() {
                         )}
                       </TableCell>
                       <TableCell
-                        className="text-right pr-6"
+                        className="px-3 py-2.5 text-right pr-5"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="inline-flex items-center justify-end gap-0.5">
@@ -996,7 +1004,7 @@ export default function OfficePayrollPage() {
                               type="button"
                               variant="ghost"
                               size="icon"
-                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                              className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
                               disabled={adminOfficePayrollDeleteBlocked(run)}
                               title={
                                 adminOfficePayrollDeleteBlocked(run)
@@ -1012,7 +1020,7 @@ export default function OfficePayrollPage() {
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="group-hover:text-primary"
+                            className="h-8 w-8 group-hover:text-primary"
                             disabled={accountingPayoutQueueOnly && !canOpenAccountingPayoutDetail}
                             title={
                               accountingPayoutQueueOnly && !canOpenAccountingPayoutDetail
@@ -1028,7 +1036,7 @@ export default function OfficePayrollPage() {
                               );
                             }}
                           >
-                            <ChevronRight className="h-5 w-5" />
+                            <ChevronRight className="h-4 w-4" />
                           </Button>
                         </div>
                       </TableCell>
