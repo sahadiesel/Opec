@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { CreditCard, HeartPulse, User, Phone, History, AlertTriangle, Wallet, Mail, CheckCircle2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import type { Worker, Position, Assignment } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
 import { sortPositionsByDisplayName } from '@/lib/position-display';
@@ -639,21 +640,58 @@ export function WorkerInfoTab({
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6 space-y-4">
-              <div className="flex items-center justify-between gap-4">
-                <div className="space-y-0.5">
-                  <Label className="font-bold">ยึดฐานค่าแรงตามสัญญา</Label>
-                  <p className="text-xs text-muted-foreground">
-                    เปิด = ดึง OFF/ON Work จากสัญญาของลูกค้าที่ได้รับมอบหมายไปทำงาน
-                    {' '}· ปิด = ใช้ฐานที่กรอกด้านล่าง (ไม่บวกค่าตำแหน่ง และไม่ใช้เรทในสัญญา)
-                  </p>
+              <div className="space-y-2">
+                <Label className="font-bold">วิธีคำนวณค่าแรง</Label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex rounded-lg border border-amber-200/80 bg-background p-0.5">
+                    <button
+                      type="button"
+                      disabled={laborReadOnly}
+                      className={cn(
+                        'px-3 py-1.5 text-sm rounded-md transition-colors disabled:opacity-60',
+                        usePosDefault
+                          ? 'bg-amber-800 text-white shadow-sm'
+                          : 'text-muted-foreground hover:bg-muted',
+                      )}
+                      onClick={() =>
+                        setEditedWorker({ ...editedWorker, laborCostUsePositionDefault: true })
+                      }
+                    >
+                      เลือกจากสัญญา
+                    </button>
+                    <button
+                      type="button"
+                      disabled={laborReadOnly}
+                      className={cn(
+                        'px-3 py-1.5 text-sm rounded-md transition-colors disabled:opacity-60',
+                        !usePosDefault
+                          ? 'bg-amber-800 text-white shadow-sm'
+                          : 'text-muted-foreground hover:bg-muted',
+                      )}
+                      onClick={() =>
+                        setEditedWorker({ ...editedWorker, laborCostUsePositionDefault: false })
+                      }
+                    >
+                      ตั้งค่าเอง
+                    </button>
+                  </div>
+                  <Badge
+                    className={cn(
+                      'text-[11px] font-medium',
+                      usePosDefault
+                        ? 'bg-amber-800 hover:bg-amber-800 text-white'
+                        : 'border-amber-700/40 bg-amber-50 text-amber-950 hover:bg-amber-50',
+                    )}
+                    variant={usePosDefault ? 'default' : 'outline'}
+                  >
+                    ตอนนี้: {usePosDefault ? 'เลือกจากสัญญา' : 'ตั้งค่าเอง'}
+                  </Badge>
                 </div>
-                <Switch
-                  disabled={laborReadOnly}
-                  checked={usePosDefault}
-                  onCheckedChange={(v) => {
-                    setEditedWorker({ ...editedWorker, laborCostUsePositionDefault: v ? true : false });
-                  }}
-                />
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {usePosDefault
+                    ? 'กำลังดึง OFF/ON Work จากสัญญาของลูกค้าที่ได้รับมอบหมายไปทำงาน'
+                    : 'กำลังใช้ฐานที่กรอกด้านล่าง — ไม่บวกค่าตำแหน่ง และไม่ใช้เรทในสัญญา'}
+                </p>
               </div>
               {usePosDefault && assignedLaborQuotes == null && (
                 <p className="text-sm text-muted-foreground">กำลังอ่านสัญญาของงานที่มอบหมาย…</p>
@@ -758,7 +796,7 @@ export function WorkerInfoTab({
                   ใช้คิดสลิปต่อวัน: ออนชอร์ {slipRateLabel('onshore')} · ออฟชอร์ {slipRateLabel('offshore')}
                 </p>
                 <p className="text-[11px]">
-                  ถ้าปิดสวิตช์และกรอกฐานเอง — ค่าแรงรวม OT (payroll + ตกเบิก) คำนวณจากฐานหน้าลูกจ้างตามสูตรด้านบน ไม่บวกค่าตำแหน่ง และไม่ใช้เรทในสัญญา
+                  ถ้าเลือก «ตั้งค่าเอง» — ค่าแรงรวม OT (payroll + ตกเบิก) คำนวณจากฐานหน้าลูกจ้างตามสูตรด้านบน ไม่บวกค่าตำแหน่ง และไม่ใช้เรทในสัญญา
                 </p>
               </div>
             </CardContent>
