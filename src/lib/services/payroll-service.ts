@@ -131,10 +131,13 @@ import {
   CASH_ADVANCE_PAYROLL_DEDUCTION_KEY,
   fetchOfficeStaffCashAdvancesPendingSalaryRecovery,
   fetchWorkerCashAdvancesPendingSalaryRecovery,
+  fetchWorkerCashAdvancesPendingSalaryRecoveryForWorkers,
 } from '@/lib/payroll/cash-advance-recovery';
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 import {
+  filterTimesheetsForWorkerPayroll,
   filterTimesheetsForWorkerPayrollAsync,
+  loadAssignmentMapForPayroll,
   loadAssignmentsForTimesheets,
   loadWorkerTimesheetsForPayrollLine,
 } from '@/lib/payroll/filter-timesheets-for-worker-payroll';
@@ -147,6 +150,7 @@ import {
 } from '@/lib/payroll/remob-position-for-payroll';
 import {
   loadPriorPaidFrozenPayrollSlice,
+  loadPriorPaidFrozenPayrollSlicesForPeriod,
   type PriorPaidFrozenPayrollSlice,
 } from '@/lib/payroll/prior-paid-timesheet-gross';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
@@ -746,17 +750,20 @@ export class PayrollService {
       where('date', '<=', period.endDate),
     );
     const tsSnap = await getDocs(tsQuery);
-    
-    let timesheets = tsSnap.docs
-      .map(d => ({ ...d.data(), id: d.id } as DailyTimesheet))
-      .filter((ts) => ts.status !== 'LOCKED' && ts.status !== 'REJECTED');
+    const allowWorkers = new Set((filters?.workerIds ?? []).map((id) => id.trim()).filter(Boolean));
 
-    timesheets = await filterTimesheetsForWorkerPayrollAsync(this.db, timesheets);
-
-    if (filters?.workerIds?.length) {
-      const allow = new Set(filters.workerIds.map((id) => id.trim()).filter(Boolean));
-      timesheets = timesheets.filter((ts) => allow.has(ts.workerId));
+    let monthTimesheets = tsSnap.docs
+      .map((d) => ({ ...d.data(), id: d.id } as DailyTimesheet))
+      .filter((ts) => ts.status !== 'REJECTED');
+    if (allowWorkers.size > 0) {
+      monthTimesheets = monthTimesheets.filter((ts) => allowWorkers.has(ts.workerId));
     }
+
+    const assignmentByIdAll = await loadAssignmentMapForPayroll(this.db, monthTimesheets);
+    monthTimesheets = filterTimesheetsForWorkerPayroll(monthTimesheets, assignmentByIdAll);
+
+    /** ใบที่ยังไม่จ่าย — ล็อกในงวดนี้ */
+    let timesheets = monthTimesheets.filter((ts) => ts.status !== 'LOCKED');
 
     const poIds = Array.from(new Set(timesheets.map((ts) => ts.purchaseOrderId).filter(Boolean)));
 
@@ -773,10 +780,11 @@ export class PayrollService {
     const poWorkModeByPoId = buildPoWorkModeMapFromPurchaseOrders(poById.values());
 
     if (filters?.workModeScope && filters.workModeScope !== 'mixed') {
-      timesheets = timesheets.filter(
-        (ts) =>
-          resolveEffectivePayrollJobMode(ts, poWorkModeByPoId).toLowerCase() === filters.workModeScope,
+      const scope = filters.workModeScope;
+      monthTimesheets = monthTimesheets.filter(
+        (ts) => resolveEffectivePayrollJobMode(ts, poWorkModeByPoId).toLowerCase() === scope,
       );
+      timesheets = monthTimesheets.filter((ts) => ts.status !== 'LOCKED');
     }
 
     if (timesheets.length === 0) {
@@ -839,7 +847,7 @@ export class PayrollService {
      * — ห้ามแนบ status=applied เข้า NORMAL (เคยทำให้จ่ายซ้ำหลัง supplemental จ่ายไปแล้ว)
      */
 
-    const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, timesheets);
+    const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, monthTimesheets);
 
     const [workerGlobalLabor, lumpSumLabor, lumpSumWhtRate] = await Promise.all([
       fetchWorkerGlobalLaborContextFromFirestore(this.db),
@@ -847,11 +855,18 @@ export class PayrollService {
       fetchLumpSumWithholdingRatePercentFromFirestore(this.db),
     ]);
 
+    await ensurePositionsLoadedForTimesheets(this.db, monthTimesheets, posById);
+
     // Aggregate by Worker — ใบที่ยังไม่ LOCKED (จะล็อกในงวดนี้)
     const workerMap: Record<string, DailyTimesheet[]> = {};
     timesheets.forEach(ts => {
       if (!workerMap[ts.workerId]) workerMap[ts.workerId] = [];
       workerMap[ts.workerId].push(ts);
+    });
+    const monthByWorker: Record<string, DailyTimesheet[]> = {};
+    monthTimesheets.forEach((ts) => {
+      if (!monthByWorker[ts.workerId]) monthByWorker[ts.workerId] = [];
+      monthByWorker[ts.workerId].push(ts);
     });
 
     const batchId = `PAY-${Date.now().toString().slice(-8)}`;
@@ -883,6 +898,55 @@ export class PayrollService {
 
     const policyRecords = await loadPayrollPoliciesFromFirestore(this.db);
     const asOf = period.endDate;
+    const generateWorkerIds = Object.keys(workerMap);
+
+    const [ppByWorker, advancesByWorker, priorPaidIndex] = await Promise.all([
+      (async () => {
+        const map = new Map<string, Record<string, unknown>>();
+        await Promise.all(
+          generateWorkerIds.map(async (workerId) => {
+            const ppSnap = await getDocs(
+              query(
+                collection(this.db, 'worker_payment_profiles'),
+                where('workerId', '==', workerId),
+                where('status', '==', 'ACTIVE'),
+                limit(1),
+              ),
+            );
+            map.set(
+              workerId,
+              ppSnap.empty ? { paymentMethod: 'CASH' } : (ppSnap.docs[0].data() as Record<string, unknown>),
+            );
+          }),
+        );
+        return map;
+      })(),
+      fetchWorkerCashAdvancesPendingSalaryRecoveryForWorkers(this.db, generateWorkerIds),
+      loadPriorPaidFrozenPayrollSlicesForPeriod(this.db, {
+        payrollPeriodId: periodId,
+        workerIds: generateWorkerIds,
+        currentBatchId: batchId,
+        currentBatchChronologyMs: batchChronologyStub.createdAt,
+      }),
+    ]);
+
+    const inferredPkgByWorker = new Map<string, number | null>();
+    for (const workerId of generateWorkerIds) {
+      const slice = priorPaidIndex.slices.get(workerId);
+      inferredPkgByWorker.set(
+        workerId,
+        inferOffshorePackageFromOt15PriorItems(slice?.priorPeriodAllowanceItems) ?? null,
+      );
+    }
+    await Promise.all(
+      [...assignmentByIdAll.values()].map(async (asgn) => {
+        const wid = String(asgn.workerId || '').trim();
+        const healed = await ensureLaborCostEpochAfterMobFinish(this.db, asgn, {
+          inferredOffshorePackage: inferredPkgByWorker.get(wid),
+        });
+        assignmentByIdAll.set(asgn.id, healed);
+      }),
+    );
 
     for (const workerId in workerMap) {
       const unpaidWorkerTs = normalizeTimesheetsForPayrollLine(workerMap[workerId]);
@@ -890,64 +954,25 @@ export class PayrollService {
        * รวมวันทั้งเดือน (รวม LOCKED ที่จ่ายไปแล้ว) — คิดภาษี/ค่าแรงทั้งเดือน
        * แล้วหักยอดงวดก่อน; ล็อกเฉพาะใบที่ยังไม่จ่ายในรอบนี้
        */
-      const fullMonthLoaded = await loadWorkerTimesheetsForPayrollLine(
-        this.db,
-        workerId,
-        period.startDate,
-        period.endDate,
-        unpaidWorkerTs.map((t) => t.id),
-      );
-      let workerTs = normalizeTimesheetsForPayrollLine(
-        fullMonthLoaded.length > 0 ? fullMonthLoaded : unpaidWorkerTs,
-      );
-
-      /** remob + เปลี่ยนตำแหน่งทะเบียน — ซิงก์ assignment แล้วทับ positionId วันหลังจบรอบเก่า */
-      const asgnIds = [...new Set(workerTs.map((t) => String(t.assignmentId || '').trim()).filter(Boolean))];
-      await Promise.all(
-        asgnIds.map(async (aid) => {
-          const snap = await getDoc(doc(this.db, 'mobilizations', aid));
-          if (!snap.exists()) return;
-          const asgn = { id: snap.id, ...(snap.data() as object) } as Assignment;
-          await syncAssignmentPositionFromWorkerOnRemob(this.db, asgn);
-        }),
-      );
-
-      const priorPaidFrozen = await loadPriorPaidFrozenPayrollSlice(this.db, {
-        payrollPeriodId: periodId,
-        workerId,
-        currentBatchId: batchId,
-        currentBatchChronologyMs: batchChronologyStub.createdAt,
-      });
-      const inferredPreRemobPkg = inferOffshorePackageFromOt15PriorItems(
-        priorPaidFrozen.priorPeriodAllowanceItems,
-      );
-
-      const remobApplied = await loadAssignmentsAndApplyRemobPositionForPayroll(
-        this.db,
-        workerTs,
+      const monthForWorker = monthByWorker[workerId] ?? unpaidWorkerTs;
+      let workerTs = applyRemobWorkerPositionToTimesheetsForPayroll(
+        normalizeTimesheetsForPayrollLine(monthForWorker.length > 0 ? monthForWorker : unpaidWorkerTs),
         workerById,
+        assignmentByIdAll,
       );
-      workerTs = remobApplied.timesheets;
-      const assignmentById = remobApplied.assignmentById;
-      await Promise.all(
-        [...assignmentById.values()].map(async (asgn) => {
-          const healed = await ensureLaborCostEpochAfterMobFinish(this.db, asgn, {
-            inferredOffshorePackage: inferredPreRemobPkg,
-          });
-          assignmentById.set(asgn.id, healed);
-        }),
-      );
-      await ensurePositionsLoadedForTimesheets(this.db, workerTs, posById);
-      
-      // Snapshot Worker Payment Profile
-      const ppQuery = query(
-        collection(this.db, 'worker_payment_profiles'),
-        where('workerId', '==', workerId),
-        where('status', '==', 'ACTIVE'),
-        limit(1)
-      );
-      const ppSnap = await getDocs(ppQuery);
-      const ppSnapshot = ppSnap.empty ? { paymentMethod: 'CASH' as any } : ppSnap.docs[0].data();
+      const assignmentById = assignmentByIdAll;
+      const priorPaidFrozen =
+        priorPaidIndex.slices.get(workerId) ??
+        ({
+          byTimesheetId: {},
+          byDate: {},
+          lockedSourceTimesheetIds: new Set<string>(),
+          frozenPackageBaseRate: null,
+          frozenWorkMode: null,
+          priorPeriodAllowanceItems: [],
+          priorPaidSummaries: [],
+        } as PriorPaidFrozenPayrollSlice);
+      const ppSnapshot = ppByWorker.get(workerId) ?? { paymentMethod: 'CASH' as const };
 
       const liveSourceTimesheetIds = new Set(unpaidWorkerTs.map((t) => t.id).filter(Boolean));
       const workerRec = workerById.get(workerId);
@@ -1050,7 +1075,7 @@ export class PayrollService {
         ...(isLumpSumWorker(workerRec) ? { lumpSumWhtRatePercent: lumpSumWhtRate } : {}),
       });
 
-      const recovery = await fetchWorkerCashAdvancesPendingSalaryRecovery(this.db, workerId);
+      const recovery = advancesByWorker.get(workerId) ?? { total: 0, advances: [] };
       const deductionsBreakdown: Record<string, number> = { ...d8Line.deductionsBreakdown };
       let lineNetAmount = d8Line.netAmount;
       if (recovery.total > 0) {
@@ -1061,10 +1086,7 @@ export class PayrollService {
         }
       }
 
-      const priorNet = await this.sumPriorPaidNetForWorker(
-        batchChronologyStub as PayrollBatch & { id: string },
-        workerId,
-      );
+      const priorNet = priorPaidIndex.priorNormalNetByWorker.get(workerId) ?? 0;
       if (priorNet > 0.005) {
         deductionsBreakdown[PRIOR_PAID_RECOVERY_DEDUCTION_KEY] = priorNet;
         lineNetAmount = round2Payroll(lineNetAmount - priorNet);
@@ -1266,14 +1288,10 @@ export class PayrollService {
     let locked = 0;
     for (let i = 0; i < unique.length; i += PAYROLL_FS_WRITE_CHUNK) {
       const slice = unique.slice(i, i + PAYROLL_FS_WRITE_CHUNK);
-      const snaps = await Promise.all(slice.map((id) => getDoc(doc(this.db, 'daily_timesheets', id))));
       const lockWb = writeBatch(this.db);
       let ops = 0;
-      for (const snap of snaps) {
-        if (!snap.exists()) continue;
-        const cur = snap.data() as DailyTimesheet;
-        if (cur.status === 'LOCKED' && cur.readyForPayroll === false) continue;
-        const amt = grossById ? Number(grossById[snap.id]) : NaN;
+      for (const id of slice) {
+        const amt = grossById ? Number(grossById[id]) : NaN;
         const lockFields: Record<string, unknown> = {
           status: 'LOCKED' as const,
           readyForPayroll: false,
@@ -1284,7 +1302,7 @@ export class PayrollService {
         if (Number.isFinite(amt) && amt > 0) {
           lockFields.payrollLockedGrossBaht = Math.round(amt * 100) / 100;
         }
-        lockWb.update(snap.ref, asFirestoreUpdate(lockFields));
+        lockWb.update(doc(this.db, 'daily_timesheets', id), asFirestoreUpdate(lockFields));
         ops++;
         locked++;
       }

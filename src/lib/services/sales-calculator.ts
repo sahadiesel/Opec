@@ -7,7 +7,8 @@ import {
   RateConditionUnitType,
   RateConditionCalculationMethod
 } from '@/lib/types';
-import { parseISO, startOfDay, isBefore, isAfter, isSameDay } from 'date-fns';
+import { startOfDay, isBefore, isAfter, isSameDay } from 'date-fns';
+import { localNoonDateFromStoredYmd } from '@/lib/date-thai';
 
 export interface SalesCalculationResult {
   value: number;
@@ -25,7 +26,7 @@ export function resolveApplicableSalesRateCondition(
   timesheet: DailyTimesheet,
   contract: SalesContractTerm
 ): RateCondition | null {
-  const tsDate = startOfDay(parseISO(timesheet.date));
+  const tsDate = startOfDay(localNoonDateFromStoredYmd(timesheet.date));
 
   // 1. Filter conditions belonging to this contract
   let applicable = conditions.filter(c => c.parentId === contract.id && c.isActive);
@@ -41,8 +42,8 @@ export function resolveApplicableSalesRateCondition(
 
   // 5. Filter by Date Effectiveness
   applicable = applicable.filter(c => {
-    const start = startOfDay(parseISO(c.effectiveDate));
-    const end = c.endDate ? startOfDay(parseISO(c.endDate)) : null;
+    const start = startOfDay(localNoonDateFromStoredYmd(c.effectiveDate));
+    const end = c.endDate ? startOfDay(localNoonDateFromStoredYmd(c.endDate)) : null;
     
     const isAfterOrEqualStart = isAfter(tsDate, start) || isSameDay(tsDate, start);
     const isBeforeOrEqualEnd = !end || isBefore(tsDate, end) || isSameDay(tsDate, end);

@@ -4,6 +4,7 @@
 import { doc, getDoc, type Firestore } from 'firebase/firestore';
 import type { PayrollPolicyRecord } from '@/lib/types';
 import type { CalendarHolidayEntry, WeeklyRestPattern } from '@/lib/contract-position-rate-extras';
+import { coerceToGregorianYmd, gregorianYmdsEqual } from '@/lib/date-thai';
 import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import type { PayrollRestDaySchedule } from '@/lib/payroll/package-labor-cost';
 
@@ -70,6 +71,31 @@ function readWeeklyPattern(cfg: Record<string, unknown>): WeeklyRestPattern {
   return DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT.weeklyRestPattern;
 }
 
+function holidayDateToYmd(raw: unknown): string {
+  if (raw == null || raw === '') return '';
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return coerceToGregorianYmd(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+  }
+  if (typeof raw === 'object') {
+    const o = raw as { toDate?: () => Date; date?: unknown; seconds?: unknown };
+    if (typeof o.toDate === 'function') {
+      try {
+        return holidayDateToYmd(o.toDate().getTime());
+      } catch {
+        /* ignore */
+      }
+    }
+    if (typeof o.seconds === 'number') {
+      return holidayDateToYmd(o.seconds * 1000);
+    }
+    if (o.date != null) return holidayDateToYmd(o.date);
+  }
+  return coerceToGregorianYmd(String(raw));
+}
+
 function readCalendarHolidays(cfg: Record<string, unknown>): CalendarHolidayEntry[] {
   const raw = cfg.calendarHolidays;
   if (!Array.isArray(raw)) return [];
@@ -77,7 +103,7 @@ function readCalendarHolidays(cfg: Record<string, unknown>): CalendarHolidayEntr
   for (const row of raw) {
     if (!row || typeof row !== 'object') continue;
     const r = row as Record<string, unknown>;
-    const date = String(r.date || '').trim();
+    const date = holidayDateToYmd(r.date);
     const label = String(r.label || '').trim();
     if (!date || !label) continue;
     out.push({ date, label });
@@ -85,13 +111,13 @@ function readCalendarHolidays(cfg: Record<string, unknown>): CalendarHolidayEntr
   return out;
 }
 
-/** วันหยุดในปฏิทินจาก HR Settings (`calendarHolidays`) — yyyy-MM-dd */
+/** วันหยุดในปฏิทินจาก HR Settings (`calendarHolidays`) — yyyy-MM-dd ค.ศ. */
 export function isHrSettingsCalendarHolidayYmd(
   ymd: string,
   holidays: CalendarHolidayEntry[] | undefined | null,
 ): boolean {
   if (!holidays?.length) return false;
-  return holidays.some((h) => h.date === ymd);
+  return holidays.some((h) => gregorianYmdsEqual(h.date, ymd));
 }
 
 /** ชื่อวันหยุดในปฏิทินจาก HR Settings สำหรับ yyyy-MM-dd (ถ้ามี) */
@@ -100,7 +126,7 @@ export function hrSettingsCalendarHolidayLabelForYmd(
   holidays: CalendarHolidayEntry[] | undefined | null,
 ): string | null {
   if (!holidays?.length) return null;
-  const hit = holidays.find((h) => h.date === ymd);
+  const hit = holidays.find((h) => gregorianYmdsEqual(h.date, ymd));
   return hit?.label?.trim() || null;
 }
 

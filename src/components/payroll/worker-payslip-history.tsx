@@ -10,6 +10,7 @@ import { buildPayslipFromWorkerLine, payrollBatchStubFromLine } from '@/lib/payr
 import { useWorkerPayrollLines } from '@/lib/payroll/fetch-self-payroll-lines';
 import type { CompanyDocumentProfileNames } from '@/hooks/use-company-document-profile';
 import { useCompanyDocumentProfile } from '@/hooks/use-company-document-profile';
+import { useWorkerPayrollRestSchedule } from '@/hooks/use-worker-payroll-rest-schedule';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { isLumpSumPayrollLine } from '@/lib/payroll/lump-sum-worker';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -27,6 +28,7 @@ function WorkerPayslipRow({
   selfProfileOnly?: boolean;
 }) {
   const firestore = useFirestore();
+  const payrollRestSchedule = useWorkerPayrollRestSchedule();
   const batchRef = useMemoFirebase(
     () => (firestore && line.payrollBatchId ? doc(firestore, 'payroll_batches', line.payrollBatchId) : null),
     [firestore, line.payrollBatchId]
@@ -46,7 +48,17 @@ function WorkerPayslipRow({
   }
 
   const batchForPayslip = payrollBatchStubFromLine(line, batch ?? null);
-  const model = buildPayslipFromWorkerLine(line, batchForPayslip, periodLabel, companyProfile ?? undefined);
+  const model = buildPayslipFromWorkerLine(
+    line,
+    batchForPayslip,
+    periodLabel,
+    companyProfile ?? undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { payrollRestSchedule },
+  );
   const lump = isLumpSumPayrollLine(line);
 
   return (

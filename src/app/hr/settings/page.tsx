@@ -55,6 +55,7 @@ import {
 import {
   DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT,
   type WorkerGlobalLaborContext,
+  type WorkerGlobalLaborCostMultipliers,
   workerGlobalLaborContextFromPolicy,
 } from '@/lib/payroll/worker-global-labor-policy';
 import {
@@ -114,6 +115,101 @@ import {
 } from '@/lib/hr/hr-settings-change-log';
 
 const NO_PERM = 'คุณไม่มีสิทธ์ในการทำรายการ';
+
+const LABOR_OT_MULT_FIELDS: readonly { key: keyof WorkerGlobalLaborCostMultipliers; label: string }[] = [
+  { key: 'otAfterShift', label: 'OT หลังกะ' },
+  { key: 'holiday', label: 'Holiday' },
+  { key: 'publicHoliday', label: 'นักขัตฤกษ์' },
+  { key: 'sunday', label: 'อาทิตย์' },
+  { key: 'sundayOt', label: 'อาทิตย์ OT' },
+];
+
+const LABOR_EVENT_MULT_FIELDS: readonly { key: keyof WorkerGlobalLaborCostMultipliers; label: string }[] = [
+  { key: 'standby', label: 'Standby' },
+  { key: 'mobilization', label: 'Mob' },
+  { key: 'demobilization', label: 'Demob' },
+  { key: 'travel', label: 'Travel' },
+];
+
+function CompactLaborMultInput({
+  value,
+  onChange,
+  disabled,
+  max,
+}: {
+  value: number;
+  onChange: (n: number) => void;
+  disabled?: boolean;
+  max?: number;
+}) {
+  return (
+    <Input
+      type="number"
+      step="0.1"
+      min={0}
+      max={max}
+      disabled={disabled}
+      className="font-mono h-8 w-full max-w-[4.5rem] px-2 text-right tabular-nums"
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value) || 0)}
+    />
+  );
+}
+
+function LaborMultiplierFieldList({
+  fields,
+  cost,
+  disabled,
+  onChange,
+  columns = 3,
+}: {
+  fields: readonly { key: keyof WorkerGlobalLaborCostMultipliers; label: string }[];
+  cost: WorkerGlobalLaborCostMultipliers;
+  disabled?: boolean;
+  onChange: (key: keyof WorkerGlobalLaborCostMultipliers, value: number) => void;
+  columns?: 3 | 4;
+}) {
+  const gridClass = columns === 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2 sm:grid-cols-3';
+  return (
+    <div className={`grid ${gridClass} gap-x-3 gap-y-2`}>
+      {fields.map((f) => (
+        <div key={f.key} className="space-y-1 min-w-0">
+          <Label className="text-[10px] text-muted-foreground font-normal leading-tight">{f.label}</Label>
+          <CompactLaborMultInput
+            value={cost[f.key]}
+            disabled={disabled}
+            onChange={(n) => onChange(f.key, n)}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LaborWeeklyRestSelect({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: WorkerGlobalLaborContext['weeklyRestPattern'];
+  disabled?: boolean;
+  onChange: (v: WorkerGlobalLaborContext['weeklyRestPattern']) => void;
+}) {
+  return (
+    <Select disabled={disabled} value={value} onValueChange={(v) => onChange(v as WorkerGlobalLaborContext['weeklyRestPattern'])}>
+      <SelectTrigger className="h-8 text-xs">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {WEEKLY_REST_OPTIONS.map((o) => (
+          <SelectItem key={o.value} value={o.value}>
+            {o.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
 
 const fmtBahtTh = (n: number, minFrac = 0, maxFrac = 2) =>
   n.toLocaleString('th-TH', { minimumFractionDigits: minFrac, maximumFractionDigits: maxFrac });
@@ -1276,248 +1372,160 @@ export default function HrSettingsPage() {
           </CardContent>
         </Card>
 
-        <Card className="border-muted">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <CalendarDays className="h-5 w-5 text-primary shrink-0" /> ตั้งค่าวันหยุดและตัวคูณค่าจ้างลูกจ้าง (กลาง)
-            </CardTitle>
-            <CardDescription>
-              ใช้คำนวณ payroll ลูกจ้างบริษัททุกสัญญา (รวม OT / วันหยุดในปฏิทิน / เสาร์–อาทิตย์) — ไม่ใช้กับลูกจ้างแบบเหมา และไม่ใช้กับพนักงานออฟฟิศ
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6 text-sm">
-            <p className="flex gap-2 items-start leading-relaxed text-muted-foreground">
-              <Info className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>
-                หน้าสัญญาหลักเหลือเฉพาะตัวคูณฝั่งลูกค้า (Billing) — ฝั่งต้นทุนย้ายมาที่นี่แล้ว แท็บ &quot;วันหยุดบริษัท&quot; ใน My Profile จะแสดงปฏิทินชุดเดียวกัน
-              </span>
-            </p>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-stretch">
+          <Card className="border-muted flex flex-col h-full">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <CalendarDays className="h-5 w-5 text-primary shrink-0" />
+                ลูกจ้างบริษัท
+              </CardTitle>
+              <CardDescription className="min-h-[3.25rem]">
+                ตัวคูณต้นทุนค่าจ้างทุกสัญญา (OT / วันหยุด / เสาร์–อาทิตย์) — ไม่ใช้กับลูกจ้างแบบเหมา และไม่ใช้กับพนักงานออฟฟิศ
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1 space-y-4 text-sm">
+              <p className="flex gap-2 items-start text-[11px] leading-relaxed text-muted-foreground min-h-[2.75rem]">
+                <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>
+                  สัญญาหลักเหลือเฉพาะตัวคูณฝั่งลูกค้า (Billing) — แท็บ &quot;วันหยุดบริษัท&quot; ใน My Profile ใช้ปฏิทินชุดนี้
+                </span>
+              </p>
 
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold text-foreground">ตัวคูณฝั่งต้นทุน (ลูกจ้าง): OT / Holiday / Public Holiday / Sunday / Sunday OT</Label>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                {(
-                  [
-                    ['otAfterShift', 'OT หลังกะ'],
-                    ['holiday', 'Holiday'],
-                    ['publicHoliday', 'นักขัตฤกษ์'],
-                    ['sunday', 'อาทิตย์'],
-                    ['sundayOt', 'อาทิตย์ OT'],
-                  ] as const
-                ).map(([key, hint]) => (
-                  <div key={key} className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">{hint}</Label>
-                    <Input
-                      type="number"
-                      step="0.1"
-                      min={0}
-                      disabled={loading || !canEdit}
-                      className="font-mono h-9"
-                      value={workerLaborDraft.cost[key]}
-                      onChange={(e) => {
-                        const v = Number(e.target.value) || 0;
-                        setWorkerLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: v } }));
-                      }}
-                    />
-                  </div>
-                ))}
+              <div className="rounded-md border bg-muted/30 px-3 py-2 min-h-[3.5rem] flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold text-foreground">หักภาษี / ประกันสังคม</p>
+                  <p className="text-[10px] text-muted-foreground leading-snug">ตามตาราง PIT และ ปสง. ด้านบน</p>
+                </div>
+                <span className="font-mono text-xs text-muted-foreground w-[4.25rem] text-right shrink-0">—</span>
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold text-foreground">Standby / Mob / Demob / Travel</Label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {(
-                  [
-                    ['standby', 'Standby'],
-                    ['mobilization', 'Mob'],
-                    ['demobilization', 'Demob'],
-                    ['travel', 'Travel'],
-                  ] as const
-                ).map(([key, hint]) => (
-                  <div key={key} className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">{hint}</Label>
-                    <Input
-                      type="number"
-                      step="0.1"
-                      min={0}
-                      disabled={loading || !canEdit}
-                      className="font-mono h-9"
-                      value={workerLaborDraft.cost[key]}
-                      onChange={(e) => {
-                        const v = Number(e.target.value) || 0;
-                        setWorkerLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: v } }));
-                      }}
-                    />
-                  </div>
-                ))}
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-semibold text-foreground">OT / Holiday / นักขัตฤกษ์ / อาทิตย์</Label>
+                <LaborMultiplierFieldList
+                  fields={LABOR_OT_MULT_FIELDS}
+                  cost={workerLaborDraft.cost}
+                  disabled={loading || !canEdit}
+                  onChange={(key, value) =>
+                    setWorkerLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: value } }))
+                  }
+                />
               </div>
-            </div>
 
-            <div className="space-y-2 max-w-xl">
-              <Label>รูปแบบวันหยุดประจำสัปดาห์ (ค่าจ้าง)</Label>
-              <Select
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-semibold text-foreground">Standby / Mob / Demob / Travel</Label>
+                <LaborMultiplierFieldList
+                  fields={LABOR_EVENT_MULT_FIELDS}
+                  cost={workerLaborDraft.cost}
+                  disabled={loading || !canEdit}
+                  columns={4}
+                  onChange={(key, value) =>
+                    setWorkerLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: value } }))
+                  }
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-semibold">รูปแบบวันหยุดประจำสัปดาห์</Label>
+                <LaborWeeklyRestSelect
+                  disabled={loading || !canEdit}
+                  value={workerLaborDraft.weeklyRestPattern}
+                  onChange={(v) => setWorkerLaborDraft((d) => ({ ...d, weeklyRestPattern: v }))}
+                />
+              </div>
+
+              <CalendarHolidayEditor
+                title="วันหยุดในปฏิทิน"
                 disabled={loading || !canEdit}
-                value={workerLaborDraft.weeklyRestPattern}
-                onValueChange={(v) =>
+                holidays={workerLaborDraft.calendarHolidays}
+                setHolidays={(fn) =>
                   setWorkerLaborDraft((d) => ({
                     ...d,
-                    weeklyRestPattern: v as WorkerGlobalLaborContext['weeklyRestPattern'],
+                    calendarHolidays: typeof fn === 'function' ? fn(d.calendarHolidays) : d.calendarHolidays,
                   }))
                 }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {WEEKLY_REST_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <CalendarHolidayEditor
-              title="วันหยุดในปฏิทิน (วันที่ + ชื่อ)"
-              disabled={loading || !canEdit}
-              holidays={workerLaborDraft.calendarHolidays}
-              setHolidays={(fn) =>
-                setWorkerLaborDraft((d) => ({
-                  ...d,
-                  calendarHolidays: typeof fn === 'function' ? fn(d.calendarHolidays) : d.calendarHolidays,
-                }))
-              }
-            />
-          </CardContent>
-        </Card>
-
-        <Card className="border-amber-200/80">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <CalendarDays className="h-5 w-5 text-amber-700 shrink-0" /> ตั้งค่าตัวคูณค่าจ้างลูกจ้างแบบเหมา
-            </CardTitle>
-            <CardDescription>
-              ใช้เฉพาะคนที่ตั้งเป็นลูกจ้างแบบเหมาในทะเบียน — ไม่เปลี่ยนสูตรลูกจ้างบริษัท และการวางบิลลูกค้า
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6 text-sm">
-            <p className="flex gap-2 items-start leading-relaxed text-muted-foreground">
-              <Info className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>
-                ค่าแรงยังมาจากสัญญาหรือค่าแรงที่กำหนดในทะเบียน × วันใน timesheet ตามเดิม ค่าเริ่มต้น: วันหยุด 1 เท่า · ไม่มีวันหยุดประจำสัปดาห์ · OT 1.5 · หัก ณ ที่จ่ายเหมา 3% (50ทวิ) ไม่หัก ปสง. และไม่หัก ภงด.1
-              </span>
-            </p>
-            <div className="space-y-2 max-w-xs">
-              <Label className="text-xs font-semibold">อัตราหัก ณ ที่จ่ายแบบเหมา (%)</Label>
-              <Input
-                type="number"
-                step="0.1"
-                min={0}
-                max={100}
-                disabled={loading || !canEdit}
-                className="font-mono h-9"
-                value={lumpSumWhtRatePercent}
-                onChange={(e) => setLumpSumWhtRatePercent(Number(e.target.value) || 0)}
               />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold text-foreground">ตัวคูณฝั่งต้นทุน (ลูกจ้างแบบเหมา)</Label>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                {(
-                  [
-                    ['otAfterShift', 'OT หลังกะ'],
-                    ['holiday', 'Holiday'],
-                    ['publicHoliday', 'นักขัตฤกษ์'],
-                    ['sunday', 'อาทิตย์'],
-                    ['sundayOt', 'อาทิตย์ OT'],
-                  ] as const
-                ).map(([key, hint]) => (
-                  <div key={key} className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">{hint}</Label>
-                    <Input
-                      type="number"
-                      step="0.1"
-                      min={0}
-                      disabled={loading || !canEdit}
-                      className="font-mono h-9"
-                      value={lumpSumLaborDraft.cost[key]}
-                      onChange={(e) => {
-                        const v = Number(e.target.value) || 0;
-                        setLumpSumLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: v } }));
-                      }}
-                    />
-                  </div>
-                ))}
+            </CardContent>
+          </Card>
+
+          <Card className="border-amber-200/80 flex flex-col h-full">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <CalendarDays className="h-5 w-5 text-amber-700 shrink-0" />
+                ลูกจ้างแบบเหมา
+              </CardTitle>
+              <CardDescription className="min-h-[3.25rem]">
+                ใช้เฉพาะคนที่ตั้งเป็นลูกจ้างแบบเหมาในทะเบียน — ไม่เปลี่ยนสูตรลูกจ้างบริษัท และการวางบิลลูกค้า
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1 space-y-4 text-sm">
+              <p className="flex gap-2 items-start text-[11px] leading-relaxed text-muted-foreground min-h-[2.75rem]">
+                <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span>
+                  ค่าแรงจากสัญญา/ทะเบียน × วันใน timesheet · ค่าเริ่มต้นวันหยุด 1 เท่า · ไม่มีวันหยุดประจำสัปดาห์ · OT 1.5
+                </span>
+              </p>
+
+              <div className="rounded-md border border-amber-200/70 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 min-h-[3.5rem] flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold text-foreground">หัก ณ ที่จ่ายแบบเหมา (%)</p>
+                  <p className="text-[10px] text-muted-foreground leading-snug">50ทวิ — ไม่หัก ปสง. / ภงด.1</p>
+                </div>
+                <CompactLaborMultInput
+                  value={lumpSumWhtRatePercent}
+                  disabled={loading || !canEdit}
+                  max={100}
+                  onChange={setLumpSumWhtRatePercent}
+                />
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold text-foreground">Standby / Mob / Demob / Travel</Label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {(
-                  [
-                    ['standby', 'Standby'],
-                    ['mobilization', 'Mob'],
-                    ['demobilization', 'Demob'],
-                    ['travel', 'Travel'],
-                  ] as const
-                ).map(([key, hint]) => (
-                  <div key={key} className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">{hint}</Label>
-                    <Input
-                      type="number"
-                      step="0.1"
-                      min={0}
-                      disabled={loading || !canEdit}
-                      className="font-mono h-9"
-                      value={lumpSumLaborDraft.cost[key]}
-                      onChange={(e) => {
-                        const v = Number(e.target.value) || 0;
-                        setLumpSumLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: v } }));
-                      }}
-                    />
-                  </div>
-                ))}
+
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-semibold text-foreground">OT / Holiday / นักขัตฤกษ์ / อาทิตย์</Label>
+                <LaborMultiplierFieldList
+                  fields={LABOR_OT_MULT_FIELDS}
+                  cost={lumpSumLaborDraft.cost}
+                  disabled={loading || !canEdit}
+                  onChange={(key, value) =>
+                    setLumpSumLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: value } }))
+                  }
+                />
               </div>
-            </div>
-            <div className="space-y-2 max-w-xl">
-              <Label>รูปแบบวันหยุดประจำสัปดาห์ (ค่าจ้างแบบเหมา)</Label>
-              <Select
+
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-semibold text-foreground">Standby / Mob / Demob / Travel</Label>
+                <LaborMultiplierFieldList
+                  fields={LABOR_EVENT_MULT_FIELDS}
+                  cost={lumpSumLaborDraft.cost}
+                  disabled={loading || !canEdit}
+                  columns={4}
+                  onChange={(key, value) =>
+                    setLumpSumLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: value } }))
+                  }
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-[11px] font-semibold">รูปแบบวันหยุดประจำสัปดาห์</Label>
+                <LaborWeeklyRestSelect
+                  disabled={loading || !canEdit}
+                  value={lumpSumLaborDraft.weeklyRestPattern}
+                  onChange={(v) => setLumpSumLaborDraft((d) => ({ ...d, weeklyRestPattern: v }))}
+                />
+              </div>
+
+              <CalendarHolidayEditor
+                title="วันหยุดในปฏิทิน"
                 disabled={loading || !canEdit}
-                value={lumpSumLaborDraft.weeklyRestPattern}
-                onValueChange={(v) =>
+                holidays={lumpSumLaborDraft.calendarHolidays}
+                setHolidays={(fn) =>
                   setLumpSumLaborDraft((d) => ({
                     ...d,
-                    weeklyRestPattern: v as WorkerGlobalLaborContext['weeklyRestPattern'],
+                    calendarHolidays: typeof fn === 'function' ? fn(d.calendarHolidays) : d.calendarHolidays,
                   }))
                 }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {WEEKLY_REST_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <CalendarHolidayEditor
-              title="วันหยุดในปฏิทินสำหรับลูกจ้างแบบเหมา"
-              disabled={loading || !canEdit}
-              holidays={lumpSumLaborDraft.calendarHolidays}
-              setHolidays={(fn) =>
-                setLumpSumLaborDraft((d) => ({
-                  ...d,
-                  calendarHolidays: typeof fn === 'function' ? fn(d.calendarHolidays) : d.calendarHolidays,
-                }))
-              }
-            />
-          </CardContent>
-        </Card>
+              />
+            </CardContent>
+          </Card>
+        </div>
 
         <Card>
           <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

@@ -14,6 +14,7 @@ export type VendorListPrintRow = {
 
 export type VendorListPrintFilterSummary = {
   searchTerm: string;
+  goodsSearchTerm?: string;
   typeFilter: string;
   statusFilter: string;
 };
@@ -37,14 +38,17 @@ export function vendorTypeLabel(type: VendorType | string | undefined): string {
 
 export function describeVendorListPrintFilters(f: VendorListPrintFilterSummary): string[] {
   const lines: string[] = [];
+  if (f.searchTerm.trim()) {
+    lines.push(`ชื่อบริษัท: "${f.searchTerm.trim()}"`);
+  }
+  if (f.goodsSearchTerm?.trim()) {
+    lines.push(`สินค้า/บริการ: "${f.goodsSearchTerm.trim()}"`);
+  }
   if (f.typeFilter !== 'ALL') {
     lines.push(`ประเภท: ${vendorTypeLabel(f.typeFilter)}`);
   }
   if (f.statusFilter !== 'ALL') {
     lines.push(`สถานะ: ${f.statusFilter}`);
-  }
-  if (f.searchTerm.trim()) {
-    lines.push(`ค้นหา: "${f.searchTerm.trim()}"`);
   }
   return lines;
 }

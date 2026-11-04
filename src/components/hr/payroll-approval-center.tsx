@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { collection, deleteField, doc, getDocs, limit, orderBy, query, updateDoc } from 'firebase/firestore';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
+import { useWorkerPayrollRestSchedule } from '@/hooks/use-worker-payroll-rest-schedule';
 import { usePermissions } from '@/hooks/use-permissions';
 import { PayrollService } from '@/lib/services/payroll-service';
 import {
@@ -258,6 +259,7 @@ export function PayrollApprovalCenterD6({
 }) {
   const router = useRouter();
   const firestore = useFirestore();
+  const payrollRestSchedule = useWorkerPayrollRestSchedule();
   const { profile: companyProfile } = useCompanyDocumentProfile();
   const { toast } = useToast();
   const { payroll } = usePermissions(currentUser);
@@ -1027,6 +1029,7 @@ export function PayrollApprovalCenterD6({
                                     {
                                       positionNameById,
                                       fallbackPositionName: fallbackPos,
+                                      payrollRestSchedule,
                                     },
                                   );
                                   return (

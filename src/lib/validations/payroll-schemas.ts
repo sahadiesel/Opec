@@ -134,6 +134,7 @@ export const PayrollBatchLineSchema = z.object({
         ot30Hours: z.number().optional(),
         holidayHours: z.number().optional(),
         amount: z.number(),
+        restDayKind: z.enum(['none', 'public_holiday', 'weekly_rest']).optional(),
         purchaseOrderId: z.string().optional(),
         remark: z.string().optional(),
       }),

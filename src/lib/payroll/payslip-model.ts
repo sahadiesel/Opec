@@ -15,7 +15,7 @@ import { formatDateThaiBE, formatOfficePayrollRunPeriodLabelThaiBE, formatYmdLoc
 import { leaveSummaryLabelTh } from '@/lib/payroll/office-payroll-period-deductions';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
 import { resolvePoLineForPayrollTimesheet } from '@/lib/payroll/timesheet-labor-base-cost';
-import { isPayrollCostStandbyPackageEvent, payrollStandbyPackageEventUnits } from '@/lib/payroll/package-labor-cost';
+import { isPayrollCostStandbyPackageEvent, payrollStandbyPackageEventUnits, type PayrollRestDaySchedule } from '@/lib/payroll/package-labor-cost';
 import {
   computeWorkDayPackagePayslipPositionSplits,
   computeWorkDayPackagePayslipSplit,
@@ -424,6 +424,8 @@ function pushStandbyLikePayslipLinesByRate(
 export type WorkerPayslipPositionNameOpts = {
   positionNameById?: ReadonlyMap<string, string>;
   fallbackPositionName?: string;
+  /** ปฏิทินวันหยุด HR — ใช้แยกค่าแรงวันหยุดเหมือนกันทุกคนในงวด */
+  payrollRestSchedule?: PayrollRestDaySchedule | null;
 };
 
 /** true ถ้าใส่บรรทัดแทน work_day_package แล้ว */

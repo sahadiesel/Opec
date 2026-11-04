@@ -13,8 +13,8 @@ import {
   htmlDateValueToTimestampMs,
   timestampToHtmlDateValue,
   formatYmdLocalThaiBE,
+  coerceToGregorianYmd,
 } from '@/lib/date-thai';
-import { parseISO } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useFirestore, useCollection, useMemoFirebase, useDoc } from '@/firebase';
 import { usePoLinesFanout } from '@/lib/ops/use-po-lines-fanout';
@@ -674,8 +674,7 @@ export function PoDailyBoardCard({
     const useMonth = !!(rosterFilterYm && /^\d{4}-\d{2}$/.test(rosterFilterYm));
     if (!useMonth) {
       try {
-        const t = parseISO(targetDate);
-        if (Number.isNaN(t.getTime())) return [];
+        if (!coerceToGregorianYmd(targetDate)) return [];
       } catch {
         return [];
       }

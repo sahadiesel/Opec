@@ -154,15 +154,12 @@ export function filterTimesheetsForWorkerPayroll(
   return tsList.filter((ts) => isDailyTimesheetPayableForWorkerPayroll(ts, assignmentById));
 }
 
-/** โหลด assignment แล้วกรองชุด timesheet ให้ตรง wave-month */
-export async function filterTimesheetsForWorkerPayrollAsync(
+/** โหลด assignment ของใบงาน + mobilization อื่นของคนเดียวกัน (ใช้ซ้ำตอน generate ไม่ยิงซ้ำรายคน) */
+export async function loadAssignmentMapForPayroll(
   db: Firestore,
-  tsList: readonly DailyTimesheet[],
-): Promise<DailyTimesheet[]> {
-  if (tsList.length === 0) return [];
+  tsList: readonly Pick<DailyTimesheet, 'assignmentId' | 'workerId'>[],
+): Promise<Map<string, Assignment>> {
   const assignmentById = await loadAssignmentsForTimesheets(db, tsList);
-
-  /** โหลด mobilization อื่นของคนเดียวกัน — ตรวจรอบ mob ปัจจุบันต่อ PO */
   const workerIds = [
     ...new Set(tsList.map((t) => String(t.workerId || '').trim()).filter(Boolean)),
   ];
@@ -177,7 +174,16 @@ export async function filterTimesheetsForWorkerPayrollAsync(
       }
     }),
   );
+  return assignmentById;
+}
 
+/** โหลด assignment แล้วกรองชุด timesheet ให้ตรง wave-month */
+export async function filterTimesheetsForWorkerPayrollAsync(
+  db: Firestore,
+  tsList: readonly DailyTimesheet[],
+): Promise<DailyTimesheet[]> {
+  if (tsList.length === 0) return [];
+  const assignmentById = await loadAssignmentMapForPayroll(db, tsList);
   return filterTimesheetsForWorkerPayroll(tsList, assignmentById);
 }
 

@@ -1,4 +1,4 @@
-import { format } from 'date-fns';
+import { coerceToGregorianYmd } from '@/lib/date-thai';
 import type { MainContract, PurchaseOrder, SalesContractTerm } from '@/lib/types';
 
 /**
@@ -9,8 +9,8 @@ export function syntheticSalesContractTermFromMainContract(
   mainContract: MainContract,
   po: PurchaseOrder,
 ): SalesContractTerm {
-  const effectiveDate = format(new Date(mainContract.startDate), 'yyyy-MM-dd');
-  const endDate = format(new Date(mainContract.endDate), 'yyyy-MM-dd');
+  const effectiveDate = coerceToGregorianYmd(mainContract.startDate) || String(mainContract.startDate || '').slice(0, 10);
+  const endDate = coerceToGregorianYmd(mainContract.endDate) || String(mainContract.endDate || '').slice(0, 10);
 
   return {
     id: mainContract.id,

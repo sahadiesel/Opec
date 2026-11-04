@@ -1,4 +1,6 @@
 import type { MainContract } from '@/lib/types';
+import { coerceToGregorianYmd, gregorianYmdsEqual } from '@/lib/date-thai';
+import { isBangkokWeeklyRestDayYmd } from '@/lib/attendance/bangkok-calendar';
 
 export interface SellRestDayResolution {
   active: boolean;
@@ -18,8 +20,9 @@ export function resolveSellRestDay(
   const sell = contract?.rateMultiplierPolicy?.sell;
   if (!sell) return { active: false, kind: 'none' };
 
+  const ymd = coerceToGregorianYmd(dateStr);
   const holidays = contract.contractSellCalendarHolidays || [];
-  if (holidays.some((h) => h.date === dateStr)) {
+  if (ymd && holidays.some((h) => gregorianYmdsEqual(h.date, ymd))) {
     return {
       active: true,
       kind: 'public_holiday',
@@ -27,28 +30,13 @@ export function resolveSellRestDay(
     };
   }
 
-  const parts = dateStr.split('-').map(Number);
-  const y = parts[0];
-  const m = parts[1];
-  const d = parts[2];
-  if (!y || !m || !d) return { active: false, kind: 'none' };
-
-  const local = new Date(y, m - 1, d);
-  const dow = local.getDay();
+  if (!ymd) return { active: false, kind: 'none' };
 
   const pattern = contract.contractSellWeeklyRestPattern || 'none';
   const sunday = Number(sell.sunday ?? 1);
   const sundayOt = Number(sell.sundayOt ?? sell.sunday ?? 1);
 
-  if (pattern === 'sunday_only' && dow === 0) {
-    return {
-      active: true,
-      kind: 'weekly_rest',
-      weeklyNormalMult: sunday,
-      weeklyOtMult: sundayOt,
-    };
-  }
-  if (pattern === 'sat_sun' && (dow === 0 || dow === 6)) {
+  if (isBangkokWeeklyRestDayYmd(ymd, pattern)) {
     return {
       active: true,
       kind: 'weekly_rest',

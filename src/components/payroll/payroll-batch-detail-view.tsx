@@ -24,6 +24,7 @@ import { WorkerPayrollWhtSingleDialog } from '@/components/payroll/worker-payrol
 import { WorkerPayrollWhtBatchDialog } from '@/components/payroll/worker-payroll-wht-batch-dialog';
 import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 import { usePoPartyLabels } from '@/hooks/use-po-party-labels';
+import { useWorkerPayrollRestSchedule } from '@/hooks/use-worker-payroll-rest-schedule';
 import { buildPayslipFromWorkerLine, normalizeIncomeSegments, isWorkerPayrollBatchSnapshotFrozen, payrollBatchChronologyMs } from '@/lib/payroll/payslip-model';
 import type { PayslipViewModel } from '@/lib/payroll/payslip-model';
 import { lineDeductionsTotal } from '@/lib/payroll/payslip-deduction-display';
@@ -333,6 +334,7 @@ export function PayrollBatchDetailView({
   );
 
   const poPartyLabelById = usePoPartyLabels(linesSorted);
+  const payrollRestSchedule = useWorkerPayrollRestSchedule();
 
   /** ยอดตาราง/การ์ดสรุป = snapshot ในงวดเท่านั้น — ไม่โหลด timesheet มาคำนวณสดตอนเปิดหน้า */
   const slipByLineId = useMemo(() => {
@@ -363,6 +365,7 @@ export function PayrollBatchDetailView({
             positionNameById,
             fallbackPositionName:
               fallbackPos && fallbackPos !== '—' ? fallbackPos : undefined,
+            payrollRestSchedule,
           },
         );
         m.set(line.id, model);
@@ -382,6 +385,7 @@ export function PayrollBatchDetailView({
     poPartyLabelById,
     positionNameById,
     workerPositionLabelByWorkerId,
+    payrollRestSchedule,
   ]);
 
   const displayBatchTotals = useMemo(() => {

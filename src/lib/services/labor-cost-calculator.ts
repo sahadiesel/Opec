@@ -7,7 +7,8 @@ import {
   RateConditionUnitType,
   RateConditionCalculationMethod
 } from '@/lib/types';
-import { parseISO, startOfDay, isBefore, isAfter, isSameDay } from 'date-fns';
+import { startOfDay, isBefore, isAfter, isSameDay } from 'date-fns';
+import { localNoonDateFromStoredYmd } from '@/lib/date-thai';
 
 /**
  * Resolves the most specific and applicable labor cost rate condition for a given timesheet entry.
@@ -18,7 +19,7 @@ export function resolveApplicableCostRateCondition(
   timesheet: DailyTimesheet,
   contract: LaborCostContractTerm
 ): RateCondition | null {
-  const tsDate = startOfDay(parseISO(timesheet.date));
+  const tsDate = startOfDay(localNoonDateFromStoredYmd(timesheet.date));
 
   // 1. Filter conditions belonging to this specific cost contract and ensure active
   let applicable = conditions.filter(c => 
@@ -38,8 +39,8 @@ export function resolveApplicableCostRateCondition(
 
   // 5. Filter by Date Effectiveness
   applicable = applicable.filter(c => {
-    const start = startOfDay(parseISO(c.effectiveDate));
-    const end = c.endDate ? startOfDay(parseISO(c.endDate)) : null;
+    const start = startOfDay(localNoonDateFromStoredYmd(c.effectiveDate));
+    const end = c.endDate ? startOfDay(localNoonDateFromStoredYmd(c.endDate)) : null;
     
     const isAfterOrEqualStart = isAfter(tsDate, start) || isSameDay(tsDate, start);
     const isBeforeOrEqualEnd = !end || isBefore(tsDate, end) || isSameDay(tsDate, end);

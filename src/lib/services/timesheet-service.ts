@@ -30,7 +30,8 @@ import { DailyTimesheetSchema } from '@/lib/validations/timesheet-schemas';
 import { assertPayrollPermission } from '@/lib/permissions';
 import { writeAuditLog } from './audit-service';
 import { deleteConflictingWorkerPoDayTimesheets } from '@/lib/timesheet/enforce-one-timesheet-per-worker-po-day';
-import { format, subDays, parseISO, isWithinInterval } from 'date-fns';
+import { format, subDays, isWithinInterval } from 'date-fns';
+import { localNoonDateFromStoredYmd } from '@/lib/date-thai';
 
 /** Firestore rejects `undefined` in set/update payloads — strip those keys. */
 function omitUndefinedFields<T extends Record<string, unknown>>(obj: T): T {
@@ -141,13 +142,13 @@ export class TimesheetService {
     );
     
     const snap = await getDocs(q);
-    const targetDate = parseISO(date);
+    const targetDate = localNoonDateFromStoredYmd(date);
 
     return snap.docs
       .map(d => ({ ...d.data(), id: d.id } as Assignment))
       .filter(asgn => {
-        const start = parseISO(asgn.startDate);
-        const end = parseISO(asgn.endDate);
+        const start = localNoonDateFromStoredYmd(asgn.startDate);
+        const end = localNoonDateFromStoredYmd(asgn.endDate);
         return isWithinInterval(targetDate, { start, end });
       });
   }
@@ -431,7 +432,7 @@ export class TimesheetService {
     user: User
   ): Promise<{ created: number; updated: number }> {
     assertPayrollPermission(user, 'timesheet', 'edit');
-    const prev = format(subDays(parseISO(targetDate), 1), 'yyyy-MM-dd');
+    const prev = format(subDays(localNoonDateFromStoredYmd(targetDate), 1), 'yyyy-MM-dd');
     const q = query(
       this.getCollection(),
       where('waveId', '==', waveId),

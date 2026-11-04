@@ -12,6 +12,8 @@ import {
 import type { StatedPackageHours } from '@/lib/commercial/package-hourly-rate';
 import { parseWorkDayHours } from '@/lib/commercial/package-work-day-hours';
 import type { ParsedWorkDayHours } from '@/lib/commercial/package-work-day-hours';
+import { isBangkokWeeklyRestDayYmd } from '@/lib/attendance/bangkok-calendar';
+import { coerceToGregorianYmd, gregorianYmdsEqual } from '@/lib/date-thai';
 
 /** @deprecated ใช้ LEGAL_NORMAL_HOURS_PER_DAY */
 export const THAI_LEGAL_NORMAL_HOURS_PER_DAY = LEGAL_NORMAL_HOURS_PER_DAY;
@@ -178,9 +180,10 @@ export interface RestDayResolution {
 export function resolvePayrollRestDay(dateStr: string, schedule: PayrollRestDaySchedule | undefined): RestDayResolution {
   if (!schedule) return { active: false, kind: 'none' };
 
+  const ymd = coerceToGregorianYmd(dateStr);
   const cost = schedule.costMultipliers;
   const holidays = schedule.calendarHolidays || [];
-  if (holidays.some((h) => h.date === dateStr)) {
+  if (ymd && holidays.some((h) => gregorianYmdsEqual(h.date, ymd))) {
     return {
       active: true,
       kind: 'public_holiday',
@@ -188,37 +191,13 @@ export function resolvePayrollRestDay(dateStr: string, schedule: PayrollRestDayS
     };
   }
 
-  const parts = dateStr.split('-').map(Number);
-  const y = parts[0];
-  const m = parts[1];
-  const d = parts[2];
-  if (!y || !m || !d) return { active: false, kind: 'none' };
-
-  const local = new Date(y, m - 1, d);
-  const dow = local.getDay();
+  if (!ymd) return { active: false, kind: 'none' };
 
   const pattern = schedule.weeklyRestPattern || 'none';
   const sunday = Number(cost.sunday ?? 1);
   const sundayOt = cost.sundayOt != null && !isNaN(Number(cost.sundayOt)) ? Number(cost.sundayOt) : undefined;
 
-  if (pattern === 'sunday_only' && dow === 0) {
-    return {
-      active: true,
-      kind: 'weekly_rest',
-      weeklyNormalMult: sunday,
-      weeklyOtMult: sundayOt,
-    };
-  }
-  if (pattern === 'sat_sun' && (dow === 0 || dow === 6)) {
-    return {
-      active: true,
-      kind: 'weekly_rest',
-      weeklyNormalMult: sunday,
-      weeklyOtMult: sundayOt,
-    };
-  }
-
-  if (dow === 0) {
+  if (isBangkokWeeklyRestDayYmd(ymd, pattern)) {
     return {
       active: true,
       kind: 'weekly_rest',
@@ -306,11 +285,10 @@ function computeBaseWorkAmount(
  * - กรอบ 8 ชม.แรกจาก normalHours × ฐานชม.
  * - normalHours เกิน 8: ส่วนเกิน × ฐาน × ตัวคูณ OT สัญญา/PO (โครงเดิมเมื่อไม่แยก tier)
  * - ot15 / ot20 / ot30: × 1.5 / × 2 / × 3 ของฐานชม. (ไม่ซ้อนกับตัวคูณ OT สัญญา — tier เป็นตัวกำหนดอัตราแล้ว)
- * - วันหยุดประจำสัปดาห์ (อาทิตย์/เสาร์): ขยายฐานชม.ด้วยตัวคูณ sunday แล้วคิดทุกชม.ที่อัตรานั้นแบนๆ
- *   (รวม OT) — ไม่ซ้อน tier 1.5 ทับอัตราที่คูณ sunday แล้ว
- *   ตัวอย่าง: แพ็ก 12 ชม. ฿2,000 → ชม.≈142.86 · อาทิตย์ ×1.5 → 214.29/ชม. ×18 = ฿3,857.14
- * - วันหยุดในปฏิทิน: ขยายฐานชม.ด้วยตัวคูณสัญญา แล้วคิด 8 ชม. + ส่วนเกินใน normalHours
- *   ที่ **อัตราเดียวกัน** — ไม่ซ้อน otContract กับตัวคูณวันหยุด
+ * - วันทำงานออฟชอร์ 12 ชม.: ค่าแรงวัน = แพ็ก D (8 ปกติ + 4 OT×1.5) · OT นอกแพ็ก = baseH×1.5
+ *   ตัวอย่าง D=2,000 → baseH≈142.86 · OT 1.5 = 214.29/ชม.
+ * - วันหยุดในปฏิทิน HR / อาทิตย์: คูณเฉพาะ 8 ชม.แรกด้วยตัวคูณนักขัตฤกษ์หรืออาทิตย์
+ *   ส่วน 4 ชม.ในแพ็กและ OT นอกแพ็กยังคิดที่ 214.29 — ห้ามคูณ 1.5 ซ้ำ
  */
 export interface WorkDayPayslipAmountParts {
   gross: number;
@@ -352,11 +330,12 @@ function resolveWorkDayHourlyAndParts(
   const rest = resolvePayrollRestDay(input.timesheet.date, input.payrollRestSchedule);
   const otContract = Math.max(0, input.otAfterShiftMultiplier);
 
+  const weekdayOtH = baseH * otContract;
   if (!rest.active) {
     return {
       baseH,
       effectiveNormalH: baseH,
-      effectiveOtH: baseH * otContract,
+      effectiveOtH: weekdayOtH,
       w,
       rest,
       mode: 'weekday_split',
@@ -367,23 +346,17 @@ function resolveWorkDayHourlyAndParts(
     return {
       baseH,
       effectiveNormalH: baseH * mult,
-      effectiveOtH: baseH * mult,
+      effectiveOtH: weekdayOtH,
       w,
       rest,
       mode: 'public_holiday_wrap',
     };
   }
   const sm = Math.max(0, rest.weeklyNormalMult ?? 1);
-  /**
-   * วันหยุดประจำสัปดาห์ (อาทิตย์/เสาร์): ใช้ฐานชม.ที่คูณ sunday แล้วคิดทุกชม.แบนๆ
-   * — ไม่ใช้ sundayOt มาแยกอัตรา OT และไม่ซ้อน tier 1.5/2/3 ทับอีก
-   *   (เช่น ฐาน 142.86 ×1.5 = 214.29 → 18 ชม. = 214.29×18 ไม่ใช่ 214.29×6×1.5)
-   */
-  const flatSundayH = baseH * sm;
   return {
     baseH,
-    effectiveNormalH: flatSundayH,
-    effectiveOtH: flatSundayH,
+    effectiveNormalH: baseH * sm,
+    effectiveOtH: weekdayOtH,
     w,
     rest,
     mode: 'weekly_rest_split',
@@ -397,27 +370,17 @@ export const OFFSHORE_PACKAGE_HOURS = 12 as const;
 export function computeWorkDayPayslipAmountParts(
   input: WorkDayPackageCostInput,
 ): WorkDayPayslipAmountParts {
-  const { effectiveNormalH, effectiveOtH, w, rest, mode } =
+  const { baseH, effectiveNormalH, effectiveOtH, w, rest } =
     resolveWorkDayHourlyAndParts(input);
   const { normalPart, overflowPart } = computeBaseWorkAmount(
     effectiveNormalH,
     effectiveOtH,
     w,
   );
-  /**
-   * วันหยุดประจำสัปดาห์: อัตราชม.ถูกคูณ sunday แล้ว — ชม. OT จ่ายที่อัตรานั้นแบนๆ ไม่ซ้อน tier 1.5/2/3
-   * วันธรรมดา: OT tier ตามเดิม (×1.5 / ×2 / ×3 ของฐานชม.)
-   */
-  const flatRestOt = mode === 'weekly_rest_split';
-  const ot15Amount = roundMoney(
-    effectiveNormalH * w.o15 * (flatRestOt ? 1 : PACKAGE_OT_TIER_MULT.OT_1_5),
-  );
-  const ot20Amount = roundMoney(
-    effectiveNormalH * w.o20 * (flatRestOt ? 1 : PACKAGE_OT_TIER_MULT.OT_2_0),
-  );
-  const ot30Amount = roundMoney(
-    effectiveNormalH * w.o30 * (flatRestOt ? 1 : PACKAGE_OT_TIER_MULT.OT_3_0),
-  );
+  /** OT นอกแพ็กคิดจากฐานชม.วันทำงาน (D/14) × 1.5/2/3 — ไม่เอาตัวคูณนักขัตฤกษ์/อาทิตย์มาคูณซ้ำ */
+  const ot15Amount = roundMoney(baseH * w.o15 * PACKAGE_OT_TIER_MULT.OT_1_5);
+  const ot20Amount = roundMoney(baseH * w.o20 * PACKAGE_OT_TIER_MULT.OT_2_0);
+  const ot30Amount = roundMoney(baseH * w.o30 * PACKAGE_OT_TIER_MULT.OT_3_0);
 
   let baseAmount: number;
   let overflowOtAmount = 0;

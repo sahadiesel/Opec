@@ -1,3 +1,5 @@
+import { coerceToGregorianYmd } from '@/lib/date-thai';
+
 /** ช่วงงวด Trip ที่ผู้ใช้แก้ได้ — ค่าเริ่มต้น M1 กลุ่มท้ายถึง D1 */
 
 export type TripPeriodYmdRange = {
@@ -30,12 +32,14 @@ export type TripPeriodEvaluation = {
 };
 
 export function isIsoYmd(value: string | undefined | null): value is string {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '').slice(0, 10));
+  return /^\d{4}-\d{2}-\d{2}$/.test(coerceToGregorianYmd(value) || String(value || '').slice(0, 10));
 }
 
 export function asIsoYmd(value: string | undefined | null): string {
+  const coerced = coerceToGregorianYmd(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(coerced)) return coerced;
   const d = String(value || '').slice(0, 10);
-  return isIsoYmd(d) ? d : '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : '';
 }
 
 /** ตัด timestamp 0 / ปี 1970 / ปี พ.ศ. ที่เพี้ยน — ไม่ใช่วันวางบิลจริง */
@@ -51,7 +55,8 @@ export function plausibleBillingYmd(value: string | undefined | null): string {
 }
 
 export function nextCalendarDayYmd(ymd: string): string {
-  const d = new Date(`${ymd}T12:00:00Z`);
+  const key = asIsoYmd(ymd) || ymd;
+  const d = new Date(`${key}T12:00:00Z`);
   if (Number.isNaN(d.getTime())) return ymd;
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);

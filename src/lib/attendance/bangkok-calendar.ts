@@ -1,3 +1,5 @@
+import { coerceToGregorianYmd } from '@/lib/date-thai';
+
 /**
  * Calendar helpers in Asia/Bangkok for attendance summaries.
  */
@@ -45,7 +47,7 @@ export function utcMsFromBangkokYmdAndHm(ymd: string, hm: string): number | null
   if (!mHm) return null;
   const hh = Number(mHm[1]);
   const mm = Number(mHm[2]);
-  const ymdTrim = ymd.trim();
+  const ymdTrim = coerceToGregorianYmd(ymd) || ymd.trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(ymdTrim)) return null;
   const isoLocal = `${ymdTrim}T${normalized}:00`;
   const d = new Date(`${isoLocal}+07:00`);
@@ -81,7 +83,7 @@ export function enumerateYmDsForMonth(monthAnchor: Date): string[] {
  * Uses noon Bangkok (= 05:00 UTC, Thailand has no DST).
  */
 export function bangkokIsoWeekdayFromYmd(ymd: string): number {
-  const [y, mo, d] = ymd.split('-').map(Number);
+  const [y, mo, d] = coerceToGregorianYmd(ymd).split('-').map(Number);
   if (!y || !mo || !d) return NaN;
   const j = new Date(Date.UTC(y, mo - 1, d, 5, 0, 0)).getUTCDay();
   return j === 0 ? 7 : j;

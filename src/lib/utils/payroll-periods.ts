@@ -7,27 +7,29 @@ import {
   isBefore, 
   isAfter, 
   format, 
-  parseISO, 
   startOfDay,
   endOfDay,
   isWithinInterval,
   isSameDay
 } from 'date-fns';
+import { localNoonDateFromStoredYmd, coerceToGregorianYmd } from '@/lib/date-thai';
 import { PayrollPeriod } from '@/lib/types';
 
 /**
  * รอบเต็มเดือนปฏิทิน (วันที่ 1 – วันสุดท้ายของเดือนเดียวกัน)
  */
 export function isFullCalendarMonthRange(startDate: string, endDate: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return false;
-  const ym = startDate.slice(0, 7);
-  if (!endDate.startsWith(ym) || !startDate.endsWith('-01')) return false;
+  const startCe = coerceToGregorianYmd(startDate);
+  const endCe = coerceToGregorianYmd(endDate);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startCe) || !/^\d{4}-\d{2}-\d{2}$/.test(endCe)) return false;
+  const ym = startCe.slice(0, 7);
+  if (!endCe.startsWith(ym) || !startCe.endsWith('-01')) return false;
   const [y, m] = ym.split('-').map(Number);
   if (!y || !m || m < 1 || m > 12) return false;
   const last = new Date(y, m, 0);
   const d = String(last.getDate()).padStart(2, '0');
   const expectedEnd = `${y}-${String(m).padStart(2, '0')}-${d}`;
-  return endDate === expectedEnd;
+  return endCe === expectedEnd;
 }
 
 const STATUS_RANK: Record<string, number> = {
@@ -79,8 +81,8 @@ export function dedupePayrollPeriodRows(periods: PayrollPeriod[]): PayrollPeriod
  * - 2026-03-01 to 2026-03-15 (Label: March 2026)
  */
 export function generateMonthlyPeriodsForRange(startDateStr: string, endDateStr: string): { startDate: string; endDate: string; label: string }[] {
-  const startDate = parseISO(startDateStr);
-  const endDate = parseISO(endDateStr);
+  const startDate = localNoonDateFromStoredYmd(startDateStr);
+  const endDate = localNoonDateFromStoredYmd(endDateStr);
   const chunks: { startDate: string; endDate: string; label: string }[] = [];
   
   if (isAfter(startDate, endDate)) return [];
@@ -111,12 +113,12 @@ export function generateMonthlyPeriodsForRange(startDateStr: string, endDateStr:
  * Filters a list of periods to find those that overlap with a specific date range.
  */
 export function listPeriodsOverlappingRange(periods: PayrollPeriod[], start: string, end: string): PayrollPeriod[] {
-  const rangeStart = startOfDay(parseISO(start));
-  const rangeEnd = endOfDay(parseISO(end));
+  const rangeStart = startOfDay(localNoonDateFromStoredYmd(start));
+  const rangeEnd = endOfDay(localNoonDateFromStoredYmd(end));
 
   return periods.filter(period => {
-    const pStart = startOfDay(parseISO(period.startDate));
-    const pEnd = endOfDay(parseISO(period.endDate));
+    const pStart = startOfDay(localNoonDateFromStoredYmd(period.startDate));
+    const pEnd = endOfDay(localNoonDateFromStoredYmd(period.endDate));
 
     // Overlap exists if: (StartA <= EndB) and (EndA >= StartB)
     const startALessEndB = isBefore(pStart, rangeEnd) || isSameDay(pStart, rangeEnd);
@@ -130,11 +132,11 @@ export function listPeriodsOverlappingRange(periods: PayrollPeriod[], start: str
  * Finds which period contains a specific date.
  */
 export function findCurrentPeriodForDate(periods: PayrollPeriod[], date: string): PayrollPeriod | null {
-  const targetDate = startOfDay(parseISO(date));
+  const targetDate = startOfDay(localNoonDateFromStoredYmd(date));
 
   return periods.find(period => {
-    const start = startOfDay(parseISO(period.startDate));
-    const end = endOfDay(parseISO(period.endDate));
+    const start = startOfDay(localNoonDateFromStoredYmd(period.startDate));
+    const end = endOfDay(localNoonDateFromStoredYmd(period.endDate));
     return isWithinInterval(targetDate, { start, end });
   }) || null;
 }

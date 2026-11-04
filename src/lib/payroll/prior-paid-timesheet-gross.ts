@@ -10,7 +10,7 @@ import type {
   PayrollBatchLineDailyRowSnapshot,
   PriorPeriodAllowanceItem,
 } from '@/lib/types';
-import { payrollBatchChronologyMs } from '@/lib/payroll/payslip-model';
+import { payrollBatchChronologyMs, resolveLineNetForPayslip } from '@/lib/payroll/payslip-model';
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -197,6 +197,121 @@ export async function loadPriorPaidFrozenPayrollSlice(
     });
   }
   return slice;
+}
+
+function isPriorPaidLikeStatus(status: string | undefined): boolean {
+  return (
+    status === 'PAID' ||
+    status === 'LOCKED' ||
+    status === 'FINANCE_PREPARED' ||
+    status === 'PAYMENT_EXPORTED'
+  );
+}
+
+function applyPriorPaidLineToSlice(
+  slice: PriorPaidFrozenPayrollSlice,
+  nb: PayrollBatch & { id: string },
+  line: PayrollBatchLine,
+): void {
+  if (nb.batchType === 'SUPPLEMENTAL') {
+    for (const it of line.hrLineAdjustments?.priorPeriodAllowanceItems ?? []) {
+      const amount = Math.max(0, Number(it.amount) || 0);
+      if (amount <= 0) continue;
+      slice.priorPeriodAllowanceItems.push({
+        sourceYearMonth: String(it.sourceYearMonth || '').trim(),
+        label: String(it.label || '').trim(),
+        amount,
+      });
+    }
+    const paidAt = nb.paidAt ?? nb.financePreparedAt ?? nb.lockedAt ?? nb.createdAt;
+    slice.priorPaidSummaries.push({
+      batchId: nb.id,
+      paymentLabel:
+        typeof paidAt === 'number' && Number.isFinite(paidAt)
+          ? new Date(paidAt).toLocaleDateString('th-TH')
+          : nb.id,
+      netAmount: round2(Number(line.netAmount) || 0),
+      grossAmount: round2(Number(line.grossAmount) || 0),
+      dailyRows: [],
+      priorPeriodAllowanceItems: [...(line.hrLineAdjustments?.priorPeriodAllowanceItems ?? [])].filter(
+        (it) => Number(it.amount) > 0,
+      ),
+    });
+    return;
+  }
+  if (nb.batchType && nb.batchType !== 'NORMAL') return;
+  mergeFrozenFromLine(slice, line);
+  const paidAt = nb.paidAt ?? nb.financePreparedAt ?? nb.lockedAt ?? nb.createdAt;
+  slice.priorPaidSummaries.push({
+    batchId: nb.id,
+    paymentLabel:
+      typeof paidAt === 'number' && Number.isFinite(paidAt)
+        ? new Date(paidAt).toLocaleDateString('th-TH')
+        : nb.id,
+      netAmount: round2(Number(line.netAmount) || 0),
+      grossAmount: round2(Number(line.grossAmount) || 0),
+      dailyRows: Array.isArray(line.dailyRowSnapshots) ? [...line.dailyRowSnapshots] : [],
+      priorPeriodAllowanceItems: [...(line.hrLineAdjustments?.priorPeriodAllowanceItems ?? [])].filter(
+        (it) => Number(it.amount) > 0,
+      ),
+  });
+}
+
+/**
+ * โหลดยอดที่จ่ายแล้วทั้งงวดครั้งเดียว — ไม่วน getDoc รายคน × ทุกรอบในเดือน
+ */
+export async function loadPriorPaidFrozenPayrollSlicesForPeriod(
+  db: Firestore,
+  input: {
+    payrollPeriodId: string;
+    workerIds: readonly string[];
+    currentBatchId?: string | null;
+    currentBatchChronologyMs?: number;
+  },
+): Promise<{
+  slices: Map<string, PriorPaidFrozenPayrollSlice>;
+  priorNormalNetByWorker: Map<string, number>;
+}> {
+  const periodId = String(input.payrollPeriodId || '').trim();
+  const workerIds = [...new Set(input.workerIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  const slices = new Map<string, PriorPaidFrozenPayrollSlice>();
+  const priorNormalNetByWorker = new Map<string, number>();
+  for (const wid of workerIds) {
+    slices.set(wid, emptySlice());
+    priorNormalNetByWorker.set(wid, 0);
+  }
+  if (!periodId || workerIds.length === 0) return { slices, priorNormalNetByWorker };
+
+  const currentId = String(input.currentBatchId || '').trim();
+  const currentMs = Number(input.currentBatchChronologyMs) || 0;
+  const batchSnaps = await getDocs(
+    query(collection(db, 'payroll_batches'), where('payrollPeriodId', '==', periodId)),
+  );
+
+  for (const bd of batchSnaps.docs) {
+    if (currentId && bd.id === currentId) continue;
+    const nb = { ...(bd.data() as PayrollBatch), id: bd.id };
+    if (!isPriorPaidLikeStatus(nb.status)) continue;
+    const priorMs = payrollBatchChronologyMs(nb);
+    if (currentMs > 0 && priorMs > 0 && priorMs >= currentMs) continue;
+
+    const linesSnap = await getDocs(collection(db, 'payroll_batches', nb.id, 'lines'));
+    for (const ld of linesSnap.docs) {
+      const line = { ...(ld.data() as PayrollBatchLine), id: ld.id };
+      const wid = String(line.workerId || '').trim();
+      const slice = slices.get(wid);
+      if (!slice) continue;
+      applyPriorPaidLineToSlice(slice, nb, line);
+      if (!nb.batchType || nb.batchType === 'NORMAL') {
+        const n = resolveLineNetForPayslip(line);
+        if (n > 0.005) {
+          priorNormalNetByWorker.set(wid, round2((priorNormalNetByWorker.get(wid) || 0) + n));
+        }
+      }
+    }
+  }
+
+  return { slices, priorNormalNetByWorker };
 }
 
 /** @deprecated ใช้ loadPriorPaidFrozenPayrollSlice */

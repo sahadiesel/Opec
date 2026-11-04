@@ -13,6 +13,7 @@ import { ArrowLeft, Loader2, Printer } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useNormalBatchesAndLines } from '@/hooks/use-normal-batches-and-lines';
 import { usePoPartyLabels } from '@/hooks/use-po-party-labels';
+import { useWorkerPayrollRestSchedule } from '@/hooks/use-worker-payroll-rest-schedule';
 import type { PayrollBatch, PayrollBatchLine, PayrollPeriod, Position, User, Worker } from '@/lib/types';
 import { positionListPrimaryName } from '@/lib/position-display';
 
@@ -64,6 +65,7 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
   );
 
   const poPartyLabelById = usePoPartyLabels(lines);
+  const payrollRestSchedule = useWorkerPayrollRestSchedule();
 
   const positionsQuery = useMemoFirebase(
     () => (firestore ? collection(firestore, 'positions') : null),
@@ -129,6 +131,7 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
         {
           positionNameById,
           fallbackPositionName: fallbackPos,
+          payrollRestSchedule,
         },
       );
     });
@@ -145,6 +148,7 @@ export default function PayrollBatchPrintAllPage({ params }: { params: Promise<{
     poPartyLabelById,
     positionNameById,
     fallbackPosByWorkerId,
+    payrollRestSchedule,
   ]);
 
   const handlePrintAll = () => window.print();

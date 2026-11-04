@@ -1,6 +1,6 @@
 /**
- * Fixed / commonly observed Thai public holidays (Gregorian).
- * Lunar holidays may shift — extend {@link FIXED_BY_YEAR} per Cabinet announcements.
+ * Fallback list for office working-day counts only.
+ * Payroll / ลูกจ้างบริษัท ใช้ปฏิทิน HR Settings (`calendarHolidays`) — ห้ามฮาร์ดโค้ดวันหยุดจ่ายเงินเดือนที่นี่
  */
 
 import { isBangkokWeekendYmd } from '@/lib/attendance/bangkok-calendar';

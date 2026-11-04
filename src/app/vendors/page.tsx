@@ -53,6 +53,7 @@ export default function VendorsPage() {
   const { toast } = useToast();
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [goodsSearchTerm, setGoodsSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
@@ -72,21 +73,24 @@ export default function VendorsPage() {
   const filteredVendors = useMemo(() => {
     if (!vendors) return [];
     return vendors.filter(v => {
-      const keyword = searchTerm.toLowerCase();
+      const keyword = searchTerm.trim().toLowerCase();
+      const goodsKeyword = goodsSearchTerm.trim().toLowerCase();
       const vendorName = (v.vendorName || '').toLowerCase();
       const vendorCode = (v.vendorCode || '').toLowerCase();
-      const matchesSearch = vendorName.includes(keyword) || vendorCode.includes(keyword);
+      const goodsDetail = (v.goodsOrServicesDetail || '').toLowerCase();
+      const matchesSearch = !keyword || vendorName.includes(keyword) || vendorCode.includes(keyword);
+      const matchesGoods = !goodsKeyword || goodsDetail.includes(goodsKeyword);
       const matchesType = typeFilter === 'ALL' || v.vendorType === typeFilter;
       const matchesStatus = statusFilter === 'ALL' || v.status === statusFilter;
-      return matchesSearch && matchesType && matchesStatus;
+      return matchesSearch && matchesGoods && matchesType && matchesStatus;
     });
-  }, [vendors, searchTerm, typeFilter, statusFilter]);
+  }, [vendors, searchTerm, goodsSearchTerm, typeFilter, statusFilter]);
 
   const allVendors = useMemo(() => vendors ?? [], [vendors]);
 
   const printFilterSummary = useMemo(
-    () => ({ searchTerm, typeFilter, statusFilter }),
-    [searchTerm, typeFilter, statusFilter],
+    () => ({ searchTerm, goodsSearchTerm, typeFilter, statusFilter }),
+    [searchTerm, goodsSearchTerm, typeFilter, statusFilter],
   );
 
   const runVendorListPrint = useCallback(
@@ -194,14 +198,25 @@ export default function VendorsPage() {
         </Alert>
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="relative w-full max-w-sm">
+          <div className="flex flex-1 flex-wrap items-center gap-3">
+            <div className="relative w-full min-w-[220px] max-w-sm flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input 
                 placeholder="ค้นหาชื่อบริษัทหรือรหัสคู่ค้า..." 
                 className="pl-9 h-11" 
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
+                aria-label="ค้นหาชื่อบริษัท"
+              />
+            </div>
+            <div className="relative w-full min-w-[200px] max-w-sm flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="ค้นหาสินค้า/บริการ..."
+                className="pl-9 h-11"
+                value={goodsSearchTerm}
+                onChange={e => setGoodsSearchTerm(e.target.value)}
+                aria-label="ค้นหาสินค้า/บริการ"
               />
             </div>
             <Select onValueChange={setTypeFilter} value={typeFilter}>

@@ -83,6 +83,21 @@ export async function fetchWorkerCashAdvancesPendingSalaryRecovery(
   return { total, advances };
 }
 
+/** ดึงเบิกล่วงหน้าของหลายคนพร้อมกัน — ไม่วนรอรายคนตอน generate batch */
+export async function fetchWorkerCashAdvancesPendingSalaryRecoveryForWorkers(
+  db: Firestore,
+  workerIds: readonly string[],
+): Promise<Map<string, { total: number; advances: CashAdvanceRecoveryRow[] }>> {
+  const ids = [...new Set(workerIds.map((id) => String(id || '').trim()).filter(Boolean))];
+  const out = new Map<string, { total: number; advances: CashAdvanceRecoveryRow[] }>();
+  await Promise.all(
+    ids.map(async (workerId) => {
+      out.set(workerId, await fetchWorkerCashAdvancesPendingSalaryRecovery(db, workerId));
+    }),
+  );
+  return out;
+}
+
 /**
  * ดึงคำขอเบิกล่วงหน้าของพนักงานออฟฟิศที่ต้องหักจากเงินเดือนในงวด office payroll
  * @param payrollRecoveryBatchId — ส่ง runId เมื่อคำนวณใหม่/แก้รายคน เพื่อรวมรายการที่ผูกกับงวดนี้แล้ว

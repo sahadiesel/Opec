@@ -1,13 +1,17 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Plus, Trash2 } from 'lucide-react';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
-import { formatYmdLocalThaiBE, thaiWeekdayNameFromYmd } from '@/lib/date-thai';
+import {
+  formatYmdLocalThaiBE,
+  normalizeStoredYmdToGregorian,
+  thaiWeekdayNameFromYmd,
+  timestampToHtmlDateValue,
+} from '@/lib/date-thai';
 import type { CalendarHolidayEntry } from '@/lib/contract-position-rate-extras';
 
 export function CalendarHolidayEditor({
@@ -43,7 +47,8 @@ export function CalendarHolidayEditor({
 
   const addRow = () => {
     if (disabled || pickTs == null || !rowLabel.trim()) return;
-    const date = format(new Date(pickTs), 'yyyy-MM-dd');
+    const date = normalizeStoredYmdToGregorian(timestampToHtmlDateValue(pickTs));
+    if (!date) return;
     const row = { date, label: rowLabel.trim() };
     setHolidays((prev) =>
       [...prev, row].sort((a, b) => a.date.localeCompare(b.date) || a.label.localeCompare(b.label, 'th')),

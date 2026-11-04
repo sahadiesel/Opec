@@ -9,6 +9,8 @@ import type {
 import type { PayrollTimesheetAggDeps } from '@/lib/payroll/aggregate-payroll-timesheet-chunks';
 import {
   computeWorkDayPayslipAmountParts,
+  resolvePayrollRestDay,
+  type PayrollRestDaySchedule,
   type WorkDayPayslipAmountParts,
 } from '@/lib/payroll/package-labor-cost';
 import {
@@ -20,6 +22,7 @@ import { workerGlobalLaborToPayrollRestSchedule } from '@/lib/payroll/worker-glo
 import { applyLaborCostEpochToWorkerForDate } from '@/lib/payroll/remob-position-for-payroll';
 import { resolveFrozenTimesheetGrossAmount } from '@/lib/payroll/prior-paid-timesheet-gross';
 import { resolveOffshoreHourlyDivisor } from '@/lib/commercial/position-rate-matrix';
+import { coerceToGregorianYmd } from '@/lib/date-thai';
 
 export type PayslipLineItem = { label: string; amount: number };
 
@@ -123,15 +126,44 @@ function otPositionPayslipLine(
 }
 
 function ymdLocalDow(ymd: string): number {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || '').slice(0, 10));
+  const key = coerceToGregorianYmd(ymd);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
   if (!m) return -1;
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getDay();
 }
 
-/**
- * วันหยุดที่ต้องขึ้นบรรทัด «ค่าแรงวันหยุด» — ต้องสอดคล้องกับยอดรายวันที่คำนวณจาก resolvePayrollRestDay
- * (อาทิตย์ + นักขัตฤกษ์) ไม่ใช่แค่วันอาทิตย์จากปฏิทิน
- */
+/** ติดชนิดวันหยุดจากปฏิทิน HR — คนละคนใช้ตารางเดียวกัน ไม่แก้รายคน */
+export function applyRestDayKindFromSchedule(
+  snaps: readonly PayrollBatchLineDailyRowSnapshot[],
+  schedule?: PayrollRestDaySchedule | null,
+): PayrollBatchLineDailyRowSnapshot[] {
+  if (!schedule || snaps.length === 0) return snaps as PayrollBatchLineDailyRowSnapshot[];
+  return snaps.map((row) => {
+    if (String(row.eventType || '') !== 'work_day') return row;
+    if (row.restDayKind === 'public_holiday' || row.restDayKind === 'weekly_rest') return row;
+    const rest = resolvePayrollRestDay(row.date, schedule);
+    if (rest.kind === 'public_holiday' || rest.kind === 'weekly_rest') {
+      return { ...row, restDayKind: rest.kind };
+    }
+    return row;
+  });
+}
+
+function impliedLaborAfterWeekdayOt(
+  amount: number,
+  o15: number,
+  o20: number,
+  o30: number,
+  nh: number,
+  packageRate: number,
+): number {
+  const beyond = Math.max(0, nh - 12);
+  const otH = packageRate / 14;
+  const otPay =
+    o15 * otH * 1.5 + o20 * otH * 2 + o30 * otH * 3 + beyond * otH * 1.5;
+  return round2(amount - otPay);
+}
+
 function isHolidayWorkDayFromSnapshotRow(
   row: Pick<
     PayrollBatchLineDailyRowSnapshot,
@@ -141,17 +173,25 @@ function isHolidayWorkDayFromSnapshotRow(
 ): boolean {
   const kind = row.restDayKind;
   if (kind === 'public_holiday' || kind === 'weekly_rest') return true;
+  if (kind === 'none') return false;
+
+  const pkg = Number(packageRatePerDay) || 0;
+  const amount = Number(row.amount) || 0;
+  const o15 = Math.max(0, Number(row.ot15Hours) || 0);
+  const o20 = Math.max(0, Number(row.ot20Hours) || 0);
+  const o30 = Math.max(0, Number(row.ot30Hours) || 0);
+  const nh = Math.max(0, Number(row.normalHours) || 0);
+  /** นักขัตฤกษ์ที่มี OT: ค่าแรงหลังหัก OT วันธรรมดายังสูงกว่าแพ็ก */
+  if (pkg > 0.005 && amount > 0.005) {
+    const labor = impliedLaborAfterWeekdayOt(amount, o15, o20, o30, nh, pkg);
+    if (labor > pkg * 1.08) return true;
+  }
+
   if (ymdLocalDow(row.date) === 0) return true;
 
-  /** งวดเก่าไม่มี restDayKind: ยอดเต็มวันสูงกว่าแพ็ก และไม่มีชม.OT แยก → นักขัตฤกษ์ */
-  const pkg = Number(packageRatePerDay) || 0;
+  const otHrs = o15 + o20 + o30;
+  const beyond12 = Math.max(0, nh - 12);
   if (pkg <= 0.005) return false;
-  const amount = Number(row.amount) || 0;
-  const otHrs =
-    Math.max(0, Number(row.ot15Hours) || 0) +
-    Math.max(0, Number(row.ot20Hours) || 0) +
-    Math.max(0, Number(row.ot30Hours) || 0);
-  const beyond12 = Math.max(0, (Number(row.normalHours) || 0) - 12);
   if (otHrs + beyond12 > 0.005) return false;
   return amount > pkg * 1.05;
 }
@@ -611,10 +651,13 @@ export function buildPositionSplitsFromDailyRowSnapshots(
     /** ชื่อตำแหน่งจาก master / splits ที่ generate ไว้ — เติมเมื่อ snapshot รายวันไม่มีชื่อ */
     positionNameById?: ReadonlyMap<string, string>;
     fallbackPositionName?: string;
+    /** ปฏิทิน HR กลาง — แยกวันหยุดนักขัตฤกษ์เหมือนกันทุกคน */
+    payrollRestSchedule?: PayrollRestDaySchedule | null;
   },
 ): PayslipWorkDayPositionSplit[] | null {
   if (!snaps?.length || pkgAmount <= 0.005) return null;
-  const work = snaps.filter(
+  const annotated = applyRestDayKindFromSchedule(snaps, opts?.payrollRestSchedule);
+  const work = annotated.filter(
     (s) => String(s.eventType || '') === 'work_day' && Number(s.amount) > 0.005,
   );
   if (!work.length) return null;
@@ -1046,6 +1089,7 @@ export function pushWorkDayPayslipIncomeLines(
   positionNameOpts?: {
     positionNameById?: ReadonlyMap<string, string>;
     fallbackPositionName?: string;
+    payrollRestSchedule?: PayrollRestDaySchedule | null;
   },
 ): boolean {
   const nameById = new Map<string, string>();
@@ -1067,7 +1111,10 @@ export function pushWorkDayPayslipIncomeLines(
   };
 
   /** รายวันในงวดเป็นแหล่งอัตราจริง (1800/2600) — ใช้ก่อน split เก่าที่อาจเฉลี่ย */
-  const fromSnaps = buildPositionSplitsFromDailyRowSnapshots(dailyRowSnapshots, pkgAmount, nameOpts);
+  const fromSnaps = buildPositionSplitsFromDailyRowSnapshots(dailyRowSnapshots, pkgAmount, {
+    ...nameOpts,
+    payrollRestSchedule: positionNameOpts?.payrollRestSchedule,
+  });
   if (fromSnaps && pushPositionWorkDaySplitLines(lines, fromSnaps, labelPrefix)) {
     return true;
   }

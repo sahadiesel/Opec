@@ -18,7 +18,8 @@ import {
 } from '@/lib/types';
 import { syntheticSalesContractTermFromMainContract } from '@/lib/commercial/synthetic-sales-contract-term';
 import { syntheticLaborCostContractTermFromMainContract } from '@/lib/commercial/synthetic-labor-cost-contract-term';
-import { parseISO, startOfDay, isBefore, isAfter, isSameDay } from 'date-fns';
+import { startOfDay, isBefore, isAfter, isSameDay } from 'date-fns';
+import { localNoonDateFromStoredYmd } from '@/lib/date-thai';
 
 /**
  * Standard result object for resolution attempts.
@@ -45,9 +46,9 @@ export function resolveMainContractBillingTerm(
     };
   }
   const term = syntheticSalesContractTermFromMainContract(mainContract, po);
-  const targetDate = startOfDay(parseISO(date));
-  const start = startOfDay(parseISO(term.effectiveDate));
-  const end = startOfDay(parseISO(term.endDate));
+  const targetDate = startOfDay(localNoonDateFromStoredYmd(date));
+  const start = startOfDay(localNoonDateFromStoredYmd(term.effectiveDate));
+  const end = startOfDay(localNoonDateFromStoredYmd(term.endDate));
   const inRange =
     (isAfter(targetDate, start) || isSameDay(targetDate, start)) &&
     (isBefore(targetDate, end) || isSameDay(targetDate, end));
@@ -74,14 +75,14 @@ export function resolveActiveSalesContractTerm(
   }
 ): ResolutionResult<SalesContractTerm> {
   const warnings: string[] = [];
-  const targetDate = startOfDay(parseISO(criteria.date));
+  const targetDate = startOfDay(localNoonDateFromStoredYmd(criteria.date));
 
   // 1. Filter by status and date effectiveness
   let applicable = terms.filter(t => t.status === 'ACTIVE');
   
   applicable = applicable.filter(t => {
-    const start = startOfDay(parseISO(t.effectiveDate));
-    const end = startOfDay(parseISO(t.endDate));
+    const start = startOfDay(localNoonDateFromStoredYmd(t.effectiveDate));
+    const end = startOfDay(localNoonDateFromStoredYmd(t.endDate));
     return (isAfter(targetDate, start) || isSameDay(targetDate, start)) && 
            (isBefore(targetDate, end) || isSameDay(targetDate, end));
   });
@@ -126,13 +127,13 @@ export function resolveActiveLaborCostContractTerm(
   }
 ): ResolutionResult<LaborCostContractTerm> {
   const warnings: string[] = [];
-  const targetDate = startOfDay(parseISO(criteria.date));
+  const targetDate = startOfDay(localNoonDateFromStoredYmd(criteria.date));
 
   let applicable = terms.filter(t => t.status === 'ACTIVE');
   
   applicable = applicable.filter(t => {
-    const start = startOfDay(parseISO(t.effectiveDate));
-    const end = startOfDay(parseISO(t.endDate));
+    const start = startOfDay(localNoonDateFromStoredYmd(t.effectiveDate));
+    const end = startOfDay(localNoonDateFromStoredYmd(t.endDate));
     return (isAfter(targetDate, start) || isSameDay(targetDate, start)) && 
            (isBefore(targetDate, end) || isSameDay(targetDate, end));
   });
@@ -200,7 +201,7 @@ export function resolveBestRateCondition(
     date: string;
   }
 ): ResolutionResult<RateCondition> {
-  const targetDate = startOfDay(parseISO(context.date));
+  const targetDate = startOfDay(localNoonDateFromStoredYmd(context.date));
 
   // 1. Initial Filtering (Type, Status, Mode, Date)
   let applicable = conditions.filter(c => 
@@ -210,8 +211,8 @@ export function resolveBestRateCondition(
   );
 
   applicable = applicable.filter(c => {
-    const start = startOfDay(parseISO(c.effectiveDate));
-    const end = c.endDate ? startOfDay(parseISO(c.endDate)) : null;
+    const start = startOfDay(localNoonDateFromStoredYmd(c.effectiveDate));
+    const end = c.endDate ? startOfDay(localNoonDateFromStoredYmd(c.endDate)) : null;
     return (isAfter(targetDate, start) || isSameDay(targetDate, start)) && 
            (!end || isBefore(targetDate, end) || isSameDay(targetDate, end));
   });

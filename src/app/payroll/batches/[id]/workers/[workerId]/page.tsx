@@ -32,6 +32,7 @@ import type {
   PayrollBatchLine,
   PayrollBatchLineDailyRowSnapshot,
   PayrollPeriod,
+  PayrollPolicyRecord,
   Position,
   User,
   WorkerPitCalculationMode,
@@ -49,7 +50,13 @@ import {
 import { PayrollService } from '@/lib/services/payroll-service';
 import { isLumpSumPayrollLine, LUMP_SUM_WHT_DEDUCTION_KEY } from '@/lib/payroll/lump-sum-worker';
 import { useToast } from '@/hooks/use-toast';
-import { formatDateThaiBE } from '@/lib/date-thai';
+import { coerceToGregorianYmd, formatYmdLocalThaiBE, thaiWeekdayNameFromYmd } from '@/lib/date-thai';
+import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import {
+  isHrSettingsCalendarHolidayYmd,
+  workerGlobalLaborContextFromPolicy,
+  workerGlobalLaborToPayrollRestSchedule,
+} from '@/lib/payroll/worker-global-labor-policy';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { WorkerLineSummaryCards } from '@/components/payroll/worker-line/worker-line-summary-cards';
 import { WorkerLinePriorPaidReference } from '@/components/payroll/worker-line/worker-line-prior-paid-reference';
@@ -97,7 +104,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
-const TH_WEEKDAYS = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์'];
 
 function snapToStandardMarginalRate(n: number): number {
   const rates = [...THAI_PIT_STANDARD_MARGINAL_RATE_PERCENTS] as number[];
@@ -106,9 +112,10 @@ function snapToStandardMarginalRate(n: number): number {
   return rates.reduce((best, x) => (Math.abs(x - v) < Math.abs(best - v) ? x : best), 35);
 }
 
-/** วันในสัปดาห์จาก YYYY-MM-DD แบบ local (สอดคล้อง package-labor-cost / สัญญา) */
+/** วันในสัปดาห์จากวันที่ที่เก็บในงวด (รองรับปี พ.ศ. ที่เก็บผิด) */
 function localWeekdayIndex(dateStr: string): number {
-  const parts = dateStr.split('-').map(Number);
+  const ymd = coerceToGregorianYmd(dateStr);
+  const parts = ymd.split('-').map(Number);
   const y = parts[0];
   const m = parts[1];
   const d = parts[2];
@@ -198,7 +205,26 @@ export default function PayrollBatchWorkerLinePage({
     () => (firestore && batch ? doc(firestore, 'payroll_periods', batch.payrollPeriodId) : null),
     [firestore, batch?.payrollPeriodId],
   );
+  const workerLaborPolicyRef = useMemoFirebase(
+    () =>
+      firestore && canViewBatch
+        ? doc(firestore, 'payroll_policies', HR_WORKER_GLOBAL_LABOR_POLICY_ID)
+        : null,
+    [firestore, canViewBatch],
+  );
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
+  const { data: workerLaborPolicyRec } = useDoc<PayrollPolicyRecord>(workerLaborPolicyRef as any);
+  const calendarHolidays = useMemo(
+    () => workerGlobalLaborContextFromPolicy(workerLaborPolicyRec).calendarHolidays,
+    [workerLaborPolicyRec],
+  );
+  const payrollRestSchedule = useMemo(
+    () =>
+      workerLaborPolicyRec
+        ? workerGlobalLaborToPayrollRestSchedule(workerGlobalLaborContextFromPolicy(workerLaborPolicyRec))
+        : undefined,
+    [workerLaborPolicyRec],
+  );
 
   const [timesheets, setTimesheets] = useState<DailyTimesheet[]>([]);
   /** false จนกว่าจะจำเป็นต้องโหลดใบงาน — งวดที่มี snapshot / จ่ายแล้วไม่ควรหมุนคำนวณตอนเปิด */
@@ -672,6 +698,7 @@ export default function PayrollBatchWorkerLinePage({
     purchaseOrderId?: string;
     remark?: string;
     fromAverage: boolean;
+    restDayKind?: PayrollBatchLineDailyRowSnapshot['restDayKind'];
   };
 
   /** แถวรายวัน — prefer snapshot ในงวด (เปิดหน้าทันที) */
@@ -698,6 +725,7 @@ export default function PayrollBatchWorkerLinePage({
           purchaseOrderId: s.purchaseOrderId,
           remark: s.remark,
           fromAverage: false,
+          restDayKind: s.restDayKind,
         }));
     }
     /** งวดจ่ายแล้วที่ไม่มี timesheetGrossById — อย่าโชว์แถวใบงานที่ยอดว่าง */
@@ -1183,6 +1211,7 @@ export default function PayrollBatchWorkerLinePage({
       {
         positionNameById: positionNameById.size > 0 ? positionNameById : undefined,
         fallbackPositionName,
+        payrollRestSchedule,
       },
     );
   }, [
@@ -1197,6 +1226,7 @@ export default function PayrollBatchWorkerLinePage({
     priorPaidRefs,
     poPartyLabelById,
     fallbackPositionName,
+    payrollRestSchedule,
   ]);
 
   /** ยอดที่แสดงทั้งหน้า = snapshot ในงวด (ตรงหน้า batch / ปุ่มสร้างงวด) */
@@ -1431,8 +1461,12 @@ export default function PayrollBatchWorkerLinePage({
                 </TableHeader>
                 <TableBody>
                   {dailyRows.map((row) => {
+                    const ymd = coerceToGregorianYmd(row.date);
                     const dow = localWeekdayIndex(row.date);
-                    const isSun = dow === 0;
+                    const isSun = dow === 0 || row.restDayKind === 'weekly_rest';
+                    const isPublicHoliday =
+                      row.restDayKind === 'public_holiday' ||
+                      isHrSettingsCalendarHolidayYmd(ymd || row.date, calendarHolidays);
                     const dayAmt = row.amount;
                     const usedAverageFallback = row.fromAverage;
                     const otBits = [
@@ -1451,11 +1485,19 @@ export default function PayrollBatchWorkerLinePage({
                           ? 'OFFSHORE'
                           : '');
                     return (
-                      <TableRow key={row.id} className={`${isSun ? 'bg-amber-50/80' : ''} h-9`}>
-                        <TableCell className="font-mono text-xs py-1.5">{formatDateThaiBE(row.date)}</TableCell>
+                      <TableRow
+                        key={row.id}
+                        className={`${isSun || isPublicHoliday ? 'bg-amber-50/80 hover:bg-amber-50/80' : ''} h-9`}
+                      >
+                        <TableCell className="font-mono text-xs py-1.5">{formatYmdLocalThaiBE(ymd || row.date)}</TableCell>
                         <TableCell className="leading-tight text-xs py-1.5">
-                          {TH_WEEKDAYS[dow]}
-                          {isSun && (
+                          {thaiWeekdayNameFromYmd(ymd || row.date) || '—'}
+                          {isPublicHoliday && (
+                            <Badge variant="secondary" className="ml-1.5 text-[9px] px-1 py-0">
+                              นักขัตฤกษ์
+                            </Badge>
+                          )}
+                          {isSun && !isPublicHoliday && (
                             <Badge variant="secondary" className="ml-1.5 text-[9px] px-1 py-0">
                               อาทิตย์
                             </Badge>

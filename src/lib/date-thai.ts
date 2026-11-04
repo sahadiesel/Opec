@@ -8,9 +8,31 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
+/**
+ * ปี พ.ศ. ที่ถูกเก็บผิดเป็น ค.ศ. ใน yyyy-mm-dd (≥ 2400)
+ * บางเบราว์เซอร์ไทยเขียนค่าจาก input type=date เป็นปี พ.ศ. แล้ว UI บวก 543 อีกครั้ง → ปี 31xx
+ */
+const BE_YEAR_STORED_AS_CE_THRESHOLD = 2400;
+
+function isDateOnlyString(s: string): boolean {
+  const t = s.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(t) || /^\d{1,2}[./]\d{1,2}[./]\d{4}$/.test(t);
+}
+
 function toDate(input: Date | number | string): Date | null {
   if (input == null || input === '') return null;
-  const d = input instanceof Date ? input : new Date(typeof input === 'number' ? input : input);
+  if (input instanceof Date) return Number.isNaN(input.getTime()) ? null : input;
+  if (typeof input === 'number') {
+    const d = new Date(input);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const s = String(input).trim();
+  if (!s) return null;
+  if (isDateOnlyString(s) || (/^\d{4}-\d{2}-\d{2}/.test(s) && !s.includes('T') && !s.includes(' '))) {
+    const ms = htmlDateValueToTimestampMs(s);
+    return ms != null ? new Date(ms) : null;
+  }
+  const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
@@ -65,7 +87,8 @@ export function timestampToHtmlDateValue(ms: number | null | undefined): string 
   if (ms == null || !Number.isFinite(ms)) return '';
   const d = new Date(ms);
   if (Number.isNaN(d.getTime())) return '';
-  const y = d.getFullYear();
+  let y = d.getFullYear();
+  while (y >= BE_YEAR_STORED_AS_CE_THRESHOLD) y -= 543;
   const m = pad2(d.getMonth() + 1);
   const day = pad2(d.getDate());
   return `${y}-${m}-${day}`;
@@ -149,12 +172,6 @@ export function formatStoredDateRangeThaiBE(
   return `${a} - ${b}`;
 }
 
-/**
- * ปี พ.ศ. ที่ถูกเก็บผิดเป็น ค.ศ. ใน yyyy-mm-dd (≥ 2400)
- * บางเบราว์เซอร์ไทยเขียนค่าจาก input type=date เป็นปี พ.ศ. แล้ว UI บวก 543 อีกครั้ง → ปี 31xx
- */
-const BE_YEAR_STORED_AS_CE_THRESHOLD = 2400;
-
 /** แปลง yyyy-mm-dd ที่อาจเป็นปี พ.ศ. ให้เป็น ค.ศ. สำหรับเก็บ/คำนวณ */
 export function normalizeStoredYmdToGregorian(ymd: string | null | undefined): string {
   const t = (ymd || '').trim();
@@ -168,10 +185,36 @@ export function normalizeStoredYmdToGregorian(ymd: string | null | undefined): s
   return `${y}-${m[2]}-${m[3]}`;
 }
 
+/**
+ * ดึง YYYY-MM-DD ค.ศ. จากค่าที่เก็บในระบบ (yyyy-mm-dd, ISO datetime, dd/mm/yyyy พ.ศ. หรือ ค.ศ.)
+ * ใช้จับวันหยุด HR Settings กับวันที่ timesheet โดยไม่ต้องแก้โค้ดทุกเดือน
+ */
+export function coerceToGregorianYmd(input: string | null | undefined): string {
+  const t = String(input ?? '').trim();
+  if (!t) return '';
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(t);
+  if (iso) return normalizeStoredYmdToGregorian(`${iso[1]}-${iso[2]}-${iso[3]}`);
+  const dmy = /^(\d{1,2})[./](\d{1,2})[./](\d{4})$/.exec(t);
+  if (!dmy) return '';
+  const dd = dmy[1].padStart(2, '0');
+  const mm = dmy[2].padStart(2, '0');
+  return normalizeStoredYmdToGregorian(`${dmy[3]}-${mm}-${dd}`);
+}
+
+export function gregorianYmdsEqual(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const x = coerceToGregorianYmd(a);
+  const y = coerceToGregorianYmd(b);
+  return Boolean(x) && x === y;
+}
+
 /** แปลง yyyy-mm-dd (local) → timestamp เที่ยงวัน — ใช้กับ DatePickerThaiBE โดยเก็บสตริงเดิมใน Firestore */
 export function htmlDateValueToTimestampMs(iso: string | null | undefined): number | undefined {
   if (iso == null || iso === '') return undefined;
-  const normalized = normalizeStoredYmdToGregorian(iso);
+  const normalized =
+    coerceToGregorianYmd(iso) || normalizeStoredYmdToGregorian(String(iso).trim().slice(0, 10));
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(normalized);
   if (!m) return undefined;
   const y = Number(m[1]);
@@ -179,6 +222,23 @@ export function htmlDateValueToTimestampMs(iso: string | null | undefined): numb
   const d = Number(m[3]);
   const dt = new Date(y, mo - 1, d, 12, 0, 0, 0);
   return Number.isNaN(dt.getTime()) ? undefined : dt.getTime();
+}
+
+/** เที่ยงวัน local จากวันที่ที่เก็บในระบบ — ใช้แทน `parseISO('yyyy-mm-dd')` ที่ตีความเป็น UTC */
+export function localNoonDateFromStoredYmd(input: string | null | undefined): Date {
+  const ms = htmlDateValueToTimestampMs(input);
+  return ms != null ? new Date(ms) : new Date(NaN);
+}
+
+/** YYYY-MM ที่อาจเป็นปี พ.ศ. → ค.ศ. */
+export function normalizeStoredYmToGregorian(ym: string | null | undefined): string {
+  const t = (ym || '').trim();
+  const m = /^(\d{4})-(\d{2})$/.exec(t);
+  if (!m) return t;
+  let y = Number(m[1]);
+  if (!Number.isFinite(y)) return t;
+  while (y >= BE_YEAR_STORED_AS_CE_THRESHOLD) y -= 543;
+  return `${y}-${m[2]}`;
 }
 
 /** dd/mm/yyyy (ค.ศ.) — สำหรับเอกสารพิมพ์ภาษาอังกฤษ */
@@ -218,7 +278,7 @@ const PAYROLL_YM = /^(\d{4})-(\d{2})$/;
  * สำหรับคอลัมน์ "ประจำเดือน" ใน office payroll
  */
 export function formatPayrollYearMonthEnAbbrev(ym: string | null | undefined, empty: string = '—'): string {
-  const s = (ym || '').trim();
+  const s = normalizeStoredYmToGregorian(ym);
   const m = PAYROLL_YM.exec(s);
   if (!m) return empty;
   const y = Number(m[1]);
@@ -230,7 +290,7 @@ export function formatPayrollYearMonthEnAbbrev(ym: string | null | undefined, em
 
 /** งวดเงินเดือน YYYY-MM → ชื่อเดือนไทย + ปี พ.ศ. เช่น พฤษภาคม 2569 */
 export function formatPayrollYearMonthThaiBE(ym: string | null | undefined, empty: string = '—'): string {
-  const s = (ym || '').trim();
+  const s = normalizeStoredYmToGregorian(ym);
   const m = PAYROLL_YM.exec(s);
   if (!m) return empty;
   const y = Number(m[1]);
@@ -243,7 +303,7 @@ export function formatPayrollYearMonthThaiBE(ym: string | null | undefined, empt
 
 /** งวดเงินเดือน YYYY-MM → เดือน/ปี พ.ศ. ตัวเลข เช่น 07/2569 (ไม่มีวัน) */
 export function formatPayrollYearMonthMmYyyyThaiBE(ym: string | null | undefined, empty: string = '—'): string {
-  const s = (ym || '').trim();
+  const s = normalizeStoredYmToGregorian(ym);
   const m = PAYROLL_YM.exec(s);
   if (!m) return empty;
   const y = Number(m[1]);
@@ -274,7 +334,7 @@ export function coerceStoredDateToMs(input: unknown): number | undefined {
   }
   if (typeof input === 'string') {
     const t = input.trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return htmlDateValueToTimestampMs(t);
+    if (/^\d{4}-\d{2}-\d{2}/.test(t) && !t.includes('T')) return htmlDateValueToTimestampMs(t);
     const parsed = Date.parse(t);
     if (Number.isFinite(parsed)) return parsed;
     return undefined;

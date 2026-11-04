@@ -6,6 +6,7 @@ import { doc, getDoc, type Firestore } from 'firebase/firestore';
 import type { Assignment, PayrollBatchLine, PayrollPolicyRecord, Worker } from '@/lib/types';
 import { effectiveWorkerJobStatus } from '@/lib/ops/worker-effective-job-status';
 import { HR_LUMP_SUM_WORKER_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import { coerceToGregorianYmd } from '@/lib/date-thai';
 import {
   DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT,
   type WorkerGlobalLaborContext,
@@ -117,7 +118,7 @@ function laborFromPolicyConfig(
     for (const row of rawHolidays) {
       if (!row || typeof row !== 'object') continue;
       const r = row as Record<string, unknown>;
-      const date = String(r.date || '').trim();
+      const date = coerceToGregorianYmd(String(r.date || '').trim());
       const label = String(r.label || '').trim();
       if (!date || !label) continue;
       calendarHolidays.push({ date, label });
