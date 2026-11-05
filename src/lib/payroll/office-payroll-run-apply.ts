@@ -220,7 +220,11 @@ export async function applyStandardOfficeRunLines(
       preStatutoryDeductions: payrollPreStatutoryDeductions,
     });
 
-    const cashAdvanceRecovery = await fetchOfficeStaffCashAdvancesPendingSalaryRecovery(firestore, staff.id);
+    const cashAdvanceRecovery = await fetchOfficeStaffCashAdvancesPendingSalaryRecovery(
+      firestore,
+      staff.id,
+      run.payrollMonth,
+    );
     const withCashAdvance = applyCashAdvanceRecoveryToOfficeD8Line(d8, cashAdvanceRecovery);
     if (withCashAdvance.advanceIds.length > 0) {
       advanceIdsToLink.push(...withCashAdvance.advanceIds);

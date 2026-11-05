@@ -8,8 +8,13 @@ import {
 } from '@/lib/payroll/employee-assistance-fund';
 import { DEFAULT_MONTHLY_WORK_NORM } from '@/lib/hr/monthly-work-norm-policy';
 import { DEFAULT_ANNUAL_PERSONAL_ALLOWANCE } from '@/lib/payroll/employee-payroll-deductions';
-import { HR_STATUTORY_POLICY_MONTHLY_WORK_ID, HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import {
+  HR_OFFICE_ONSHORE_LABOR_POLICY_ID,
+  HR_STATUTORY_POLICY_MONTHLY_WORK_ID,
+  HR_WORKER_GLOBAL_LABOR_POLICY_ID,
+} from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import { DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT } from '@/lib/payroll/worker-global-labor-policy';
+import { DEFAULT_OFFICE_ONSHORE_LABOR_CONTEXT } from '@/lib/payroll/office-onshore-labor-policy';
 import type { PayrollPolicyRecord } from '@/lib/types';
 
 /** ค่าเริ่มต้นเมื่อยังไม่มีเอกสารใน `payroll_policies` */
@@ -28,6 +33,23 @@ export function embeddedDefaultPayrollPolicies(): PayrollPolicyRecord[] {
         costMultipliers: { ...DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT.cost },
         weeklyRestPattern: DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT.weeklyRestPattern,
         calendarHolidays: DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT.calendarHolidays,
+      },
+      createdAt: t,
+      updatedAt: t,
+    },
+    {
+      id: HR_OFFICE_ONSHORE_LABOR_POLICY_ID,
+      kind: 'office_onshore_labor' as const,
+      name: 'Office + onshore worker payroll — shared calendar & split multipliers (embedded default)',
+      effectiveFrom: '2000-01-01',
+      effectiveTo: null,
+      status: 'active' as const,
+      appliesTo: 'all' as const,
+      config: {
+        weeklyRestPattern: DEFAULT_OFFICE_ONSHORE_LABOR_CONTEXT.weeklyRestPattern,
+        calendarHolidays: DEFAULT_OFFICE_ONSHORE_LABOR_CONTEXT.calendarHolidays,
+        officeMultipliers: { ...DEFAULT_OFFICE_ONSHORE_LABOR_CONTEXT.office },
+        costMultipliers: { ...DEFAULT_OFFICE_ONSHORE_LABOR_CONTEXT.workerCost },
       },
       createdAt: t,
       updatedAt: t,

@@ -1,5 +1,5 @@
 /**
- * ตัวคูณ + ปฏิทินวันหยุดฝั่งต้นทุนลูกจ้าง — แหล่งความจริงเดียวจาก HR Settings (`payroll_policies/policy_worker_global_labor`)
+ * ตัวคูณ + ปฏิทินวันหยุดฝั่งต้นทุนลูกจ้างบริษัท Offshore — HR Settings (`payroll_policies/policy_worker_global_labor`)
  */
 import { doc, getDoc, type Firestore } from 'firebase/firestore';
 import type { PayrollPolicyRecord } from '@/lib/types';

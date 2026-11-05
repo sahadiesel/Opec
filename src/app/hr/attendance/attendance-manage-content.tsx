@@ -133,15 +133,12 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
-import {
-  HR_STATUTORY_POLICY_MONTHLY_WORK_ID,
-  HR_WORKER_GLOBAL_LABOR_POLICY_ID,
-} from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import { HR_STATUTORY_POLICY_MONTHLY_WORK_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import {
   hrSettingsCalendarHolidayLabelForYmd,
   isHrSettingsCalendarHolidayYmd,
-  workerGlobalLaborContextFromPolicy,
 } from '@/lib/payroll/worker-global-labor-policy';
+import { useOfficeOnshoreRest } from '@/hooks/use-office-onshore-rest';
 import { monthlyWorkNormFromPolicyRecord } from '@/lib/payroll/office-payroll-period-deductions';
 import type { PayrollPolicyRecord } from '@/lib/types';
 
@@ -252,18 +249,10 @@ export function HrAttendanceManagePageContent() {
     [],
   );
 
-  /** อ่าน HR Settings — วันหยุดประจำสัปดาห์ + วันหยุดในปฏิทิน (แหล่งความจริงเดียวกับ HR Settings) */
-  const workerGlobalLaborRef = useMemoFirebase(
-    () => (firestore ? doc(firestore as Firestore, 'payroll_policies', HR_WORKER_GLOBAL_LABOR_POLICY_ID) : null),
-    [firestore],
-  );
-  const { data: workerGlobalLaborPolicy } = useDoc<PayrollPolicyRecord>(workerGlobalLaborRef as any);
-  const workerGlobalLabor = useMemo(
-    () => workerGlobalLaborContextFromPolicy(workerGlobalLaborPolicy ?? null),
-    [workerGlobalLaborPolicy],
-  );
-  const weeklyRestPattern: WeeklyRestPatternForCalendar = workerGlobalLabor.weeklyRestPattern;
-  const calendarHolidays = workerGlobalLabor.calendarHolidays;
+  /** อ่าน HR Settings — ปฏิทินร่วมออฟฟิศ + ลูกจ้าง Onshore */
+  const officeOnshoreRest = useOfficeOnshoreRest();
+  const weeklyRestPattern: WeeklyRestPatternForCalendar = officeOnshoreRest.weeklyRestPattern;
+  const calendarHolidays = officeOnshoreRest.calendarHolidays;
 
   const monthlyWorkNormPolicyRef = useMemoFirebase(
     () => (firestore ? doc(firestore as Firestore, 'payroll_policies', HR_STATUTORY_POLICY_MONTHLY_WORK_ID) : null),

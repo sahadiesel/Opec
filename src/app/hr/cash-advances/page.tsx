@@ -33,6 +33,7 @@ import { useToast } from '@/hooks/use-toast';
 import { canView } from '@/lib/permissions';
 import { getEffectiveSimpleRole } from '@/lib/simple-tier-model';
 import { formatDateThaiBE } from '@/lib/date-thai';
+import { cashAdvanceDocumentYearMonth } from '@/lib/payroll/cash-advance-recovery';
 import {
   buildYearCeOptions,
   currentMonthMm,
@@ -52,8 +53,14 @@ import {
 import { openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 
 function cashAdvanceRowMonthYm(r: CashAdvanceRequest): string | null {
-  if (!r.createdAt) return null;
-  return new Date(r.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }).slice(0, 7);
+  return cashAdvanceDocumentYearMonth(r);
+}
+
+function cashAdvanceListDateMs(r: CashAdvanceRequest): number | null {
+  const paid = Number(r.paidAt);
+  if (Number.isFinite(paid) && paid > 0) return paid;
+  const created = Number(r.createdAt);
+  return Number.isFinite(created) && created > 0 ? created : null;
 }
 
 function statusBadge(status: CashAdvanceStatus) {
@@ -84,7 +91,7 @@ function originLabel(origin: CashAdvanceRequest['origin']): string {
 function buildCashAdvancePrintRow(r: CashAdvanceRequest): CashAdvanceListPrintRow {
   return {
     requestNo: r.requestNo,
-    dateLabel: formatDateThaiBE(r.createdAt),
+    dateLabel: formatDateThaiBE(cashAdvanceListDateMs(r)),
     subjectName: r.subjectNameSnapshot,
     subjectTypeLabel: subjectTypeLabel(r.subjectType),
     amountLabel: `฿${Number(r.amountBaht || 0).toLocaleString('th-TH')}`,
@@ -359,7 +366,9 @@ function HrCashAdvancesPageContent() {
                         onClick={() => router.push(`/hr/cash-advances/${r.id}`)}
                       >
                         <TableCell className="px-3 py-2.5 font-mono text-xs font-semibold">{r.requestNo}</TableCell>
-                        <TableCell className="whitespace-nowrap px-3 py-2.5 text-sm">{formatDateThaiBE(r.createdAt)}</TableCell>
+                        <TableCell className="whitespace-nowrap px-3 py-2.5 text-sm">
+                          {formatDateThaiBE(cashAdvanceListDateMs(r))}
+                        </TableCell>
                         <TableCell className="px-3 py-2.5">{r.subjectNameSnapshot}</TableCell>
                         <TableCell className="px-3 py-2.5">{subjectTypeLabel(r.subjectType)}</TableCell>
                         <TableCell className="px-3 py-2.5 text-right font-medium">

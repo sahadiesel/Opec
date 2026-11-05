@@ -22,6 +22,7 @@ export function buildPayrollLineDailyRowSnapshots(
     posById?: DailySnapshotPositionLookup;
     /** HR rest schedule — ติด restDayKind ให้สลิปแยกวันหยุดนักขัตฤกษ์ได้ */
     payrollRestSchedule?: PayrollRestDaySchedule;
+    payrollRestScheduleForTimesheet?: (ts: DailyTimesheet) => PayrollRestDaySchedule | undefined;
   },
 ): PayrollBatchLineDailyRowSnapshot[] {
   const sorted = [...timesheets].sort((a, b) => String(a.date).localeCompare(String(b.date)));
@@ -52,10 +53,13 @@ export function buildPayrollLineDailyRowSnapshots(
     if (ot20 > 0) row.ot20Hours = ot20;
     if (ot30 > 0) row.ot30Hours = ot30;
     if (holiday > 0) row.holidayHours = holiday;
-    if (opts?.payrollRestSchedule && ts.eventType === 'work_day') {
-      const rest = resolvePayrollRestDay(date, opts.payrollRestSchedule);
-      if (rest.kind === 'public_holiday' || rest.kind === 'weekly_rest') {
-        row.restDayKind = rest.kind;
+    if (ts.eventType === 'work_day') {
+      const sched = opts?.payrollRestScheduleForTimesheet?.(ts) ?? opts?.payrollRestSchedule;
+      if (sched) {
+        const rest = resolvePayrollRestDay(date, sched);
+        if (rest.kind === 'public_holiday' || rest.kind === 'weekly_rest') {
+          row.restDayKind = rest.kind;
+        }
       }
     }
     const poId = (ts.purchaseOrderId || '').trim();

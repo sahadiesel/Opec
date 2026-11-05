@@ -11,6 +11,7 @@ import {
   loadPayrollPoWorkModeMap,
   buildPoWorkModeMapFromPurchaseOrders,
   resolvePoLineForPayrollTimesheet,
+  timesheetToLaborWorkMode,
   type PayrollPoLineMaps,
 } from '@/lib/payroll/timesheet-labor-base-cost';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
@@ -20,6 +21,10 @@ import {
   fetchLumpSumWorkerLaborContextFromFirestore,
   laborContextForWorker,
 } from '@/lib/payroll/lump-sum-worker';
+import {
+  fetchOfficeOnshoreLaborContextFromFirestore,
+  onshoreWorkerLaborContextFromOfficeOnshore,
+} from '@/lib/payroll/office-onshore-labor-policy';
 
 export type SingleTimesheetGrossContext = {
   contractMap: Map<string, MainContract>;
@@ -30,6 +35,7 @@ export type SingleTimesheetGrossContext = {
   posById: Map<string, Position>;
   workerGlobalLabor: WorkerGlobalLaborContext;
   lumpSumLabor: WorkerGlobalLaborContext;
+  onshoreLabor?: WorkerGlobalLaborContext;
 };
 
 /** Gross หนึ่งใบ — สอดคล้อง loop ใน PayrollService.generatePayrollBatch */
@@ -47,7 +53,13 @@ export function computeSingleTimesheetGrossLikeBatch(
     contractMap: ctx.contractMap,
     poContractById: ctx.poContractById,
     poWorkModeByPoId: ctx.poWorkModeByPoId,
-    workerGlobalLabor: laborContextForWorker(wk, ctx.workerGlobalLabor, ctx.lumpSumLabor),
+    workerGlobalLabor: laborContextForWorker(
+      wk,
+      ctx.workerGlobalLabor,
+      ctx.lumpSumLabor,
+      ctx.onshoreLabor,
+      timesheetToLaborWorkMode(ts, ctx.poWorkModeByPoId),
+    ),
   });
   return r.gross > 0 ? r.gross : null;
 }
@@ -101,9 +113,10 @@ export async function buildSingleTimesheetGrossContext(
     }),
   );
 
-  const [workerGlobalLabor, lumpSumLabor] = await Promise.all([
+  const [workerGlobalLabor, lumpSumLabor, officeOnshoreCtx] = await Promise.all([
     fetchWorkerGlobalLaborContextFromFirestore(db),
     fetchLumpSumWorkerLaborContextFromFirestore(db),
+    fetchOfficeOnshoreLaborContextFromFirestore(db),
   ]);
 
   return {
@@ -115,5 +128,6 @@ export async function buildSingleTimesheetGrossContext(
     posById,
     workerGlobalLabor,
     lumpSumLabor,
+    onshoreLabor: onshoreWorkerLaborContextFromOfficeOnshore(officeOnshoreCtx),
   };
 }

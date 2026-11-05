@@ -45,9 +45,41 @@ function isRecoveryBatchEligible(
   return false;
 }
 
+/**
+ * เดือนที่ใช้หักคืนเงินเดือน = เดือนที่จ่ายเงินเบิก (Petty/โอน) ตามเวลาไทย
+ * ยังไม่จ่าย → ใช้วันที่สร้างเอกสาร
+ */
+export function cashAdvanceDocumentYearMonth(r: Pick<CashAdvanceRequest, 'createdAt' | 'paidAt'>): string | null {
+  const fromPaid = bangkokYearMonthFromMs(Number(r.paidAt));
+  if (fromPaid) return fromPaid;
+  return bangkokYearMonthFromMs(Number(r.createdAt));
+}
+
+function bangkokYearMonthFromMs(ms: number): string | null {
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const ym = new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }).slice(0, 7);
+  return /^\d{4}-\d{2}$/.test(ym) ? ym : null;
+}
+
+/**
+ * หักคืนในงวดเงินเดือนเดือนที่จ่ายเงินเบิก (หรือเดือนก่อนหน้าที่ยังไม่หัก)
+ * จ่าย พ.ย. ห้ามไปหักงวด ต.ค. — รอหักในงวด พ.ย.
+ */
+export function cashAdvanceEligibleForPayrollMonth(
+  r: Pick<CashAdvanceRequest, 'createdAt' | 'paidAt'>,
+  payrollYearMonth: string | null | undefined,
+): boolean {
+  const payrollYm = String(payrollYearMonth || '').trim().slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(payrollYm)) return false;
+  const advanceYm = cashAdvanceDocumentYearMonth(r);
+  if (!advanceYm) return false;
+  return advanceYm <= payrollYm;
+}
+
 function collectEligibleCashAdvanceRows(
   docs: Array<{ id: string; data: () => object }>,
   filter: (r: CashAdvanceRequest) => boolean,
+  payrollYearMonth: string | null | undefined,
   payrollRecoveryBatchId?: string | null,
 ): CashAdvanceRecoveryRow[] {
   const eligible = new Set(CASH_ADVANCE_STATUSES_ELIGIBLE_FOR_SALARY_RECOVERY);
@@ -58,6 +90,7 @@ function collectEligibleCashAdvanceRows(
     if (!eligible.has(r.status)) continue;
     if (!isRecoveryBatchEligible(r, payrollRecoveryBatchId)) continue;
     if (!isCashAdvancePaidForRecovery(r)) continue;
+    if (!cashAdvanceEligibleForPayrollMonth(r, payrollYearMonth)) continue;
     const amt = Math.max(0, Number(r.amountBaht) || 0);
     if (amt <= 0) continue;
     advances.push({ id: r.id, requestNo: r.requestNo || r.id, amountBaht: amt });
@@ -71,6 +104,8 @@ function collectEligibleCashAdvanceRows(
 export async function fetchWorkerCashAdvancesPendingSalaryRecovery(
   db: Firestore,
   workerId: string,
+  payrollYearMonth: string | null | undefined,
+  payrollRecoveryBatchId?: string | null,
 ): Promise<{ total: number; advances: CashAdvanceRecoveryRow[] }> {
   const snap = await getDocs(
     query(collection(db, 'cash_advance_requests'), where('workerId', '==', workerId)),
@@ -78,6 +113,8 @@ export async function fetchWorkerCashAdvancesPendingSalaryRecovery(
   const advances = collectEligibleCashAdvanceRows(
     snap.docs,
     (r) => r.subjectType === 'worker',
+    payrollYearMonth,
+    payrollRecoveryBatchId,
   );
   const total = round2Payroll(advances.reduce((s, a) => s + a.amountBaht, 0));
   return { total, advances };
@@ -87,12 +124,17 @@ export async function fetchWorkerCashAdvancesPendingSalaryRecovery(
 export async function fetchWorkerCashAdvancesPendingSalaryRecoveryForWorkers(
   db: Firestore,
   workerIds: readonly string[],
+  payrollYearMonth: string | null | undefined,
+  payrollRecoveryBatchId?: string | null,
 ): Promise<Map<string, { total: number; advances: CashAdvanceRecoveryRow[] }>> {
   const ids = [...new Set(workerIds.map((id) => String(id || '').trim()).filter(Boolean))];
   const out = new Map<string, { total: number; advances: CashAdvanceRecoveryRow[] }>();
   await Promise.all(
     ids.map(async (workerId) => {
-      out.set(workerId, await fetchWorkerCashAdvancesPendingSalaryRecovery(db, workerId));
+      out.set(
+        workerId,
+        await fetchWorkerCashAdvancesPendingSalaryRecovery(db, workerId, payrollYearMonth, payrollRecoveryBatchId),
+      );
     }),
   );
   return out;
@@ -105,6 +147,7 @@ export async function fetchWorkerCashAdvancesPendingSalaryRecoveryForWorkers(
 export async function fetchOfficeStaffCashAdvancesPendingSalaryRecovery(
   db: Firestore,
   officeStaffId: string,
+  payrollYearMonth: string | null | undefined,
   payrollRecoveryBatchId?: string | null,
 ): Promise<{ total: number; advances: CashAdvanceRecoveryRow[] }> {
   const snap = await getDocs(
@@ -113,6 +156,7 @@ export async function fetchOfficeStaffCashAdvancesPendingSalaryRecovery(
   const advances = collectEligibleCashAdvanceRows(
     snap.docs,
     (r) => r.subjectType !== 'worker' && r.officeStaffId === officeStaffId,
+    payrollYearMonth,
     payrollRecoveryBatchId,
   );
   const total = round2Payroll(advances.reduce((s, a) => s + a.amountBaht, 0));
@@ -210,4 +254,36 @@ export async function linkCashAdvancesToPayrollRecoveryBatch(
     }
   }
   if (n > 0) await wb.commit();
+}
+
+/**
+ * คำนวณใหม่รายคน — ผูกเบิกที่หักในงวดนี้ และปลดเบิกเดือนถัดไปที่เคยถูกผูกผิด
+ */
+export async function syncWorkerCashAdvancesForPayrollBatch(
+  db: Firestore,
+  batchId: string,
+  workerId: string,
+  nextAdvanceIds: string[],
+): Promise<void> {
+  const keep = new Set(nextAdvanceIds.map((id) => String(id || '').trim()).filter(Boolean));
+  const snap = await getDocs(
+    query(collection(db, 'cash_advance_requests'), where('workerId', '==', workerId)),
+  );
+  const now = Date.now();
+  let wb = writeBatch(db);
+  let n = 0;
+  for (const d of snap.docs) {
+    const r = d.data() as CashAdvanceRequest;
+    if (r.payrollRecoveryBatchId !== batchId) continue;
+    if (keep.has(d.id)) continue;
+    wb.update(d.ref, { payrollRecoveryBatchId: deleteField(), updatedAt: now });
+    n++;
+    if (n >= 400) {
+      await wb.commit();
+      wb = writeBatch(db);
+      n = 0;
+    }
+  }
+  if (n > 0) await wb.commit();
+  await linkCashAdvancesToPayrollRecoveryBatch(db, batchId, [...keep]);
 }

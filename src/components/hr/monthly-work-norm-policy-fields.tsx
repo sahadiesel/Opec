@@ -47,6 +47,8 @@ export type MonthlyWorkNormPolicyFieldsProps = {
   showThreePeriodRules?: boolean;
   /** หมายเหตุด้านล่าง (เช่น ที่เก็บใน Firestore) */
   footerNote?: ReactNode;
+  /** ย้ายตัวคูณ A/B/C ไปตารางพนักงานออฟฟิศและลูกจ้าง Onshore */
+  hideOfficeHolidayMultipliers?: boolean;
 };
 
 export function MonthlyWorkNormPolicyFields({
@@ -76,6 +78,7 @@ export function MonthlyWorkNormPolicyFields({
   hideAbsenceDemo,
   showThreePeriodRules,
   footerNote,
+  hideOfficeHolidayMultipliers,
 }: MonthlyWorkNormPolicyFieldsProps) {
   const preview: MonthlyWorkNormPolicyConfig = {
     standardWorkingDaysPerMonth: workDaysPerMonth,
@@ -340,6 +343,7 @@ export function MonthlyWorkNormPolicyFields({
             perMinute={absenceDemoRates.perMinute}
           />
         </div>
+        {!hideOfficeHolidayMultipliers && (
         <div className="grid gap-3 sm:col-span-2 rounded-md border border-dashed bg-muted/40 px-3 py-3 sm:grid-cols-3">
           <div className="grid gap-2">
             <Label className="text-muted-foreground">
@@ -395,6 +399,7 @@ export function MonthlyWorkNormPolicyFields({
             </p>
           </div>
         </div>
+        )}
       </div>
 
       <div className="rounded-md border bg-background px-3 py-2 text-sm space-y-1">

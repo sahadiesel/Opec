@@ -50,6 +50,7 @@ import {
   HR_STATUTORY_POLICY_SSO_ID,
   HR_STATUTORY_POLICY_TAX_OFFICE_ID,
   HR_WORKER_GLOBAL_LABOR_POLICY_ID,
+  HR_OFFICE_ONSHORE_LABOR_POLICY_ID,
   HR_LUMP_SUM_WORKER_LABOR_POLICY_ID,
 } from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import {
@@ -64,6 +65,11 @@ import {
   lumpSumLaborContextFromPolicy,
   lumpSumWithholdingRatePercentFromPolicy,
 } from '@/lib/payroll/lump-sum-worker';
+import {
+  DEFAULT_OFFICE_ONSHORE_LABOR_CONTEXT,
+  officeOnshoreLaborContextFromPolicy,
+  type OfficeOnshoreLaborContext,
+} from '@/lib/payroll/office-onshore-labor-policy';
 import { WEEKLY_REST_OPTIONS } from '@/lib/contract-position-rate-extras';
 import { CalendarHolidayEditor } from '@/app/main-contracts/[id]/_components/calendar-holiday-editor';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -149,7 +155,7 @@ function CompactLaborMultInput({
       min={0}
       max={max}
       disabled={disabled}
-      className="font-mono h-8 w-full max-w-[4.5rem] px-2 text-right tabular-nums"
+      className="font-mono h-8 w-full min-w-0 px-1.5 text-right tabular-nums"
       value={value}
       onChange={(e) => onChange(Number(e.target.value) || 0)}
     />
@@ -161,15 +167,15 @@ function LaborMultiplierFieldList({
   cost,
   disabled,
   onChange,
-  columns = 3,
+  columns = 5,
 }: {
   fields: readonly { key: keyof WorkerGlobalLaborCostMultipliers; label: string }[];
   cost: WorkerGlobalLaborCostMultipliers;
   disabled?: boolean;
   onChange: (key: keyof WorkerGlobalLaborCostMultipliers, value: number) => void;
-  columns?: 3 | 4;
+  columns?: 4 | 5;
 }) {
-  const gridClass = columns === 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2 sm:grid-cols-3';
+  const gridClass = columns === 4 ? 'grid-cols-4' : 'grid-cols-5';
   return (
     <div className={`grid ${gridClass} gap-x-3 gap-y-2`}>
       {fields.map((f) => (
@@ -343,17 +349,14 @@ export default function HrSettingsPage() {
   const [latePenaltyBands, setLatePenaltyBands] = useState<OfficeLatePenaltyBand[]>(() =>
     DEFAULT_OFFICE_LATE_PENALTY_BANDS.map((b) => ({ ...b })),
   );
-  const [officeHolidayNormalWorkMultiplier, setOfficeHolidayNormalWorkMultiplier] = useState(
-    DEFAULT_MONTHLY_WORK_NORM.officeHolidayNormalWorkMultiplier ?? 1.0,
-  );
-  const [officeWeekdayOvertimeMultiplier, setOfficeWeekdayOvertimeMultiplier] = useState(
-    DEFAULT_MONTHLY_WORK_NORM.officeWeekdayOvertimeMultiplier ?? 1.5,
-  );
-  const [officeHolidayOvertimeMultiplier, setOfficeHolidayOvertimeMultiplier] = useState(
-    DEFAULT_MONTHLY_WORK_NORM.officeHolidayOvertimeMultiplier ?? 1.5,
-  );
   /** เงินเดือนสมมุติเพื่อแสดงตัวอย่างหักรายวัน/รายนาที (ไม่บันทึก) */
   const [absenceDemoSalary, setAbsenceDemoSalary] = useState(26000);
+
+  const [officeOnshoreDraft, setOfficeOnshoreDraft] = useState<OfficeOnshoreLaborContext>(() => ({
+    ...DEFAULT_OFFICE_ONSHORE_LABOR_CONTEXT,
+    workerCost: { ...DEFAULT_OFFICE_ONSHORE_LABOR_CONTEXT.workerCost },
+    calendarHolidays: [],
+  }));
 
   const [workerLaborDraft, setWorkerLaborDraft] = useState<WorkerGlobalLaborContext>(() => ({
     ...DEFAULT_WORKER_GLOBAL_LABOR_CONTEXT,
@@ -433,12 +436,28 @@ export default function HrSettingsPage() {
         setLatePenaltyBands(
           (cfg.latePenaltyBands ?? DEFAULT_OFFICE_LATE_PENALTY_BANDS).map((b) => ({ ...b })),
         );
-        setOfficeHolidayNormalWorkMultiplier(cfg.officeHolidayNormalWorkMultiplier ?? 1.0);
-        setOfficeWeekdayOvertimeMultiplier(cfg.officeWeekdayOvertimeMultiplier ?? 1.5);
-        setOfficeHolidayOvertimeMultiplier(cfg.officeHolidayOvertimeMultiplier ?? 1.5);
       }
       const wlRec = policies.find((p) => p.id === HR_WORKER_GLOBAL_LABOR_POLICY_ID);
-      setWorkerLaborDraft(workerGlobalLaborContextFromPolicy(wlRec ?? null));
+      const wlCtx = workerGlobalLaborContextFromPolicy(wlRec ?? null);
+      setWorkerLaborDraft(wlCtx);
+      const ooRec = policies.find((p) => p.id === HR_OFFICE_ONSHORE_LABOR_POLICY_ID);
+      if (ooRec) {
+        setOfficeOnshoreDraft(officeOnshoreLaborContextFromPolicy(ooRec));
+      } else {
+        const mwCfg = mw?.config
+          ? monthlyWorkNormFromUnknownConfig(mw.config as Record<string, unknown>)
+          : DEFAULT_MONTHLY_WORK_NORM;
+        setOfficeOnshoreDraft({
+          weeklyRestPattern: wlCtx.weeklyRestPattern,
+          calendarHolidays: wlCtx.calendarHolidays,
+          office: {
+            holidayNormal: mwCfg.officeHolidayNormalWorkMultiplier ?? 1,
+            weekdayOt: mwCfg.officeWeekdayOvertimeMultiplier ?? 1.5,
+            holidayOt: mwCfg.officeHolidayOvertimeMultiplier ?? 1.5,
+          },
+          workerCost: { ...wlCtx.cost },
+        });
+      }
       const lsRec = policies.find((p) => p.id === HR_LUMP_SUM_WORKER_LABOR_POLICY_ID);
       setLumpSumLaborDraft(lumpSumLaborContextFromPolicy(lsRec ?? null));
       setLumpSumWhtRatePercent(lumpSumWithholdingRatePercentFromPolicy(lsRec ?? null));
@@ -578,23 +597,23 @@ export default function HrSettingsPage() {
       latePenaltyBands,
       officeHolidayNormalWorkMultiplier: Math.max(
         0.5,
-        Math.min(10, Number(officeHolidayNormalWorkMultiplier) || 1),
+        Math.min(10, Number(officeOnshoreDraft.office.holidayNormal) || 1),
       ),
       officeWeekdayOvertimeMultiplier: Math.max(
         0.5,
-        Math.min(10, Number(officeWeekdayOvertimeMultiplier) || 1.5),
+        Math.min(10, Number(officeOnshoreDraft.office.weekdayOt) || 1.5),
       ),
       officeHolidayOvertimeMultiplier: Math.max(
         0.5,
-        Math.min(10, Number(officeHolidayOvertimeMultiplier) || 1.5),
+        Math.min(10, Number(officeOnshoreDraft.office.holidayOt) || 1.5),
       ),
       officeOvertimeHourMultiplier: Math.max(
         0.5,
-        Math.min(10, Number(officeWeekdayOvertimeMultiplier) || 1.5),
+        Math.min(10, Number(officeOnshoreDraft.office.weekdayOt) || 1.5),
       ),
       officeHolidayHourMultiplier: Math.max(
         0.5,
-        Math.min(10, Number(officeHolidayNormalWorkMultiplier) || 1),
+        Math.min(10, Number(officeOnshoreDraft.office.holidayNormal) || 1),
       ),
     };
     const mwErr = validateMonthlyWorkNormForSave(monthlyWorkCfg);
@@ -610,13 +629,15 @@ export default function HrSettingsPage() {
       const taxRef = doc(firestore, 'payroll_policies', HR_STATUTORY_POLICY_TAX_OFFICE_ID);
       const mwRef = doc(firestore, 'payroll_policies', HR_STATUTORY_POLICY_MONTHLY_WORK_ID);
       const wlRef = doc(firestore, 'payroll_policies', HR_WORKER_GLOBAL_LABOR_POLICY_ID);
+      const ooRef = doc(firestore, 'payroll_policies', HR_OFFICE_ONSHORE_LABOR_POLICY_ID);
       const lsRef = doc(firestore, 'payroll_policies', HR_LUMP_SUM_WORKER_LABOR_POLICY_ID);
       const leaveRef = doc(firestore, HR_CONFIGURATION_COLLECTION, HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID);
-      const [ssoPrev, taxPrev, mwPrev, wlPrev, lsPrev, leavePrev] = await Promise.all([
+      const [ssoPrev, taxPrev, mwPrev, wlPrev, ooPrev, lsPrev, leavePrev] = await Promise.all([
         getDoc(ssoRef),
         getDoc(taxRef),
         getDoc(mwRef),
         getDoc(wlRef),
+        getDoc(ooRef),
         getDoc(lsRef),
         getDoc(leaveRef),
       ]);
@@ -635,6 +656,10 @@ export default function HrSettingsPage() {
       const wlCreated =
         wlPrev.exists() && typeof wlPrev.data()?.createdAt === 'number'
           ? (wlPrev.data()!.createdAt as number)
+          : now;
+      const ooCreated =
+        ooPrev.exists() && typeof ooPrev.data()?.createdAt === 'number'
+          ? (ooPrev.data()!.createdAt as number)
           : now;
       const lsCreated =
         lsPrev.exists() && typeof lsPrev.data()?.createdAt === 'number'
@@ -701,10 +726,28 @@ export default function HrSettingsPage() {
         createdAt: mwCreated,
       };
 
+      const officeOnshoreLaborPolicy: PayrollPolicyRecord = {
+        id: HR_OFFICE_ONSHORE_LABOR_POLICY_ID,
+        kind: 'office_onshore_labor',
+        name: 'Office staff + onshore worker — shared holiday calendar & split multipliers (HR settings)',
+        effectiveFrom: '2000-01-01',
+        effectiveTo: null,
+        status: 'active',
+        appliesTo: 'all',
+        config: {
+          weeklyRestPattern: officeOnshoreDraft.weeklyRestPattern,
+          calendarHolidays: officeOnshoreDraft.calendarHolidays,
+          officeMultipliers: { ...officeOnshoreDraft.office },
+          costMultipliers: { ...officeOnshoreDraft.workerCost },
+        },
+        updatedAt: now,
+        createdAt: ooCreated,
+      };
+
       const workerLaborPolicy: PayrollPolicyRecord = {
         id: HR_WORKER_GLOBAL_LABOR_POLICY_ID,
         kind: 'worker_global_labor',
-        name: 'Worker payroll — global OT/holiday multipliers & calendar (HR settings)',
+        name: 'Offshore company worker payroll — OT/holiday multipliers & calendar (HR settings)',
         effectiveFrom: '2000-01-01',
         effectiveTo: null,
         status: 'active',
@@ -741,6 +784,7 @@ export default function HrSettingsPage() {
       await setDoc(taxRef, { ...taxPolicy }, { merge: true });
       await setDoc(mwRef, { ...monthlyWorkPolicy }, { merge: true });
       await setDoc(wlRef, { ...workerLaborPolicy }, { merge: true });
+      await setDoc(ooRef, { ...officeOnshoreLaborPolicy }, { merge: true });
       await setDoc(lsRef, { ...lumpSumLaborPolicy }, { merge: true });
 
       const leavePayload: OfficeLeaveEntitlementsDoc = {
@@ -758,6 +802,7 @@ export default function HrSettingsPage() {
           taxData: taxPrev.exists() ? (taxPrev.data() as Record<string, unknown>) : null,
           monthlyWorkData: mwPrev.exists() ? (mwPrev.data() as Record<string, unknown>) : null,
           workerLaborData: wlPrev.exists() ? (wlPrev.data() as Record<string, unknown>) : null,
+          officeOnshoreLaborData: ooPrev.exists() ? (ooPrev.data() as Record<string, unknown>) : null,
           lumpSumLaborData: lsPrev.exists() ? (lsPrev.data() as Record<string, unknown>) : null,
           leaveData: leavePrev.exists() ? (leavePrev.data() as Record<string, unknown>) : null,
         }),
@@ -774,6 +819,7 @@ export default function HrSettingsPage() {
         leaveSick: leavePayload.sickDaysPerYear,
         leaveAnnual: leavePayload.annualVacationDaysPerYear,
         workerLabor: workerLaborDraft,
+        officeOnshoreLabor: officeOnshoreDraft,
         lumpSumLabor: lumpSumLaborDraft,
         lumpSumWhtRatePercent: lumpRate,
       });
@@ -966,15 +1012,22 @@ export default function HrSettingsPage() {
                   onLateGraceMinutes={setLateGraceMinutes}
                   latePenaltyBands={latePenaltyBands}
                   onLatePenaltyBands={setLatePenaltyBands}
-                  officeHolidayNormalWorkMultiplier={officeHolidayNormalWorkMultiplier}
-                  onOfficeHolidayNormalWorkMultiplier={setOfficeHolidayNormalWorkMultiplier}
-                  officeWeekdayOvertimeMultiplier={officeWeekdayOvertimeMultiplier}
-                  onOfficeWeekdayOvertimeMultiplier={setOfficeWeekdayOvertimeMultiplier}
-                  officeHolidayOvertimeMultiplier={officeHolidayOvertimeMultiplier}
-                  onOfficeHolidayOvertimeMultiplier={setOfficeHolidayOvertimeMultiplier}
+                  officeHolidayNormalWorkMultiplier={officeOnshoreDraft.office.holidayNormal}
+                  onOfficeHolidayNormalWorkMultiplier={(v) =>
+                    setOfficeOnshoreDraft((d) => ({ ...d, office: { ...d.office, holidayNormal: v } }))
+                  }
+                  officeWeekdayOvertimeMultiplier={officeOnshoreDraft.office.weekdayOt}
+                  onOfficeWeekdayOvertimeMultiplier={(v) =>
+                    setOfficeOnshoreDraft((d) => ({ ...d, office: { ...d.office, weekdayOt: v } }))
+                  }
+                  officeHolidayOvertimeMultiplier={officeOnshoreDraft.office.holidayOt}
+                  onOfficeHolidayOvertimeMultiplier={(v) =>
+                    setOfficeOnshoreDraft((d) => ({ ...d, office: { ...d.office, holidayOt: v } }))
+                  }
                   absenceDemoSalary={absenceDemoSalary}
                   onAbsenceDemoSalary={setAbsenceDemoSalary}
                   hideAbsenceDemo
+                  hideOfficeHolidayMultipliers
                   showThreePeriodRules
                   footerNote={
                     <>
@@ -1092,9 +1145,9 @@ export default function HrSettingsPage() {
                 breakStartTime,
                 lateGraceMinutes,
                 latePenaltyBands,
-                officeHolidayNormalWorkMultiplier,
-                officeWeekdayOvertimeMultiplier,
-                officeHolidayOvertimeMultiplier,
+                officeHolidayNormalWorkMultiplier: officeOnshoreDraft.office.holidayNormal,
+                officeWeekdayOvertimeMultiplier: officeOnshoreDraft.office.weekdayOt,
+                officeHolidayOvertimeMultiplier: officeOnshoreDraft.office.holidayOt,
               })}
             />
 
@@ -1372,15 +1425,113 @@ export default function HrSettingsPage() {
           </CardContent>
         </Card>
 
+        <Card className="border-sky-200/80">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-sky-700 shrink-0" />
+              พนักงานออฟฟิศและลูกจ้างแบบ Onshore
+            </CardTitle>
+            <CardDescription>
+              ปฏิทินวันหยุดร่วม · ตัวคูณพนักงานออฟฟิศ (A/B/C) แยกจากตัวคูณลูกจ้าง Onshore — ไม่ใช้กับลูกจ้างบริษัท Offshore และลูกจ้างแบบเหมา
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5 text-sm">
+            <div className="space-y-1.5">
+              <Label className="text-[11px] font-semibold text-foreground">ตัวคูณพนักงานออฟฟิศ</Label>
+              <div className="grid gap-3 rounded-md border bg-sky-50/50 dark:bg-sky-950/20 px-3 py-3 sm:grid-cols-3">
+                <div className="space-y-1 min-w-0">
+                  <Label className="text-[10px] text-muted-foreground font-normal leading-tight">
+                    A. ทำงานวันหยุด/อาทิตย์ (เวลาปกติ)
+                  </Label>
+                  <CompactLaborMultInput
+                    value={officeOnshoreDraft.office.holidayNormal}
+                    disabled={loading || !canEdit}
+                    onChange={(n) =>
+                      setOfficeOnshoreDraft((d) => ({ ...d, office: { ...d.office, holidayNormal: n } }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1 min-w-0">
+                  <Label className="text-[10px] text-muted-foreground font-normal leading-tight">
+                    B. OT วันทำงานปกติ
+                  </Label>
+                  <CompactLaborMultInput
+                    value={officeOnshoreDraft.office.weekdayOt}
+                    disabled={loading || !canEdit}
+                    onChange={(n) =>
+                      setOfficeOnshoreDraft((d) => ({ ...d, office: { ...d.office, weekdayOt: n } }))
+                    }
+                  />
+                </div>
+                <div className="space-y-1 min-w-0">
+                  <Label className="text-[10px] text-muted-foreground font-normal leading-tight">
+                    C. OT วันหยุด/อาทิตย์
+                  </Label>
+                  <CompactLaborMultInput
+                    value={officeOnshoreDraft.office.holidayOt}
+                    disabled={loading || !canEdit}
+                    onChange={(n) =>
+                      setOfficeOnshoreDraft((d) => ({ ...d, office: { ...d.office, holidayOt: n } }))
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-[11px] font-semibold text-foreground">ตัวคูณลูกจ้าง Onshore</Label>
+              <LaborMultiplierFieldList
+                fields={LABOR_OT_MULT_FIELDS}
+                cost={officeOnshoreDraft.workerCost}
+                disabled={loading || !canEdit}
+                columns={5}
+                onChange={(key, value) =>
+                  setOfficeOnshoreDraft((d) => ({ ...d, workerCost: { ...d.workerCost, [key]: value } }))
+                }
+              />
+              <LaborMultiplierFieldList
+                fields={LABOR_EVENT_MULT_FIELDS}
+                cost={officeOnshoreDraft.workerCost}
+                disabled={loading || !canEdit}
+                columns={4}
+                onChange={(key, value) =>
+                  setOfficeOnshoreDraft((d) => ({ ...d, workerCost: { ...d.workerCost, [key]: value } }))
+                }
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-[11px] font-semibold">รูปแบบวันหยุดประจำสัปดาห์ (ร่วม)</Label>
+              <LaborWeeklyRestSelect
+                disabled={loading || !canEdit}
+                value={officeOnshoreDraft.weeklyRestPattern}
+                onChange={(v) => setOfficeOnshoreDraft((d) => ({ ...d, weeklyRestPattern: v }))}
+              />
+            </div>
+
+            <CalendarHolidayEditor
+              title="วันหยุดในปฏิทิน (ร่วมออฟฟิศ + Onshore)"
+              disabled={loading || !canEdit}
+              holidays={officeOnshoreDraft.calendarHolidays}
+              setHolidays={(fn) =>
+                setOfficeOnshoreDraft((d) => ({
+                  ...d,
+                  calendarHolidays: typeof fn === 'function' ? fn(d.calendarHolidays) : d.calendarHolidays,
+                }))
+              }
+            />
+          </CardContent>
+        </Card>
+
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-stretch">
           <Card className="border-muted flex flex-col h-full">
             <CardHeader className="pb-3">
               <CardTitle className="text-base flex items-center gap-2">
                 <CalendarDays className="h-5 w-5 text-primary shrink-0" />
-                ลูกจ้างบริษัท
+                ลูกจ้างบริษัท (Offshore)
               </CardTitle>
               <CardDescription className="min-h-[3.25rem]">
-                ตัวคูณต้นทุนค่าจ้างทุกสัญญา (OT / วันหยุด / เสาร์–อาทิตย์) — ไม่ใช้กับลูกจ้างแบบเหมา และไม่ใช้กับพนักงานออฟฟิศ
+                ตัวคูณและปฏิทินวันหยุดจ่ายค่าแรงลูกจ้างบริษัท Offshore เท่านั้น — ไม่ใช้กับออฟฟิศ Onshore และลูกจ้างแบบเหมา
               </CardDescription>
             </CardHeader>
             <CardContent className="flex-1 space-y-4 text-sm">
@@ -1405,6 +1556,7 @@ export default function HrSettingsPage() {
                   fields={LABOR_OT_MULT_FIELDS}
                   cost={workerLaborDraft.cost}
                   disabled={loading || !canEdit}
+                  columns={5}
                   onChange={(key, value) =>
                     setWorkerLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: value } }))
                   }
@@ -1484,6 +1636,7 @@ export default function HrSettingsPage() {
                   fields={LABOR_OT_MULT_FIELDS}
                   cost={lumpSumLaborDraft.cost}
                   disabled={loading || !canEdit}
+                  columns={5}
                   onChange={(key, value) =>
                     setLumpSumLaborDraft((d) => ({ ...d, cost: { ...d.cost, [key]: value } }))
                   }

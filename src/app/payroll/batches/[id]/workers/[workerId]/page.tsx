@@ -48,15 +48,28 @@ import {
   retroAdjustmentsToPriorPeriodItemsWithPay,
 } from '@/lib/services/timesheet-retro-adjustment-service';
 import { PayrollService } from '@/lib/services/payroll-service';
-import { isLumpSumPayrollLine, LUMP_SUM_WHT_DEDUCTION_KEY } from '@/lib/payroll/lump-sum-worker';
+import {
+  fetchLumpSumWorkerLaborContextFromFirestore,
+  isLumpSumPayrollLine,
+  LUMP_SUM_WHT_DEDUCTION_KEY,
+  payrollRestScheduleForTimesheet,
+} from '@/lib/payroll/lump-sum-worker';
 import { useToast } from '@/hooks/use-toast';
 import { coerceToGregorianYmd, formatYmdLocalThaiBE, thaiWeekdayNameFromYmd } from '@/lib/date-thai';
-import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import {
+  HR_OFFICE_ONSHORE_LABOR_POLICY_ID,
+  HR_WORKER_GLOBAL_LABOR_POLICY_ID,
+} from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import {
   isHrSettingsCalendarHolidayYmd,
   workerGlobalLaborContextFromPolicy,
   workerGlobalLaborToPayrollRestSchedule,
 } from '@/lib/payroll/worker-global-labor-policy';
+import {
+  fetchOfficeOnshoreLaborContextFromFirestore,
+  officeOnshoreLaborContextFromPolicy,
+  onshoreWorkerLaborContextFromOfficeOnshore,
+} from '@/lib/payroll/office-onshore-labor-policy';
 import { PayslipDialog } from '@/components/payroll/payslip-dialog';
 import { WorkerLineSummaryCards } from '@/components/payroll/worker-line/worker-line-summary-cards';
 import { WorkerLinePriorPaidReference } from '@/components/payroll/worker-line/worker-line-prior-paid-reference';
@@ -212,12 +225,24 @@ export default function PayrollBatchWorkerLinePage({
         : null,
     [firestore, canViewBatch],
   );
+  const officeOnshorePolicyRef = useMemoFirebase(
+    () =>
+      firestore && canViewBatch
+        ? doc(firestore, 'payroll_policies', HR_OFFICE_ONSHORE_LABOR_POLICY_ID)
+        : null,
+    [firestore, canViewBatch],
+  );
   const { data: period } = useDoc<PayrollPeriod>(periodRef as any);
   const { data: workerLaborPolicyRec } = useDoc<PayrollPolicyRecord>(workerLaborPolicyRef as any);
+  const { data: officeOnshorePolicyRec } = useDoc<PayrollPolicyRecord>(officeOnshorePolicyRef as any);
   const calendarHolidays = useMemo(
     () => workerGlobalLaborContextFromPolicy(workerLaborPolicyRec).calendarHolidays,
     [workerLaborPolicyRec],
   );
+  const onshoreCalendarHolidays = useMemo(() => {
+    if (!officeOnshorePolicyRec) return calendarHolidays;
+    return officeOnshoreLaborContextFromPolicy(officeOnshorePolicyRec).calendarHolidays;
+  }, [officeOnshorePolicyRec, calendarHolidays]);
   const payrollRestSchedule = useMemo(
     () =>
       workerLaborPolicyRec
@@ -604,15 +629,25 @@ export default function PayrollBatchWorkerLinePage({
         const { loadWorkersAndPositionsForPayroll } = await import(
           '@/lib/payroll/timesheet-labor-base-cost'
         );
-        const { fetchWorkerGlobalLaborContextFromFirestore, workerGlobalLaborToPayrollRestSchedule } =
+        const { fetchWorkerGlobalLaborContextFromFirestore } =
           await import('@/lib/payroll/worker-global-labor-policy');
         const { posById } = await loadWorkersAndPositionsForPayroll(firestore, timesheets);
         if (cancelled) return;
-        const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(firestore);
+        const [workerGlobalLabor, lumpSumLabor, officeOnshoreCtx] = await Promise.all([
+          fetchWorkerGlobalLaborContextFromFirestore(firestore),
+          fetchLumpSumWorkerLaborContextFromFirestore(firestore),
+          fetchOfficeOnshoreLaborContextFromFirestore(firestore),
+        ]);
         if (cancelled) return;
+        const officeOnshoreLabor = onshoreWorkerLaborContextFromOfficeOnshore(officeOnshoreCtx);
         const snaps = buildPayrollLineDailyRowSnapshots(timesheets, line.timesheetGrossById, {
           posById,
-          payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
+          payrollRestScheduleForTimesheet: (ts) =>
+            payrollRestScheduleForTimesheet(ts, undefined, {
+              offshore: workerGlobalLabor,
+              onshore: officeOnshoreLabor,
+              lumpSum: lumpSumLabor,
+            }),
         });
         if (cancelled || !isUsableDailyRowSnapshots(snaps, line.grossAmount)) return;
         await updateDoc(lineRef as any, {
@@ -658,15 +693,25 @@ export default function PayrollBatchWorkerLinePage({
         const { loadWorkersAndPositionsForPayroll } = await import(
           '@/lib/payroll/timesheet-labor-base-cost'
         );
-        const { fetchWorkerGlobalLaborContextFromFirestore, workerGlobalLaborToPayrollRestSchedule } =
+        const { fetchWorkerGlobalLaborContextFromFirestore } =
           await import('@/lib/payroll/worker-global-labor-policy');
         const { posById } = await loadWorkersAndPositionsForPayroll(firestore, tsList);
         if (cancelled) return;
-        const workerGlobalLabor = await fetchWorkerGlobalLaborContextFromFirestore(firestore);
+        const [workerGlobalLabor, lumpSumLabor, officeOnshoreCtx] = await Promise.all([
+          fetchWorkerGlobalLaborContextFromFirestore(firestore),
+          fetchLumpSumWorkerLaborContextFromFirestore(firestore),
+          fetchOfficeOnshoreLaborContextFromFirestore(firestore),
+        ]);
         if (cancelled) return;
+        const officeOnshoreLabor = onshoreWorkerLaborContextFromOfficeOnshore(officeOnshoreCtx);
         const nextSnaps = buildPayrollLineDailyRowSnapshots(tsList, line.timesheetGrossById, {
           posById,
-          payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(workerGlobalLabor),
+          payrollRestScheduleForTimesheet: (ts) =>
+            payrollRestScheduleForTimesheet(ts, undefined, {
+              offshore: workerGlobalLabor,
+              onshore: officeOnshoreLabor,
+              lumpSum: lumpSumLabor,
+            }),
         });
         if (!isUsableDailyRowSnapshots(nextSnaps, line.grossAmount)) return;
         await updateDoc(lineRef as any, {
@@ -1464,9 +1509,12 @@ export default function PayrollBatchWorkerLinePage({
                     const ymd = coerceToGregorianYmd(row.date);
                     const dow = localWeekdayIndex(row.date);
                     const isSun = dow === 0 || row.restDayKind === 'weekly_rest';
+                    const rowHolidays = String(row.workMode || '').toUpperCase().includes('ON')
+                      ? onshoreCalendarHolidays
+                      : calendarHolidays;
                     const isPublicHoliday =
                       row.restDayKind === 'public_holiday' ||
-                      isHrSettingsCalendarHolidayYmd(ymd || row.date, calendarHolidays);
+                      isHrSettingsCalendarHolidayYmd(ymd || row.date, rowHolidays);
                     const dayAmt = row.amount;
                     const usedAverageFallback = row.fromAverage;
                     const otBits = [

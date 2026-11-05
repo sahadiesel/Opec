@@ -14,7 +14,7 @@ import { formatPriorPeriodAllowancePayslipLabel } from '@/lib/payroll/prior-peri
 import { formatDateThaiBE, formatOfficePayrollRunPeriodLabelThaiBE, formatYmdLocalThaiBE, formatYmdRangeThaiBE } from '@/lib/date-thai';
 import { leaveSummaryLabelTh } from '@/lib/payroll/office-payroll-period-deductions';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
-import { resolvePoLineForPayrollTimesheet } from '@/lib/payroll/timesheet-labor-base-cost';
+import { resolvePoLineForPayrollTimesheet, timesheetToLaborWorkMode } from '@/lib/payroll/timesheet-labor-base-cost';
 import { isPayrollCostStandbyPackageEvent, payrollStandbyPackageEventUnits, type PayrollRestDaySchedule } from '@/lib/payroll/package-labor-cost';
 import {
   computeWorkDayPackagePayslipPositionSplits,
@@ -683,7 +683,13 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
         contractMap: ctx.contractMap,
         poContractById: ctx.poContractById,
         poWorkModeByPoId: ctx.poWorkModeByPoId,
-        workerGlobalLabor: laborContextForWorker(wk, ctx.workerGlobalLabor, ctx.lumpSumLabor),
+        workerGlobalLabor: laborContextForWorker(
+          wk,
+          ctx.workerGlobalLabor,
+          ctx.lumpSumLabor,
+          ctx.onshoreLabor,
+          timesheetToLaborWorkMode(ts, ctx.poWorkModeByPoId),
+        ),
       });
       if (r.gross <= 0) continue;
 
@@ -734,7 +740,10 @@ export function buildWorkerPayslipIncomeLinesFromTimesheets(
         ctx.workerById.get(group[0]?.workerId || ''),
         ctx.workerGlobalLabor,
         ctx.lumpSumLabor,
+        ctx.onshoreLabor,
       ),
+      onshoreLabor: ctx.onshoreLabor,
+      lumpSumLabor: ctx.lumpSumLabor,
     };
     const split = seg?.payslipWorkDaySplit ?? computeWorkDayPackagePayslipSplit(group, aggDeps, undefined);
     const positionSplits =

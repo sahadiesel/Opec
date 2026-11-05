@@ -75,15 +75,12 @@ import {
   officeLeaveDateRangeLabelTh,
 } from '@/lib/documents/office-leave-request-list-print';
 import { monthlyWorkNormFromPolicyRecord } from '@/lib/payroll/office-payroll-period-deductions';
-import {
-  HR_STATUTORY_POLICY_MONTHLY_WORK_ID,
-  HR_WORKER_GLOBAL_LABOR_POLICY_ID,
-} from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import { HR_STATUTORY_POLICY_MONTHLY_WORK_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import {
   hrSettingsCalendarHolidayLabelForYmd,
   isHrSettingsCalendarHolidayYmd,
-  workerGlobalLaborContextFromPolicy,
 } from '@/lib/payroll/worker-global-labor-policy';
+import { useOfficeOnshoreRest } from '@/hooks/use-office-onshore-rest';
 import type { OfficeStaff, PayrollPolicyRecord, User } from '@/lib/types';
 
 function hmOrDash(ms: number | null | undefined): string {
@@ -125,15 +122,7 @@ function AttendanceDayDetailPageContent() {
   );
   const { data: staff, isLoading: staffLoading } = useDoc<OfficeStaff>(staffRef as any);
 
-  const workerGlobalLaborRef = useMemoFirebase(
-    () => (firestore ? doc(firestore as Firestore, 'payroll_policies', HR_WORKER_GLOBAL_LABOR_POLICY_ID) : null),
-    [firestore],
-  );
-  const { data: workerGlobalLaborPolicy } = useDoc<PayrollPolicyRecord>(workerGlobalLaborRef as any);
-  const workerGlobalLabor = useMemo(
-    () => workerGlobalLaborContextFromPolicy(workerGlobalLaborPolicy ?? null),
-    [workerGlobalLaborPolicy],
-  );
+  const workerGlobalLabor = useOfficeOnshoreRest();
 
   const monthlyWorkNormPolicyRef = useMemoFirebase(
     () => (firestore ? doc(firestore as Firestore, 'payroll_policies', HR_STATUTORY_POLICY_MONTHLY_WORK_ID) : null),

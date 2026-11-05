@@ -51,13 +51,20 @@ import { DEFAULT_MONTHLY_WORK_NORM, otHoursFromWorkNormHmRange } from '@/lib/hr/
 import { monthlyWorkNormFromPolicyRecord } from '@/lib/payroll/office-payroll-period-deductions';
 import { formatDateThaiBE } from '@/lib/date-thai';
 import { loadPayrollPoliciesFromFirestore, resolvePayrollPoliciesForDate } from '@/lib/payroll/d8';
-import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import {
+  HR_OFFICE_ONSHORE_LABOR_POLICY_ID,
+  HR_WORKER_GLOBAL_LABOR_POLICY_ID,
+} from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import {
   computeOfficeOvertimePayForApprovedRequest,
   isOfficeRestOrHolidayDay,
 } from '@/lib/payroll/office-overtime-pay';
 import { validateOfficeOvertimeHmRange } from '@/lib/payroll/office-overtime-interval-pay';
-import { workerGlobalLaborContextFromPolicy } from '@/lib/payroll/worker-global-labor-policy';
+import {
+  officeOnshoreLaborContextFromPolicy,
+  overlayOfficeMultipliersOnMonthlyWorkNorm,
+  resolveOfficeOnshoreRestFromPolicies,
+} from '@/lib/payroll/office-onshore-labor-policy';
 
 export default function AttendanceOvertimeApprovalPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -71,7 +78,7 @@ export default function AttendanceOvertimeApprovalPage() {
     Record<string, { start: string; end: string; hours: string }>
   >({});
   const [normByAsOf, setNormByAsOf] = useState<Record<string, ReturnType<typeof monthlyWorkNormFromPolicyRecord>>>({});
-  const [laborCtxLoaded, setLaborCtxLoaded] = useState<ReturnType<typeof workerGlobalLaborContextFromPolicy> | null>(
+  const [laborCtxLoaded, setLaborCtxLoaded] = useState<ReturnType<typeof resolveOfficeOnshoreRestFromPolicies> | null>(
     null,
   );
 
@@ -123,7 +130,8 @@ export default function AttendanceOvertimeApprovalPage() {
     if (!firestore || laborCtxLoaded) return laborCtxLoaded;
     const policies = await loadPayrollPoliciesFromFirestore(firestore);
     const laborRec = policies.find((p) => p.id === HR_WORKER_GLOBAL_LABOR_POLICY_ID) ?? null;
-    const ctx = workerGlobalLaborContextFromPolicy(laborRec);
+    const officeRec = policies.find((p) => p.id === HR_OFFICE_ONSHORE_LABOR_POLICY_ID) ?? null;
+    const ctx = resolveOfficeOnshoreRestFromPolicies(officeRec, laborRec);
     setLaborCtxLoaded(ctx);
     return ctx;
   }
@@ -132,7 +140,14 @@ export default function AttendanceOvertimeApprovalPage() {
     if (!firestore || normByAsOf[asOfYmd]) return normByAsOf[asOfYmd];
     const policies = await loadPayrollPoliciesFromFirestore(firestore);
     const resolved = resolvePayrollPoliciesForDate(asOfYmd, policies, 'office');
-    const norm = monthlyWorkNormFromPolicyRecord(resolved.monthlyWorkNorm);
+    const officeRec = policies.find((p) => p.id === HR_OFFICE_ONSHORE_LABOR_POLICY_ID) ?? null;
+    let norm = monthlyWorkNormFromPolicyRecord(resolved.monthlyWorkNorm);
+    if (officeRec) {
+      norm = overlayOfficeMultipliersOnMonthlyWorkNorm(
+        norm,
+        officeOnshoreLaborContextFromPolicy(officeRec).office,
+      );
+    }
     setNormByAsOf((prev) => ({ ...prev, [asOfYmd]: norm }));
     return norm;
   }
@@ -180,7 +195,7 @@ export default function AttendanceOvertimeApprovalPage() {
       }
 
       const norm = (await loadNormForDate(row.workDateYmd)) ?? monthlyWorkNormFromPolicyRecord(null);
-      const laborCtx = (await loadLaborContext()) ?? workerGlobalLaborContextFromPolicy(null);
+      const laborCtx = (await loadLaborContext()) ?? resolveOfficeOnshoreRestFromPolicies(null, null);
       const isHoliday = isOfficeRestOrHolidayDay(
         row.workDateYmd,
         laborCtx.weeklyRestPattern,

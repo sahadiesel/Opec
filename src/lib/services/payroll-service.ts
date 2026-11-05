@@ -94,10 +94,15 @@ import {
   resolvePoLineForPayrollTimesheet,
   resolveEffectivePayrollContractId,
   resolveEffectivePayrollJobMode,
+  timesheetToLaborWorkMode,
   buildPayrollLaborResolutionSnapshotForTimesheets,
 } from '@/lib/payroll/timesheet-labor-base-cost';
 import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-worker-timesheet-gross';
-import { fetchWorkerGlobalLaborContextFromFirestore, workerGlobalLaborToPayrollRestSchedule } from '@/lib/payroll/worker-global-labor-policy';
+import { fetchWorkerGlobalLaborContextFromFirestore } from '@/lib/payroll/worker-global-labor-policy';
+import {
+  fetchOfficeOnshoreLaborContextFromFirestore,
+  onshoreWorkerLaborContextFromOfficeOnshore,
+} from '@/lib/payroll/office-onshore-labor-policy';
 import {
   applyLumpSumStatutoryDeductions,
   fetchLumpSumWorkerLaborContextFromFirestore,
@@ -105,6 +110,7 @@ import {
   isLumpSumPayrollLine,
   isLumpSumWorker,
   laborContextForWorker,
+  payrollRestScheduleForTimesheet,
 } from '@/lib/payroll/lump-sum-worker';
 import {
   calendarYearMonthFromPeriodStart,
@@ -132,6 +138,7 @@ import {
   fetchOfficeStaffCashAdvancesPendingSalaryRecovery,
   fetchWorkerCashAdvancesPendingSalaryRecovery,
   fetchWorkerCashAdvancesPendingSalaryRecoveryForWorkers,
+  syncWorkerCashAdvancesForPayrollBatch,
 } from '@/lib/payroll/cash-advance-recovery';
 import { normalizeTimesheetsForPayrollLine } from '@/lib/payroll/dedupe-timesheets-for-payroll';
 import {
@@ -634,10 +641,12 @@ export class PayrollService {
       timesheets,
     );
 
-    const [workerGlobalLabor, lumpSumLabor] = await Promise.all([
+    const [workerGlobalLabor, lumpSumLabor, officeOnshoreCtx] = await Promise.all([
       fetchWorkerGlobalLaborContextFromFirestore(this.db),
       fetchLumpSumWorkerLaborContextFromFirestore(this.db),
+      fetchOfficeOnshoreLaborContextFromFirestore(this.db),
     ]);
+    const officeOnshoreLabor = onshoreWorkerLaborContextFromOfficeOnshore(officeOnshoreCtx);
 
     const workerTsMap: Record<string, DailyTimesheet[]> = {};
     timesheets.forEach((ts) => {
@@ -664,7 +673,13 @@ export class PayrollService {
           contractMap,
           poContractById,
           poWorkModeByPoId,
-          workerGlobalLabor: laborContextForWorker(wk, workerGlobalLabor, lumpSumLabor),
+          workerGlobalLabor: laborContextForWorker(
+            wk,
+            workerGlobalLabor,
+            lumpSumLabor,
+            officeOnshoreLabor,
+            timesheetToLaborWorkMode(ts, poWorkModeByPoId),
+          ),
         });
         if (r.gross > 0) {
           hasAnyRate = true;
@@ -849,11 +864,13 @@ export class PayrollService {
 
     const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, monthTimesheets);
 
-    const [workerGlobalLabor, lumpSumLabor, lumpSumWhtRate] = await Promise.all([
+    const [workerGlobalLabor, lumpSumLabor, lumpSumWhtRate, officeOnshoreCtx] = await Promise.all([
       fetchWorkerGlobalLaborContextFromFirestore(this.db),
       fetchLumpSumWorkerLaborContextFromFirestore(this.db),
       fetchLumpSumWithholdingRatePercentFromFirestore(this.db),
+      fetchOfficeOnshoreLaborContextFromFirestore(this.db),
     ]);
+    const officeOnshoreLabor = onshoreWorkerLaborContextFromOfficeOnshore(officeOnshoreCtx);
 
     await ensurePositionsLoadedForTimesheets(this.db, monthTimesheets, posById);
 
@@ -921,7 +938,11 @@ export class PayrollService {
         );
         return map;
       })(),
-      fetchWorkerCashAdvancesPendingSalaryRecoveryForWorkers(this.db, generateWorkerIds),
+      fetchWorkerCashAdvancesPendingSalaryRecoveryForWorkers(
+        this.db,
+        generateWorkerIds,
+        calendarYearMonthFromPeriodStart(period.startDate),
+      ),
       loadPriorPaidFrozenPayrollSlicesForPeriod(this.db, {
         payrollPeriodId: periodId,
         workerIds: generateWorkerIds,
@@ -976,7 +997,12 @@ export class PayrollService {
 
       const liveSourceTimesheetIds = new Set(unpaidWorkerTs.map((t) => t.id).filter(Boolean));
       const workerRec = workerById.get(workerId);
-      const laborForWorker = laborContextForWorker(workerRec, workerGlobalLabor, lumpSumLabor);
+      const laborForWorker = laborContextForWorker(
+        workerRec,
+        workerGlobalLabor,
+        lumpSumLabor,
+        officeOnshoreLabor,
+      );
 
       const aggDeps = {
         poLineMaps,
@@ -986,6 +1012,8 @@ export class PayrollService {
         posById,
         contractMap,
         workerGlobalLabor: laborForWorker,
+        onshoreLabor: officeOnshoreLabor,
+        lumpSumLabor,
         assignmentById,
         frozenTimesheetGrossById: priorPaidFrozen.byTimesheetId,
         priorPaidFrozen,
@@ -1123,7 +1151,13 @@ export class PayrollService {
         timesheetGrossById,
         dailyRowSnapshots: buildPayrollLineDailyRowSnapshots(workerTs, timesheetGrossById, {
           posById,
-          payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(laborForWorker),
+          payrollRestScheduleForTimesheet: (ts) =>
+            payrollRestScheduleForTimesheet(
+              ts,
+              workerRec,
+              { offshore: workerGlobalLabor, onshore: officeOnshoreLabor, lumpSum: lumpSumLabor },
+              poWorkModeByPoId,
+            ),
         }),
         deductionsBreakdown,
         grossAmount: workerGross,
@@ -1960,18 +1994,21 @@ export class PayrollService {
         const tsList = await loadDailyTimesheetsByIds(this.db, ids);
         if (tsList.length === 0) continue;
         const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, tsList);
-        const [workerGlobalLabor, lumpSumLabor] = await Promise.all([
+        const [workerGlobalLabor, lumpSumLabor, officeOnshoreCtx] = await Promise.all([
           fetchWorkerGlobalLaborContextFromFirestore(this.db),
           fetchLumpSumWorkerLaborContextFromFirestore(this.db),
+          fetchOfficeOnshoreLaborContextFromFirestore(this.db),
         ]);
-        const laborForWorker = laborContextForWorker(
-          workerById.get(line.workerId),
-          workerGlobalLabor,
-          lumpSumLabor,
-        );
+        const officeOnshoreLabor = onshoreWorkerLaborContextFromOfficeOnshore(officeOnshoreCtx);
+        const workerRec = workerById.get(line.workerId);
         const snaps = buildPayrollLineDailyRowSnapshots(tsList, line.timesheetGrossById, {
           posById,
-          payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(laborForWorker),
+          payrollRestScheduleForTimesheet: (ts) =>
+            payrollRestScheduleForTimesheet(
+              ts,
+              workerRec,
+              { offshore: workerGlobalLabor, onshore: officeOnshoreLabor, lumpSum: lumpSumLabor },
+            ),
         });
         if (!isUsableDailyRowSnapshots(snaps, line.grossAmount)) continue;
         await updateDoc(d.ref, {
@@ -2115,11 +2152,13 @@ export class PayrollService {
         assignmentById,
       );
       await ensurePositionsLoadedForTimesheets(this.db, workerTsForCalc, posById);
-      const [workerGlobalLabor, lumpSumLabor] = await Promise.all([
+      const [workerGlobalLabor, lumpSumLabor, officeOnshoreCtx] = await Promise.all([
         fetchWorkerGlobalLaborContextFromFirestore(this.db),
         fetchLumpSumWorkerLaborContextFromFirestore(this.db),
+        fetchOfficeOnshoreLaborContextFromFirestore(this.db),
       ]);
       if (!gate.active) return 'mismatch';
+      const officeOnshoreLabor = onshoreWorkerLaborContextFromOfficeOnshore(officeOnshoreCtx);
 
       const liveSourceTimesheetIds = new Set(
         workerTsForCalc.map((t) => String(t.id || '').trim()).filter(Boolean),
@@ -2128,6 +2167,7 @@ export class PayrollService {
         workerById.get(workerId),
         workerGlobalLabor,
         lumpSumLabor,
+        officeOnshoreLabor,
       );
       const aggDeps = {
         poLineMaps,
@@ -2137,6 +2177,8 @@ export class PayrollService {
         posById,
         contractMap,
         workerGlobalLabor: laborForWorker,
+        onshoreLabor: officeOnshoreLabor,
+        lumpSumLabor,
         assignmentById,
         frozenTimesheetGrossById: {},
         priorPaidFrozen: emptyPrior,
@@ -2157,7 +2199,13 @@ export class PayrollService {
       const timesheetGrossById = mergedChunk.timesheetGrossById;
       const dailySnaps = buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById, {
         posById,
-        payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(laborForWorker),
+        payrollRestScheduleForTimesheet: (ts) =>
+          payrollRestScheduleForTimesheet(
+            ts,
+            workerById.get(workerId),
+            { offshore: workerGlobalLabor, onshore: officeOnshoreLabor, lumpSum: lumpSumLabor },
+            poWorkModeByPoId,
+          ),
       });
       const daySum = round2Payroll(
         Object.values(timesheetGrossById || {}).reduce((s, n) => s + (Number(n) || 0), 0),
@@ -2353,7 +2401,7 @@ export class PayrollService {
 
   /**
    * คำนวณใหม่เฉพาะคนงานหนึ่งคนจากใบงานปัจจุบันที่จ่ายได้ (สอดคล้อง timesheet / remob)
-   * — **คง** เบี้ยเลี้ยง/หักพิเศษ/ภงด. และยอดหักเบิกล่วงหน้าที่บันทึกแล้ว
+   * — **คง** เบี้ยเลี้ยง/หักพิเศษ/ภงด. — หักคืนเบิกล่วงหน้าคำนวณใหม่ตามเดือนที่จ่ายเงินเบิก
    * ไม่แตะบรรทัดคนอื่น — ใช้แทน Regenerate ทั้ง batch เมื่อแก้สูตร/ซ้ำวันแล้วไม่ต้องเสียการปรับยอดทุกคน
    *
    * options.bypassFinanceStatusGate — ใช้ตอนยืนยันจ่าย / ซ่อม snapshot งวด PAID
@@ -2553,11 +2601,13 @@ export class PayrollService {
     );
 
     const { workerById, posById } = await loadWorkersAndPositionsForPayroll(this.db, workerTs);
-    const [workerGlobalLabor, lumpSumLabor, lumpSumWhtRate] = await Promise.all([
+    const [workerGlobalLabor, lumpSumLabor, lumpSumWhtRate, officeOnshoreCtx] = await Promise.all([
       fetchWorkerGlobalLaborContextFromFirestore(this.db),
       fetchLumpSumWorkerLaborContextFromFirestore(this.db),
       fetchLumpSumWithholdingRatePercentFromFirestore(this.db),
+      fetchOfficeOnshoreLaborContextFromFirestore(this.db),
     ]);
+    const officeOnshoreLabor = onshoreWorkerLaborContextFromOfficeOnshore(officeOnshoreCtx);
 
     const asgnIds = [...new Set(workerTs.map((t) => String(t.assignmentId || '').trim()).filter(Boolean))];
     if (!snapshotBackfill) {
@@ -2620,7 +2670,12 @@ export class PayrollService {
     );
 
     const workerRec = workerById.get(workerId);
-    const laborForWorker = laborContextForWorker(workerRec, workerGlobalLabor, lumpSumLabor);
+    const laborForWorker = laborContextForWorker(
+      workerRec,
+      workerGlobalLabor,
+      lumpSumLabor,
+      officeOnshoreLabor,
+    );
     const aggDeps = {
       poLineMaps,
       poContractById,
@@ -2629,6 +2684,8 @@ export class PayrollService {
       posById,
       contractMap,
       workerGlobalLabor: laborForWorker,
+      onshoreLabor: officeOnshoreLabor,
+      lumpSumLabor,
       assignmentById,
       frozenTimesheetGrossById: priorPaidFrozen.byTimesheetId,
       priorPaidFrozen,
@@ -2810,9 +2867,17 @@ export class PayrollService {
       deductions[`manual_ded_${idx}`] = Math.max(0, Number(d.amount) || 0);
     });
 
-    const caRecover = Number(line.deductionsBreakdown?.[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]) || 0;
-    if (caRecover > 0) {
-      deductions[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY] = Math.round(caRecover * 100) / 100;
+    const payrollYm = calendarYearMonthFromPeriodStart(periodStart);
+    const cashAdvanceRecovery = snapshotBackfill
+      ? {
+          total: Math.max(0, Number(line.deductionsBreakdown?.[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY]) || 0),
+          advances: [] as { id: string; requestNo: string; amountBaht: number }[],
+        }
+      : await fetchWorkerCashAdvancesPendingSalaryRecovery(this.db, workerId, payrollYm, batchId);
+    if (cashAdvanceRecovery.total > 0) {
+      deductions[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY] = round2Payroll(cashAdvanceRecovery.total);
+    } else {
+      delete deductions[CASH_ADVANCE_PAYROLL_DEDUCTION_KEY];
     }
 
     /** HR recalc ก่อนส่งบัญชี — ไม่เก็บ prior_paid (สลิปชุดหลังหักตอนแสดง); ตอนจ่าย/ซ่อม PAID ค่อย persist */
@@ -2879,7 +2944,13 @@ export class PayrollService {
       const computedNet = round2Payroll(netAmount);
       const dailySnaps = buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById, {
         posById,
-        payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(laborForWorker),
+        payrollRestScheduleForTimesheet: (ts) =>
+          payrollRestScheduleForTimesheet(
+            ts,
+            workerById.get(workerId),
+            { offshore: workerGlobalLabor, onshore: officeOnshoreLabor, lumpSum: lumpSumLabor },
+            poWorkModeByPoId,
+          ),
       });
       const daySum = round2Payroll(
         Object.values(timesheetGrossById || {}).reduce((s, n) => s + (Number(n) || 0), 0),
@@ -2947,7 +3018,13 @@ export class PayrollService {
       timesheetGrossById,
       dailyRowSnapshots: buildPayrollLineDailyRowSnapshots(workerTsForCalc, timesheetGrossById, {
         posById,
-        payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(laborForWorker),
+        payrollRestScheduleForTimesheet: (ts) =>
+          payrollRestScheduleForTimesheet(
+            ts,
+            workerById.get(workerId),
+            { offshore: workerGlobalLabor, onshore: officeOnshoreLabor, lumpSum: lumpSumLabor },
+            poWorkModeByPoId,
+          ),
       }),
       grossAmount: isSupplemental ? effectiveGross : workerGross,
       deductionsBreakdown: deductions,
@@ -2976,6 +3053,13 @@ export class PayrollService {
     }
 
     await updateDoc(lineRef, stripUndefinedForFirestore(patch) as DocumentData);
+
+    await syncWorkerCashAdvancesForPayrollBatch(
+      this.db,
+      batchId,
+      workerId,
+      cashAdvanceRecovery.advances.map((a) => a.id),
+    );
 
     await this.lockTimesheetsForPayrollBatchAdmin(
       [...liveSourceTimesheetIds],
@@ -3298,6 +3382,7 @@ export class PayrollService {
       const recovery = await fetchOfficeStaffCashAdvancesPendingSalaryRecovery(
         this.db,
         line.staffId,
+        run.payrollMonth,
         runId,
       );
       const withCashAdvance = applyCashAdvanceRecoveryToOfficeD8Line(d8, recovery);

@@ -43,16 +43,13 @@ import type {
 } from '@/lib/attendance/types';
 import { OFFICE_LEAVE_REQUESTS_COLLECTION } from '@/lib/leaves/policy';
 import type { OfficeLeaveRequestDoc } from '@/lib/leaves/types';
-import {
-  HR_STATUTORY_POLICY_MONTHLY_WORK_ID,
-  HR_WORKER_GLOBAL_LABOR_POLICY_ID,
-} from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import { HR_STATUTORY_POLICY_MONTHLY_WORK_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import { monthlyWorkNormFromPolicyRecord } from '@/lib/payroll/office-payroll-period-deductions';
 import {
   hrSettingsCalendarHolidayLabelForYmd,
   isHrSettingsCalendarHolidayYmd,
-  workerGlobalLaborContextFromPolicy,
 } from '@/lib/payroll/worker-global-labor-policy';
+import { useOfficeOnshoreRest } from '@/hooks/use-office-onshore-rest';
 import type { OfficeStaff, PayrollPolicyRecord } from '@/lib/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -122,17 +119,9 @@ export function SubjectAttendanceHistory(props: {
     return null;
   }, [staffProp, staffFromDoc, subjectType, subjectId]);
 
-  const workerGlobalLaborRef = useMemoFirebase(
-    () => doc(firestore, 'payroll_policies', HR_WORKER_GLOBAL_LABOR_POLICY_ID),
-    [firestore],
-  );
-  const { data: workerGlobalLaborPolicy } = useDoc<PayrollPolicyRecord>(workerGlobalLaborRef as any);
-  const workerGlobalLabor = useMemo(
-    () => workerGlobalLaborContextFromPolicy(workerGlobalLaborPolicy ?? null),
-    [workerGlobalLaborPolicy],
-  );
-  const weeklyRestPattern: WeeklyRestPatternForCalendar = workerGlobalLabor.weeklyRestPattern;
-  const calendarHolidays = workerGlobalLabor.calendarHolidays;
+  const officeOnshoreRest = useOfficeOnshoreRest();
+  const weeklyRestPattern: WeeklyRestPatternForCalendar = officeOnshoreRest.weeklyRestPattern;
+  const calendarHolidays = officeOnshoreRest.calendarHolidays;
 
   const monthlyWorkNormPolicyRef = useMemoFirebase(
     () => doc(firestore, 'payroll_policies', HR_STATUTORY_POLICY_MONTHLY_WORK_ID),

@@ -16,6 +16,11 @@ import {
   type WorkerGlobalLaborContext,
 } from '@/lib/payroll/worker-global-labor-policy';
 import {
+  DEFAULT_OFFICE_ONSHORE_LABOR_CONTEXT,
+  officeOnshoreLaborContextFromPolicy,
+  type OfficeOnshoreLaborContext,
+} from '@/lib/payroll/office-onshore-labor-policy';
+import {
   DEFAULT_LUMP_SUM_WORKER_LABOR_CONTEXT,
   lumpSumLaborContextFromPolicy,
 } from '@/lib/payroll/lump-sum-worker';
@@ -53,6 +58,7 @@ export type HrSettingsSnapshotValues = {
   leaveSick: number;
   leaveAnnual: number;
   workerLabor: WorkerGlobalLaborContext;
+  officeOnshoreLabor?: OfficeOnshoreLaborContext;
   lumpSumLabor: WorkerGlobalLaborContext;
   lumpSumWhtRatePercent: number;
 };
@@ -84,9 +90,9 @@ const LABELS: Record<string, string> = {
   leavePersonal: 'โควตาลากิจ (วัน/ปี)',
   leaveSick: 'โควตาลาป่วย (วัน/ปี)',
   leaveAnnual: 'โควตาลาพักร้อน (วัน/ปี)',
-  weeklyRestPattern: 'วันหยุดประจำสัปดาห์ (ลูกจ้าง)',
-  calendarHolidays: 'วันหยุดในปฏิทิน (ลูกจ้าง)',
-  cost_otAfterShift: 'ตัวคูณ OT หลังกะ (ลูกจ้าง)',
+  weeklyRestPattern: 'วันหยุดประจำสัปดาห์ (ลูกจ้างบริษัท Offshore)',
+  calendarHolidays: 'วันหยุดในปฏิทิน (ลูกจ้างบริษัท Offshore)',
+  cost_otAfterShift: 'ตัวคูณ OT หลังกะ (ลูกจ้างบริษัท Offshore)',
   cost_holiday: 'ตัวคูณวันหยุด (ลูกจ้าง)',
   cost_publicHoliday: 'ตัวคูณนักขัตฤกษ์ (ลูกจ้าง)',
   cost_sunday: 'ตัวคูณวันอาทิตย์ (ลูกจ้าง)',
@@ -107,6 +113,20 @@ const LABELS: Record<string, string> = {
   lump_cost_demobilization: 'ตัวคูณ Demob (ลูกจ้างแบบเหมา)',
   lump_cost_travel: 'ตัวคูณ Travel (ลูกจ้างแบบเหมา)',
   lumpSumWhtRatePercent: 'อัตราหัก ณ ที่จ่ายลูกจ้างแบบเหมา (%)',
+  oo_weeklyRestPattern: 'วันหยุดประจำสัปดาห์ (ออฟฟิศ+Onshore)',
+  oo_calendarHolidays: 'วันหยุดในปฏิทิน (ออฟฟิศ+Onshore)',
+  oo_office_holidayNormal: 'ตัวคูณ A ทำงานวันหยุด (ออฟฟิศ)',
+  oo_office_weekdayOt: 'ตัวคูณ B OT วันทำงาน (ออฟฟิศ)',
+  oo_office_holidayOt: 'ตัวคูณ C OT วันหยุด (ออฟฟิศ)',
+  oo_cost_otAfterShift: 'ตัวคูณ OT หลังกะ (ลูกจ้าง Onshore)',
+  oo_cost_holiday: 'ตัวคูณวันหยุด (ลูกจ้าง Onshore)',
+  oo_cost_publicHoliday: 'ตัวคูณนักขัตฤกษ์ (ลูกจ้าง Onshore)',
+  oo_cost_sunday: 'ตัวคูณวันอาทิตย์ (ลูกจ้าง Onshore)',
+  oo_cost_sundayOt: 'ตัวคูณ OT วันอาทิตย์ (ลูกจ้าง Onshore)',
+  oo_cost_standby: 'ตัวคูณ Standby (ลูกจ้าง Onshore)',
+  oo_cost_mobilization: 'ตัวคูณ Mob (ลูกจ้าง Onshore)',
+  oo_cost_demobilization: 'ตัวคูณ Demob (ลูกจ้าง Onshore)',
+  oo_cost_travel: 'ตัวคูณ Travel (ลูกจ้าง Onshore)',
 };
 
 function weeklyRestLabel(v: string): string {
@@ -143,6 +163,13 @@ export function flattenHrSettingsSnapshot(v: HrSettingsSnapshotValues): Record<s
   const c = v.workerLabor.cost;
   const lc = (v.lumpSumLabor ?? DEFAULT_LUMP_SUM_WORKER_LABOR_CONTEXT).cost;
   const lumpLabor = v.lumpSumLabor ?? DEFAULT_LUMP_SUM_WORKER_LABOR_CONTEXT;
+  const oo = v.officeOnshoreLabor ?? DEFAULT_OFFICE_ONSHORE_LABOR_CONTEXT;
+  const ooc = oo.workerCost;
+  const ooAsLabor: WorkerGlobalLaborContext = {
+    cost: ooc,
+    weeklyRestPattern: oo.weeklyRestPattern,
+    calendarHolidays: oo.calendarHolidays,
+  };
   return {
     ssoRate: fmtNum(v.ssoRate),
     ssoCeiling: fmtNum(v.ssoCeiling),
@@ -186,6 +213,20 @@ export function flattenHrSettingsSnapshot(v: HrSettingsSnapshotValues): Record<s
     lump_cost_demobilization: fmtNum(lc.demobilization),
     lump_cost_travel: fmtNum(lc.travel),
     lumpSumWhtRatePercent: fmtNum(v.lumpSumWhtRatePercent ?? 3),
+    oo_weeklyRestPattern: weeklyRestLabel(oo.weeklyRestPattern),
+    oo_calendarHolidays: fmtHolidays(ooAsLabor),
+    oo_office_holidayNormal: fmtNum(oo.office.holidayNormal),
+    oo_office_weekdayOt: fmtNum(oo.office.weekdayOt),
+    oo_office_holidayOt: fmtNum(oo.office.holidayOt),
+    oo_cost_otAfterShift: fmtNum(ooc.otAfterShift),
+    oo_cost_holiday: fmtNum(ooc.holiday),
+    oo_cost_publicHoliday: fmtNum(ooc.publicHoliday),
+    oo_cost_sunday: fmtNum(ooc.sunday),
+    oo_cost_sundayOt: fmtNum(ooc.sundayOt),
+    oo_cost_standby: fmtNum(ooc.standby),
+    oo_cost_mobilization: fmtNum(ooc.mobilization),
+    oo_cost_demobilization: fmtNum(ooc.demobilization),
+    oo_cost_travel: fmtNum(ooc.travel),
   };
 }
 
@@ -209,6 +250,7 @@ export function hrSettingsSnapshotFromStored(input: {
   taxConfig?: Record<string, unknown> | null;
   monthlyWorkConfig?: Record<string, unknown> | null;
   workerLaborPolicy?: PayrollPolicyRecord | null;
+  officeOnshoreLaborPolicy?: PayrollPolicyRecord | null;
   lumpSumLaborPolicy?: PayrollPolicyRecord | null;
   leave?: Partial<OfficeLeaveEntitlementsDoc> | null;
 }): HrSettingsSnapshotValues {
@@ -235,6 +277,7 @@ export function hrSettingsSnapshotFromStored(input: {
     leaveSick: Number(leave.sickDaysPerYear ?? 0),
     leaveAnnual: Number(leave.annualVacationDaysPerYear ?? 0),
     workerLabor: workerGlobalLaborContextFromPolicy(input.workerLaborPolicy),
+    officeOnshoreLabor: officeOnshoreLaborContextFromPolicy(input.officeOnshoreLaborPolicy),
     lumpSumLabor: lumpSumLaborContextFromPolicy(input.lumpSumLaborPolicy),
     lumpSumWhtRatePercent: Number(
       (input.lumpSumLaborPolicy?.config as { withholdingRatePercent?: number } | undefined)
@@ -253,6 +296,7 @@ export function hrSettingsSnapshotFromPolicyDocs(input: {
   taxData?: Record<string, unknown> | null;
   monthlyWorkData?: Record<string, unknown> | null;
   workerLaborData?: Record<string, unknown> | null;
+  officeOnshoreLaborData?: Record<string, unknown> | null;
   lumpSumLaborData?: Record<string, unknown> | null;
   leaveData?: Record<string, unknown> | null;
 }): HrSettingsSnapshotValues {
@@ -260,6 +304,11 @@ export function hrSettingsSnapshotFromPolicyDocs(input: {
   const workerLaborPolicy =
     wlRaw && typeof wlRaw === 'object'
       ? ({ id: 'policy_worker_global_labor', ...(wlRaw as object) } as PayrollPolicyRecord)
+      : null;
+  const ooRaw = input.officeOnshoreLaborData;
+  const officeOnshoreLaborPolicy =
+    ooRaw && typeof ooRaw === 'object'
+      ? ({ id: 'policy_office_onshore_labor', ...(ooRaw as object) } as PayrollPolicyRecord)
       : null;
   const lsRaw = input.lumpSumLaborData;
   const lumpSumLaborPolicy =
@@ -271,6 +320,7 @@ export function hrSettingsSnapshotFromPolicyDocs(input: {
     taxConfig: asConfig(input.taxData || undefined),
     monthlyWorkConfig: asConfig(input.monthlyWorkData || undefined),
     workerLaborPolicy,
+    officeOnshoreLaborPolicy,
     lumpSumLaborPolicy,
     leave: input.leaveData as Partial<OfficeLeaveEntitlementsDoc> | null,
   });

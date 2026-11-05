@@ -17,8 +17,10 @@ import {
   resolveBaseCostForPayrollTimesheet,
   resolveEffectivePayrollContractId,
   resolvePoLineForPayrollTimesheet,
+  timesheetToLaborWorkMode,
 } from '@/lib/payroll/timesheet-labor-base-cost';
 import { workerGlobalLaborToPayrollRestSchedule } from '@/lib/payroll/worker-global-labor-policy';
+import { laborContextForWorker } from '@/lib/payroll/lump-sum-worker';
 import { applyLaborCostEpochToWorkerForDate } from '@/lib/payroll/remob-position-for-payroll';
 import { resolveFrozenTimesheetGrossAmount } from '@/lib/payroll/prior-paid-timesheet-gross';
 import { resolveOffshoreHourlyDivisor } from '@/lib/commercial/position-rate-matrix';
@@ -401,9 +403,16 @@ function workDayPartsForTimesheet(
 
   const statedHours = poLine.normalWorkHoursSnapshot === 12 ? 12 : 8;
   const costOt = poLine.costOtRulesSnapshot as { afterShift?: number } | undefined;
+  const laborCtx = laborContextForWorker(
+    wkLive,
+    deps.workerGlobalLabor,
+    deps.lumpSumLabor ?? deps.workerGlobalLabor,
+    deps.onshoreLabor,
+    timesheetToLaborWorkMode(ts, deps.poWorkModeByPoId),
+  );
   const otMult =
     Number(costOt?.afterShift) ||
-    Number(deps.workerGlobalLabor.cost.otAfterShift) ||
+    Number(laborCtx.cost.otAfterShift) ||
     1.5;
   const positionId = (ts.positionId || '').trim();
   const contractPositionRate = mainContract?.positionRates?.find(
@@ -415,7 +424,7 @@ function workDayPartsForTimesheet(
     costPackagePerDay: baseCost,
     statedHours,
     otAfterShiftMultiplier: otMult,
-    payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(deps.workerGlobalLabor),
+    payrollRestSchedule: workerGlobalLaborToPayrollRestSchedule(laborCtx),
     hourlyDivisor: resolveOffshoreHourlyDivisor(
       'cost',
       contractPositionRate?.rateMatrix,

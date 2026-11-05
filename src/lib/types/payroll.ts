@@ -33,8 +33,10 @@ export type PayrollPolicyKind =
   | 'tax'
   | 'allowance_deduction'
   | 'monthly_work_norm'
-  /** ตัวคูณ/ปฏิทินค่าจ้างลูกจ้างแบบกลาง — `payroll_policies/policy_worker_global_labor` */
+  /** ตัวคูณ/ปฏิทินค่าจ้างลูกจ้างบริษัท Offshore — `payroll_policies/policy_worker_global_labor` */
   | 'worker_global_labor'
+  /** ปฏิทินร่วมออฟฟิศ+ออนชอร์ และตัวคูณแยก — `payroll_policies/policy_office_onshore_labor` */
+  | 'office_onshore_labor'
   /** ตัวคูณค่าจ้างลูกจ้างแบบเหมา — `payroll_policies/policy_lump_sum_worker_labor` */
   | 'lump_sum_worker_labor';
 

@@ -4,11 +4,13 @@ import { computeRegistryWorkerTimesheetGross } from '@/lib/payroll/registry-work
 import {
   type PayrollPoLineMaps,
   resolvePoLineForPayrollTimesheet,
+  timesheetToLaborWorkMode,
 } from '@/lib/payroll/timesheet-labor-base-cost';
 import { isPayrollCostStandbyPackageEvent, payrollStandbyPackageEventUnits } from '@/lib/payroll/package-labor-cost';
 import type { PriorPaidFrozenPayrollSlice } from '@/lib/payroll/prior-paid-timesheet-gross';
 import { resolveFrozenTimesheetGrossAmount } from '@/lib/payroll/prior-paid-timesheet-gross';
 import { applyLaborCostEpochToWorkerForDate } from '@/lib/payroll/remob-position-for-payroll';
+import { laborContextForWorker } from '@/lib/payroll/lump-sum-worker';
 
 export type PayrollTimesheetAggChunk = {
   gross: number;
@@ -28,7 +30,11 @@ export type PayrollTimesheetAggDeps = {
   workerById: Map<string, Worker>;
   posById: Map<string, Position>;
   contractMap: Map<string, MainContract>;
+  /** ลูกจ้างบริษัท Offshore (หรือเหมาเมื่อบรรทัดเป็น LUMP_SUM) */
   workerGlobalLabor: WorkerGlobalLaborContext;
+  /** ลูกจ้างบริษัท Onshore — ปฏิทิน/ตัวคูณตารางออฟฟิศ+ออนชอร์ */
+  onshoreLabor?: WorkerGlobalLaborContext;
+  lumpSumLabor?: WorkerGlobalLaborContext;
   /** assignment ของใบงาน — ใช้ laborCostEpochs (อัตราก่อน remob) */
   assignmentById?: Map<string, Assignment>;
   /**
@@ -125,7 +131,13 @@ export function aggregateDailyTimesheetsPayrollChunk(
           contractMap: deps.contractMap,
           poContractById: deps.poContractById,
           poWorkModeByPoId: deps.poWorkModeByPoId,
-          workerGlobalLabor: deps.workerGlobalLabor,
+          workerGlobalLabor: laborContextForWorker(
+            wkFrozen,
+            deps.workerGlobalLabor,
+            deps.lumpSumLabor ?? deps.workerGlobalLabor,
+            deps.onshoreLabor,
+            timesheetToLaborWorkMode(ts, deps.poWorkModeByPoId),
+          ),
         });
         if (rFrozen.gross > 0) frozenAmt = Math.round(rFrozen.gross * 100) / 100;
       }
@@ -158,7 +170,13 @@ export function aggregateDailyTimesheetsPayrollChunk(
       contractMap: deps.contractMap,
       poContractById: deps.poContractById,
       poWorkModeByPoId: deps.poWorkModeByPoId,
-      workerGlobalLabor: deps.workerGlobalLabor,
+      workerGlobalLabor: laborContextForWorker(
+        wk,
+        deps.workerGlobalLabor,
+        deps.lumpSumLabor ?? deps.workerGlobalLabor,
+        deps.onshoreLabor,
+        timesheetToLaborWorkMode(ts, deps.poWorkModeByPoId),
+      ),
     });
     if (r.fromPositionModel) {
       anyOpecPositionLaborBase = true;

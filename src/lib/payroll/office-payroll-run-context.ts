@@ -21,15 +21,20 @@ import {
 import { OFFICE_LEAVE_REQUESTS_COLLECTION } from '@/lib/leaves/policy';
 import { ATTENDANCE_OVERTIME_REQUESTS_COLLECTION } from '@/lib/attendance/constants';
 import type { OfficeLeaveRequestDoc } from '@/lib/leaves/types';
-import { HR_WORKER_GLOBAL_LABOR_POLICY_ID } from '@/lib/payroll/d8/hr-statutory-policy-ids';
+import {
+  HR_OFFICE_ONSHORE_LABOR_POLICY_ID,
+  HR_WORKER_GLOBAL_LABOR_POLICY_ID,
+} from '@/lib/payroll/d8/hr-statutory-policy-ids';
 import { resolvePayrollPoliciesForDate } from '@/lib/payroll/d8';
 import {
   enumerateYmdsInclusive,
   monthlyWorkNormFromPolicyRecord,
 } from '@/lib/payroll/office-payroll-period-deductions';
 import {
-  workerGlobalLaborContextFromPolicy,
-} from '@/lib/payroll/worker-global-labor-policy';
+  officeOnshoreLaborContextFromPolicy,
+  overlayOfficeMultipliersOnMonthlyWorkNorm,
+  resolveOfficeOnshoreRestFromPolicies,
+} from '@/lib/payroll/office-onshore-labor-policy';
 import type { CalendarHolidayEntry } from '@/lib/contract-position-rate-extras';
 import type { OfficePayrollRun, PayrollPolicyRecord } from '@/lib/types';
 import type { WeeklyRestPatternForCalendar } from '@/lib/attendance/bangkok-calendar';
@@ -67,13 +72,23 @@ export async function loadOfficePayrollRunComputationContext(
 
   const asOf = periodEnd || `${run.payrollMonth}-28`;
   const officePolicies = resolvePayrollPoliciesForDate(asOf, policyRecords, 'office');
-  const monthlyWorkNorm = monthlyWorkNormFromPolicyRecord(officePolicies.monthlyWorkNorm);
-
+  const officeOnshoreRec =
+    policyRecords.find((p) => p.id === HR_OFFICE_ONSHORE_LABOR_POLICY_ID) ??
+    policyRecords.find((p) => p.kind === 'office_onshore_labor' && p.status === 'active') ??
+    null;
   const laborRec =
     policyRecords.find((p) => p.id === HR_WORKER_GLOBAL_LABOR_POLICY_ID) ??
     policyRecords.find((p) => p.kind === 'worker_global_labor' && p.status === 'active') ??
     null;
-  const laborCtx = workerGlobalLaborContextFromPolicy(laborRec);
+  const rest = resolveOfficeOnshoreRestFromPolicies(officeOnshoreRec, laborRec);
+  const monthlyWorkNormBase = monthlyWorkNormFromPolicyRecord(officePolicies.monthlyWorkNorm);
+  const monthlyWorkNorm = officeOnshoreRec
+    ? overlayOfficeMultipliersOnMonthlyWorkNorm(
+        monthlyWorkNormBase,
+        officeOnshoreLaborContextFromPolicy(officeOnshoreRec).office,
+      )
+    : monthlyWorkNormBase;
+  const laborCtx = rest;
 
   const [entSnap, leaveSnap, otSnap, punchSnap, overrideSnap] = await Promise.all([
     getDoc(doc(firestore, HR_CONFIGURATION_COLLECTION, HR_OFFICE_LEAVE_ENTITLEMENTS_DOC_ID)),
