@@ -189,8 +189,6 @@ function isHolidayWorkDayFromSnapshotRow(
     if (labor > pkg * 1.08) return true;
   }
 
-  if (ymdLocalDow(row.date) === 0) return true;
-
   const otHrs = o15 + o20 + o30;
   const beyond12 = Math.max(0, nh - 12);
   if (pkg <= 0.005) return false;
