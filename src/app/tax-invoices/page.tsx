@@ -80,7 +80,7 @@ import {
 } from '@/components/ui/alert-dialog';
 
 function formatTaxInvoiceMoney(amount: number, currency = 'THB'): string {
-  return `${currency} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+  return `${currency} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /** ตารางรายการ — ไม่ใส่รหัสสกุลเงิน เพื่อประหยัดความกว้าง */

@@ -952,7 +952,7 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                         <TableCell className="pl-6 font-mono font-bold text-primary">{quo.quotationNo}</TableCell>
                         <TableCell className="text-sm font-medium">{quo.projectTitle}</TableCell>
                         <TableCell className="text-xs">{formatStoredDateThaiBE(quo.issueDate)}</TableCell>
-                        <TableCell className="text-right font-bold text-primary">฿{(quo.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                        <TableCell className="text-right font-bold text-primary">฿{(quo.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                         <TableCell>
                           <Badge variant={quo.status === 'accepted' ? 'default' : 'outline'} className={quo.status === 'accepted' ? 'bg-green-600 text-white border-none' : ''}>
                             {quo.status.toUpperCase()}

@@ -7,6 +7,7 @@ import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
 import { amountToEnglishBahtText } from '@/lib/documents/english-baht-text';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
+import { formatMoney2, roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import {
   type CompanyProfilePrint,
   assembleStandardPrintPageHtml,
@@ -81,16 +82,17 @@ function buildMoneyReceiptPrintHtmlSinglePage(params: {
     partyName,
     detailLines: customerPartyDetailLines(customer, L),
   });
-  const amountWords = L === 'en' ? amountToEnglishBahtText(receipt.amount) : amountToThaiBahtText(receipt.amount);
+  const amount = roundMoney2(receipt.amount);
+  const amountWords = L === 'en' ? amountToEnglishBahtText(amount) : amountToThaiBahtText(amount);
   const mainHtml = `${partyHtml}
   <table class="sd-table"><tbody>
     <tr><td class="sd-num">1</td><td>${lineDescriptionHtml}</td>
     <td class="sd-right">1</td>
     <td class="sd-right">—</td>
-    <td class="sd-right">${receipt.amount.toLocaleString(loc, { minimumFractionDigits: 2 })}</td></tr>
+    <td class="sd-right">${formatMoney2(amount, loc)}</td></tr>
   </tbody></table>
   <div class="sd-totals">
-    <p class="sd-grand"><strong>${escapeHtmlDoc(printT(L, 'grandTotal'))}:</strong> ${receipt.currency} ${receipt.amount.toLocaleString(loc, { minimumFractionDigits: 2 })}</p>
+    <p class="sd-grand"><strong>${escapeHtmlDoc(printT(L, 'grandTotal'))}:</strong> ${receipt.currency} ${formatMoney2(amount, loc)}</p>
     <p class="sd-words">${escapeHtmlDoc(amountWords)}</p>
   </div>`;
   const footerHtml = buildStandardSignFooterHtml({

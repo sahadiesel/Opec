@@ -360,7 +360,7 @@ export default function QuotationsPage() {
                         </TableCell>
                         <TableCell className="text-sm font-medium">{q.projectTitle}</TableCell>
                         <TableCell className="text-right font-black text-primary">
-                          {q.currency} {(q.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          {q.currency} {(q.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </TableCell>
                         <TableCell className="text-sm whitespace-nowrap">
                           {documentCreatorDisplayName(q)}

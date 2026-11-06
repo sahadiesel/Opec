@@ -844,7 +844,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       toast({
         title: 'บันทึกแล้ว',
         description: editShowWht
-          ? `แสดงหัก ณ ที่จ่ายบนเอกสาร — ยอดหัก ${wht.toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท`
+          ? `แสดงหัก ณ ที่จ่ายบนเอกสาร — ยอดหัก ${wht.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} บาท`
           : 'ไม่แสดงยอดหัก ณ ที่จ่ายบนใบกำกับ — พิมพ์แบบยอดรวมสุทธิเต็มจำนวน',
       });
     } catch (e) {
@@ -1173,14 +1173,14 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                   <span className="text-muted-foreground">ยอดเงินฐานภาษี (Taxable Amount)</span>
                   <span className="font-bold">
                     {invoice.currency}{' '}
-                    {invoice.taxableAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    {invoice.taxableAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม (VAT 7%)</span>
                   <span className="font-bold">
                     {invoice.currency}{' '}
-                    {invoice.vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    {invoice.vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 {showWhtBlock ? (
@@ -1189,7 +1189,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                       <span className="font-black text-primary uppercase">ยอดรวมใบกำกับ (รวม VAT)</span>
                       <span className="font-black text-2xl text-primary">
                         {invoice.currency}{' '}
-                        {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-sm text-muted-foreground">
@@ -1199,7 +1199,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                       <span className="font-medium text-destructive">
                         −{invoice.currency}{' '}
                         {(Number(invoice.withholdingTaxAmount) || 0).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
+                          minimumFractionDigits: 2, maximumFractionDigits: 2,
                         })}
                       </span>
                     </div>
@@ -1207,7 +1207,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                       <span>ยอดหลังหัก ณ ที่จ่าย (อ้างอิง)</span>
                       <span className="font-medium">
                         {invoice.currency}{' '}
-                        {netAfterWht.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        {netAfterWht.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                   </>
@@ -1216,7 +1216,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                     <span className="font-black text-primary uppercase">ยอดรวมสุทธิ (Net Total)</span>
                     <span className="font-black text-2xl text-primary">
                       {invoice.currency}{' '}
-                      {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                 )}
@@ -1668,7 +1668,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                   <p className="text-xs text-muted-foreground">
                     ใบเสร็จออกตามยอดรวมใบกำกับ (ฐานภาษี + VAT){' '}
                     <span className="font-semibold text-foreground">
-                      {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                     {showWhtBlock ? ' — ไม่หัก ณ ที่จ่ายในใบเสร็จ' : null}
                   </p>

@@ -12,6 +12,7 @@ import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import type { PortalDictKey } from '@/lib/i18n/client-portal-dictionary';
+import { formatMoney2 } from '@/lib/ops/purchase-payment-milestones';
 
 function statusBadge(q: Quotation, en: boolean, t: (key: PortalDictKey) => string) {
   if (q.status === 'sent' && q.customerRevisionRequestedAt) {
@@ -100,7 +101,7 @@ export default function ClientPortalQuotationsListPage() {
                   <TableCell className="max-w-[200px] truncate text-sm">{q.projectTitle || '—'}</TableCell>
                   <TableCell className="text-right text-sm font-medium">
                     {q.currency}{' '}
-                    {q.grandTotal.toLocaleString(en ? 'en-GB' : 'th-TH', { minimumFractionDigits: 2 })}
+                    {formatMoney2(q.grandTotal, en ? 'en-GB' : 'th-TH')}
                   </TableCell>
                   <TableCell>{statusBadge(q, en, t)}</TableCell>
                   <TableCell className="text-right">

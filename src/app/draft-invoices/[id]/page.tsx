@@ -1862,13 +1862,13 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                           }
                         />
                       ) : (
-                        <>฿{line.unitPrice.toLocaleString(moneyLoc, { minimumFractionDigits: 2 })}</>
+                        <>฿{line.unitPrice.toLocaleString(moneyLoc, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
                       )}
                     </TableCell>
                     <TableCell className="text-right pr-6 font-medium align-top font-mono text-sm">
                       ฿
                       {roundMoney(line.quantity * line.unitPrice).toLocaleString(moneyLoc, {
-                        minimumFractionDigits: 2,
+                        minimumFractionDigits: 2, maximumFractionDigits: 2,
                       })}
                     </TableCell>
                     {canEditDraftLines && (
@@ -1952,7 +1952,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                       {(invoice.status === 'DRAFT' && canAct
                         ? previewTotals.before
                         : invoice.amountBeforeTax
-                      ).toLocaleString(moneyLoc, { minimumFractionDigits: 2 })}
+                      ).toLocaleString(moneyLoc, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div>
@@ -1961,7 +1961,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                       ฿
                       {(invoice.status === 'DRAFT' && canAct ? previewTotals.vat : invoice.vatAmount).toLocaleString(
                         moneyLoc,
-                        { minimumFractionDigits: 2 },
+                        { minimumFractionDigits: 2, maximumFractionDigits: 2 },
                       )}
                     </span>
                   </div>
@@ -1969,7 +1969,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                     {printT(docL, 'grandTotal')} ฿
                     {(invoice.status === 'DRAFT' && canAct ? previewTotals.total : invoice.totalAmount).toLocaleString(
                       moneyLoc,
-                      { minimumFractionDigits: 2 },
+                      { minimumFractionDigits: 2, maximumFractionDigits: 2 },
                     )}{' '}
                     {invoice.currency}
                   </div>

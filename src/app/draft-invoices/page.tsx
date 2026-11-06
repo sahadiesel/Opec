@@ -545,7 +545,7 @@ export default function DraftInvoicesPage() {
         billingKindLabel: commercialBillingKindLabel(inv),
         issueDateLabel: formatStoredDateThaiBE(inv.issueDate),
         wavePeriodLabel: commercialWavePeriodLabel(inv),
-        totalLabel: `฿${(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`,
+        totalLabel: `฿${(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
         statusLabel: commercialStatusPrintLabel(inv, revisedInvoiceIds.has(inv.id)),
       })),
     [customerLabel, revisedInvoiceIds],
@@ -2035,7 +2035,7 @@ export default function DraftInvoicesPage() {
                         </div>
                       </TableCell>
                       <TableCell className="whitespace-nowrap px-2 py-1.5 text-right text-sm tabular-nums">
-                        ฿{(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
+                        ฿{(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </TableCell>
                       <TableCell className="whitespace-nowrap px-2 py-1.5 text-sm">
                         {documentCreatorDisplayName(inv)}

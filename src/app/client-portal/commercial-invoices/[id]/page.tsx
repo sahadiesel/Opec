@@ -18,6 +18,7 @@ import { useFirebaseApp, useFirestore, useDoc, useMemoFirebase, useUser } from '
 import { doc, updateDoc } from 'firebase/firestore';
 import { usePortalLocale } from '@/contexts/portal-locale-context';
 import { formatDateTimeThaiBE, formatStoredDateThaiBE } from '@/lib/date-thai';
+import { formatMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { useToast } from '@/hooks/use-toast';
 import { useClientPortalIdentity } from '@/contexts/client-portal-user-context';
 import {
@@ -365,7 +366,7 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
                   </TableCell>
                   <TableCell className="text-right">{line.quantity}</TableCell>
                   <TableCell className="text-right font-medium">
-                    ฿{line.amount.toLocaleString(printLocale === 'en' ? 'en-GB' : 'th-TH', { minimumFractionDigits: 2 })}
+                    ฿{formatMoney2(line.amount, printLocale === 'en' ? 'en-GB' : 'th-TH')}
                   </TableCell>
                 </TableRow>
               ))}
@@ -379,20 +380,20 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
           <div className="flex justify-between">
             <span className="text-muted-foreground">{en ? 'Before VAT' : 'ก่อน VAT'}</span>
             <span>
-              {invoice.currency} {invoice.amountBeforeTax.toLocaleString()}
+              {invoice.currency} {formatMoney2(invoice.amountBeforeTax, en ? 'en-GB' : 'th-TH')}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">VAT ({invoice.vatPercent}%)</span>
             <span>
-              {invoice.currency} {invoice.vatAmount.toLocaleString()}
+              {invoice.currency} {formatMoney2(invoice.vatAmount, en ? 'en-GB' : 'th-TH')}
             </span>
           </div>
           <Separator />
           <div className="flex justify-between font-bold text-primary text-lg">
             <span>{en ? 'Total' : 'รวม'}</span>
             <span>
-              {invoice.currency} {invoice.totalAmount.toLocaleString()}
+              {invoice.currency} {formatMoney2(invoice.totalAmount, en ? 'en-GB' : 'th-TH')}
             </span>
           </div>
         </CardContent>

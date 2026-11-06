@@ -12,7 +12,7 @@ import { amountToEnglishBahtText } from '@/lib/documents/english-baht-text';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
 import { stripCommercialLinePoPrefix, translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
-import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
+import { formatMoney2, roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import {
   type CompanyProfilePrint,
   type StandardTotalsRow,
@@ -46,8 +46,8 @@ function buildCommercialLinesTableRowsForPrint(
       const descText = L === 'en' ? translateCommercialLineDescriptionToEn(rawDesc) : rawDesc;
       const desc = escapeHtmlDoc(descText);
       const qty = Number(line.quantity).toLocaleString(loc);
-      const up = Number(line.unitPrice).toLocaleString(loc, { minimumFractionDigits: 2 });
-      const amt = Number(line.amount ?? line.quantity * line.unitPrice).toLocaleString(loc, { minimumFractionDigits: 2 });
+      const up = formatMoney2(Number(line.unitPrice), loc);
+      const amt = formatMoney2(Number(line.amount ?? line.quantity * line.unitPrice), loc);
       const seq = invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx);
       return `<tr>
         <td class="sd-num">${seq}</td>
@@ -131,8 +131,8 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
           .map((line, idx) => {
             const desc = escapeHtmlDoc(line.description || '—');
             const qty = Number(line.quantity).toLocaleString(loc);
-            const up = Number(line.unitPrice).toLocaleString(loc, { minimumFractionDigits: 2 });
-            const amt = Number(line.amount).toLocaleString(loc, { minimumFractionDigits: 2 });
+            const up = formatMoney2(Number(line.unitPrice), loc);
+            const amt = formatMoney2(Number(line.amount), loc);
             const seq = invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx);
             return `<tr>
         <td class="sd-num">${seq}</td>
@@ -148,43 +148,46 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
   const vatPct = billingNote ? Number(billingNote.vatPercent) || 0 : 7;
   const vatRowLabel =
     vatPct > 0 ? `${printT(L, 'vat')} ${vatPct}%` : printT(L, 'vat');
-  const whtAmt = Number(invoice.withholdingTaxAmount) || 0;
+  const taxable = roundMoney2(invoice.taxableAmount);
+  const vatAmt = roundMoney2(invoice.vatAmount);
+  const totalAmt = roundMoney2(invoice.totalAmount);
+  const whtAmt = roundMoney2(Number(invoice.withholdingTaxAmount) || 0);
   const rateDoc = Number(invoice.withholdingTaxRatePercentOnDocument ?? 3);
   const showWhtOnDoc = invoice.showWithholdingOnDocument === true && whtAmt > 0.005;
-  const netPayable = roundMoney2(invoice.totalAmount - whtAmt);
+  const netPayable = roundMoney2(totalAmt - whtAmt);
 
   const totalRows: StandardTotalsRow[] = [
     {
       label: printT(L, 'taxableBase'),
-      value: invoice.taxableAmount.toLocaleString(loc, { minimumFractionDigits: 2 }),
+      value: formatMoney2(taxable, loc),
     },
     {
       label: vatRowLabel,
-      value: invoice.vatAmount.toLocaleString(loc, { minimumFractionDigits: 2 }),
+      value: formatMoney2(vatAmt, loc),
     },
   ];
   if (showWhtOnDoc) {
     totalRows.push({
       label: printT(L, 'invoiceTotalInclVat'),
-      value: `฿ ${invoice.totalAmount.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+      value: `฿ ${formatMoney2(totalAmt, loc)}`,
       grand: true,
     });
     totalRows.push({
       label: `${printT(L, 'wht')} (${rateDoc}%)`,
-      value: `-${whtAmt.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+      value: `-${formatMoney2(whtAmt, loc)}`,
     });
     totalRows.push({
       label: printT(L, 'netPayableAfterWht'),
-      value: `฿ ${netPayable.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+      value: `฿ ${formatMoney2(netPayable, loc)}`,
     });
   } else {
     totalRows.push({
       label: printT(L, 'grandTotal'),
-      value: `฿ ${invoice.totalAmount.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+      value: `฿ ${formatMoney2(totalAmt, loc)}`,
       grand: true,
     });
   }
-  const amountForWords = invoice.totalAmount;
+  const amountForWords = totalAmt;
   const totalWords =
     L === 'en' ? amountToEnglishBahtText(amountForWords) : amountToThaiBahtText(amountForWords);
   const isDraft = invoice.status === 'DRAFT';

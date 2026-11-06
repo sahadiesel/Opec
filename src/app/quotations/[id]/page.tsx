@@ -47,6 +47,7 @@ import { canView, canEdit } from '@/lib/permissions';
 import { officerCanAccessDocument } from '@/lib/documents/own-created-list';
 
 import { buildQuotationPrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import { formatMoney2, roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { DocumentShareButton } from '@/components/documents/document-share-controls';
@@ -204,11 +205,14 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   const displayLines = isEditMode ? draftLines : [...(lines || [])].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 
   const computeTotals = (currentLines: QuotationLine[], header: Partial<Quotation>) => {
-    const subtotal = currentLines.reduce((sum, l) => sum + (Number(l.lineTotal) || 0), 0);
+    const subtotal = roundMoney2(
+      currentLines.reduce((sum, l) => sum + roundMoney2(Number(l.lineTotal) || 0), 0),
+    );
     const taxPercent = Number(header.taxPercent ?? quotation?.taxPercent ?? 7) || 7;
-    const discountAmount = Number(header.discountAmount ?? quotation?.discountAmount ?? 0) || 0;
-    const taxAmount = (subtotal - discountAmount) * (taxPercent / 100);
-    const grandTotal = subtotal - discountAmount + taxAmount;
+    const discountAmount = roundMoney2(Number(header.discountAmount ?? quotation?.discountAmount ?? 0) || 0);
+    const taxable = roundMoney2(subtotal - discountAmount);
+    const taxAmount = roundMoney2(taxable * (taxPercent / 100));
+    const grandTotal = roundMoney2(taxable + taxAmount);
     return { subtotal, taxAmount, grandTotal, discountAmount, taxPercent };
   };
 
@@ -374,8 +378,8 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
           description: line.description,
           quantity: Number(line.quantity) || 0,
           unit: line.unit || 'EA',
-          unitPrice: Number(line.unitPrice) || 0,
-          lineTotal: Number(line.lineTotal) || 0,
+          unitPrice: roundMoney2(Number(line.unitPrice) || 0),
+          lineTotal: roundMoney2(Number(line.lineTotal) || 0),
           remarks: line.remarks || '',
           displayOrder: line.displayOrder ?? 0,
           updatedAt: Date.now(),
@@ -457,6 +461,9 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
         const { id: _ignore, ...lineData } = line;
         await addDoc(collection(firestore, 'quotations', revisionId, 'lines'), {
           ...lineData,
+          quantity: Number(line.quantity) || 0,
+          unitPrice: roundMoney2(Number(line.unitPrice) || 0),
+          lineTotal: roundMoney2(Number(line.lineTotal) || 0),
           quotationId: revisionId,
           createdAt: Date.now(),
           updatedAt: Date.now(),
@@ -525,8 +532,8 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     if (!editingLine?.description || !isEditable) return;
     
     const qty = Number(editingLine.quantity) || 0;
-    const price = Number(editingLine.unitPrice) || 0;
-    const lineTotal = qty * price;
+    const price = roundMoney2(Number(editingLine.unitPrice) || 0);
+    const lineTotal = roundMoney2(qty * price);
     
     const lineData = {
       ...editingLine,
@@ -876,10 +883,10 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                               <span className="text-sm font-bold">{line.quantity}</span> <span className="text-[10px] text-muted-foreground uppercase font-medium">{line.unit}</span>
                             </TableCell>
                             <TableCell className="text-right text-sm font-medium">
-                              ฿{(line.unitPrice || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              ฿{formatMoney2(line.unitPrice || 0)}
                             </TableCell>
                             <TableCell className="text-right font-black text-primary">
-                              ฿{(line.lineTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              ฿{formatMoney2(line.lineTotal || 0)}
                             </TableCell>
                             <TableCell className="text-right pr-6">
                               {isEditMode && (
@@ -1018,7 +1025,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                   <CardContent className="pt-6 space-y-3 text-sm">
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-muted-foreground">ยอดรวมสินค้า (Subtotal):</span>
-                      <span className="font-bold">฿{computeTotals(displayLines, editedHeader).subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      <span className="font-bold">฿{formatMoney2(computeTotals(displayLines, editedHeader).subtotal)}</span>
                     </div>
                     <div className="flex justify-between items-center group">
                       <span className="text-muted-foreground">ส่วนลด (Discount):</span>
@@ -1038,12 +1045,12 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                     </div>
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-muted-foreground">ภาษีมูลค่าเพิ่ม ({computeTotals(displayLines, editedHeader).taxPercent}%):</span>
-                      <span className="font-bold">฿{computeTotals(displayLines, editedHeader).taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      <span className="font-bold">฿{formatMoney2(computeTotals(displayLines, editedHeader).taxAmount)}</span>
                     </div>
                     <Separator className="my-2" />
                     <div className="flex justify-between items-end">
                       <span className="font-black text-primary uppercase text-[10px] tracking-widest">ยอดสุทธิ (Grand Total)</span>
-                      <span className="font-black text-2xl text-primary underline decoration-double">฿{computeTotals(displayLines, editedHeader).grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      <span className="font-black text-2xl text-primary underline decoration-double">฿{formatMoney2(computeTotals(displayLines, editedHeader).grandTotal)}</span>
                     </div>
                   </CardContent>
                 </Card>

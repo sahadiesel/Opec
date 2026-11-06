@@ -37,6 +37,7 @@ import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { buildQuotationPrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import { formatMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
@@ -317,7 +318,7 @@ export default function ClientPortalQuotationDetailPage({ params }: { params: Pr
                   <TableCell className="text-right font-mono text-sm">{line.quantity}</TableCell>
                   <TableCell className="text-right font-medium">
                     {quotation.currency}{' '}
-                    {line.lineTotal.toLocaleString(loc, { minimumFractionDigits: 2 })}
+                    {formatMoney2(line.lineTotal, loc)}
                   </TableCell>
                 </TableRow>
               ))}
@@ -332,14 +333,14 @@ export default function ClientPortalQuotationDetailPage({ params }: { params: Pr
             <span className="text-muted-foreground">{en ? 'Subtotal' : 'รวมย่อย'}</span>
             <span>
               {quotation.currency}{' '}
-              {quotation.subtotal.toLocaleString(loc, { minimumFractionDigits: 2 })}
+              {formatMoney2(quotation.subtotal, loc)}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">VAT ({quotation.taxPercent}%)</span>
             <span>
               {quotation.currency}{' '}
-              {quotation.taxAmount.toLocaleString(loc, { minimumFractionDigits: 2 })}
+              {formatMoney2(quotation.taxAmount, loc)}
             </span>
           </div>
           <Separator />
@@ -347,7 +348,7 @@ export default function ClientPortalQuotationDetailPage({ params }: { params: Pr
             <span>{en ? 'Grand total' : 'รวมทั้งสิ้น'}</span>
             <span>
               {quotation.currency}{' '}
-              {quotation.grandTotal.toLocaleString(loc, { minimumFractionDigits: 2 })}
+              {formatMoney2(quotation.grandTotal, loc)}
             </span>
           </div>
         </CardContent>

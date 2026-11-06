@@ -12,6 +12,7 @@ import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
 import { amountToEnglishBahtText } from '@/lib/documents/english-baht-text';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
+import { formatMoney2, roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import {
   type CompanyProfilePrint,
   type StandardTotalsRow,
@@ -84,8 +85,8 @@ export function buildQuotationPrintHtml(params: {
         : '';
       const qty = Number(line.quantity).toLocaleString(loc);
       const unit = escapeHtmlDoc((line.unit || '—').trim() || '—');
-      const up = Number(line.unitPrice).toLocaleString(loc, { minimumFractionDigits: 2 });
-      const lt = Number(line.lineTotal).toLocaleString(loc, { minimumFractionDigits: 2 });
+      const up = formatMoney2(Number(line.unitPrice), loc);
+      const lt = formatMoney2(Number(line.lineTotal), loc);
       return `<tr>
         <td class="sd-num">${idx + 1}</td>
         <td class="sd-line-desc">${descBody}${remHtml}</td>
@@ -97,27 +98,27 @@ export function buildQuotationPrintHtml(params: {
     })
     .join('');
 
-  const subtotal = totalsOverride?.subtotal ?? (Number(q.subtotal) || 0);
-  const disc = totalsOverride?.discountAmount ?? (Number(q.discountAmount) || 0);
-  const taxAmt = totalsOverride?.taxAmount ?? (Number(q.taxAmount) || 0);
-  const grand = totalsOverride?.grandTotal ?? (Number(q.grandTotal) || 0);
+  const subtotal = roundMoney2(totalsOverride?.subtotal ?? (Number(q.subtotal) || 0));
+  const disc = roundMoney2(totalsOverride?.discountAmount ?? (Number(q.discountAmount) || 0));
+  const taxAmt = roundMoney2(totalsOverride?.taxAmount ?? (Number(q.taxAmount) || 0));
+  const grand = roundMoney2(subtotal - disc + taxAmt);
   const taxPct = totalsOverride?.taxPercent ?? (Number(q.taxPercent) || 7);
   const totalRows: StandardTotalsRow[] = [
-    { label: printT(L, 'subtotal'), value: subtotal.toLocaleString(loc, { minimumFractionDigits: 2 }) },
+    { label: printT(L, 'subtotal'), value: formatMoney2(subtotal, loc) },
   ];
   if (disc > 0.005) {
     totalRows.push({
       label: printT(L, 'discount'),
-      value: `-${disc.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+      value: `-${formatMoney2(disc, loc)}`,
     });
   }
   totalRows.push({
     label: taxPct > 0 ? `${printT(L, 'vat')} ${taxPct}%` : printT(L, 'vat'),
-    value: taxAmt.toLocaleString(loc, { minimumFractionDigits: 2 }),
+    value: formatMoney2(taxAmt, loc),
   });
   totalRows.push({
     label: printT(L, 'grandTotal'),
-    value: `฿ ${grand.toLocaleString(loc, { minimumFractionDigits: 2 })}`,
+    value: `฿ ${formatMoney2(grand, loc)}`,
     grand: true,
   });
   const totalWords = L === 'en' ? amountToEnglishBahtText(grand) : amountToThaiBahtText(grand);

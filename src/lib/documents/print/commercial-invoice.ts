@@ -17,6 +17,7 @@ import { amountToThaiBahtText } from '@/lib/documents/thai-baht-text';
 import { amountToEnglishBahtText } from '@/lib/documents/english-baht-text';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
+import { formatMoney2, roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { collapseSameLocationMobDemobLines } from '@/lib/commercial/mob-demob-invoice-lines';
 import {
   stripCommercialLinePoPrefix,
@@ -294,10 +295,9 @@ export function buildCommercialInvoicePrintHtml(params: {
       const split = isDelivery ? splitLineUnitFromDescription(line, descText) : { description: descText, unit: '' };
       const desc = escapeHtmlDoc(split.description);
       const qty = Number(line.quantity).toLocaleString(L === 'en' ? 'en-GB' : 'th-TH');
-      const up = Number(line.unitPrice).toLocaleString(L === 'en' ? 'en-GB' : 'th-TH', { minimumFractionDigits: 2 });
-      const amt = Number(line.amount ?? line.quantity * line.unitPrice).toLocaleString(L === 'en' ? 'en-GB' : 'th-TH', {
-        minimumFractionDigits: 2,
-      });
+      const moneyLoc = L === 'en' ? 'en-GB' : 'th-TH';
+      const up = formatMoney2(Number(line.unitPrice), moneyLoc);
+      const amt = formatMoney2(Number(line.amount ?? line.quantity * line.unitPrice), moneyLoc);
       const seq = invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx);
       const unitCell = isDelivery ? `<td class="sd-center">${escapeHtmlDoc(split.unit)}</td>` : '';
       const priceCells = showPrices
@@ -314,36 +314,36 @@ export function buildCommercialInvoicePrintHtml(params: {
     })
     .join('');
 
+  const moneyLoc = L === 'en' ? 'en-GB' : 'th-TH';
+  const before = roundMoney2(amountBeforeTax);
+  const vat = roundMoney2(vatAmount);
+  const total = roundMoney2(totalAmount);
+  const wht = roundMoney2(Number(invoice.withholdingTaxAmount) || 0);
   const vatPct = Number(invoice.vatPercent) || 0;
-  const vatLabel =
-    vatPct > 0
-      ? L === 'en'
-        ? `${printT(L, 'vat')} ${vatPct}%`
-        : `${printT(L, 'vat')} ${vatPct}%`
-      : printT(L, 'vat');
+  const vatLabel = vatPct > 0 ? `${printT(L, 'vat')} ${vatPct}%` : printT(L, 'vat');
   const totalRows: StandardTotalsRow[] = [
     {
       label: printT(L, 'subtotal'),
-      value: amountBeforeTax.toLocaleString(L === 'en' ? 'en-GB' : 'th-TH', { minimumFractionDigits: 2 }),
+      value: formatMoney2(before, moneyLoc),
     },
     {
       label: vatLabel,
-      value: vatAmount.toLocaleString(L === 'en' ? 'en-GB' : 'th-TH', { minimumFractionDigits: 2 }),
+      value: formatMoney2(vat, moneyLoc),
     },
   ];
-  if ((invoice.withholdingTaxAmount ?? 0) > 0.005) {
+  if (wht > 0.005) {
     totalRows.push({
       label: printT(L, 'wht'),
-      value: `-${invoice.withholdingTaxAmount!.toLocaleString(L === 'en' ? 'en-GB' : 'th-TH', { minimumFractionDigits: 2 })}`,
+      value: `-${formatMoney2(wht, moneyLoc)}`,
     });
   }
   totalRows.push({
     label: printT(L, 'grandTotal'),
-    value: `฿ ${totalAmount.toLocaleString(L === 'en' ? 'en-GB' : 'th-TH', { minimumFractionDigits: 2 })}`,
+    value: `฿ ${formatMoney2(total, moneyLoc)}`,
     grand: true,
   });
 
-  const totalWords = L === 'en' ? amountToEnglishBahtText(totalAmount) : amountToThaiBahtText(totalAmount);
+  const totalWords = L === 'en' ? amountToEnglishBahtText(total) : amountToThaiBahtText(total);
   /** Portal: single title “Invoice” / “ใบแจ้งหนี้” only; status is in the app list, not on the paper */
   const headerHtml = buildStandardDocumentHeaderHtml({
     company,

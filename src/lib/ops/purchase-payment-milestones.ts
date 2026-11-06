@@ -9,8 +9,17 @@ import type {
   VendorBillWhtPresetCategory,
 } from '@/lib/types';
 
+/** เงินบนเอกสารคำนวณ — เหลือทศนิยม 2 ตำแหน่ง (สตางค์) */
 export function roundMoney2(n: number): number {
   return Math.round(Number(n) * 100) / 100;
+}
+
+/** แสดงเงิน 2 ตำแหน่งเสมอ ไม่ให้ตำแหน่งที่สามโผล่จากค่าที่ยังไม่ปัด */
+export function formatMoney2(n: number, locale?: string): string {
+  return roundMoney2(n).toLocaleString(locale, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 export function milestonesSumAmount(milestones: Pick<PurchasePaymentMilestone, 'amount'>[]): number {

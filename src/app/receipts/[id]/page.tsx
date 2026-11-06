@@ -236,7 +236,7 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
       setFixOpen(false);
       toast({
         title: 'แก้ยอดใบเสร็จแล้ว',
-        description: `ยอดใหม่ ${result.toAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} (รวม VAT ตามใบกำกับ)`,
+        description: `ยอดใหม่ ${result.toAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (รวม VAT ตามใบกำกับ)`,
       });
     } catch (e) {
       console.error(e);
@@ -317,12 +317,12 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
                 ยอดปัจจุบัน{' '}
                 <span className="font-mono font-semibold">
                   {receipt.currency}{' '}
-                  {whtFixPreview.currentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {whtFixPreview.currentAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>{' '}
                 ควรเป็น{' '}
                 <span className="font-mono font-semibold text-primary">
                   {receipt.currency}{' '}
-                  {whtFixPreview.expectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {whtFixPreview.expectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>{' '}
                 (ฐานภาษี + VAT)
               </p>
@@ -356,7 +356,7 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
             </p>
             <p>
               <span className="text-muted-foreground">ยอด: </span>
-              {receipt.currency} {receipt.amount.toLocaleString()}
+              {receipt.currency} {receipt.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </p>
             {receipt.cashbookEntryNo ? (
               <p>
@@ -503,7 +503,7 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
               <DialogTitle>แก้ยอดใบเสร็จเป็นยอดรวม (รวม VAT)</DialogTitle>
               <DialogDescription>
                 {whtFixPreview
-                  ? `${receipt.receiptNo}: ${whtFixPreview.currentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} → ${whtFixPreview.expectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                  ? `${receipt.receiptNo}: ${whtFixPreview.currentAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} → ${whtFixPreview.expectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                   : '—'}
               </DialogDescription>
             </DialogHeader>
