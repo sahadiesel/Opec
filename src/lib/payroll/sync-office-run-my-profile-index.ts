@@ -12,7 +12,6 @@ import {
   sanitizeOfficeStaffPayrollLineRefs,
 } from '@/lib/payroll/self-payroll-line-index';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
-import { isActiveOfficeStaffStatus } from '@/lib/hr/office-staff-active';
 
 const BATCH_LIMIT = 400;
 
@@ -63,7 +62,7 @@ export async function syncOfficeRunMyProfileIndex(
     }
     const staff = { id: staffSnap.id, ...(staffSnap.data() as object) } as OfficeStaff;
     const linked = staff.linkedUserId?.trim();
-    if (!linked || !isActiveOfficeStaffStatus(staff.status)) {
+    if (!linked) {
       skipped++;
       continue;
     }

@@ -13,7 +13,6 @@ import {
   sanitizeOfficeStaffPayrollLineRefs,
 } from '@/lib/payroll/self-payroll-line-index';
 import { stripUndefinedForFirestore } from '@/lib/firestore/strip-undefined-for-firestore';
-import { isActiveOfficeStaffStatus } from '@/lib/hr/office-staff-active';
 
 const OFFICE_RUN_COLLECTIONS = new Set(['office_payroll_runs', 'executive_payroll_runs']);
 
@@ -45,9 +44,6 @@ export async function verifySelfPayrollSubject(
   const linked = typeof data.linkedUserId === 'string' ? data.linkedUserId.trim() : '';
   if (!linked || linked !== uid) {
     return { ok: false, status: 403, error: 'ทะเบียนนี้ไม่ได้ผูกกับบัญชีของคุณ' };
-  }
-  if (kind === 'office_staff' && !isActiveOfficeStaffStatus(data.status)) {
-    return { ok: false, status: 403, error: 'ทะเบียนพนักงานไม่ได้อยู่ในสถานะ ACTIVE' };
   }
   return { ok: true, linkedUserId: linked };
 }

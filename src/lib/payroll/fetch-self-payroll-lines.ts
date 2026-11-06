@@ -16,7 +16,6 @@ import type {
 } from '@/lib/payroll/self-payroll-line-index';
 import { OFFICE_RUN_STATUSES_WITH_SAVED_LINES } from '@/lib/payroll/office-month-staff-aggregate';
 import { standardOfficePayrollLineDocId } from '@/lib/payroll/office-payroll-line-ids';
-import { isActiveOfficeStaffStatus } from '@/lib/hr/office-staff-active';
 
 const OFFICE_LINE_RUN_COLLECTIONS = ['office_payroll_runs', 'executive_payroll_runs'] as const;
 
@@ -47,7 +46,6 @@ async function verifyLinkedActiveSubject(
   const data = snap.data() as { linkedUserId?: string; status?: string };
   const linked = data.linkedUserId?.trim();
   if (!linked || linked !== linkedUserId) return false;
-  if (col === 'office_staff' && !isActiveOfficeStaffStatus(data.status)) return false;
   return true;
 }
 

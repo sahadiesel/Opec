@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -110,6 +111,7 @@ export function WorkerDrugTab({
   const [bpDia, setBpDia] = useState('');
   const [alcohol, setAlcohol] = useState('');
   const [conclusion, setConclusion] = useState<DrugTestScreeningConclusion | ''>('');
+  const [note, setNote] = useState('');
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pendingPreviewUrls, setPendingPreviewUrls] = useState<string[]>([]);
   const [existingAttachments, setExistingAttachments] = useState<WaveMonthTimesheetPhotoAttachment[]>([]);
@@ -163,6 +165,7 @@ export function WorkerDrugTab({
     setBpDia('');
     setAlcohol('');
     setConclusion('');
+    setNote('');
     setExistingAttachments([]);
     setRemovedAttachmentIds(new Set());
     setRecordMeta(null);
@@ -195,6 +198,7 @@ export function WorkerDrugTab({
     );
     setAlcohol(row.alcoholMgPercent != null && Number.isFinite(row.alcoholMgPercent) ? String(row.alcoholMgPercent) : '');
     setConclusion(row.conclusion === 'pass' || row.conclusion === 'fail' ? row.conclusion : '');
+    setNote(row.note || '');
     setExistingAttachments(listWorkerDrugTestAttachments(row));
     setRemovedAttachmentIds(new Set());
     const at = row.recordedAt || row.createdAt;
@@ -360,6 +364,7 @@ export function WorkerDrugTab({
         bloodPressureDiastolic: dia,
         alcoholMgPercent: alc,
         conclusion,
+        note: note.trim(),
         attachments,
       };
 
@@ -491,6 +496,9 @@ export function WorkerDrugTab({
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
+                      {row.note?.trim() ? (
+                        <p className="mt-1 max-w-[12rem] whitespace-pre-wrap text-[11px] text-muted-foreground">{row.note.trim()}</p>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       {validity === 'valid' ? (
@@ -659,7 +667,7 @@ export function WorkerDrugTab({
             <div className="space-y-4 py-2">
               <div className="space-y-2">
                 <Label>1. ชุดตรวจ (ติ๊กชุดที่ใช้ — เลือกได้ 1 หรือทั้ง 2 ชุด)</Label>
-                <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-3">
                   {panelSubstances.map((s) => {
                     const checked = selectedKitIds.includes(s.id);
                     return (
@@ -751,22 +759,36 @@ export function WorkerDrugTab({
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label>ข้อสรุป</Label>
-                <RadioGroup
-                  value={conclusion}
-                  onValueChange={(v) => setConclusion(v as DrugTestScreeningConclusion)}
-                  className="flex flex-wrap gap-4"
-                >
-                  <label className="flex items-center gap-2 text-sm">
-                    <RadioGroupItem value="pass" disabled={formReadOnly} />
-                    ผ่าน
-                  </label>
-                  <label className="flex items-center gap-2 text-sm">
-                    <RadioGroupItem value="fail" disabled={formReadOnly} />
-                    ไม่ผ่าน
-                  </label>
-                </RadioGroup>
+              <div className="grid grid-cols-2 items-start gap-3">
+                <div className="space-y-2">
+                  <Label>ข้อสรุป</Label>
+                  <RadioGroup
+                    value={conclusion}
+                    onValueChange={(v) => setConclusion(v as DrugTestScreeningConclusion)}
+                    className="flex h-10 flex-wrap items-center gap-4"
+                  >
+                    <label className="flex items-center gap-2 text-sm">
+                      <RadioGroupItem value="pass" disabled={formReadOnly} />
+                      ผ่าน
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <RadioGroupItem value="fail" disabled={formReadOnly} />
+                      ไม่ผ่าน
+                    </label>
+                  </RadioGroup>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="drug-note">หมายเหตุ</Label>
+                  <Textarea
+                    id="drug-note"
+                    value={note}
+                    disabled={formReadOnly}
+                    rows={2}
+                    placeholder="บันทึกเพิ่มเติม (ไม่บังคับ)"
+                    className="min-h-[4.5rem] resize-y"
+                    onChange={(e) => setNote(e.target.value)}
+                  />
+                </div>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">

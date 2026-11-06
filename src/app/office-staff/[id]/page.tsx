@@ -254,6 +254,11 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
       employmentEndDate: latestTenure?.endDate || staffData.employmentEndDate || '',
       employmentEndReason: latestTenure?.endReason || staffData.employmentEndReason || '',
       employmentEndReasonNote: latestTenure?.endReasonNote || staffData.employmentEndReasonNote || '',
+      status: officeStatusForEmploymentTenure(
+        latestTenure?.endDate || staffData.employmentEndDate || '',
+        latestTenure?.endReason || staffData.employmentEndReason || '',
+        staffData.status,
+      ),
     });
   }, [staffData]);
 
@@ -515,7 +520,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
               </p>
               {registryFrozen ? (
                 <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-                  พนักงานไม่ได้สถานะทำงานอยู่ — แก้ข้อมูลอื่นไม่ได้ แก้ได้เฉพาะวันที่เริ่มงานและวันที่สิ้นสุดการทำงาน
+                  พนักงานไม่ได้สถานะทำงานอยู่ — แก้ข้อมูลอื่นไม่ได้ แก้ได้เฉพาะวันที่เริ่มงาน วันที่สิ้นสุดการทำงาน และสถานะ (ตั้งเป็น ACTIVE เพื่อกลับมาทำงาน)
                 </p>
               ) : null}
             </div>
@@ -737,11 +742,14 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                     })
                   }
                 />
-                <div inert={registryFrozen ? true : undefined} className={registryFrozen ? 'min-w-0 opacity-70' : 'min-w-0'}>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 items-end">
                   <div className="space-y-2">
                     <Label className="font-bold">สถานะ (Status)</Label>
-                    <Select onValueChange={(v: StaffStatus) => setFormData({ ...formData, status: v })} value={formData.status}>
+                    <Select
+                      onValueChange={(v: StaffStatus) => setFormData({ ...formData, status: v })}
+                      value={formData.status}
+                      disabled={isSubmitting || (isNew ? !canCreateOfficeStaff : !canEditOfficeStaff)}
+                    >
                       <SelectTrigger className="h-10">
                         <SelectValue />
                       </SelectTrigger>
@@ -751,8 +759,11 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                         <SelectItem value="RESIGNED">RESIGNED (ลาออก)</SelectItem>
                       </SelectContent>
                     </Select>
+                    <p className="text-[10px] text-muted-foreground">
+                      มีวันสิ้นสุดล่วงหน้าแล้วยัง ACTIVE จนถึงวันนั้น — เลยวันแล้วค่อย INACTIVE/RESIGNED
+                      งวดเงินเดือนที่ทับช่วงจ้างยังจ่ายได้แม้สถานะเปลี่ยนแล้ว
+                    </p>
                   </div>
-                </div>
                 </div>
               </CardContent>
             </Card>
@@ -876,7 +887,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                           <SelectItem value="MONTHLY">รายเดือน</SelectItem>
                           <SelectItem value="DAILY">รายวัน</SelectItem>
                           <SelectItem value="MONTHLY_NO_ATT">รายเดือน (ไม่อ้างอิงสแกน/เวลาเข้างาน)</SelectItem>
-                          <SelectItem value="NONE">ไม่คิดเงินเดือนผ่านงวดออฟฟิศ (จ่ายนอกระบบ / ฝึกงาน ฯลฯ)</SelectItem>
+                          <SelectItem value="NONE">ไม่คิดเงินเดือนผ่านงวดออฟฟิศ (จ่ายนอกระบบ)</SelectItem>
                         </SelectContent>
                       </Select>
                       {officeStaffShowsTimeDeductionBasisField(formData) ? (

@@ -1,3 +1,4 @@
+import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { normalizeStaffDateYmd } from '@/lib/payroll/office-staff-date-ymd';
 
 export const EMPLOYMENT_END_REASONS = [
@@ -250,16 +251,22 @@ export function commitEmploymentTenure(input: {
   };
 }
 
-/** สถานะทะเบียนออฟฟิศให้สอดคล้องกับรอบล่าสุด */
+/**
+ * สถานะทะเบียนออฟฟิศตามรอบจ้าง
+ * — มีวันสิ้นสุดล่วงหน้า (ฝึกงาน/สัญญา) แล้วยัง ACTIVE จนถึงวันนั้นรวมวันสิ้นสุด
+ * — เลยวันสิ้นสุดแล้วค่อย RESIGNED หรือ INACTIVE
+ */
 export function officeStatusForEmploymentTenure(
   endDate: string,
   endReason: EmploymentEndReason | '',
   currentStatus: 'ACTIVE' | 'INACTIVE' | 'RESIGNED' | undefined,
+  todayYmd = thailandTodayYmd(),
 ): 'ACTIVE' | 'INACTIVE' | 'RESIGNED' {
   if (!endDate) {
     if (currentStatus === 'RESIGNED') return 'ACTIVE';
     return currentStatus || 'ACTIVE';
   }
+  if (endDate >= todayYmd) return 'ACTIVE';
   if (endReason === 'RESIGNED') return 'RESIGNED';
   return 'INACTIVE';
 }

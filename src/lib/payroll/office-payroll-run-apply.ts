@@ -33,7 +33,7 @@ import {
   buildOfficeStaffSelfPayrollLineIndex,
   officeStaffSelfPayrollLineIndexRef,
 } from '@/lib/payroll/self-payroll-line-index';
-import { isActiveOfficeStaffStatus } from '@/lib/hr/office-staff-active';
+import { officeStaffEmploymentOverlapsYmdRange } from '@/lib/hr/office-staff-employed-in-period';
 import {
   applyCashAdvanceRecoveryToOfficeD8Line,
   clearCashAdvanceRecoveriesForPayrollBatch,
@@ -56,11 +56,18 @@ export function getPayrollMonthPeriodBounds(yyyyMm: string): { payrollPeriodStar
   return { payrollPeriodStart, payrollPeriodEnd };
 }
 
-/** พนักงานที่เข้างวด office มาตรฐาน (ไม่รวมผู้บริหาร / ไม่จ่ายผ่านงวดนี้) */
-export function isOfficeStaffEligibleForStandardOfficeRun(s: OfficeStaff): boolean {
-  if (s.status !== 'ACTIVE') return false;
+/** พนักงานที่เข้างวด office มาตรฐาน (ไม่รวมผู้บริหาร / ไม่จ่ายผ่านงวดนี้)
+ * INACTIVE/RESIGNED ยังเลือกจ่ายได้ถ้าช่วงงวดทับวันเริ่ม–วันสิ้นสุดงาน และยังไม่อยู่งวดอื่นของเดือนนั้น
+ */
+export function isOfficeStaffEligibleForStandardOfficeRun(
+  s: OfficeStaff,
+  period?: Pick<OfficePayrollRun, 'payrollPeriodStart' | 'payrollPeriodEnd'> | null,
+): boolean {
   if (s.payrollBand === 'EXECUTIVE') return false;
   if (s.excludeFromPayrollRuns) return false;
+  if (period?.payrollPeriodStart && period?.payrollPeriodEnd) {
+    return officeStaffEmploymentOverlapsYmdRange(s, period.payrollPeriodStart, period.payrollPeriodEnd);
+  }
   return true;
 }
 
@@ -188,6 +195,10 @@ export async function applyStandardOfficeRunLines(
         weeklyRestPattern: payrollCtx.weeklyRestPattern,
         calendarHolidays: payrollCtx.calendarHolidays,
       },
+      {
+        startYmd: staff.startDate,
+        endYmd: staff.employmentEndDate,
+      },
     );
 
     const restDayWorked = sumOfficeRestDayWorkedPayInPeriod(
@@ -287,7 +298,7 @@ export async function applyStandardOfficeRunLines(
     batch.set(lineDoc, stripUndefinedForFirestore(newLine));
 
     const linked = staff.linkedUserId?.trim();
-    if (linked && isActiveOfficeStaffStatus(staff.status)) {
+    if (linked) {
       batch.set(
         officeStaffSelfPayrollLineIndexRef(firestore, staff.id, lineId),
         buildOfficeStaffSelfPayrollLineIndex({ ...newLine, subjectLinkedUserId: linked }),

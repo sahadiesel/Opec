@@ -1,4 +1,6 @@
 import { WAVE_TIMESHEET_DEPLOYMENT_STATUSES } from '@/lib/constants/timesheet-wave';
+import { isEffectivelyActiveOfficeStaff } from '@/lib/hr/office-staff-active';
+import { officeStaffEmploymentOverlapsYmdRange } from '@/lib/hr/office-staff-employed-in-period';
 import type {
   Assignment,
   DailyTimesheet,
@@ -7,12 +9,16 @@ import type {
   OfficeStaff,
 } from '@/lib/types';
 
-export function isActiveOfficePayrollStaff(s: OfficeStaff): boolean {
-  return (
-    s.status === 'ACTIVE' &&
-    s.payrollBand !== 'EXECUTIVE' &&
-    s.excludeFromPayrollRuns !== true
-  );
+export function isActiveOfficePayrollStaff(
+  s: OfficeStaff,
+  period?: { payrollPeriodStart?: string; payrollPeriodEnd?: string } | null,
+): boolean {
+  if (s.payrollBand === 'EXECUTIVE') return false;
+  if (s.excludeFromPayrollRuns === true) return false;
+  if (period?.payrollPeriodStart && period?.payrollPeriodEnd) {
+    return officeStaffEmploymentOverlapsYmdRange(s, period.payrollPeriodStart, period.payrollPeriodEnd);
+  }
+  return isEffectivelyActiveOfficeStaff(s);
 }
 
 export function officeStaffHasBank(s: OfficeStaff): boolean {

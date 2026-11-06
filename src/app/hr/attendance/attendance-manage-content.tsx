@@ -139,12 +139,13 @@ import {
   isHrSettingsCalendarHolidayYmd,
 } from '@/lib/payroll/worker-global-labor-policy';
 import { useOfficeOnshoreRest } from '@/hooks/use-office-onshore-rest';
+import { isEffectivelyActiveOfficeStaff } from '@/lib/hr/office-staff-active';
 import { monthlyWorkNormFromPolicyRecord } from '@/lib/payroll/office-payroll-period-deductions';
 import type { PayrollPolicyRecord } from '@/lib/types';
 
 /** พนักงานออฟฟิศที่อยู่ในทะเบียนปัจจุบัน — ไม่รวมผู้บริหาร (แยกทะเบียน/งวด) */
 function isOfficeStaffOnActiveRegistry(s: OfficeStaff): boolean {
-  return s.status === 'ACTIVE' && s.payrollBand !== 'EXECUTIVE';
+  return isEffectivelyActiveOfficeStaff(s) && s.payrollBand !== 'EXECUTIVE';
 }
 
 type SubjectKey = `${AttendanceSubjectType}:${string}`;

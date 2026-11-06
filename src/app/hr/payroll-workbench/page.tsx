@@ -223,7 +223,7 @@ export default function HrPayrollWorkbenchPage() {
   const { data: periodTimesheets, isLoading: loadingPeriodTs } = useCollection<DailyTimesheet>(periodTimesheetsQuery as any);
 
   const officeStats = useMemo(() => {
-    const staff = (officeStaff || []).filter(isActiveOfficePayrollStaff);
+    const staff = (officeStaff || []).filter((s) => isActiveOfficePayrollStaff(s, focusOfficeRun));
     const total = staff.length;
     const lineIds =
       monthOfficeLineStaffIds != null
@@ -455,7 +455,7 @@ export default function HrPayrollWorkbenchPage() {
         });
       });
     (officeStaff || [])
-      .filter(isActiveOfficePayrollStaff)
+      .filter((s) => isActiveOfficePayrollStaff(s, focusOfficeRun))
       .filter((s) => !officeMasterDataComplete(s))
       .slice(0, 8)
       .forEach((s) => {
@@ -518,6 +518,7 @@ export default function HrPayrollWorkbenchPage() {
     periodTimesheets,
     waveMap,
     currentUser,
+    focusOfficeRun,
   ]);
 
   const financeReady = useMemo(() => {

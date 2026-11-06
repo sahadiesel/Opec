@@ -1,5 +1,5 @@
 import type { EmploymentTenure } from '@/lib/hr/employment-tenure';
-import { isActiveOfficeStaffStatus } from '@/lib/hr/office-staff-active';
+import { isEffectivelyActiveOfficeStaff } from '@/lib/hr/office-staff-active';
 import { isActiveWorkerForSelection } from '@/lib/hr/worker-active';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { normalizeStaffDateYmd } from '@/lib/payroll/office-staff-date-ymd';
@@ -47,7 +47,7 @@ export function isWorkerRegistryOperable(
 export function isOfficeStaffRegistryOperable(
   staff: Pick<OfficeStaff, 'status' | 'employmentEndDate' | 'employmentTenures'>,
 ): boolean {
-  if (!isActiveOfficeStaffStatus(staff.status)) return false;
+  if (!isEffectivelyActiveOfficeStaff(staff)) return false;
   if (employmentCycleHasEnded(staff)) return false;
   return true;
 }

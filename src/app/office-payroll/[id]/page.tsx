@@ -254,7 +254,7 @@ function OfficePayrollDetailPageInner({ params }: { params: Promise<{ id: string
       }
       return staffList;
     }
-    return allStaff.filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s));
+    return allStaff.filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s, run));
   }, [allStaff, lines]);
 
   useEffect(() => {

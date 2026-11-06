@@ -71,6 +71,9 @@ export function EmploymentTenureFields({
         </div>
         <div className="space-y-2">
           <Label className="font-bold">วันที่สิ้นสุดการทำงาน</Label>
+          <p className="text-[11px] text-muted-foreground leading-snug">
+            กำหนดล่วงหน้าได้ (เช่น ฝึกงาน) — ยังถือว่าทำงานอยู่จนถึงวันนี้ ไม่ตัดสถานะทันที
+          </p>
           <DatePickerThaiBE
             className="h-10"
             placeholder="ยังไม่ระบุ"

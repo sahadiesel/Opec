@@ -32,7 +32,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
-import { isActiveOfficeStaffStatus } from '@/lib/hr/office-staff-active';
+import { effectiveOfficeStaffStatus } from '@/lib/hr/office-staff-active';
 
 function officeStaffStatusBadge(status: StaffStatus) {
   switch (status) {
@@ -102,7 +102,7 @@ function OfficeStaffTable({
                 <span className="text-[10px] text-muted-foreground">{staff.salaryType}</span>
               </div>
             </TableCell>
-            <TableCell>{officeStaffStatusBadge(staff.status)}</TableCell>
+            <TableCell>{officeStaffStatusBadge(effectiveOfficeStaffStatus(staff))}</TableCell>
             <TableCell className="text-right pr-6">
               <div className="flex justify-end gap-2">
                 <Button
@@ -162,19 +162,15 @@ export default function OfficeStaffPage() {
   }, [staffList, searchTerm, deptFilter, typeFilter]);
 
   const activeStaff = useMemo(
-    () => filteredStaff.filter((s) => isActiveOfficeStaffStatus(s.status)),
+    () => filteredStaff.filter((s) => effectiveOfficeStaffStatus(s) === 'ACTIVE'),
     [filteredStaff],
   );
   const resignedStaff = useMemo(
-    () => filteredStaff.filter((s) => (s.status || '').trim().toUpperCase() === 'RESIGNED'),
+    () => filteredStaff.filter((s) => effectiveOfficeStaffStatus(s) === 'RESIGNED'),
     [filteredStaff],
   );
   const inactiveStaff = useMemo(
-    () =>
-      filteredStaff.filter((s) => {
-        const st = (s.status || '').trim().toUpperCase();
-        return st !== 'ACTIVE' && st !== 'RESIGNED';
-      }),
+    () => filteredStaff.filter((s) => effectiveOfficeStaffStatus(s) === 'INACTIVE'),
     [filteredStaff],
   );
 

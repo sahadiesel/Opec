@@ -22,6 +22,35 @@ function employmentOverlapsRange(
   return true;
 }
 
+/** งวดจ่ายทับช่วงเริ่มงาน–สิ้นสุดงาน (ดูทุก tenure ถ้ามี) */
+export function officeStaffEmploymentOverlapsYmdRange(
+  staff: {
+    startDate?: unknown;
+    employmentEndDate?: unknown;
+    employmentTenures?: Array<{ startDate?: unknown; endDate?: unknown }> | null;
+  },
+  rangeStart: string,
+  rangeEnd: string,
+): boolean {
+  const rs = rangeStart.slice(0, 10);
+  const re = rangeEnd.slice(0, 10);
+  const ranges = (staff.employmentTenures ?? [])
+    .map((t) => ({
+      start: normalizeStaffDateYmd(t.startDate),
+      end: normalizeStaffDateYmd(t.endDate),
+    }))
+    .filter((t) => t.start);
+  if (ranges.length > 0) {
+    return ranges.some((t) => employmentOverlapsRange(t.start, t.end, rs, re));
+  }
+  return employmentOverlapsRange(
+    normalizeStaffDateYmd(staff.startDate),
+    normalizeStaffDateYmd(staff.employmentEndDate),
+    rs,
+    re,
+  );
+}
+
 function rangeOverlapsLeaveFilter(
   startYmd: string | null,
   endYmd: string | null,

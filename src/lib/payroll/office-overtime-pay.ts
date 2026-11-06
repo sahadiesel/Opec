@@ -258,12 +258,17 @@ export function sumApprovedOfficeOvertimePayInPeriod(
     weeklyRestPattern: WeeklyRestPatternForCalendar;
     calendarHolidays: CalendarHolidayEntry[];
   },
+  employment?: { startYmd?: string | null; endYmd?: string | null },
 ): number {
   const latestByDay = latestApprovedOvertimeByDayForStaff(staffId, periodStart, periodEnd, requests);
+  const staffStart = employment?.startYmd ? normalizeStaffDateYmd(employment.startYmd) : null;
+  const staffEnd = employment?.endYmd ? normalizeStaffDateYmd(employment.endYmd) : null;
 
   let total = 0;
   for (const r of latestByDay.values()) {
     const ymd = r.workDateYmd.slice(0, 10);
+    if (staffStart && ymd < staffStart) continue;
+    if (staffEnd && ymd > staffEnd) continue;
     const approvedHours = Number(r.approvedOtHours ?? r.requestedOtHours);
     if (!Number.isFinite(approvedHours) || approvedHours <= 0) {
       const startHm = normalizeAttendanceHmInput(r.approvedOtStartHm);

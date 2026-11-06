@@ -327,6 +327,8 @@ export interface WorkerDrugTest {
   bloodPressureDiastolic?: number | null;
   alcoholMgPercent?: number | null;
   conclusion?: DrugTestScreeningConclusion;
+  /** หมายเหตุของรอบตรวจ — ไม่บังคับ และไม่ใช้ตัดสิน mob */
+  note?: string;
   recordedByName?: string;
   recordedByUserId?: string;
   recordedAt?: number;

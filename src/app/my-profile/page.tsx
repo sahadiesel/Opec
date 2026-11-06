@@ -44,7 +44,7 @@ import type { OfficeStaff } from '@/lib/types';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import { fetchLinkedPersonnelForUser } from '@/lib/hr/linked-personnel';
-import { isActiveOfficeStaffStatus } from '@/lib/hr/office-staff-active';
+import { isEffectivelyActiveOfficeStaff } from '@/lib/hr/office-staff-active';
 import type {
   CashAdvanceRequest,
   OfficePayrollLine,
@@ -269,8 +269,7 @@ export default function MyProfilePage() {
     })();
   }, [firestore, linked]);
 
-  const officeSelfPayrollEnabled =
-    linked?.kind === 'office_staff' && isActiveOfficeStaffStatus(linked.record.status);
+  const officeSelfPayrollEnabled = linked?.kind === 'office_staff';
 
   const officePayrollLinesHook = useOfficeStaffPayrollLines(
     firestore,
@@ -855,7 +854,7 @@ export default function MyProfilePage() {
             </TabsContent>
 
             <TabsContent value="holidays" className="mt-4">
-              {linked.kind === 'office_staff' && !isActiveOfficeStaffStatus(linked.record.status) ? (
+              {linked.kind === 'office_staff' && !isEffectivelyActiveOfficeStaff(linked.record) ? (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base">วันหยุดและกฎค่าจ้างอ้างอิง</CardTitle>
@@ -937,7 +936,7 @@ export default function MyProfilePage() {
             </TabsContent>
 
             <TabsContent value="payslips" className="mt-4">
-              {linked.kind === 'office_staff' && !isActiveOfficeStaffStatus(linked.record.status) ? (
+              {linked.kind === 'office_staff' && !isEffectivelyActiveOfficeStaff(linked.record) ? (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base">สลิปเงินเดือน</CardTitle>
@@ -966,7 +965,7 @@ export default function MyProfilePage() {
             </TabsContent>
 
             <TabsContent value="wht" className="mt-4">
-              {linked.kind === 'office_staff' && !isActiveOfficeStaffStatus(linked.record.status) ? (
+              {linked.kind === 'office_staff' && !isEffectivelyActiveOfficeStaff(linked.record) ? (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base">ใบหัก ณ ที่จ่าย (ภงด.1 / 50ทวิ)</CardTitle>

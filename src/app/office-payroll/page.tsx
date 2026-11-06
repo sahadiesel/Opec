@@ -288,24 +288,32 @@ export default function OfficePayrollPage() {
     if (!isDialogOpen || loadingLocked) return;
     if (!allOfficeStaff?.length) return;
     const eligible = allOfficeStaff
-      .filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s) && !lockedInOtherRuns.has(s.id))
+      .filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s, newRun) && !lockedInOtherRuns.has(s.id))
       .sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
     setSelectedStaffIds(new Set(eligible.map((s) => s.id)));
-  }, [isDialogOpen, loadingLocked, lockedInOtherRuns, staffPickVersion, nStaff]);
+  }, [
+    isDialogOpen,
+    loadingLocked,
+    lockedInOtherRuns,
+    staffPickVersion,
+    nStaff,
+    newRun.payrollPeriodStart,
+    newRun.payrollPeriodEnd,
+  ]);
 
   const eligibleForCreate = useMemo(() => {
     if (!allOfficeStaff) return [];
     return allOfficeStaff
-      .filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s) && !lockedInOtherRuns.has(s.id))
+      .filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s, newRun) && !lockedInOtherRuns.has(s.id))
       .sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
-  }, [allOfficeStaff, lockedInOtherRuns]);
+  }, [allOfficeStaff, lockedInOtherRuns, newRun.payrollPeriodStart, newRun.payrollPeriodEnd]);
 
   const lockedOutForCreate = useMemo(() => {
     if (!allOfficeStaff) return [];
     return allOfficeStaff
-      .filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s) && lockedInOtherRuns.has(s.id))
+      .filter((s) => isOfficeStaffEligibleForStandardOfficeRun(s, newRun) && lockedInOtherRuns.has(s.id))
       .sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
-  }, [allOfficeStaff, lockedInOtherRuns]);
+  }, [allOfficeStaff, lockedInOtherRuns, newRun.payrollPeriodStart, newRun.payrollPeriodEnd]);
 
   const filteredEligible = useMemo(() => {
     const q = createStaffSearch.trim().toLowerCase();
@@ -417,7 +425,7 @@ export default function OfficePayrollPage() {
     for (const id of selectedStaffIds) {
       const s = byId.get(id);
       if (!s) continue;
-      if (!isOfficeStaffEligibleForStandardOfficeRun(s) || lockedInOtherRuns.has(s.id)) {
+      if (!isOfficeStaffEligibleForStandardOfficeRun(s, newRun) || lockedInOtherRuns.has(s.id)) {
         toast({ variant: 'destructive', title: 'รายชื่อไม่ถูกต้อง', description: 'มีรายชื่อที่ถูกงวดอื่นใช้แล้วหรือไม่เข้าเงื่อนไข — ลองปิดแล้วเปิดใหม่' });
         return;
       }
