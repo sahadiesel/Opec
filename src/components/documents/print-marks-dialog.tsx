@@ -34,7 +34,9 @@ export function PrintMarksChoices({
   return (
     <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
       <p className="text-sm font-medium">จะให้เพิ่มลายเซ็นและตรายางลงในเอกสารหรือไม่?</p>
-      <p className="text-xs text-muted-foreground">ลายเซ็นสองส่วนแยกกัน — เลือกได้ทีละช่อง หรือหลายช่องพร้อมกัน</p>
+      <p className="text-xs text-muted-foreground">
+        เลือกแล้วระบบจำไว้สำหรับเอกสารนี้ในการพิมพ์ครั้งถัดไป จนกว่าจะติ๊กออก
+      </p>
       <label className="flex items-start gap-2 text-sm">
         <Checkbox
           checked={includePreparerSignature}
@@ -52,7 +54,11 @@ export function PrintMarksChoices({
       <label className="flex items-start gap-2 text-sm">
         <Checkbox
           checked={includeAuthorizedSignature}
-          onCheckedChange={(v) => onAuthorizedSignature(v === true)}
+          onCheckedChange={(v) => {
+            const on = v === true;
+            onAuthorizedSignature(on);
+            if (!on) onStamp(false);
+          }}
           className="mt-0.5"
         />
         <span>
@@ -65,12 +71,21 @@ export function PrintMarksChoices({
           </span>
         </span>
       </label>
-      <label className="flex items-start gap-2 text-sm">
-        <Checkbox checked={includeStamp} onCheckedChange={(v) => onStamp(v === true)} className="mt-0.5" />
+      <label className={`flex items-start gap-2 text-sm ${includeAuthorizedSignature ? '' : 'opacity-60'}`}>
+        <Checkbox
+          checked={includeAuthorizedSignature && includeStamp}
+          disabled={!includeAuthorizedSignature}
+          onCheckedChange={(v) => onStamp(v === true)}
+          className="mt-0.5"
+        />
         <span>
           <span className="font-medium">3. ตรายาง</span>
           <span className="block text-xs text-muted-foreground">
-            {stampReady ? 'วางทับช่องผู้มีอำนาจลงนาม · จากหัวเอกสารบริษัท' : 'ยังไม่มีรูปตรายางในหัวเอกสารบริษัท'}
+            {!includeAuthorizedSignature
+              ? 'เลือกลายเซ็นผู้มีอำนาจลงนามก่อน จึงจะเลือกตรายางได้'
+              : stampReady
+                ? 'วางระหว่างผู้จัดเตรียมกับผู้มีอำนาจลงนาม · จากหัวเอกสารบริษัท'
+                : 'ยังไม่มีรูปตรายางในหัวเอกสารบริษัท'}
           </span>
         </span>
       </label>
@@ -114,7 +129,9 @@ export function PrintMarksDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>ตัวเลือกก่อนพิมพ์</DialogTitle>
-          <DialogDescription>ลายเซ็นและตรายางจะถูกใส่เฉพาะรอบพิมพ์นี้ ไม่เปลี่ยนรายการหรือเลขที่เอกสาร</DialogDescription>
+          <DialogDescription>
+            ตัวเลือกถูกจำไว้กับเอกสารนี้ ตรายางเลือกได้เมื่อติ๊กลายเซ็นผู้มีอำนาจลงนาม
+          </DialogDescription>
         </DialogHeader>
         <PrintMarksChoices
           includePreparerSignature={includePreparerSignature}

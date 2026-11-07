@@ -98,6 +98,7 @@ import { DocumentPrintLocaleToggle } from '@/components/documents/document-print
 import { DocumentShareButton } from '@/components/documents/document-share-controls';
 import { AuthorizedSignatoryActions } from '@/components/documents/authorized-signatory-actions';
 import { PrintMarksChoices, PrintMarksDialog } from '@/components/documents/print-marks-dialog';
+import { usePersistedPrintMarks } from '@/components/documents/use-persisted-print-marks';
 import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
 import { authorizedSignatureReady } from '@/lib/types/document-signature';
 import { TaxInvoiceLinesTable } from '@/components/documents/tax-invoice-lines-table';
@@ -152,9 +153,14 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const [savingNotes, setSavingNotes] = useState(false);
   const [printPresetOpen, setPrintPresetOpen] = useState(false);
   const [marksDialogOpen, setMarksDialogOpen] = useState(false);
-  const [includePreparerSignature, setIncludePreparerSignature] = useState(false);
-  const [includeAuthorizedSignature, setIncludeAuthorizedSignature] = useState(false);
-  const [includeStamp, setIncludeStamp] = useState(false);
+  const {
+    includePreparerSignature,
+    setIncludePreparerSignature,
+    includeAuthorizedSignature,
+    setIncludeAuthorizedSignature,
+    includeStamp,
+    setIncludeStamp,
+  } = usePersistedPrintMarks('tax_invoices', id);
   const [accountingPrintPreset, setAccountingPrintPreset] = useState<'p1' | 'p2' | 'p3' | 'p4'>('p1');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelReasonDraft, setCancelReasonDraft] = useState('');
@@ -700,9 +706,6 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
 
   const handlePrintTaxInvoice = () => {
     if (!invoice) return;
-    setIncludePreparerSignature(false);
-    setIncludeAuthorizedSignature(false);
-    setIncludeStamp(false);
     if (isAccountingActor) {
       setAccountingPrintPreset('p1');
       setPrintPresetOpen(true);

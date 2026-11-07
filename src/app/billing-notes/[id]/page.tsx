@@ -65,10 +65,11 @@ import {
   extractFirestoreIndexConsoleUrl,
   isFirestoreMissingIndexError,
 } from '@/firebase/firestore/firestore-index-error';
+import { FIRESTORE_DATABASE_ID, firebaseConfig } from '@/firebase/config';
 
-/** โปรเจกต์จาก `.firebaserc` — หน้าจัดการ Indexes ใน Console */
+/** หน้าจัดการ Indexes ของฐาน opec-data-sg ใน Console */
 const FIRESTORE_INDEXES_CONSOLE_URL =
-  'https://console.firebase.google.com/project/studio-9554558161-dc547/firestore/databases/-default-/indexes';
+  `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${FIRESTORE_DATABASE_ID}/indexes`;
 
 export default function BillingNoteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);

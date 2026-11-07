@@ -129,6 +129,17 @@ export default function HrApprovalCenterPage() {
   );
   const { data: purchasePendingRows, isLoading: loadingPurchase } = useCollection<Purchase>(purchasePendingQ as any);
 
+  const purchaseCancelPendingQ = useMemoFirebase(
+    () =>
+      firestore && approvalGate
+        ? query(collection(firestore, 'purchases'), where('cancellationRequestStatus', '==', 'PENDING'))
+        : null,
+    [firestore, approvalGate],
+  );
+  const { data: purchaseCancelPendingRows, isLoading: loadingPurchaseCancel } = useCollection<Purchase>(
+    purchaseCancelPendingQ as any,
+  );
+
   const purchaseRequestPendingQ = useMemoFirebase(
     () =>
       firestore && approvalGate
@@ -186,8 +197,12 @@ export default function HrApprovalCenterPage() {
   const cashAdvancePendingCount = cashAdvancePendingRows?.length ?? 0;
 
   const purchasePendingCount = useMemo(() => {
-    return (purchasePendingRows?.length ?? 0) + (purchaseRequestPendingRows?.length ?? 0);
-  }, [purchasePendingRows, purchaseRequestPendingRows]);
+    return (
+      (purchasePendingRows?.length ?? 0) +
+      (purchaseRequestPendingRows?.length ?? 0) +
+      (purchaseCancelPendingRows?.length ?? 0)
+    );
+  }, [purchasePendingRows, purchaseRequestPendingRows, purchaseCancelPendingRows]);
 
   const attendanceCorrectionPendingCount = attendanceCorrectionPendingRows?.length ?? 0;
   const overtimePendingCount = overtimePendingRows?.length ?? 0;
@@ -325,7 +340,7 @@ export default function HrApprovalCenterPage() {
             <CardHeader className="relative pb-3 pr-28 pt-6 sm:pr-36">
               <ApprovalSectionPendingBadge
                 count={purchasePendingCount}
-                loading={loadingPurchase || loadingPurchaseRequest}
+                loading={loadingPurchase || loadingPurchaseRequest || loadingPurchaseCancel}
                 kindLabel="คำขอซื้อ (PR) / ใบสั่งซื้อคลัง"
               />
               <CardTitle className="flex items-start gap-2.5 text-lg leading-snug">
@@ -344,7 +359,7 @@ export default function HrApprovalCenterPage() {
                 <Link href="/store/purchase-requests">คำขออนุมัติสั่งซื้อ (PR) — รออนุมัติ</Link>
               </Button>
               <Button asChild variant="outline" size="sm">
-                <Link href="/purchases">ใบสั่งซื้อคลัง — รออนุมัติ</Link>
+                <Link href="/purchases">ใบสั่งซื้อคลัง — รออนุมัติ / ขอยกเลิก</Link>
               </Button>
               <Button asChild variant="ghost" size="sm">
                 <Link href="/purchase-orders">ใบสั่งซื้อลูกค้า (Commercial PO)</Link>

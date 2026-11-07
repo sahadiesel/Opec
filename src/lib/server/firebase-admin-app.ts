@@ -7,7 +7,8 @@ import {
   type App,
   type ServiceAccount,
 } from 'firebase-admin/app';
-import { firebaseConfig } from '@/firebase/config';
+import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { FIRESTORE_DATABASE_ID, firebaseConfig } from '@/firebase/config';
 
 function loadServiceAccountFromPath(path: string): ServiceAccount {
   const raw = readFileSync(path, 'utf8');
@@ -40,6 +41,7 @@ export function getFirebaseAdminApp(): App {
     return initializeApp({
       credential: cert(parsed),
       projectId: projectIdFromServiceAccount(parsed),
+      storageBucket: firebaseConfig.storageBucket,
     });
   }
 
@@ -51,11 +53,18 @@ export function getFirebaseAdminApp(): App {
     return initializeApp({
       credential: cert(parsed),
       projectId: projectIdFromServiceAccount(parsed),
+      storageBucket: firebaseConfig.storageBucket,
     });
   }
 
   return initializeApp({
     credential: applicationDefault(),
     projectId: firebaseConfig.projectId,
+    storageBucket: firebaseConfig.storageBucket,
   });
+}
+
+/** Admin Firestore ของฐาน `opec-data-sg` ไม่ใช่ `(default)` */
+export function getAdminFirestore(app: App = getFirebaseAdminApp()): Firestore {
+  return getFirestore(app, FIRESTORE_DATABASE_ID);
 }

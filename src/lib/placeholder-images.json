@@ -3,7 +3,7 @@
     {
       "id": "login-bg",
       "description": "OPEC login background (Firebase Storage)",
-      "imageUrl": "https://firebasestorage.googleapis.com/v0/b/studio-9554558161-dc547.firebasestorage.app/o/OPEC_Image_2.png?alt=media",
+      "imageUrl": "https://firebasestorage.googleapis.com/v0/b/opec-data-sg/o/OPEC_Image_2.png?alt=media",
       "imageHint": "OPEC branding"
     }
   ]

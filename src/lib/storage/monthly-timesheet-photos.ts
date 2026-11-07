@@ -1,5 +1,6 @@
 import type { FirebaseApp } from 'firebase/app';
-import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject, listAll } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL, deleteObject, listAll } from 'firebase/storage';
+import { getNamedStorage } from '@/firebase/named-storage';
 import type { WaveMonthTimesheetPhotoAttachment } from '@/lib/types';
 import { compressImageFileToMaxSize } from '@/lib/storage/image-compress';
 import { validateWaveMonthTimesheetFile } from '@/lib/storage/wave-month-timesheet-photos';
@@ -41,7 +42,7 @@ export async function uploadMonthlyTimesheetPhoto(
   }
 
   const path = `monthly_timesheet_photos/${yearMonth}/${Date.now()}_${id.slice(0, 8)}_${safeName}`;
-  const storage = getStorage(firebaseApp);
+  const storage = getNamedStorage(firebaseApp);
   const r = ref(storage, path);
   await uploadBytes(r, blob, { contentType });
   const downloadUrl = await getDownloadURL(r);
@@ -60,7 +61,7 @@ export async function deleteMonthlyTimesheetPhotoFile(
   firebaseApp: FirebaseApp,
   storagePath: string,
 ): Promise<void> {
-  const storage = getStorage(firebaseApp);
+  const storage = getNamedStorage(firebaseApp);
   await deleteObject(ref(storage, storagePath));
 }
 
@@ -96,7 +97,7 @@ export async function listMonthlyTimesheetPhotoAttachmentsFromStorage(
   yearMonth: string,
 ): Promise<WaveMonthTimesheetPhotoAttachment[]> {
   if (!/^\d{4}-\d{2}$/.test(yearMonth)) return [];
-  const storage = getStorage(firebaseApp);
+  const storage = getNamedStorage(firebaseApp);
   const folderRef = ref(storage, `monthly_timesheet_photos/${yearMonth}`);
   try {
     const listing = await listAll(folderRef);

@@ -8,10 +8,12 @@ import { runRentalContractDailyJob } from './rentalContractSchedule';
 const REGION = 'asia-southeast1';
 
 if (!getApps().length) {
-  initializeApp();
+  initializeApp({ storageBucket: 'opec-data-sg' });
 }
 
-const db = getFirestore();
+/** Named database asia-southeast1 — ให้ตรงกับ FIRESTORE_DATABASE_ID ใน src/firebase/config.ts */
+const FIRESTORE_DATABASE_ID = 'opec-data-sg';
+const db = getFirestore(FIRESTORE_DATABASE_ID);
 db.settings({ ignoreUndefinedProperties: true });
 
 /**

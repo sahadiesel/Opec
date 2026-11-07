@@ -1,6 +1,6 @@
 'use client';
 
-import { firebaseConfig } from '@/firebase/config';
+import { FIRESTORE_DATABASE_ID, firebaseConfig } from '@/firebase/config';
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, initializeFirestore } from 'firebase/firestore';
@@ -35,11 +35,15 @@ export function initializeFirebase() {
 export function getSdks(firebaseApp: FirebaseApp) {
   let firestore;
   try {
-    firestore = initializeFirestore(firebaseApp, {
-      experimentalForceLongPolling: true,
-    });
+    firestore = initializeFirestore(
+      firebaseApp,
+      {
+        experimentalForceLongPolling: true,
+      },
+      FIRESTORE_DATABASE_ID,
+    );
   } catch {
-    firestore = getFirestore(firebaseApp);
+    firestore = getFirestore(firebaseApp, FIRESTORE_DATABASE_ID);
   }
   return {
     firebaseApp,

@@ -1,5 +1,6 @@
 import type { FirebaseApp } from 'firebase/app';
-import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { getNamedStorage } from '@/firebase/named-storage';
 import type { TaxInvoiceTimesheetAttachment } from '@/lib/types';
 import { compressImageFileToMaxSize } from '@/lib/storage/image-compress';
 
@@ -39,7 +40,7 @@ export async function uploadTaxInvoiceTimesheetImage(
   const safe = safeFileSegment(file.name.replace(/\.[^.]+$/, '') + '.jpg');
   const id = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   const path = `tax_invoice_attachments/${invoiceId}/${Date.now()}_${id.slice(0, 8)}_${safe}`;
-  const storage = getStorage(firebaseApp);
+  const storage = getNamedStorage(firebaseApp);
   const r = ref(storage, path);
   await uploadBytes(r, blob, { contentType });
   const downloadUrl = await getDownloadURL(r);
@@ -57,6 +58,6 @@ export async function uploadTaxInvoiceTimesheetImage(
 }
 
 export async function deleteTaxInvoiceAttachmentFile(firebaseApp: FirebaseApp, storagePath: string): Promise<void> {
-  const storage = getStorage(firebaseApp);
+  const storage = getNamedStorage(firebaseApp);
   await deleteObject(ref(storage, storagePath));
 }

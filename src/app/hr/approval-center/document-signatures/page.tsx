@@ -98,7 +98,7 @@ export default function DocumentSignatureApprovalPage() {
               รออนุมัติการเซ็นต์เอกสาร
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              อนุมัติแล้วลายเซ็นของผู้จัดการจะถูกใส่ในช่องผู้มีอำนาจลงนาม ตอนพิมพ์เอกสารเลือก “ลายเซ็น” เพื่อแสดงรูป
+              คนที่กดอนุมัติจะถูกบันทึกชื่อและลายเซ็นลงช่องผู้มีอำนาจลงนามของเอกสารนั้น
             </p>
           </div>
           <Button variant="outline" asChild>
@@ -119,10 +119,12 @@ export default function DocumentSignatureApprovalPage() {
             <Card key={row.id}>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">
-                  {row.documentLabel} · <span className="font-mono">{row.documentNo}</span>
+                  {row.documentLabel} · เลขที่ <span className="font-mono">{row.documentNo}</span>
                 </CardTitle>
-                <CardDescription>
-                  ขอโดย {row.requestedByName || '—'} · {row.requestedAt ? formatDateTimeThaiBE(row.requestedAt) : '—'}
+                <CardDescription className="space-y-1">
+                  <span className="block">วันที่ขอ: {row.requestedAt ? formatDateTimeThaiBE(row.requestedAt) : '—'}</span>
+                  <span className="block">ผู้ขอ: {row.requestedByName || '—'}</span>
+                  {row.note?.trim() ? <span className="block">ข้อความ: {row.note.trim()}</span> : null}
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-wrap gap-2">

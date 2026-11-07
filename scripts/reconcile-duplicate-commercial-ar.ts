@@ -16,6 +16,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { applicationDefault, cert, getApps, initializeApp, type ServiceAccount } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { FIRESTORE_DATABASE_ID } from '../src/firebase/config';
 import {
   applyReconcileDuplicateCommercialAr,
   scanReconcileDuplicateCommercialAr,
@@ -98,7 +99,7 @@ async function main() {
   const dryRun = hasFlag('dry-run') || !hasFlag('apply');
 
   initFirebaseAdmin();
-  const db = getFirestore();
+  const db = getFirestore(FIRESTORE_DATABASE_ID);
 
   try {
     await db.collection('accounts_receivable').limit(1).get();

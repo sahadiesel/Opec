@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
-import { getFirebaseAdminApp } from '@/lib/server/firebase-admin-app';
+import { getAdminFirestore, getFirebaseAdminApp } from '@/lib/server/firebase-admin-app';
 import type { User as AppUser } from '@/lib/types';
 import { getFieldsForBusinessRole, normalizeUserAuthorizationFields } from '@/lib/auth-mapping';
 import { sanitizeFirestorePayload } from '@/lib/utils';
@@ -62,7 +61,7 @@ export async function POST(req: NextRequest) {
 
     const app = getFirebaseAdminApp();
     const adminAuth = getAuth(app);
-    const db = getFirestore(app);
+    const db = getAdminFirestore(app);
 
     const decoded = await adminAuth.verifyIdToken(token);
     const callerSnap = await db.collection('users').doc(decoded.uid).get();

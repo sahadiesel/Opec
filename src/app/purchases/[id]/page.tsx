@@ -79,6 +79,7 @@ import { canView, canEdit, canDelete, canApprovePurchaseAsManager } from '@/lib/
 import { salesOfficerCanAccessDocument } from '@/lib/documents/own-created-list';
 import { Switch } from '@/components/ui/switch';
 import { computePurchaseTotalsFromLines, sumLineAmounts } from '@/lib/purchase/pr-totals';
+import { PurchaseCancellationPanel } from '@/components/purchases/purchase-cancellation-panel';
 
 function escapeHtml(s: string): string {
   return s
@@ -97,6 +98,7 @@ function statusLabelTh(status: PurchaseStatus): string {
     REJECTED: 'ไม่อนุมัติ',
     ISSUED: 'ออกใบสั่งแล้ว',
     COMPLETED: 'เสร็จสิ้น',
+    PENDING_CANCELLATION: 'รอยกเลิก',
     CANCELLED: 'ยกเลิก',
   };
   return m[status] || status;
@@ -121,6 +123,7 @@ function approvalStatusPillClass(status: PurchaseStatus): string {
     case 'CANCELLED':
       return 'bg-red-600 text-white border-transparent hover:bg-red-600';
     case 'PENDING_APPROVAL':
+    case 'PENDING_CANCELLATION':
       return 'bg-amber-500 text-white border-transparent hover:bg-amber-500';
     case 'RETURNED_FOR_REVISION':
       return 'bg-orange-500 text-white border-transparent hover:bg-orange-500';
@@ -1280,6 +1283,13 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                 )}
               </CardContent>
             </Card>
+
+            <PurchaseCancellationPanel
+              purchase={purchase}
+              currentUser={currentUser}
+              canEdit={canEditPurchases}
+              canApprove={canApprove}
+            />
 
             <Card className="bg-primary text-primary-foreground shadow-lg">
               <CardHeader className="pb-4 border-b border-white/10">

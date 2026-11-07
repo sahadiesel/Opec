@@ -1,5 +1,6 @@
 import type { FirebaseApp } from 'firebase/app';
-import { getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
+import { getNamedStorage } from '@/firebase/named-storage';
 import {
   resolvedVendorBillProofContentType,
   validateVendorBillPaymentProof,
@@ -46,7 +47,7 @@ export async function uploadPayrollWhtTaxPaymentProof(
     section === 'sso' ? 'payroll_sso_payment_proofs' : 'payroll_wht_tax_payment_proofs';
   const path = `${folder}/${section === 'sso' ? 'combined' : section}/${uploaderUid}/${Date.now()}_${id.slice(0, 8)}_${safeName}`;
 
-  const storage = getStorage(firebaseApp);
+  const storage = getNamedStorage(firebaseApp);
   const r = ref(storage, path);
   await uploadBytes(r, file, { contentType: resolvedVendorBillProofContentType(file) });
   const downloadUrl = await getDownloadURL(r);

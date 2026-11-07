@@ -109,6 +109,7 @@ import { DocumentPrintLocaleToggle } from '@/components/documents/document-print
 import { DocumentShareButton } from '@/components/documents/document-share-controls';
 import { AuthorizedSignatoryActions } from '@/components/documents/authorized-signatory-actions';
 import { PrintMarksDialog } from '@/components/documents/print-marks-dialog';
+import { usePersistedPrintMarks } from '@/components/documents/use-persisted-print-marks';
 import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
 import { authorizedSignatureReady } from '@/lib/types/document-signature';
 import {
@@ -325,9 +326,14 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
   const [printMode, setPrintMode] = useState<CommercialInvoicePrintMode>('invoice');
   const [marksDialogOpen, setMarksDialogOpen] = useState(false);
-  const [includePreparerSignature, setIncludePreparerSignature] = useState(false);
-  const [includeAuthorizedSignature, setIncludeAuthorizedSignature] = useState(false);
-  const [includeStamp, setIncludeStamp] = useState(false);
+  const {
+    includePreparerSignature,
+    setIncludePreparerSignature,
+    includeAuthorizedSignature,
+    setIncludeAuthorizedSignature,
+    includeStamp,
+    setIncludeStamp,
+  } = usePersistedPrintMarks('commercial_invoices', id);
 
   /** โหมด ENG ขณะแก้ไข — คงข้อความบรรทัดเป็นอังกฤษ (ไม่ต้องสลับไทย) */
   useEffect(() => {
@@ -1051,9 +1057,6 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   void handlePrintCommercial(false, false, false);
                   return;
                 }
-                setIncludePreparerSignature(false);
-                setIncludeAuthorizedSignature(false);
-                setIncludeStamp(false);
                 setMarksDialogOpen(true);
               }}
             >

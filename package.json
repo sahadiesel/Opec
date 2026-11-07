@@ -24,7 +24,7 @@
     "firebase:login:reauth": "npx firebase-tools login --reauth",
     "firebase:login:no-localhost": "npx firebase-tools login --no-localhost",
     "firebase:login:reauth:no-localhost": "npx firebase-tools login --reauth --no-localhost",
-    "deploy:app": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only apphosting:opecbackend --force",
+    "deploy:app": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only apphosting:opecdatasg --force",
     "generate:permission-matrix": "npx tsx scripts/generate-role-permission-matrix.ts",
     "generate:rules-from-matrix": "npx tsx scripts/generate-firestore-rules-from-matrix.ts",
     "generate:rules-simplified": "npx tsx scripts/generate-simplified-firestore-rules.ts",
@@ -43,7 +43,7 @@
     "deploy:all": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --force",
     "deploy:functions": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only functions",
     "deploy:functions:indexes": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only firestore:indexes,functions",
-    "deploy:rules-and-app": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only firestore:rules && cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only apphosting:opecbackend --force"
+    "deploy:rules-and-app": "cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only firestore:rules && cross-env NODE_OPTIONS=--use-system-ca npx firebase-tools deploy --only apphosting:opecdatasg --force"
   },
   "dependencies": {
     "@genkit-ai/google-genai": "^1.28.0",

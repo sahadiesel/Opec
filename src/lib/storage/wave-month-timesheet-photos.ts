@@ -1,5 +1,6 @@
 import type { FirebaseApp } from 'firebase/app';
-import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { getNamedStorage } from '@/firebase/named-storage';
 import type { WaveMonthTimesheetPhotoAttachment } from '@/lib/types';
 import { compressImageFileToMaxSize } from '@/lib/storage/image-compress';
 
@@ -68,7 +69,7 @@ export async function uploadWaveMonthTimesheetPhoto(
   }
 
   const path = `wave_month_timesheet_photos/${reviewDocId}/${Date.now()}_${id.slice(0, 8)}_${safeName}`;
-  const storage = getStorage(firebaseApp);
+  const storage = getNamedStorage(firebaseApp);
   const r = ref(storage, path);
   await uploadBytes(r, blob, { contentType });
   const downloadUrl = await getDownloadURL(r);
@@ -84,6 +85,6 @@ export async function uploadWaveMonthTimesheetPhoto(
 }
 
 export async function deleteWaveMonthTimesheetPhotoFile(firebaseApp: FirebaseApp, storagePath: string): Promise<void> {
-  const storage = getStorage(firebaseApp);
+  const storage = getNamedStorage(firebaseApp);
   await deleteObject(ref(storage, storagePath));
 }

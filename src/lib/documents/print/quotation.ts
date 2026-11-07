@@ -25,6 +25,7 @@ import {
   formatCustomerPartyNameForPrint,
   formatIssueDateYmdForPrint,
 } from './standard-html-primitives';
+import { quotationNotesWithPaymentTerm } from '@/lib/commercial/quotation-payment-term';
 
 /**
  * ที่อยู่วางบิลบนใบเสนอราคา — ใช้ snapshot บนใบก่อน ถ้าไม่มีค่อยดึงจากทะเบียนลูกค้า (billing → registered)
@@ -173,7 +174,7 @@ export function buildQuotationPrintHtml(params: {
       rows: totalRows,
       amountInWords: totalWords,
     },
-    notes: q.notes,
+    notes: quotationNotesWithPaymentTerm(q, L),
     notesTitle: printT(L, 'termsNotes'),
   });
   const mainHtml = `${partyHtml}
@@ -190,9 +191,9 @@ export function buildQuotationPrintHtml(params: {
       roleLine: printT(L, 'signAuthorizedCompany'),
       name: (q.authorizedSignatory?.signerName || '').trim() || '—',
       imageUrl: params.printMarks?.authorizedSignatureImageUrl,
-      stampUrl: params.printMarks?.stampImageUrl,
     },
     right: { roleLine: printT(L, 'signCustomerShort'), name: '—' },
+    betweenStampUrl: params.printMarks?.stampImageUrl,
     belowHtml: `<p class="sd-approval-notice">${escapeHtmlDoc(printT(L, 'signAcceptQuotation'))}</p>`,
   });
   return assembleStandardPrintPageHtml({

@@ -2,6 +2,17 @@
 
 export type QuotationStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'expired' | 'cancelled' | 'revised';
 
+/** เงินสด หรือเครดิต — พิมพ์ในช่องเงื่อนไขของใบเสนอราคา */
+export type QuotationPaymentKind = 'cash' | 'credit';
+
+/** เครดิตนับจากเหตุการณ์ใด */
+export type QuotationCreditCountFrom =
+  | 'delivery'
+  | 'billing'
+  | 'invoice_date'
+  | 'goods_receipt'
+  | 'custom';
+
 /** ลูกค้า portal เห็นได้หลัง OPEC กดส่งให้ลูกค้าเท่านั้น — ไม่รวม draft/revised */
 
 export const QUOTATION_PORTAL_VISIBLE_STATUSES: QuotationStatus[] = [
@@ -30,6 +41,14 @@ export interface Quotation {
   contactPerson?: string;
   billingAddressSnapshot?: string;
   notes?: string;
+  /** การจ่ายเงินที่พิมพ์บนเอกสาร — เงินสด หรือเครดิต */
+  paymentKind?: QuotationPaymentKind;
+  /** จำนวนวัน เมื่อ paymentKind เป็น credit */
+  paymentCreditDays?: number;
+  /** นับเครดิตจากอะไร */
+  paymentCountFrom?: QuotationCreditCountFrom;
+  /** ข้อความเมื่อ paymentCountFrom เป็น custom */
+  paymentCountFromCustom?: string;
   /** ลายเซ็นผู้มีอำนาจลงนาม — แนบโดยผู้จัดการ หรือหลังอนุมัติคำขอของ officer */
   authorizedSignatory?: import('@/lib/types/document-signature').AuthorizedSignatoryMark;
   internalNotes?: string;

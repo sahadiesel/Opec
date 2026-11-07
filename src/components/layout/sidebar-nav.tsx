@@ -532,7 +532,7 @@ export function SidebarNav({
     cashAdvanceAlert,
     vendorBillAlert,
   } = useAccountingSidebarAlerts(user);
-  const { approvalAlert } = useApprovalSidebarAlerts(user);
+  const { approvalAlert, documentSignatureAlert } = useApprovalSidebarAlerts(user);
 
   /** ไฟเตือนรายเมนูย่อยใต้ «รายการรอทำจ่าย (บัญชี)» — href → มีรายการรอจ่ายหรือไม่ */
   const payoutQueueAlertByHref: Record<string, { active: boolean; title: string }> = {
@@ -855,6 +855,9 @@ export function SidebarNav({
                               <SidebarMenuSub>
                                 {sub.visibleItems.map((item) => {
                                   const active = pathMatches(pathname, item.href);
+                                  const signatureAlert =
+                                    documentSignatureAlert &&
+                                    item.href === '/hr/approval-center/document-signatures';
                                   return (
                                     <SidebarMenuSubItem key={`${item.key}-${item.href}`}>
                                       <SidebarMenuSubButton asChild isActive={active} size="sm">
@@ -863,6 +866,9 @@ export function SidebarNav({
                                             className={`h-3.5 w-3.5 ${active ? 'text-primary' : 'text-muted-foreground'}`}
                                           />
                                           <span>{item.title}</span>
+                                          {signatureAlert ? (
+                                            <AccountingNavAlertDot title="มีคำขอรออนุมัติลายเซ็นเอกสาร" />
+                                          ) : null}
                                         </Link>
                                       </SidebarMenuSubButton>
                                     </SidebarMenuSubItem>

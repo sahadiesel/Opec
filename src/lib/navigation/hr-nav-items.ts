@@ -19,6 +19,7 @@ import {
   CalendarCheck,
   HeartPulse,
   FileQuestion,
+  PenLine,
   Banknote,
   QrCode,
   Clock,
@@ -155,6 +156,12 @@ export const HR_NAV_SUBSECTIONS: HrNavSubsection[] = [
         title: 'ศูนย์อนุมัติ (Overview)',
         href: '/hr/approval-center',
         icon: ShieldCheck,
+      },
+      {
+        key: 'hr_hub',
+        title: 'รออนุมัติการเซ็นต์เอกสาร',
+        href: '/hr/approval-center/document-signatures',
+        icon: PenLine,
       },
       {
         key: 'hr_hub',

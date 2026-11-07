@@ -14,6 +14,23 @@ const DEFAULT_PROJECT_ID = 'studio-9554558161-dc547';
 
 const resolvedProjectId = envPublic('NEXT_PUBLIC_FIREBASE_PROJECT_ID') ?? DEFAULT_PROJECT_ID;
 
+/**
+ * Cloud Firestore named database ใน asia-southeast1 (สิงคโปร์)
+ * ไม่ใช่ฐาน `(default)` — ต้องส่งชื่อนี้เข้า getFirestore / initializeFirestore ทุกจุด
+ */
+export const FIRESTORE_DATABASE_ID =
+  envPublic('NEXT_PUBLIC_FIRESTORE_DATABASE_ID') ??
+  envPublic('FIRESTORE_DATABASE_ID') ??
+  'opec-data-sg';
+
+/**
+ * Cloud Storage bucket `gs://opec-data-sg` (สิงคโปร์)
+ * ค่าใน firebaseConfig เป็นชื่อถัง ไม่ใส่ prefix `gs://`
+ */
+export const FIREBASE_STORAGE_BUCKET = (
+  envPublic('NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET') ?? 'opec-data-sg'
+).replace(/^gs:\/\//, '');
+
 export const firebaseConfig = {
   projectId: resolvedProjectId,
   appId:
@@ -28,7 +45,5 @@ export const firebaseConfig = {
   measurementId: envPublic('NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID') ?? '',
   messagingSenderId:
     envPublic('NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID') ?? '260259212048',
-  storageBucket:
-    envPublic('NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET') ??
-    `${resolvedProjectId}.firebasestorage.app`,
+  storageBucket: FIREBASE_STORAGE_BUCKET,
 };

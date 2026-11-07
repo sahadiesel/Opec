@@ -47,12 +47,20 @@ import { canView, canEdit } from '@/lib/permissions';
 import { officerCanAccessDocument } from '@/lib/documents/own-created-list';
 
 import { buildQuotationPrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
+import { QuotationPaymentTermFields } from '@/components/commercial/quotation-payment-term-fields';
+import {
+  mergeQuotationPayment,
+  quotationPaymentCreateFields,
+  quotationPaymentTermError,
+  stripStaleQuotationPaymentFields,
+} from '@/lib/commercial/quotation-payment-term';
 import { formatMoney2, roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { DocumentShareButton } from '@/components/documents/document-share-controls';
 import { AuthorizedSignatoryActions } from '@/components/documents/authorized-signatory-actions';
 import { PrintMarksDialog } from '@/components/documents/print-marks-dialog';
+import { usePersistedPrintMarks } from '@/components/documents/use-persisted-print-marks';
 import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
 import { authorizedSignatureReady } from '@/lib/types/document-signature';
 import { QuotationPreviewTab } from './_components/quotation-preview-tab';
@@ -111,9 +119,14 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
 
   const { printLocale, setPrintLocale } = useDocumentPrintLocale();
   const [marksDialogOpen, setMarksDialogOpen] = useState(false);
-  const [includePreparerSignature, setIncludePreparerSignature] = useState(false);
-  const [includeAuthorizedSignature, setIncludeAuthorizedSignature] = useState(false);
-  const [includeStamp, setIncludeStamp] = useState(false);
+  const {
+    includePreparerSignature,
+    setIncludePreparerSignature,
+    includeAuthorizedSignature,
+    setIncludeAuthorizedSignature,
+    includeStamp,
+    setIncludeStamp,
+  } = usePersistedPrintMarks('quotations', id);
 
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedHeader, setEditedHeader] = useState<Partial<Quotation>>({});
@@ -331,6 +344,11 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     }
     if (!firestore || !quotation || !quotationRef || !currentUser) return;
     if (quotation.status !== 'draft' && quotation.status !== 'accepted') return;
+    const paymentError = quotationPaymentTermError(editedHeader);
+    if (paymentError) {
+      toast({ variant: 'destructive', title: 'การจ่ายเงินไม่ครบ', description: paymentError });
+      return;
+    }
     if (isLinkedToInvoice) {
       toast({
         variant: 'destructive',
@@ -355,6 +373,16 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
           taxPercent: totals.taxPercent,
           notes: editedHeader.notes ?? quotation.notes,
           internalNotes: editedHeader.internalNotes ?? quotation.internalNotes,
+          ...(editedHeader.paymentKind === 'credit'
+            ? quotationPaymentCreateFields(editedHeader)
+            : editedHeader.paymentKind === 'cash'
+              ? {
+                  paymentKind: 'cash' as const,
+                  paymentCreditDays: deleteField(),
+                  paymentCountFrom: deleteField(),
+                  paymentCountFromCustom: deleteField(),
+                }
+              : {}),
           subtotal: totals.subtotal,
           taxAmount: totals.taxAmount,
           grandTotal: totals.grandTotal,
@@ -429,6 +457,11 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
       toast({ variant: 'destructive', title: 'เอกสารถูกแก้ไขแล้ว', description: 'ฉบับนี้เปิดแก้ไขต่อไม่ได้ ให้เปิดที่ฉบับล่าสุดแทน' });
       return;
     }
+    const paymentError = quotationPaymentTermError(editedHeader);
+    if (paymentError) {
+      toast({ variant: 'destructive', title: 'การจ่ายเงินไม่ครบ', description: paymentError });
+      return;
+    }
 
     const baseNo = quotation.baseQuotationNo || quotation.quotationNo;
     const nextRevisionNo = (quotation.revisionNo || 0) + 1;
@@ -436,7 +469,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
 
     try {
       const totals = computeTotals(draftLines, editedHeader);
-      const { id: revisionId } = await addDoc(collection(firestore, 'quotations'), {
+      const { id: revisionId } = await addDoc(collection(firestore, 'quotations'), stripStaleQuotationPaymentFields({
         ...quotation,
         ...editedHeader,
         quotationNo: revisedNo,
@@ -455,7 +488,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
         createdBy: currentUser.displayName,
         createdByUid: currentUser.id,
         updatedBy: currentUser.id,
-      });
+      }, editedHeader));
 
       for (const line of draftLines) {
         const { id: _ignore, ...lineData } = line;
@@ -690,12 +723,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
               variant="outline"
               type="button"
               className="gap-2 border-primary text-primary hover:bg-primary/5 h-11 px-6 shadow-sm"
-              onClick={() => {
-                setIncludePreparerSignature(false);
-                setIncludeAuthorizedSignature(false);
-                setIncludeStamp(false);
-                setMarksDialogOpen(true);
-              }}
+              onClick={() => setMarksDialogOpen(true)}
             >
               <Printer className="h-4 w-4" /> พิมพ์เอกสาร (Print)
             </Button>
@@ -1064,6 +1092,14 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4 pt-4">
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-bold text-muted-foreground">การจ่ายเงิน (Term of payment)</Label>
+                  <QuotationPaymentTermFields
+                    disabled={!isEditable}
+                    value={editedHeader}
+                    onChange={(next) => setEditedHeader((prev) => mergeQuotationPayment(prev, next))}
+                  />
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-1">
                     <Label className="text-[10px] font-bold text-muted-foreground">เงื่อนไขในเอกสาร (Client Terms)</Label>

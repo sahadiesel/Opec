@@ -23,6 +23,8 @@ export type DocumentSignatureRequest = {
   requestedByUid: string;
   requestedByName: string;
   requestedAt: number;
+  /** ข้อความที่ผู้ขอพิมพ์ถึงผู้อนุมัติ */
+  note?: string;
   decidedByUid?: string;
   decidedByName?: string;
   decidedAt?: number;
@@ -34,7 +36,7 @@ export type DocumentPrintMarks = {
   preparerSignatureImageUrl?: string;
   /** ช่องกลาง — ลายเซ็นผู้มีอำนาจที่แนบหรืออนุมัติแล้ว */
   authorizedSignatureImageUrl?: string;
-  /** วางทับช่องผู้มีอำนาจลงนาม */
+  /** วางระหว่างช่องผู้จัดเตรียมกับผู้มีอำนาจลงนาม */
   stampImageUrl?: string;
 };
 

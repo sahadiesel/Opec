@@ -95,6 +95,11 @@ export function useApprovalSidebarAlerts(user: User | null | undefined) {
     return query(collection(firestore, 'leave_requests'), where('status', '==', 'SUBMITTED'), limit(1));
   }, [firestore, enabled]);
 
+  const documentSignatureQ = useMemoFirebase(() => {
+    if (!firestore || !enabled) return null;
+    return query(collection(firestore, 'document_signature_requests'), where('status', '==', 'PENDING'), limit(1));
+  }, [firestore, enabled]);
+
   const { data: wavePending } = useCollection(waveQ as any);
   const { data: poMonthPending } = useCollection(poMonthQ as any);
   const { data: workerBatchPending } = useCollection(workerBatchQ as any);
@@ -105,6 +110,9 @@ export function useApprovalSidebarAlerts(user: User | null | undefined) {
   const { data: attendanceCorrectionPending } = useCollection(attendanceCorrectionQ as any);
   const { data: overtimePending } = useCollection(overtimeQ as any);
   const { data: leavePending } = useCollection(leaveQ as any);
+  const { data: documentSignaturePending } = useCollection(documentSignatureQ as any);
+
+  const documentSignatureAlert = (documentSignaturePending?.length ?? 0) > 0;
 
   const approvalAlert =
     (wavePending?.length ?? 0) > 0 ||
@@ -116,7 +124,8 @@ export function useApprovalSidebarAlerts(user: User | null | undefined) {
     (purchaseRequestPending?.length ?? 0) > 0 ||
     (attendanceCorrectionPending?.length ?? 0) > 0 ||
     (overtimePending?.length ?? 0) > 0 ||
-    (leavePending?.length ?? 0) > 0;
+    (leavePending?.length ?? 0) > 0 ||
+    documentSignatureAlert;
 
-  return { approvalAlert, enabled };
+  return { approvalAlert, documentSignatureAlert, enabled };
 }

@@ -11,6 +11,7 @@ import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { cert, getApps, initializeApp, refreshToken } from 'firebase-admin/app';
 import { getSecurityRules } from 'firebase-admin/security-rules';
+import { firestoreRulesReleaseName } from './firestore-release-name.mjs';
 
 /** Public OAuth client used by firebase-tools CLI (open source). */
 const FIREBASE_CLI_OAUTH = {
@@ -23,6 +24,8 @@ const root = resolve(__dirname, '..');
 const rulesPath = resolve(root, 'firestore.rules');
 const projectId =
   process.env.FIREBASE_PROJECT_ID?.trim() || 'studio-9554558161-dc547';
+/** ให้ตรงกับ FIRESTORE_DATABASE_ID ใน src/firebase/config.ts */
+const FIRESTORE_DATABASE_ID = process.env.FIRESTORE_DATABASE_ID?.trim() || 'opec-data-sg';
 const maxAttempts = Number(process.env.DEPLOY_RULES_MAX_ATTEMPTS || 12);
 
 function isRetryable(err) {
@@ -85,16 +88,21 @@ function initAdmin() {
 async function main() {
   const source = readFileSync(rulesPath, 'utf8');
   const kb = (Buffer.byteLength(source, 'utf8') / 1024).toFixed(1);
-  console.log(`Project: ${projectId}`);
-  console.log(`Rules:   ${rulesPath} (${kb} KB)`);
+  const releaseName = firestoreRulesReleaseName(FIRESTORE_DATABASE_ID);
+  console.log(`Project:  ${projectId}`);
+  console.log(`Database: ${FIRESTORE_DATABASE_ID}`);
+  console.log(`Release:  ${releaseName}`);
+  console.log(`Rules:    ${rulesPath} (${kb} KB)`);
 
   initAdmin();
   const securityRules = getSecurityRules();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      console.log(`\nAttempt ${attempt}/${maxAttempts} — releaseFirestoreRulesetFromSource...`);
-      const ruleset = await securityRules.releaseFirestoreRulesetFromSource(source);
+      console.log(`\nAttempt ${attempt}/${maxAttempts} — createRuleset + releaseRuleset (${releaseName})...`);
+      const rulesFile = securityRules.createRulesFileFromSource('firestore.rules', source);
+      const ruleset = await securityRules.createRuleset(rulesFile);
+      await securityRules.releaseRuleset(ruleset, releaseName);
       console.log(`\nDeploy complete. Ruleset: ${ruleset.name}`);
       console.log('Propagation may take 1–2 minutes.');
       return;

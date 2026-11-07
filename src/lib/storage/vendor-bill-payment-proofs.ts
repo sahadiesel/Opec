@@ -1,5 +1,6 @@
 import type { FirebaseApp } from 'firebase/app';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { getNamedStorage } from '@/firebase/named-storage';
 
 const MAX_PROOF_BYTES = 10 * 1024 * 1024;
 
@@ -82,7 +83,7 @@ export async function uploadVendorBillPaymentProofPdf(
     (resolvedVendorBillProofContentType(file) === 'application/pdf' ? '.pdf' : '.jpg');
   const safeName = safeFileSegment(`${stem}${ext}`);
   const path = `vendor_bill_payment_proofs/${uploaderUid}/${vendorBillId}/${Date.now()}_${id.slice(0, 8)}_${safeName}`;
-  const storage = getStorage(firebaseApp);
+  const storage = getNamedStorage(firebaseApp);
   const r = ref(storage, path);
   await uploadBytes(r, file, { contentType: resolvedVendorBillProofContentType(file) });
   const downloadUrl = await getDownloadURL(r);
@@ -108,7 +109,7 @@ export async function uploadVendorBillWhtProofPdf(
     (resolvedVendorBillProofContentType(file) === 'application/pdf' ? '.pdf' : '.jpg');
   const safeName = safeFileSegment(`${stem}${ext}`);
   const path = `vendor_bill_wht_payment_proofs/${uploaderUid}/${vendorBillId}/${Date.now()}_${id.slice(0, 8)}_${safeName}`;
-  const storage = getStorage(firebaseApp);
+  const storage = getNamedStorage(firebaseApp);
   const r = ref(storage, path);
   await uploadBytes(r, file, { contentType: resolvedVendorBillProofContentType(file) });
   const downloadUrl = await getDownloadURL(r);

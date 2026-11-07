@@ -17,15 +17,18 @@ import {
   Printer,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { AccountsReceivable, ARStatus, User, Customer, TaxInvoice, CommercialInvoice } from '@/lib/types';
+import { AccountsReceivable, ARStatus, User, Customer, TaxInvoice, CommercialInvoice, Purchase, Vendor, BankAccount } from '@/lib/types';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { arStatusBadge } from '@/lib/accounts-receivable/ar-status-badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canView } from '@/lib/permissions';
-import { collection, query, orderBy, doc, getDoc } from 'firebase/firestore';
+import { canExecuteBankCashbookPayments, canView, isAccountingStaff } from '@/lib/permissions';
+import { collection, query, orderBy, where, doc, getDoc } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { settlePurchaseCancellationRefund } from '@/lib/purchases/purchase-cancellation';
 import { formatStoredDateThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
 import {
   buildYearCeOptions,
@@ -96,6 +99,13 @@ export default function AccountsReceivablePage() {
   const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
+  const [refundTarget, setRefundTarget] = useState<Purchase | null>(null);
+  const [refundBankId, setRefundBankId] = useState('');
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundBusy, setRefundBusy] = useState(false);
+
+  const showPoRefunds = !!currentUser && (isAccountingStaff(currentUser) || isSystemAdmin(currentUser));
+  const canRecordRefund = !!currentUser && canExecuteBankCashbookPayments(currentUser);
 
   const isAuthorized = useMemo(
     () => !!currentUser && canView(currentUser, 'accounts_receivable'),
@@ -120,6 +130,24 @@ export default function AccountsReceivablePage() {
     [firestore, isAuthorized],
   );
   const { data: commercialInvoices } = useCollection<CommercialInvoice>(commercialQuery as any);
+
+  const refundPurchasesQuery = useMemoFirebase(() => {
+    if (!firestore || !isAuthorized || !showPoRefunds) return null;
+    return query(collection(firestore, 'purchases'), where('status', '==', 'PENDING_CANCELLATION'));
+  }, [firestore, isAuthorized, showPoRefunds]);
+  const { data: refundPurchases } = useCollection<Purchase>(refundPurchasesQuery as any);
+
+  const refundVendorsQuery = useMemoFirebase(
+    () => (firestore && showPoRefunds ? collection(firestore, 'vendors') : null),
+    [firestore, showPoRefunds],
+  );
+  const { data: refundVendors } = useCollection<Vendor>(refundVendorsQuery as any);
+
+  const bankAccountsQuery = useMemoFirebase(
+    () => (firestore && canRecordRefund ? collection(firestore, 'bank_accounts') : null),
+    [firestore, canRecordRefund],
+  );
+  const { data: bankAccounts } = useCollection<BankAccount>(bankAccountsQuery as any);
 
   const customersQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'customers') : null), [firestore, isAuthorized]);
   const { data: customers } = useCollection<Customer>(customersQuery as any);
@@ -193,16 +221,55 @@ export default function AccountsReceivablePage() {
     });
   }, [monthFilteredItems, searchQuery, customerById]);
 
+  const vendorNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const v of refundVendors ?? []) m.set(v.id, v.vendorName);
+    return m;
+  }, [refundVendors]);
+
+  const refundReceivables = useMemo(() => {
+    return (refundPurchases ?? []).filter(
+      (p) => p.status === 'PENDING_CANCELLATION' && p.cancellationRefundMode === 'REFUND_REQUIRED',
+    );
+  }, [refundPurchases]);
+
+  const monthRefundReceivables = useMemo(() => {
+    return refundReceivables.filter((p) =>
+      ymMatchesYearMonthScope(String(p.purchaseDate || '').slice(0, 7), yearFilterCe, monthScope),
+    );
+  }, [refundReceivables, yearFilterCe, monthScope]);
+
+  const visibleRefundReceivables = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return monthRefundReceivables;
+    return monthRefundReceivables.filter((p) => {
+      const haystack = [p.purchaseNo, vendorNameById.get(p.vendorId), p.cancellationReason]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [monthRefundReceivables, searchQuery, vendorNameById]);
+
+  const activeBankAccounts = useMemo(
+    () => (bankAccounts ?? []).filter((b) => !b.status || b.status === 'ACTIVE'),
+    [bankAccounts],
+  );
+
   const stats = useMemo(() => {
+    const refundOutstanding = (rows: Purchase[]) => rows.reduce((sum, p) => sum + (Number(p.totalAmount) || 0), 0);
     return {
-      globalOutstanding: visibleArItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
-      monthOutstanding: monthFilteredItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
+      globalOutstanding:
+        visibleArItems.reduce((sum, item) => sum + item.outstandingAmount, 0) + refundOutstanding(refundReceivables),
+      monthOutstanding:
+        monthFilteredItems.reduce((sum, item) => sum + item.outstandingAmount, 0) +
+        refundOutstanding(monthRefundReceivables),
       overdue: monthFilteredItems
         .filter((item) => item.status === 'OVERDUE')
         .reduce((sum, item) => sum + item.outstandingAmount, 0),
       collected: monthFilteredItems.reduce((sum, item) => sum + item.creditAmount, 0),
     };
-  }, [visibleArItems, monthFilteredItems]);
+  }, [visibleArItems, monthFilteredItems, refundReceivables, monthRefundReceivables]);
 
   const printFilterSummary = useMemo(
     () => ({ searchTerm: searchQuery, yearCe: yearFilterCe, monthScope }),
@@ -528,6 +595,54 @@ export default function AccountsReceivablePage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {visibleRefundReceivables.map((purchase) => (
+                    <TableRow key={`po-refund-${purchase.id}`} className="hover:bg-muted/20 bg-amber-50/40">
+                      <TableCell className="py-4 pl-6">
+                        <div className="flex items-center gap-2 text-sm font-bold text-primary">
+                          <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+                          {vendorNameById.get(purchase.vendorId) || 'คู่ค้า'}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground mt-1">รับเงินคืนยกเลิกใบสั่งซื้อ — ไม่ออกใบเสร็จ</p>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs font-bold text-primary">{purchase.purchaseNo}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-col text-[10px]">
+                          <span className="flex items-center gap-1 text-muted-foreground">
+                            <Calendar className="h-2.5 w-2.5" /> {formatStoredDateThaiBE(purchase.purchaseDate)}
+                          </span>
+                          <span className="font-medium text-amber-800">รอยกเลิก · รอรับเงินคืน</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right text-sm tabular-nums">
+                        ฿ {purchase.totalAmount.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right text-sm text-green-600 tabular-nums">฿ 0</TableCell>
+                      <TableCell className="text-right font-black text-primary tabular-nums">
+                        ฿ {purchase.totalAmount.toLocaleString()}
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge {...arStatusBadge('OPEN')} />
+                      </TableCell>
+                      <TableCell className="text-right pr-6">
+                        {canRecordRefund ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-8"
+                            onClick={() => {
+                              setRefundTarget(purchase);
+                              setRefundBankId('');
+                              setRefundAmount(String(purchase.totalAmount ?? ''));
+                            }}
+                          >
+                            รับเงินเข้าบัญชี
+                          </Button>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground">รอผู้จัดการบัญชีบันทึกรับเงิน</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
                   {filteredItems.map((item) => {
                     const customer = customerById.get(item.customerId);
                     const row = item as AccountsReceivable & { id: string };
@@ -573,14 +688,17 @@ export default function AccountsReceivablePage() {
                       </TableRow>
                     );
                   })}
-                  {(!visibleArItems.length) && !listLoading && (
+                  {(!visibleArItems.length && !visibleRefundReceivables.length) && !listLoading && (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
                         ไม่มีรายการลูกหนี้ในระบบ
                       </TableCell>
                     </TableRow>
                   )}
-                  {visibleArItems.length > 0 && filteredItems.length === 0 && !listLoading && (
+                  {(visibleArItems.length > 0 || refundReceivables.length > 0) &&
+                    filteredItems.length === 0 &&
+                    visibleRefundReceivables.length === 0 &&
+                    !listLoading && (
                     <TableRow>
                       <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
                         {searchQuery.trim()
@@ -594,6 +712,78 @@ export default function AccountsReceivablePage() {
             )}
           </CardContent>
         </Card>
+
+        <Dialog open={!!refundTarget} onOpenChange={(open) => !open && !refundBusy && setRefundTarget(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>รับเงินคืนจากคู่ค้า</DialogTitle>
+              <DialogDescription>
+                {refundTarget?.purchaseNo} — บันทึกเข้า cashbook ตามบัญชีและยอดที่รับจริง ไม่ได้ออกใบเสร็จ
+                จากนั้นสถานะใบสั่งซื้อเปลี่ยนจากรอยกเลิกเป็นยกเลิก
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label>บัญชีที่รับเงิน</Label>
+                <Select value={refundBankId} onValueChange={setRefundBankId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="เลือกบัญชี" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {activeBankAccounts.map((b) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.bankName} · {b.accountNumber}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="po-refund-amount">ยอดเงินที่รับ</Label>
+                <Input
+                  id="po-refund-amount"
+                  inputMode="decimal"
+                  value={refundAmount}
+                  onChange={(e) => setRefundAmount(e.target.value)}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={refundBusy} onClick={() => setRefundTarget(null)}>
+                ปิด
+              </Button>
+              <Button
+                type="button"
+                disabled={refundBusy || !refundBankId || !(Number(refundAmount) > 0) || !firestore || !currentUser || !refundTarget}
+                onClick={() => {
+                  if (!firestore || !currentUser || !refundTarget) return;
+                  setRefundBusy(true);
+                  void settlePurchaseCancellationRefund(firestore, currentUser, refundTarget, {
+                    bankAccountId: refundBankId,
+                    amount: Number(refundAmount),
+                  })
+                    .then((r) => {
+                      toast({
+                        title: 'บันทึกรับเงินแล้ว',
+                        description: `สมุด ${r.entryNo} — ใบสั่งซื้อ ${refundTarget.purchaseNo} เป็นยกเลิก โดยไม่ออกใบเสร็จ`,
+                      });
+                      setRefundTarget(null);
+                    })
+                    .catch((e: unknown) => {
+                      toast({
+                        variant: 'destructive',
+                        title: 'บันทึกไม่สำเร็จ',
+                        description: e instanceof Error ? e.message : 'เกิดข้อผิดพลาด',
+                      });
+                    })
+                    .finally(() => setRefundBusy(false));
+                }}
+              >
+                {refundBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'บันทึกเข้าบัญชี'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppShell>
   );

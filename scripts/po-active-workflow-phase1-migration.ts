@@ -27,6 +27,7 @@ import {
   type QueryDocumentSnapshot,
   type WriteBatch,
 } from 'firebase-admin/firestore';
+import { FIRESTORE_DATABASE_ID } from '../src/firebase/config';
 import { existsSync, readFileSync } from 'node:fs';
 import { buildMobCycleDocId } from '../src/lib/ops/mob-cycle-ids';
 import { resolvePoActiveBundleKeyForPo } from '../src/lib/ops/po-active-bundle';
@@ -176,7 +177,7 @@ async function paginateCollection(
   collectionPath: string,
   onBatch: (docs: QueryDocumentSnapshot[]) => Promise<void>,
 ): Promise<void> {
-  const db = getFirestore();
+  const db = getFirestore(FIRESTORE_DATABASE_ID);
   let last: QueryDocumentSnapshot | undefined;
   for (;;) {
     let q = db.collection(collectionPath).orderBy(FieldPath.documentId()).limit(400);
@@ -196,7 +197,7 @@ async function main() {
 
   initFirebaseAdmin();
   const projectIdResolved = resolveFirebaseProjectId();
-  const db = getFirestore();
+  const db = getFirestore(FIRESTORE_DATABASE_ID);
   await assertFirestoreReachable(db, projectIdResolved);
   const poCache = new Map<string, PurchaseOrder | null>();
 

@@ -282,9 +282,9 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
       roleLine: printT(L, 'signAuthorizedCompany'),
       name: (invoice.authorizedSignatory?.signerName || '').trim() || '—',
       imageUrl: params.printMarks?.authorizedSignatureImageUrl,
-      stampUrl: params.printMarks?.stampImageUrl,
     },
     right: { roleLine: printT(L, 'signCustomerShort'), name: '—' },
+    betweenStampUrl: params.printMarks?.stampImageUrl,
     belowHtml: '',
   });
   let watermarkHtml = '';

@@ -1,5 +1,6 @@
 {
   "firestore": {
+    "database": "opec-data-sg",
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
@@ -18,12 +19,15 @@
       "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"]
     }
   ],
-  "storage": {
-    "rules": "storage.rules"
-  },
+  "storage": [
+    {
+      "bucket": "opec-data-sg",
+      "rules": "storage.rules"
+    }
+  ],
   "apphosting": [
     {
-      "backendId": "opecbackend",
+      "backendId": "opecdatasg",
       "rootDir": ".",
       "ignore": [
         "node_modules",

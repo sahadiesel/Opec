@@ -290,6 +290,10 @@ export default function PurchasesPage() {
     () => visiblePurchases.filter((p) => p.status === 'PENDING_APPROVAL' && !p.purchaseRequestId).length,
     [visiblePurchases]
   );
+  const pendingCancellationCount = useMemo(
+    () => visiblePurchases.filter((p) => p.cancellationRequestStatus === 'PENDING').length,
+    [visiblePurchases],
+  );
 
   function purchaseRowMonth(purchaseDate: string | undefined): string {
     if (!purchaseDate?.trim()) return '';
@@ -519,8 +523,10 @@ export default function PurchasesPage() {
         return <Badge variant="outline" className="bg-blue-50 text-blue-600 border-blue-200">ISSUED</Badge>;
       case 'COMPLETED':
         return <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">COMPLETED</Badge>;
+      case 'PENDING_CANCELLATION':
+        return <Badge variant="outline" className="bg-amber-50 text-amber-900 border-amber-300">รอยกเลิก</Badge>;
       case 'CANCELLED':
-        return <Badge variant="secondary">CANCELLED</Badge>;
+        return <Badge variant="secondary">ยกเลิก</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
@@ -567,6 +573,15 @@ export default function PurchasesPage() {
             <AlertTitle className="text-amber-900">มี PO รออนุมัติ (รายการเก่า ไม่อ้าง PR)</AlertTitle>
             <AlertDescription className="text-amber-800">
               จำนวน {pendingApprovalCount} รายการ — รายการใหม่ให้ส่งขออนุมัติที่ PR ก่อน แล้วค่อยสร้าง PO จาก PR; รายการนี้เปิดแล้วอนุมัติที่หน้ารายละเอียด
+            </AlertDescription>
+          </Alert>
+        )}
+        {canApprove && pendingCancellationCount > 0 && (
+          <Alert className="border-amber-300 bg-amber-50">
+            <AlertTriangle className="h-4 w-4 text-amber-700" />
+            <AlertTitle className="text-amber-900">มีคำขอยกเลิกใบสั่งซื้อรออนุมัติ</AlertTitle>
+            <AlertDescription className="text-amber-800">
+              จำนวน {pendingCancellationCount} รายการ — เปิดใบสั่งซื้อแล้วเลือกว่ารับเงินคืนจากคู่ค้า หรือไม่ต้องรับเงินคืนพร้อมเหตุผล
             </AlertDescription>
           </Alert>
         )}
@@ -788,7 +803,16 @@ export default function PurchasesPage() {
                         <TableCell className="text-right font-black text-primary">
                           ฿ {p.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </TableCell>
-                        <TableCell>{getStatusBadge(p.status)}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col items-start gap-1">
+                            {getStatusBadge(p.status)}
+                            {p.cancellationRequestStatus === 'PENDING' ? (
+                              <Badge variant="outline" className="bg-amber-50 text-amber-900 border-amber-300">
+                                รออนุมัติยกเลิก
+                              </Badge>
+                            ) : null}
+                          </div>
+                        </TableCell>
                         {showPoDeleteColumn && (
                           <TableCell
                             className="w-14 px-2 text-center"

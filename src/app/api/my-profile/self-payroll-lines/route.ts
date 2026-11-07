@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
-import { getFirebaseAdminApp } from '@/lib/server/firebase-admin-app';
+import { getAdminFirestore, getFirebaseAdminApp } from '@/lib/server/firebase-admin-app';
 import {
   fetchOfficeStaffPayrollLinesAdmin,
   fetchWorkerPayrollLinesAdmin,
@@ -32,7 +31,7 @@ export async function GET(req: NextRequest) {
 
     const app = getFirebaseAdminApp();
     const decoded = await getAuth(app).verifyIdToken(token);
-    const db = getFirestore(app);
+    const db = getAdminFirestore(app);
 
     const verified = await verifySelfPayrollSubject(db, decoded.uid, kind, subjectId);
     if (!verified.ok) {

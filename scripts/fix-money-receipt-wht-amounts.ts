@@ -12,6 +12,7 @@
 
 import { getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { FIRESTORE_DATABASE_ID } from '../src/firebase/config';
 import {
   applyMoneyReceiptWhtFix,
   scanMoneyReceiptWhtFixes,
@@ -46,7 +47,7 @@ async function main() {
     }
   }
 
-  const db = getFirestore();
+  const db = getFirestore(FIRESTORE_DATABASE_ID);
   const { plans, skipped } = await scanMoneyReceiptWhtFixes(db, { receiptId, receiptNo });
 
   console.log(`\n=== ใบเสร็จที่ต้องแก้: ${plans.length} ===`);

@@ -71,10 +71,12 @@ export async function requestDocumentSignature(
     documentNo: string;
     documentLabel: string;
     actor: User;
+    note?: string;
   },
 ): Promise<string> {
   const now = Date.now();
   const name = actorName(params.actor);
+  const note = (params.note || '').trim();
   const reqRef = doc(collection(db, 'document_signature_requests'));
   const request: DocumentSignatureRequest = {
     id: reqRef.id,
@@ -86,6 +88,7 @@ export async function requestDocumentSignature(
     requestedByUid: params.actor.id,
     requestedByName: name,
     requestedAt: now,
+    ...(note ? { note } : {}),
   };
   const batch = writeBatch(db);
   batch.set(reqRef, request);

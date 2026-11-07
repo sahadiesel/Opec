@@ -1,5 +1,6 @@
 'use client';
 import { getAuth, type User } from 'firebase/auth';
+import { FIRESTORE_DATABASE_ID } from '@/firebase/config';
 
 type SecurityRuleContext = {
   path: string;
@@ -91,7 +92,7 @@ function buildRequestObject(context: SecurityRuleContext): SecurityRuleRequest {
   return {
     auth: authObject,
     method: context.operation,
-    path: `/databases/(default)/documents/${context.path}`,
+    path: `/databases/${FIRESTORE_DATABASE_ID}/documents/${context.path}`,
     resource: context.requestResourceData ? { data: context.requestResourceData } : undefined,
   };
 }

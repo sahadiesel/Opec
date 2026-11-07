@@ -132,6 +132,30 @@ export interface Purchase {
   issuedAt?: number;
   issuedByUid?: string;
   issuedByName?: string;
+  /** คำขอยกเลิก — PENDING = อยู่ในคิวอนุมัติใบสั่งซื้อ */
+  cancellationRequestStatus?: PurchaseCancellationRequestStatus | null;
+  /** เหตุผลจากผู้ขอ */
+  cancellationReason?: string | null;
+  cancellationRequestedAt?: number | null;
+  cancellationRequestedByUid?: string | null;
+  cancellationRequestedByName?: string | null;
+  /** ตั้งเมื่ออนุมัติคำขอยกเลิก */
+  cancellationRefundMode?: PurchaseCancellationRefundMode | null;
+  /** เหตุผลของผู้อนุมัติ — บังคับเมื่อไม่ต้องรับเงินคืน */
+  cancellationApproverNote?: string | null;
+  cancellationDecidedAt?: number | null;
+  cancellationDecidedByUid?: string | null;
+  cancellationDecidedByName?: string | null;
+  cancellationRejectReason?: string | null;
+  /** ใบวางบิลยอด 0 เมื่อไม่ต้องรับเงินคืน */
+  cancellationVendorBillId?: string | null;
+  cancellationSettledAt?: number | null;
+  cancellationSettledByUid?: string | null;
+  cancellationSettledByName?: string | null;
+  cancellationBankAccountId?: string | null;
+  cancellationReceivedAmount?: number | null;
+  cancellationCashbookEntryId?: string | null;
+  cancellationCashbookEntryNo?: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -144,7 +168,15 @@ export type PurchaseStatus =
   | 'REJECTED'
   | 'ISSUED'
   | 'COMPLETED'
+  /** อนุมัติให้ยกเลิกแล้ว — รอแผนกบัญชีปิดเรื่อง */
+  | 'PENDING_CANCELLATION'
   | 'CANCELLED';
+
+/** คำขอยกเลิกใบสั่งซื้อ — อนุมัติที่คิวใบสั่งซื้อคลัง */
+export type PurchaseCancellationRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+
+/** ผู้อนุมัติเลือกทางปิดเรื่องหลังยกเลิก */
+export type PurchaseCancellationRefundMode = 'REFUND_REQUIRED' | 'NO_REFUND';
 
 export interface PurchaseLine {
   id: string;
@@ -322,6 +354,8 @@ export interface PurchaseVendorBill {
    * ใช้เมื่อฐานหักตามกฎไม่เท่ากับยอดก่อนภาษีที่แสดงในใบวางบิล (ค่าไม่เกินยอดรวมในใบก่อนหัก ณ ที่จ่าย)
    */
   supplierWithholdingTaxBaseBill?: number | null;
+  /** ใบปิดเรื่องยกเลิก PO โดยไม่รับเงินคืน — ยอดในใบเป็น 0 */
+  cancellationSettlement?: boolean;
   createdAt: number;
   updatedAt: number;
 }

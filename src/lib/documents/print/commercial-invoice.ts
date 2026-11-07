@@ -426,9 +426,9 @@ export function buildCommercialInvoicePrintHtml(params: {
           roleLine: printT(L, 'signAuthorizedCompany'),
           name: (invoice.authorizedSignatory?.signerName || '').trim() || '—',
           imageUrl: params.printMarks?.authorizedSignatureImageUrl,
-          stampUrl: params.printMarks?.stampImageUrl,
         },
         right: { roleLine: printT(L, 'signCustomerShort'), name: rightSignName },
+        betweenStampUrl: params.printMarks?.stampImageUrl,
         belowHtml: confirmLine,
       });
   const isDraftPrint = invoice.status === 'DRAFT' || invoice.status === 'PENDING_CUSTOMER';

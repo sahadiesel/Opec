@@ -16,6 +16,7 @@
 
 import { getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore, type DocumentReference, type DocumentData } from 'firebase-admin/firestore';
+import { FIRESTORE_DATABASE_ID } from '../src/firebase/config';
 import {
   planBackfillsForRates,
   shouldApplyToPosition,
@@ -80,7 +81,7 @@ async function main() {
       initializeApp(projectId ? { projectId } : undefined);
     }
   }
-  const db = getFirestore();
+  const db = getFirestore(FIRESTORE_DATABASE_ID);
   const contractRef = db.doc(`main_contracts/${contractId}`);
   const cSnap = await contractRef.get();
   if (!cSnap.exists) {

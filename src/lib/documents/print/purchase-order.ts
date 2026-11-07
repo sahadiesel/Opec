@@ -17,6 +17,7 @@ import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { sumLineAmounts } from '@/lib/purchase/pr-totals';
 import {
   type CompanyProfilePrint,
+  appendPartyBranchParenToName,
   assembleStandardPrintPageHtml,
   buildStandardDocumentHeaderHtml,
   buildStandardPartyBoxHtml,
@@ -36,6 +37,27 @@ export function purchaseTypeEn(t: string | undefined): string {
   if (t === 'CASH') return 'Cash';
   if (t === 'CREDIT') return 'Credit';
   return t ? String(t) : '—';
+}
+
+/** ชื่อคู่ค้านิติบุคคลบนใบสั่งซื้อ + วงเล็บสำนักงานใหญ่หรือเลขสาขา */
+export function formatVendorPartyNameForPrint(
+  vendor: Vendor | null | undefined,
+  locale: PrintDocumentLocale = 'th',
+): string {
+  const raw = vendor?.vendorName?.trim() || '—';
+  if (!vendor || vendor.vendorLegalForm === 'NATURAL') return raw;
+  const storedNo = String(vendor.branchNo || '').trim();
+  const branchType =
+    vendor.branchType ||
+    (storedNo === '' || storedNo === '00000' ? 'head_office' : 'branch');
+  return appendPartyBranchParenToName(
+    raw,
+    {
+      branchType,
+      branchNo: branchType === 'branch' ? storedNo : '',
+    },
+    locale,
+  );
 }
 
 /**
@@ -158,7 +180,7 @@ export function buildPurchaseOrderPrintHtml(params: {
 
   const partyHtml = buildStandardPartyBoxHtml({
     boxLabel: printT(L, 'vendorInfo'),
-    partyName: vendor?.vendorName || '—',
+    partyName: formatVendorPartyNameForPrint(vendor, L),
     detailLines: [
       ...(vendor?.address ? [vendor.address] : []),
       ...(vendor?.phone ? [`${printT(L, 'tel')} ${vendor.phone}`] : []),

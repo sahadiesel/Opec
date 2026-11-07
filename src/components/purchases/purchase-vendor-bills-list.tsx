@@ -31,7 +31,8 @@ import {
   type Firestore,
 } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
-import { canMarkPurchaseVendorBillPaid, canView, isSystemAdmin } from '@/lib/permissions';
+import { canMarkPurchaseVendorBillPaid, canView, isAccountingStaff, isSystemAdmin } from '@/lib/permissions';
+import { confirmPurchaseCancellationWithoutRefund } from '@/lib/purchases/purchase-cancellation';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -109,13 +110,17 @@ async function deleteVendorBillDraft(firestore: Firestore, bill: PurchaseVendorB
   await deleteDoc(doc(firestore, 'purchase_vendor_bills', bill.id));
 }
 
-function statusBadge(bill: Pick<PurchaseVendorBill, 'status' | 'vendorBillDocumentationClosed'>) {
+function statusBadge(bill: Pick<PurchaseVendorBill, 'status' | 'vendorBillDocumentationClosed' | 'cancellationSettlement'>) {
   const status = effectiveVendorBillStatus(bill);
   switch (status) {
     case 'DRAFT':
       return <Badge variant="outline">ฉบับร่าง</Badge>;
     case 'SUBMITTED':
-      return <Badge className="bg-amber-600">รอจ่ายเงิน</Badge>;
+      return bill.cancellationSettlement ? (
+        <Badge className="bg-amber-700">รอยืนยันยกเลิก</Badge>
+      ) : (
+        <Badge className="bg-amber-600">รอจ่ายเงิน</Badge>
+      );
     case 'PARTIALLY_PAID':
       return <Badge className="bg-orange-600">จ่ายบางส่วน</Badge>;
     case 'CLOSED':
@@ -172,6 +177,12 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
   const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [billVendorId, setBillVendorId] = useState<string>('all');
   const [listPage, setListPage] = useState(1);
+  const [confirmingCancelId, setConfirmingCancelId] = useState<string | null>(null);
+
+  const canConfirmCancellation = useMemo(
+    () => mode !== 'store' && !!currentUser && (isAccountingStaff(currentUser) || isSystemAdmin(currentUser)),
+    [mode, currentUser],
+  );
 
   const billsQuery = useMemoFirebase(() => {
     if (!firestore || !ok) return null;
@@ -559,7 +570,9 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                           </TableCell>
                           <TableCell className="py-2.5 text-sm">{v?.vendorName || '—'}</TableCell>
                           <TableCell className="py-2.5 text-right text-sm">
-                            {b.billAmount != null && b.billAmount > 0 ? (
+                            {b.cancellationSettlement ? (
+                              <span className="font-mono font-medium">฿0.00</span>
+                            ) : b.billAmount != null && b.billAmount > 0 ? (
                               <span className="font-mono font-medium">
                                 ฿{b.billAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                               </span>
@@ -587,11 +600,51 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                             </TableCell>
                           )}
                           <TableCell className="py-2.5 pr-4 text-right" onClick={(e) => e.stopPropagation()}>
-                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" asChild>
-                              <Link href={detailHref}>
-                                <ChevronRight className="h-4 w-4" />
-                              </Link>
-                            </Button>
+                            <div className="flex items-center justify-end gap-1">
+                              {canConfirmCancellation && b.cancellationSettlement && b.status === 'SUBMITTED' ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  disabled={confirmingCancelId === b.id}
+                                  onClick={() => {
+                                    if (!firestore || !currentUser) return;
+                                    setConfirmingCancelId(b.id);
+                                    void confirmPurchaseCancellationWithoutRefund(
+                                      firestore,
+                                      currentUser,
+                                      b.purchaseId,
+                                      b.id,
+                                    )
+                                      .then(() => {
+                                        toast({
+                                          title: 'ยืนยันยกเลิกแล้ว',
+                                          description: `${b.purchaseNo || 'ใบสั่งซื้อ'} เปลี่ยนจากรอยกเลิกเป็นยกเลิก`,
+                                        });
+                                      })
+                                      .catch((e: unknown) => {
+                                        toast({
+                                          variant: 'destructive',
+                                          title: 'ยืนยันไม่สำเร็จ',
+                                          description: e instanceof Error ? e.message : 'เกิดข้อผิดพลาด',
+                                        });
+                                      })
+                                      .finally(() => setConfirmingCancelId(null));
+                                  }}
+                                >
+                                  {confirmingCancelId === b.id ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    'ยืนยันยกเลิก'
+                                  )}
+                                </Button>
+                              ) : null}
+                              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" asChild>
+                                <Link href={detailHref}>
+                                  <ChevronRight className="h-4 w-4" />
+                                </Link>
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );

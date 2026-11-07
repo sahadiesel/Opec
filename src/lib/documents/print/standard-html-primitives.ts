@@ -549,6 +549,19 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
   }
   .sd-sign-footer--receipt { position: relative; }
   .sd-sign-footer--receipt .sd-signatures { align-items: end; }
+  .sd-sign-footer--between { position: relative; }
+  .sd-sign-between-stamp {
+    position: absolute;
+    left: calc((100% - 32px) / 3 + 8px);
+    bottom: 8mm;
+    width: 26mm;
+    height: 26mm;
+    object-fit: contain;
+    transform: translateX(-50%);
+    opacity: 0.88;
+    z-index: 2;
+    pointer-events: none;
+  }
   .sd-receipt-gap-stamp {
     position: absolute;
     left: 50%;
@@ -1054,6 +1067,8 @@ export function buildStandardSignFooterHtml(params: {
   belowHtml?: string;
   /** ตรายางวางช่องว่างระหว่างสองลายเซ็น (ใบเสร็จ) — ไม่ทับลายเซ็นผู้รับเงิน */
   gapStampUrl?: string;
+  /** ตรายางระหว่างผู้จัดเตรียมกับผู้มีอำนาจลงนาม — ไม่ทับรูปลายเซ็น */
+  betweenStampUrl?: string;
 }): string {
   const below = params.belowHtml ?? '';
   const three = Boolean(params.middle);
@@ -1063,7 +1078,16 @@ export function buildStandardSignFooterHtml(params: {
   const gapStamp = params.gapStampUrl?.trim()
     ? `<img class="sd-receipt-gap-stamp" src="${escapeHtmlDoc(params.gapStampUrl.trim())}" alt="" />`
     : '';
-  const footerClass = gapStamp ? 'sd-sign-footer sd-sign-footer--receipt' : 'sd-sign-footer';
+  const betweenStamp = params.betweenStampUrl?.trim()
+    ? `<img class="sd-sign-between-stamp" src="${escapeHtmlDoc(params.betweenStampUrl.trim())}" alt="" />`
+    : '';
+  const footerClass = [
+    'sd-sign-footer',
+    gapStamp ? 'sd-sign-footer--receipt' : '',
+    betweenStamp ? 'sd-sign-footer--between' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
   return `<footer class="${footerClass}">
   <div class="${gridClass}">
     ${standardSignBlockHtml(params.left, leftSlot)}
@@ -1071,6 +1095,7 @@ export function buildStandardSignFooterHtml(params: {
     ${standardSignBlockHtml(params.right, leftSlot)}
   </div>
   ${gapStamp}
+  ${betweenStamp}
   ${below}
   </footer>`;
 }

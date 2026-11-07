@@ -14,6 +14,7 @@
 
 import { getApps, initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore, FieldValue, type DocumentReference } from 'firebase-admin/firestore';
+import { FIRESTORE_DATABASE_ID } from '../src/firebase/config';
 import { resolveFirebaseProjectId } from './resolve-firebase-project-id';
 
 function argValue(name: string): string | undefined {
@@ -43,7 +44,7 @@ async function main() {
       initializeApp(projectId ? { projectId } : undefined);
     }
   }
-  const db = getFirestore();
+  const db = getFirestore(FIRESTORE_DATABASE_ID);
 
   const mainRefs = onlyContract
     ? [db.doc(`main_contracts/${onlyContract}`)]

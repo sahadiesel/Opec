@@ -17,6 +17,9 @@ import { fileURLToPath } from 'url';
 import { cert, getApps, initializeApp, refreshToken } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
+/** ให้ตรงกับ FIRESTORE_DATABASE_ID ใน src/firebase/config.ts */
+const FIRESTORE_DATABASE_ID = process.env.FIRESTORE_DATABASE_ID?.trim() || 'opec-data-sg';
+
 const FIREBASE_CLI_OAUTH = {
   clientId: '563584335869-fgrhgmd47bqnekij5i8b5pr03ho849e6.apps.googleusercontent.com',
   clientSecret: 'j9iVZfS8kkCEFUPaAeJV0sAi',
@@ -71,7 +74,7 @@ function initAdmin() {
 
 initAdmin();
 
-const db = getFirestore();
+const db = getFirestore(FIRESTORE_DATABASE_ID);
 const snap = await db.collection('users').doc(uid).get();
 
 if (!snap.exists) {

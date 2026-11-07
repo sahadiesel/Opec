@@ -38,6 +38,13 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { CustomerSearchSelect } from '@/components/commercial/customer-search-select';
+import { QuotationPaymentTermFields } from '@/components/commercial/quotation-payment-term-fields';
+import {
+  mergeQuotationPayment,
+  quotationPaymentCreateFields,
+  quotationPaymentTermError,
+} from '@/lib/commercial/quotation-payment-term';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { generateNextDocumentCode, getPreviewPattern } from '@/lib/services/numbering-service';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -117,13 +124,19 @@ export default function QuotationsPage() {
     discountAmount: 0,
     taxPercent: 7,
     taxAmount: 0,
-    grandTotal: 0
+    grandTotal: 0,
+    paymentKind: 'cash',
   });
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
     if (!newQuotation.customerId || !newQuotation.projectTitle) {
       toast({ variant: "destructive", title: "ข้อมูลไม่ครบ", description: "กรุณาระบุชื่อใบเสนอราคาและลูกค้า" });
+      return;
+    }
+    const paymentError = quotationPaymentTermError(newQuotation);
+    if (paymentError) {
+      toast({ variant: "destructive", title: "การจ่ายเงินไม่ครบ", description: paymentError });
       return;
     }
 
@@ -139,6 +152,7 @@ export default function QuotationsPage() {
       // 2. Create the document
       const docRef = await addDocumentNonBlocking(collection(firestore, 'quotations'), {
         ...newQuotation,
+        ...quotationPaymentCreateFields(newQuotation),
         quotationNo: finalNo,
         customerNameSnapshot: customer?.name || '',
         billingAddressSnapshot: customer?.billingAddress || '',
@@ -267,7 +281,7 @@ export default function QuotationsPage() {
                 <Plus className="h-5 w-5" /> สร้างใบเสนอราคาใหม่ (New Quotation)
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-xl">
+            <DialogContent className="max-h-[90vh] max-w-xl overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>สร้างใบเสนอราคาใหม่</DialogTitle>
                 <DialogDescription>ระบุรายละเอียดเบื้องต้นเพื่อเริ่มต้นจัดทำข้อเสนอเชิงพาณิชย์</DialogDescription>
@@ -284,14 +298,11 @@ export default function QuotationsPage() {
                 </div>
                 <div className="space-y-2 md:col-span-2">
                   <Label>ลูกค้า (Customer)</Label>
-                  <Select onValueChange={v => setNewQuotation({...newQuotation, customerId: v})}>
-                    <SelectTrigger className="h-11"><SelectValue placeholder="เลือกบริษัทลูกค้า..." /></SelectTrigger>
-                    <SelectContent>
-                      {customers?.map(c => (
-                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <CustomerSearchSelect
+                    customers={customers}
+                    value={newQuotation.customerId}
+                    onChange={(customerId) => setNewQuotation({ ...newQuotation, customerId })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>วันที่ออกเอกสาร</Label>
@@ -309,6 +320,13 @@ export default function QuotationsPage() {
                     onChange={(ms) =>
                       setNewQuotation({ ...newQuotation, validUntilDate: timestampToHtmlDateValue(ms) })
                     }
+                  />
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label>การจ่ายเงิน (Term of payment)</Label>
+                  <QuotationPaymentTermFields
+                    value={newQuotation}
+                    onChange={(next) => setNewQuotation((prev) => mergeQuotationPayment(prev, next))}
                   />
                 </div>
               </div>

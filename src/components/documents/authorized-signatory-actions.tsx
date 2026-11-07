@@ -1,16 +1,21 @@
 'use client';
 
 import { useState } from 'react';
-import { doc } from 'firebase/firestore';
 import { Loader2, PenLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useDoc, useFirestore, useMemoFirebase } from '@/firebase';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { useFirestore } from '@/firebase';
 import { useToast } from '@/hooks/use-toast';
 import { getEffectiveAccessLevel, isSystemAdmin } from '@/lib/permission-core';
-import {
-  attachAuthorizedSignature,
-  requestDocumentSignature,
-} from '@/lib/services/document-signature-request-service';
+import { requestDocumentSignature } from '@/lib/services/document-signature-request-service';
 import type {
   AuthorizedSignatoryMark,
   DocumentSignatureSourceCollection,
@@ -38,19 +43,14 @@ export function AuthorizedSignatoryActions({
   const firestore = useFirestore();
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState('');
   const level = getEffectiveAccessLevel(currentUser);
-  const isManager = isSystemAdmin(currentUser) || level === 'admin' || level === 'manager';
-  const isOfficer = level === 'officer';
+  const canRequest = isSystemAdmin(currentUser) || level === 'admin' || level === 'manager' || level === 'officer';
   const ready = authorizedSignatureReady(mark);
   const pending = mark?.status === 'PENDING';
 
-  const userRef = useMemoFirebase(
-    () => (firestore && isManager ? doc(firestore, 'users', currentUser.id) : null),
-    [firestore, isManager, currentUser.id],
-  );
-  const { data: self } = useDoc<User>(userRef as never);
-
-  if (!isManager && !isOfficer) return null;
+  if (!canRequest) return null;
 
   const btnClass =
     tone === 'onDark'
@@ -58,39 +58,7 @@ export function AuthorizedSignatoryActions({
       : 'gap-2';
   const noteClass = tone === 'onDark' ? 'text-[11px] text-white/80' : 'text-[11px] text-muted-foreground';
 
-  const attach = async () => {
-    if (!firestore) return;
-    const url = (self?.signatureImageUrl || currentUser.signatureImageUrl || '').trim();
-    if (!url) {
-      toast({
-        variant: 'destructive',
-        title: 'ยังไม่มีลายเซ็น',
-        description: 'อัปโหลดลายเซ็นในหน้าจัดการผู้ใช้งานก่อน',
-      });
-      return;
-    }
-    setBusy(true);
-    try {
-      await attachAuthorizedSignature(firestore, {
-        sourceCollection,
-        sourceId,
-        actor: currentUser,
-        signatureImageUrl: url,
-        openRequestId: pending ? mark?.requestId : undefined,
-      });
-      toast({ title: 'แนบลายเซ็นแล้ว', description: 'ตอนพิมพ์เลือก “ลายเซ็น” เพื่อใส่ลงเอกสาร' });
-    } catch (err) {
-      toast({
-        variant: 'destructive',
-        title: 'แนบไม่สำเร็จ',
-        description: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const request = async () => {
+  const submit = async () => {
     if (!firestore || pending) return;
     setBusy(true);
     try {
@@ -100,8 +68,14 @@ export function AuthorizedSignatoryActions({
         documentNo,
         documentLabel,
         actor: currentUser,
+        note,
       });
-      toast({ title: 'ส่งขออนุมัติลายเซ็นแล้ว', description: 'รอผู้จัดการอนุมัติในศูนย์อนุมัติ' });
+      setOpen(false);
+      setNote('');
+      toast({
+        title: 'ส่งขออนุมัติลายเซ็นแล้ว',
+        description: 'รายการไปอยู่ที่ศูนย์อนุมัติ → รออนุมัติการเซ็นต์เอกสาร',
+      });
     } catch (err) {
       toast({
         variant: 'destructive',
@@ -117,23 +91,51 @@ export function AuthorizedSignatoryActions({
     <div className={tone === 'onDark' ? 'space-y-2' : 'flex flex-col items-stretch gap-1'}>
       {ready ? (
         <p className={noteClass}>
-          มีลายเซ็นผู้มีอำนาจแล้ว{mark?.signerName ? ` · ${mark.signerName}` : ''}
+          ผู้อนุมัติ{mark?.signerName ? `: ${mark.signerName}` : 'บันทึกแล้ว'}
         </p>
       ) : null}
-      {pending ? <p className={noteClass}>รออนุมัติลายเซ็นจากผู้จัดการ</p> : null}
+      {pending ? <p className={noteClass}>รออนุมัติลายเซ็นจากศูนย์อนุมัติ</p> : null}
       {mark?.status === 'REJECTED' ? <p className={noteClass}>คำขอลายเซ็นถูกปฏิเสธ — ส่งขอใหม่ได้</p> : null}
-      {isManager ? (
-        <Button type="button" variant="outline" className={btnClass} disabled={busy} onClick={() => void attach()}>
-          {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PenLine className="mr-2 h-4 w-4" />}
-          แนบลายเซ็นต์
-        </Button>
-      ) : null}
-      {isOfficer && !ready ? (
-        <Button type="button" variant="outline" className={btnClass} disabled={busy || pending} onClick={() => void request()}>
-          {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PenLine className="mr-2 h-4 w-4" />}
-          ขออนุมัติลายเซ็นต์
-        </Button>
-      ) : null}
+      <Button
+        type="button"
+        variant="outline"
+        className={btnClass}
+        disabled={busy || pending}
+        onClick={() => setOpen(true)}
+      >
+        {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PenLine className="mr-2 h-4 w-4" />}
+        ขออนุมัติลายเซ็นต์
+      </Button>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          if (!busy) setOpen(next);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>ขออนุมัติลายเซ็น</DialogTitle>
+            <DialogDescription>
+              {documentLabel} เลขที่ {documentNo} — ผู้ที่กดอนุมัติในศูนย์อนุมัติจะถูกบันทึกชื่อและลายเซ็นลงเอกสาร
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="ข้อความถึงผู้อนุมัติ (ไม่จำเป็น)"
+            rows={4}
+          />
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" disabled={busy} onClick={() => setOpen(false)}>
+              ยกเลิก
+            </Button>
+            <Button type="button" disabled={busy} onClick={() => void submit()}>
+              {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              ขออนุมัติ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

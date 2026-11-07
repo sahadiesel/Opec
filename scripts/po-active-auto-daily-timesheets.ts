@@ -17,6 +17,7 @@ import {
   type Firestore,
   type QueryDocumentSnapshot,
 } from 'firebase-admin/firestore';
+import { FIRESTORE_DATABASE_ID } from '../src/firebase/config';
 import { existsSync, readFileSync } from 'node:fs';
 import { DailyTimesheetSchema } from '../src/lib/validations/timesheet-schemas';
 import { resolvePoActiveBundleKeyForPo } from '../src/lib/ops/po-active-bundle';
@@ -303,7 +304,7 @@ async function main(): Promise<void> {
 
   initFirebaseAdmin();
   const projectIdResolved = resolveFirebaseProjectId();
-  const db = getFirestore();
+  const db = getFirestore(FIRESTORE_DATABASE_ID);
   await assertFirestoreReachable(db, projectIdResolved);
 
   const totals: Totals = { created: 0, updated: 0, skipped: 0 };

@@ -8,6 +8,7 @@ import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { cert, getApps, initializeApp, refreshToken } from 'firebase-admin/app';
 import { getSecurityRules } from 'firebase-admin/security-rules';
+import { firestoreRulesReleaseName } from './firestore-release-name.mjs';
 import { createHash } from 'crypto';
 
 const FIREBASE_CLI_OAUTH = {
@@ -19,6 +20,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 const localPath = resolve(root, 'firestore.rules');
 const projectId = process.env.FIREBASE_PROJECT_ID?.trim() || 'studio-9554558161-dc547';
+/** ให้ตรงกับ FIRESTORE_DATABASE_ID ใน src/firebase/config.ts */
+const FIRESTORE_DATABASE_ID = process.env.FIRESTORE_DATABASE_ID?.trim() || 'opec-data-sg';
 
 function loadFirebaseCliRefreshToken() {
   const paths = [
@@ -66,9 +69,12 @@ function sha(s) {
 async function main() {
   initAdmin();
   const sr = getSecurityRules();
+  const releaseName = firestoreRulesReleaseName(FIRESTORE_DATABASE_ID);
   console.log(`Project: ${projectId}`);
+  console.log(`Database: ${FIRESTORE_DATABASE_ID}`);
+  console.log(`Release: ${releaseName}`);
   console.log('Fetching active Firestore ruleset...');
-  const ruleset = await sr.getFirestoreRuleset();
+  const ruleset = await sr.getRulesetForRelease(releaseName);
   const file = ruleset.source?.[0] ?? ruleset.source?.files?.[0];
   const content = file?.content ?? '';
   console.log('');
