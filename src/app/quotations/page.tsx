@@ -58,6 +58,13 @@ import { DocumentShareListMarker } from '@/components/documents/document-share-c
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
+import {
   AlertDialog,
   AlertDialogCancel,
   AlertDialogContent,
@@ -113,6 +120,8 @@ export default function QuotationsPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | QuotationStatus>('all');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [newQuotation, setNewQuotation] = useState<Partial<Quotation>>({
     quotationNo: getPreviewPattern('quotation'),
     issueDate: new Date().toISOString().split('T')[0],
@@ -206,9 +215,22 @@ export default function QuotationsPage() {
     <StatusBadge {...quotationStatusBadge(status)} />
   );
 
+  const visibleQuotations = useMemo(
+    () => filterToOwnCreatedDocuments(currentUser, quotations),
+    [currentUser, quotations],
+  );
+
+  const yearOptionsCe = useMemo(
+    () => buildYearCeOptions(visibleQuotations.map((q) => (q.issueDate || '').slice(0, 7))),
+    [visibleQuotations],
+  );
+
   const filteredQuotations = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    return filterToOwnCreatedDocuments(currentUser, quotations).filter((q) => {
+    return visibleQuotations.filter((q) => {
+      if (!ymMatchesYearMonthScope((q.issueDate || '').slice(0, 7), yearFilterCe, monthScope)) {
+        return false;
+      }
       const statusMatched = statusFilter === 'all' || q.status === statusFilter;
       if (!statusMatched) return false;
       if (!term) return true;
@@ -218,7 +240,7 @@ export default function QuotationsPage() {
       const status = (q.status || '').toLowerCase();
       return no.includes(term) || customer.includes(term) || title.includes(term) || status.includes(term);
     });
-  }, [quotations, searchTerm, statusFilter, currentUser]);
+  }, [visibleQuotations, searchTerm, statusFilter, yearFilterCe, monthScope]);
 
   if (isUserLoading || userLoading || !currentUser) return null;
 
@@ -243,7 +265,7 @@ export default function QuotationsPage() {
         </Alert>
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex items-center gap-3 flex-1">
+          <div className="flex flex-1 flex-wrap items-center gap-3">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -253,6 +275,16 @@ export default function QuotationsPage() {
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
+            <YearMonthScopeSelects
+              idPrefix="quotations"
+              yearCe={yearFilterCe}
+              monthScope={monthScope}
+              yearOptionsCe={yearOptionsCe}
+              onYearCeChange={setYearFilterCe}
+              onMonthScopeChange={setMonthScope}
+              yearTriggerClassName="h-11 w-[7.5rem]"
+              monthTriggerClassName="h-11 w-[9.5rem]"
+            />
             <div className="w-[210px]">
               <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as 'all' | QuotationStatus)}>
                 <SelectTrigger className="h-11 gap-2">
@@ -349,16 +381,16 @@ export default function QuotationsPage() {
               <Table>
                 <TableHeader className="bg-muted/50">
                   <TableRow>
-                    <TableHead className="font-bold py-4 pl-6">เลขที่ (No.)</TableHead>
-                    <TableHead className="font-bold">ลูกค้า (Customer)</TableHead>
-                    <TableHead className="font-bold">รายละเอียด (Title)</TableHead>
-                    <TableHead className="font-bold text-right">มูลค่าสุทธิ</TableHead>
-                    <TableHead className="font-bold">ผู้สร้าง</TableHead>
+                    <TableHead className="h-[2.4rem] py-2 pl-6 font-bold">เลขที่ (No.)</TableHead>
+                    <TableHead className="h-[2.4rem] py-2 font-bold">ลูกค้า (Customer)</TableHead>
+                    <TableHead className="h-[2.4rem] py-2 font-bold">รายละเอียด (Title)</TableHead>
+                    <TableHead className="h-[2.4rem] py-2 text-right font-bold">มูลค่าสุทธิ</TableHead>
+                    <TableHead className="h-[2.4rem] py-2 font-bold">ผู้สร้าง</TableHead>
                     {showShareColumn && (
-                      <TableHead className="font-bold w-12 text-center">แชร์</TableHead>
+                      <TableHead className="h-[2.4rem] w-12 py-2 text-center font-bold">แชร์</TableHead>
                     )}
-                    <TableHead className="font-bold">สถานะ</TableHead>
-                    <TableHead className="text-right pr-6">จัดการ</TableHead>
+                    <TableHead className="h-[2.4rem] py-2 font-bold">สถานะ</TableHead>
+                    <TableHead className="h-[2.4rem] py-2 pr-6 text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -369,22 +401,22 @@ export default function QuotationsPage() {
                         className="cursor-pointer hover:bg-muted/30 group transition-all" 
                         onClick={() => router.push(`/quotations/${q.id}`)}
                       >
-                        <TableCell className="py-4 pl-6 font-bold text-primary font-mono">{q.quotationNo}</TableCell>
-                        <TableCell>
+                        <TableCell className="py-[12.8px] pl-6 font-bold text-primary font-mono">{q.quotationNo}</TableCell>
+                        <TableCell className="py-[12.8px]">
                           <div className="flex items-center gap-2 text-sm font-bold text-primary">
                             <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
                             {q.customerNameSnapshot || 'N/A'}
                           </div>
                         </TableCell>
-                        <TableCell className="text-sm font-medium">{q.projectTitle}</TableCell>
-                        <TableCell className="text-right font-black text-primary">
+                        <TableCell className="py-[12.8px] text-sm font-medium">{q.projectTitle}</TableCell>
+                        <TableCell className="py-[12.8px] text-right font-black text-primary">
                           {q.currency} {(q.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </TableCell>
-                        <TableCell className="text-sm whitespace-nowrap">
+                        <TableCell className="py-[12.8px] text-sm whitespace-nowrap">
                           {documentCreatorDisplayName(q)}
                         </TableCell>
                         {showShareColumn && (
-                          <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                          <TableCell className="py-[12.8px] text-center" onClick={(e) => e.stopPropagation()}>
                             <DocumentShareListMarker
                               collectionName="quotations"
                               documentId={q.id}
@@ -394,9 +426,9 @@ export default function QuotationsPage() {
                             />
                           </TableCell>
                         )}
-                        <TableCell>{getStatusBadge(q.status)}</TableCell>
+                        <TableCell className="py-[12.8px]">{getStatusBadge(q.status)}</TableCell>
                         <TableCell
-                          className="text-right pr-6"
+                          className="py-[12.8px] text-right pr-6"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <div className="inline-flex items-center justify-end gap-0.5">
@@ -405,21 +437,21 @@ export default function QuotationsPage() {
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
                                 title="ลบใบเสนอราคา (ผู้ดูแลระบบ)"
                                 onClick={() => setDeleteTarget(q)}
                               >
-                                <Trash2 className="h-5 w-5" />
+                                <Trash2 className="h-4 w-4" />
                               </Button>
                             )}
                             <Button
                               type="button"
                               variant="ghost"
                               size="icon"
-                              className="group-hover:text-primary"
+                              className="h-8 w-8 group-hover:text-primary"
                               onClick={() => router.push(`/quotations/${q.id}`)}
                             >
-                              <ChevronRight className="h-5 w-5" />
+                              <ChevronRight className="h-4 w-4" />
                             </Button>
                           </div>
                         </TableCell>
@@ -428,7 +460,9 @@ export default function QuotationsPage() {
                   })}
                   {filteredQuotations.length === 0 && !isLoading && (
                     <TableRow>
-                      <TableCell colSpan={showShareColumn ? 8 : 7} className="text-center py-20 text-muted-foreground italic">ไม่มีรายการใบเสนอราคาในระบบ</TableCell>
+                      <TableCell colSpan={showShareColumn ? 8 : 7} className="text-center py-16 text-muted-foreground italic">
+                        ไม่มีใบเสนอราคาในช่วงปีและเดือนที่เลือก
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>
