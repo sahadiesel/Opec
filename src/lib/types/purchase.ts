@@ -241,7 +241,16 @@ export type VendorBillVatTreatmentOverride = 'NONE' | 'VAT_7' | 'VAT_7_INCLUSIVE
 
 /** รับวางบิลจากใบสั่งซื้อที่อนุมัติแล้ว — คลังสร้าง บัญชีติดตามจ่าย */
 
-export type PurchaseVendorBillStatus = 'DRAFT' | 'SUBMITTED' | 'PARTIALLY_PAID' | 'PAID' | 'CLOSED';
+export type PurchaseVendorBillStatus =
+  | 'DRAFT'
+  | 'SUBMITTED'
+  | 'PARTIALLY_PAID'
+  | 'PAID'
+  | 'CLOSED'
+  /** ใบเดิมที่เคยรอจ่าย — อนุมัติยกเลิก PO แล้ว รอบัญชีปิดเรื่อง */
+  | 'PENDING_CANCELLATION'
+  /** ปิดเรื่องยกเลิกบนใบเดิม — เก็บไว้ตรวจเหตุผลภายหลัง */
+  | 'CANCELLED';
 
 /** งวดจ่ายภายในใบรับวางบิลเดียว (แผนที่คลังกำหนด — ไม่ใช่แค่หมายเหตุ) */
 
@@ -354,8 +363,16 @@ export interface PurchaseVendorBill {
    * ใช้เมื่อฐานหักตามกฎไม่เท่ากับยอดก่อนภาษีที่แสดงในใบวางบิล (ค่าไม่เกินยอดรวมในใบก่อนหัก ณ ที่จ่าย)
    */
   supplierWithholdingTaxBaseBill?: number | null;
-  /** ใบปิดเรื่องยกเลิก PO โดยไม่รับเงินคืน — ยอดในใบเป็น 0 */
+  /**
+   * ใบที่ระบบเคยสร้างแยกเป็นยอด 0 ตอนยกเลิก — ไม่ใช้แล้ว
+   * รายการนี้ไม่แสดง และจะถูกลบเมื่อซิงก์สถานะกลับไปที่ใบวางบิลเดิม
+   */
   cancellationSettlement?: boolean;
+  /** เหตุผลขอยกเลิก ที่คัดลอกมาไว้บนใบเดิม */
+  cancellationReason?: string;
+  /** เหตุผลผู้อนุมัติ เมื่อไม่ต้องรับเงินคืน */
+  cancellationApproverNote?: string;
+  cancellationRefundMode?: PurchaseCancellationRefundMode;
   createdAt: number;
   updatedAt: number;
 }

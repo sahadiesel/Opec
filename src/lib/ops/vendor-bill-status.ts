@@ -4,6 +4,7 @@ import type { PurchaseVendorBill, PurchaseVendorBillStatus } from '@/lib/types';
 export function isVendorBillPaymentComplete(
   bill: Pick<PurchaseVendorBill, 'status' | 'paidAt'>,
 ): boolean {
+  if (bill.status === 'PENDING_CANCELLATION' || bill.status === 'CANCELLED') return false;
   if (bill.status === 'PAID' || bill.status === 'CLOSED') return true;
   return typeof bill.paidAt === 'number' && bill.paidAt > 0;
 }

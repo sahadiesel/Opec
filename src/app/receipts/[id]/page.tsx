@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useCallback, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,7 @@ import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { DocumentShareButton } from '@/components/documents/document-share-controls';
 import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
+import { inlineCompanyStampForPrint, inlineUserSignatureForPrint } from '@/lib/storage/print-signature-image';
 import { detectMoneyReceiptWhtUndercharge } from '@/lib/accounting/money-receipt-wht-amount';
 import { fixMoneyReceiptWhtAmount } from '@/lib/services/money-receipt-wht-fix-service';
 import Link from 'next/link';
@@ -124,22 +125,59 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
   const showStamp = marksMatch ? marksDraft.stamp : savedStamp;
 
   const marksDirty = showSignature !== savedSignature || showStamp !== savedStamp;
+  const [printSignatureUrl, setPrintSignatureUrl] = useState<string | undefined>();
+  const [printStampUrl, setPrintStampUrl] = useState<string | undefined>();
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!showSignature || !receipt?.createdByUid) {
+      setPrintSignatureUrl(undefined);
+    } else {
+      void inlineUserSignatureForPrint(receipt.createdByUid).then((url) => {
+        if (!cancelled) setPrintSignatureUrl(url);
+      });
+    }
+    if (!showStamp) {
+      setPrintStampUrl(undefined);
+    } else {
+      void inlineCompanyStampForPrint().then((url) => {
+        if (!cancelled) setPrintStampUrl(url);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [showSignature, showStamp, receipt?.createdByUid]);
 
   const previewReceipt = useMemo(() => {
     if (!receipt) return null;
     return {
       ...receipt,
-      receiverSignatureImageUrl: showSignature && receiverSignatureUrl ? receiverSignatureUrl : undefined,
-      companyStampImageUrl: showStamp && stampUrl ? stampUrl : undefined,
+      receiverSignatureImageUrl: showSignature ? printSignatureUrl : undefined,
+      companyStampImageUrl: showStamp ? printStampUrl : undefined,
     };
-  }, [receipt, showSignature, showStamp, receiverSignatureUrl, stampUrl]);
+  }, [receipt, showSignature, showStamp, printSignatureUrl, printStampUrl]);
 
   const executeReceiptPrint = useCallback(
     async (sheets: TaxInvoicePrintSheet[]) => {
-      if (!previewReceipt || !taxInv) return;
+      if (!previewReceipt || !taxInv || !receipt) return;
+      const receiverImage = showSignature
+        ? printSignatureUrl || (await inlineUserSignatureForPrint(receipt.createdByUid))
+        : undefined;
+      const stampImage = showStamp ? printStampUrl || (await inlineCompanyStampForPrint()) : undefined;
+      if (showSignature && !receiverImage) {
+        toast({ title: 'ยังไม่มีลายเซ็นผู้รับเงิน', description: 'พิมพ์ช่องผู้รับเงินโดยไม่มีรูปลายเซ็น' });
+      }
+      if (showStamp && !stampImage) {
+        toast({ title: 'ยังไม่มีตรายาง', description: 'พิมพ์โดยไม่มีตรายาง — ตั้งได้ที่หัวเอกสารบริษัท' });
+      }
       const body = buildMoneyReceiptPrintHtml({
         company: companyProfile ?? undefined,
-        receipt: previewReceipt,
+        receipt: {
+          ...previewReceipt,
+          receiverSignatureImageUrl: receiverImage,
+          companyStampImageUrl: stampImage,
+        },
         taxInvoice: taxInv,
         customer: customer ?? undefined,
         printedAtMs: Date.now(),
@@ -160,7 +198,7 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
         });
       }
     },
-    [previewReceipt, taxInv, companyProfile, customer, printLocale, toast],
+    [previewReceipt, receipt, taxInv, companyProfile, customer, printLocale, toast, showSignature, showStamp, printSignatureUrl, printStampUrl],
   );
 
   /** พรีวิวหน้าจอ — รูปแบบเดียวกับตอนพิมพ์ (ต้นฉบับ 1 แผ่น) */

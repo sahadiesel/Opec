@@ -152,6 +152,8 @@ import {
 function statusLabel(s: PurchaseVendorBillStatus) {
   if (s === 'DRAFT') return 'ฉบับร่าง';
   if (s === 'SUBMITTED') return 'รอจ่ายเงิน';
+  if (s === 'PENDING_CANCELLATION') return 'รอยกเลิก';
+  if (s === 'CANCELLED') return 'ยกเลิก';
   if (s === 'PARTIALLY_PAID') return 'จ่ายบางส่วน';
   if (s === 'CLOSED') return 'Close';
   return 'จ่ายครบแล้ว';
@@ -1614,6 +1616,21 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
               <CardDescription className="text-amber-950/90">
                 จ่ายเงินครบแล้ว แต่สถานะสมบูรณ์ทางธุรการตามนโยบายคือได้รับ{' '}
                 <strong>ใบกำกับภาษี</strong> และ <strong>ใบเสร็จรับเงิน</strong> ครบและปิดเช็คลิสด้านล่าง
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        )}
+
+        {(bill.status === 'PENDING_CANCELLATION' || bill.status === 'CANCELLED') && (
+          <Card className="border-amber-200 bg-amber-50/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base text-amber-950">
+                {bill.status === 'CANCELLED' ? 'ยกเลิกใบสั่งซื้อแล้ว' : 'รอยกเลิกใบสั่งซื้อ'}
+              </CardTitle>
+              <CardDescription className="text-amber-950/90">
+                ใบวางบิลใบเดิมเปลี่ยนสถานะบนบรรทัดนี้ ใบขอซื้อไม่ถูกยกเลิก ถ้าจะซื้อใหม่ให้สร้างใบขอซื้อและใบสั่งซื้อใหม่
+                {bill.cancellationReason ? ` เหตุผลผู้ขอ: ${bill.cancellationReason}` : ''}
+                {bill.cancellationApproverNote ? ` เหตุผลผู้อนุมัติ: ${bill.cancellationApproverNote}` : ''}
               </CardDescription>
             </CardHeader>
           </Card>

@@ -1207,6 +1207,25 @@ export async function openStandardPrintWindow(params: {
       }
     }, 500);
   };
+  const waitForPrintImages = () => {
+    const imgs = Array.from(w.document.images || []);
+    if (!imgs.length) return Promise.resolve();
+    const pending = imgs
+      .filter((img) => !(img.complete && img.naturalWidth > 0))
+      .map(
+        (img) =>
+          new Promise<void>((resolve) => {
+            const done = () => resolve();
+            img.addEventListener('load', done, { once: true });
+            img.addEventListener('error', done, { once: true });
+          }),
+      );
+    if (!pending.length) return Promise.resolve();
+    return Promise.race([
+      Promise.all(pending).then(() => undefined),
+      new Promise<void>((resolve) => window.setTimeout(resolve, 4000)),
+    ]);
+  };
   const runPrint = () => {
     if (didPrint || w.closed) return;
     didPrint = true;
@@ -1220,12 +1239,10 @@ export async function openStandardPrintWindow(params: {
         scheduleClose();
       }
     };
-    const fontsReady = w.document.fonts?.ready;
-    if (fontsReady) {
-      fontsReady.then(() => window.setTimeout(doPrint, 80)).catch(() => doPrint());
-    } else {
-      window.setTimeout(doPrint, 150);
-    }
+    const fontsReady = w.document.fonts?.ready ?? Promise.resolve();
+    void Promise.all([fontsReady.catch(() => undefined), waitForPrintImages()])
+      .then(() => window.setTimeout(doPrint, 80))
+      .catch(() => doPrint());
   };
   try {
     w.document.open();

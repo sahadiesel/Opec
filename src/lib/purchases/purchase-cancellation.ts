@@ -2,11 +2,14 @@ import {
   collection,
   deleteField,
   doc,
+  getDoc,
+  getDocs,
+  query,
   updateDoc,
+  where,
   writeBatch,
   type Firestore,
 } from 'firebase/firestore';
-import { generateNextDocumentCode } from '@/lib/services/numbering-service';
 import { recordCashbookMovementWithBalance } from '@/lib/services/cashbook-bank-movement';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import type {
@@ -81,63 +84,102 @@ export async function rejectPurchaseCancellation(
   });
 }
 
+const OPEN_VENDOR_BILL_STATUSES = new Set(['DRAFT', 'SUBMITTED', 'PARTIALLY_PAID', 'PENDING_CANCELLATION']);
+
+/**
+ * เปลี่ยนสถานะบนใบวางบิลเดิมของ PO นี้ ไม่สร้างใบใหม่ และไม่แตะ PR
+ * ใบยอด 0 ที่เคยถูกสร้างแยกไว้จะถูกลบ
+ */
+async function syncExistingVendorBillsForCancellation(
+  db: Firestore,
+  purchaseId: string,
+  phase: 'PENDING_CANCELLATION' | 'CANCELLED',
+  detail: {
+    reason?: string | null;
+    approverNote?: string | null;
+    refundMode?: PurchaseCancellationRefundMode | null;
+  },
+): Promise<void> {
+  const snap = await getDocs(
+    query(collection(db, 'purchase_vendor_bills'), where('purchaseId', '==', purchaseId)),
+  );
+  if (snap.empty) return;
+  const now = Date.now();
+  const batch = writeBatch(db);
+  let writes = 0;
+  for (const billDoc of snap.docs) {
+    const data = billDoc.data() as {
+      status?: string;
+      cancellationSettlement?: boolean;
+      cancellationReason?: string;
+      cancellationApproverNote?: string;
+    };
+    if (data.cancellationSettlement) {
+      batch.delete(billDoc.ref);
+      writes += 1;
+      continue;
+    }
+    if (data.status === 'PAID' || data.status === 'CLOSED' || data.status === 'CANCELLED') continue;
+    if (phase === 'PENDING_CANCELLATION' && !OPEN_VENDOR_BILL_STATUSES.has(String(data.status || ''))) continue;
+    if (phase === 'CANCELLED' && data.status !== 'PENDING_CANCELLATION' && !OPEN_VENDOR_BILL_STATUSES.has(String(data.status || ''))) {
+      continue;
+    }
+    batch.update(billDoc.ref, {
+      status: phase,
+      cancellationReason: (detail.reason || data.cancellationReason || '').trim(),
+      cancellationApproverNote: (detail.approverNote || data.cancellationApproverNote || '').trim(),
+      ...(detail.refundMode ? { cancellationRefundMode: detail.refundMode } : {}),
+      updatedAt: now,
+    });
+    writes += 1;
+  }
+  if (writes > 0) await batch.commit();
+}
+
+/** ซ่อมใบที่เคยถูกสร้างเป็นบรรทัดยอด 0 — ย้ายสถานะกลับไปใบวางบิลเดิม */
+export async function repairPlaceholderCancellationBills(db: Firestore, purchaseId: string): Promise<void> {
+  const purchaseSnap = await getDoc(doc(db, 'purchases', purchaseId));
+  if (!purchaseSnap.exists()) return;
+  const purchase = purchaseSnap.data() as Purchase;
+  const phase =
+    purchase.status === 'CANCELLED'
+      ? 'CANCELLED'
+      : purchase.status === 'PENDING_CANCELLATION'
+        ? 'PENDING_CANCELLATION'
+        : null;
+  if (!phase) return;
+  await syncExistingVendorBillsForCancellation(db, purchaseId, phase, {
+    reason: purchase.cancellationReason,
+    approverNote: purchase.cancellationApproverNote,
+    refundMode: purchase.cancellationRefundMode,
+  });
+}
+
 export async function approvePurchaseCancellation(
   db: Firestore,
   user: User,
-  purchase: Pick<Purchase, 'id' | 'purchaseNo' | 'vendorId' | 'purchaseType'>,
+  purchase: Pick<Purchase, 'id' | 'purchaseNo' | 'cancellationReason'>,
   mode: PurchaseCancellationRefundMode,
   approverNote: string,
 ): Promise<void> {
   const note = approverNote.trim();
   if (mode === 'NO_REFUND' && !note) throw new Error('กรุณาระบุเหตุผลที่ไม่ต้องรับเงินคืน');
   const now = Date.now();
-  const purchaseRef = doc(db, 'purchases', purchase.id);
-  const base = {
-    cancellationRequestStatus: 'APPROVED' as const,
+  await updateDoc(doc(db, 'purchases', purchase.id), {
+    cancellationRequestStatus: 'APPROVED',
     cancellationRefundMode: mode,
     cancellationDecidedAt: now,
     cancellationDecidedByUid: user.id,
     cancellationDecidedByName: actorName(user),
-    status: 'PENDING_CANCELLATION' as const,
-    updatedAt: now,
-  };
-
-  if (mode === 'REFUND_REQUIRED') {
-    await updateDoc(purchaseRef, {
-      ...base,
-      cancellationApproverNote: note || deleteField(),
-    });
-    return;
-  }
-
-  const { code } = await generateNextDocumentCode(db, 'purchase_vendor_bill', {
-    actor: actorName(user),
-  });
-  const billRef = doc(collection(db, 'purchase_vendor_bills'));
-  const ymd = todayYmd();
-  const batch = writeBatch(db);
-  batch.set(billRef, {
-    receiptNo: code,
-    purchaseId: purchase.id,
-    purchaseNo: purchase.purchaseNo,
-    purchaseType: purchase.purchaseType,
-    vendorId: purchase.vendorId,
-    billAmount: 0,
-    billingReceivedDate: ymd,
-    plannedPaymentDate: ymd,
-    status: 'SUBMITTED',
-    cancellationSettlement: true,
-    supplierWithholdingEnabledBill: false,
-    notes: `ปิดเรื่องยกเลิกใบสั่งซื้อโดยไม่รับเงินคืน — ${note}`,
-    createdAt: now,
+    cancellationApproverNote: note || deleteField(),
+    status: 'PENDING_CANCELLATION',
     updatedAt: now,
   });
-  batch.update(purchaseRef, {
-    ...base,
-    cancellationApproverNote: note,
-    cancellationVendorBillId: billRef.id,
+  await syncExistingVendorBillsForCancellation(db, purchase.id, 'PENDING_CANCELLATION', {
+    reason: purchase.cancellationReason,
+    approverNote: note,
+    refundMode: mode,
   });
-  await batch.commit();
 }
 
 /** รับเงินคืนจากคู่ค้า — ลง cashbook อย่างเดียว ไม่ได้ออกใบเสร็จ แล้วปิดสถานะเป็นยกเลิก */
@@ -171,34 +213,23 @@ export async function settlePurchaseCancellationRefund(
     cancellationCashbookEntryNo: entryNo,
     updatedAt: now,
   });
+  await syncExistingVendorBillsForCancellation(db, purchase.id, 'CANCELLED', {});
   return { entryNo };
 }
 
-/** บัญชียืนยันใบวางบิลยอด 0 แล้วเปลี่ยนสถานะจากรอยกเลิกเป็นยกเลิก */
+/** บัญชียืนยันบนใบวางบิลเดิม — สถานะรอยกเลิกเป็นยกเลิก ไม่สร้างใบใหม่ และไม่ยกเลิก PR */
 export async function confirmPurchaseCancellationWithoutRefund(
   db: Firestore,
   user: User,
   purchaseId: string,
-  vendorBillId: string | null | undefined,
 ): Promise<void> {
   const now = Date.now();
-  const batch = writeBatch(db);
-  if (vendorBillId?.trim()) {
-    batch.update(doc(db, 'purchase_vendor_bills', vendorBillId), {
-      status: 'CLOSED',
-      vendorBillDocumentationClosed: true,
-      vendorBillDocumentationClosedAt: now,
-      vendorBillDocumentationClosedByUid: user.id,
-      vendorBillDocumentationClosedByName: actorName(user),
-      updatedAt: now,
-    });
-  }
-  batch.update(doc(db, 'purchases', purchaseId), {
+  await updateDoc(doc(db, 'purchases', purchaseId), {
     status: 'CANCELLED',
     cancellationSettledAt: now,
     cancellationSettledByUid: user.id,
     cancellationSettledByName: actorName(user),
     updatedAt: now,
   });
-  await batch.commit();
+  await syncExistingVendorBillsForCancellation(db, purchaseId, 'CANCELLED', {});
 }

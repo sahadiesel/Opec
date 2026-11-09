@@ -77,7 +77,7 @@ export function PurchaseCancellationPanel({
           <Ban className="h-4 w-4" /> ยกเลิกใบสั่งซื้อ
         </CardTitle>
         <CardDescription>
-          คำขอเข้าคิวอนุมัติใบสั่งซื้อ เมื่ออนุมัติแล้วสถานะเป็นรอยกเลิกและส่งต่อแผนกบัญชี
+          คำขอเข้าคิวอนุมัติใบสั่งซื้อ เมื่ออนุมัติแล้วใบวางบิลเดิมเป็นรอยกเลิก บัญชีปิดเรื่องแล้วเป็นยกเลิก ใบขอซื้อเดิมไม่ถูกยกเลิก — ถ้าจะซื้อใหม่ให้สร้าง PR และใบสั่งซื้อใหม่
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -87,7 +87,7 @@ export function PurchaseCancellationPanel({
             <p>
               {purchase.cancellationRefundMode === 'REFUND_REQUIRED'
                 ? 'ต้องรับเงินคืนจากคู่ค้า — รายการอยู่ในลูกหนี้การค้า บันทึกรับเงินเข้าบัญชีโดยไม่ออกใบเสร็จ'
-                : 'ไม่ต้องรับเงินคืน — ใบวางบิลยอด 0 อยู่ในรายการจ่ายเจ้าหนี้ รอผู้ตรวจสอบกดยืนยัน'}
+                : 'ไม่ต้องรับเงินคืน — ใบวางบิลเดิมเปลี่ยนจากรอจ่ายเป็นรอยกเลิก รอผู้ตรวจสอบกดยืนยันเป็นยกเลิก'}
             </p>
             {purchase.cancellationApproverNote ? (
               <p className="text-xs">เหตุผลผู้อนุมัติ: {purchase.cancellationApproverNote}</p>
@@ -186,7 +186,7 @@ export function PurchaseCancellationPanel({
               <div className="flex items-start gap-2">
                 <RadioGroupItem value="NO_REFUND" id="po-cancel-norefund" />
                 <Label htmlFor="po-cancel-norefund" className="font-normal leading-snug">
-                  2. ไม่ต้องรับเงินคืน — ระบุเหตุผล แล้วส่งใบวางบิลยอด 0 ให้บัญชียืนยัน
+                  2. ไม่ต้องรับเงินคืน — ระบุเหตุผล ใบวางบิลเดิมจะเป็นรอยกเลิก แล้วบัญชียืนยันเป็นยกเลิก
                 </Label>
               </div>
             </RadioGroup>

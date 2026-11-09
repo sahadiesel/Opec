@@ -87,6 +87,8 @@ function vendorBillStatusTh(bill: Pick<PurchaseVendorBill, 'status' | 'vendorBil
   const s = effectiveVendorBillStatus(bill);
   if (s === 'DRAFT') return 'ร่าง';
   if (s === 'SUBMITTED') return 'แจ้งบัญชีแล้ว';
+  if (s === 'PENDING_CANCELLATION') return 'รอยกเลิก';
+  if (s === 'CANCELLED') return 'ยกเลิก';
   if (s === 'PARTIALLY_PAID') return 'จ่ายบางส่วน';
   if (s === 'CLOSED') return 'Close';
   return 'จ่ายแล้ว';

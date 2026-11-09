@@ -62,6 +62,7 @@ import { AuthorizedSignatoryActions } from '@/components/documents/authorized-si
 import { PrintMarksDialog } from '@/components/documents/print-marks-dialog';
 import { usePersistedPrintMarks } from '@/components/documents/use-persisted-print-marks';
 import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
+import { loadDocumentPrintImages, userIdFromSignatureUrl } from '@/lib/storage/print-signature-image';
 import { authorizedSignatureReady } from '@/lib/types/document-signature';
 import { QuotationPreviewTab } from './_components/quotation-preview-tab';
 import { QuotationHistoryTab } from './_components/quotation-history-tab';
@@ -236,14 +237,22 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   ) => {
     if (!quotation) return;
     const authorizedReady = authorizedSignatureReady(quotation.authorizedSignatory);
-    const stampUrl = (companyProfile?.documentHeaderStampUrl || '').trim();
-    if (withPreparerSignature && !preparerSignatureUrl) {
+    const images = await loadDocumentPrintImages({
+      includePreparer: withPreparerSignature,
+      preparerUid: quotation.createdByUid,
+      includeAuthorized: withAuthorizedSignature && authorizedReady,
+      signerUid:
+        quotation.authorizedSignatory?.signerUid ||
+        userIdFromSignatureUrl(quotation.authorizedSignatory?.signatureImageUrl),
+      includeStamp: withStamp,
+    });
+    if (withPreparerSignature && !images.preparer) {
       toast({ title: 'ยังไม่มีลายเซ็นผู้จัดเตรียมเอกสาร', description: 'พิมพ์ช่องซ้ายโดยไม่มีรูปลายเซ็น' });
     }
-    if (withAuthorizedSignature && !authorizedReady) {
+    if (withAuthorizedSignature && (!authorizedReady || !images.authorized)) {
       toast({ title: 'ยังไม่มีลายเซ็นผู้มีอำนาจลงนาม', description: 'พิมพ์ช่องกลางโดยไม่มีรูปลายเซ็น' });
     }
-    if (withStamp && !stampUrl) {
+    if (withStamp && !images.stamp) {
       toast({ title: 'ยังไม่มีตรายาง', description: 'พิมพ์โดยไม่มีตรายาง — ตั้งได้ที่หัวเอกสารบริษัท' });
     }
     const headerSlice = { ...quotation, ...editedHeader } as Quotation;
@@ -263,11 +272,9 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
       printedAtMs: Date.now(),
       locale: printLocale,
       printMarks: {
-        preparerSignatureImageUrl:
-          withPreparerSignature && preparerSignatureUrl ? preparerSignatureUrl : undefined,
-        authorizedSignatureImageUrl:
-          withAuthorizedSignature && authorizedReady ? quotation.authorizedSignatory?.signatureImageUrl : undefined,
-        stampImageUrl: withStamp && stampUrl ? stampUrl : undefined,
+        preparerSignatureImageUrl: images.preparer,
+        authorizedSignatureImageUrl: images.authorized,
+        stampImageUrl: images.stamp,
       },
     });
     if (

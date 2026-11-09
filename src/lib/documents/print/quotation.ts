@@ -25,7 +25,10 @@ import {
   formatCustomerPartyNameForPrint,
   formatIssueDateYmdForPrint,
 } from './standard-html-primitives';
-import { quotationNotesWithPaymentTerm } from '@/lib/commercial/quotation-payment-term';
+import {
+  formatQuotationPaymentTermLine,
+  quotationNotesWithPaymentTerm,
+} from '@/lib/commercial/quotation-payment-term';
 
 /**
  * ที่อยู่วางบิลบนใบเสนอราคา — ใช้ snapshot บนใบก่อน ถ้าไม่มีค่อยดึงจากทะเบียนลูกค้า (billing → registered)
@@ -123,6 +126,7 @@ export function buildQuotationPrintHtml(params: {
     grand: true,
   });
   const totalWords = L === 'en' ? amountToEnglishBahtText(grand) : amountToThaiBahtText(grand);
+  const paymentTermLine = formatQuotationPaymentTermLine(q, L);
   const headerHtml = buildStandardDocumentHeaderHtml({
     company,
     documentTitleTh: 'ใบเสนอราคา',
@@ -131,7 +135,7 @@ export function buildQuotationPrintHtml(params: {
       { line: `${printT(L, 'dateIssued')} ${issueStr}` },
       { line: `${printT(L, 'validUntil')}: ${validStr}` },
       { line: `${printT(L, 'docNo')}: ${q.quotationNo}` },
-      { line: `${printT(L, 'currency')}: ${q.currency || 'THB'}` },
+      ...(paymentTermLine ? [{ line: paymentTermLine }] : []),
     ],
     locale: L,
   });

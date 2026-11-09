@@ -112,6 +112,7 @@ import { PrintMarksDialog } from '@/components/documents/print-marks-dialog';
 import { usePersistedPrintMarks } from '@/components/documents/use-persisted-print-marks';
 import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
 import { authorizedSignatureReady } from '@/lib/types/document-signature';
+import { loadDocumentPrintImages, userIdFromSignatureUrl } from '@/lib/storage/print-signature-image';
 import {
   createTaxInvoiceDraftFromIssuedCommercial,
   updateLinkedInvoiceTermNotes,
@@ -447,14 +448,22 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   ) => {
     if (!invoice) return;
     const authorizedReady = authorizedSignatureReady(invoice.authorizedSignatory);
-    const stampUrl = (companyProfile?.documentHeaderStampUrl || '').trim();
-    if (withPreparerSignature && !preparerSignatureUrl) {
+    const images = await loadDocumentPrintImages({
+      includePreparer: withPreparerSignature,
+      preparerUid: invoice.createdByUid,
+      includeAuthorized: withAuthorizedSignature && authorizedReady,
+      signerUid:
+        invoice.authorizedSignatory?.signerUid ||
+        userIdFromSignatureUrl(invoice.authorizedSignatory?.signatureImageUrl),
+      includeStamp: withStamp,
+    });
+    if (withPreparerSignature && !images.preparer) {
       toast({ title: 'ยังไม่มีลายเซ็นผู้จัดเตรียมเอกสาร', description: 'พิมพ์ช่องซ้ายโดยไม่มีรูปลายเซ็น' });
     }
-    if (withAuthorizedSignature && !authorizedReady) {
+    if (withAuthorizedSignature && (!authorizedReady || !images.authorized)) {
       toast({ title: 'ยังไม่มีลายเซ็นผู้มีอำนาจลงนาม', description: 'พิมพ์ช่องกลางโดยไม่มีรูปลายเซ็น' });
     }
-    if (withStamp && !stampUrl) {
+    if (withStamp && !images.stamp) {
       toast({ title: 'ยังไม่มีตรายาง', description: 'พิมพ์โดยไม่มีตรายาง — ตั้งได้ที่หัวเอกสารบริษัท' });
     }
     const invoiceForPrint =
@@ -474,11 +483,9 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       locale: printLocale,
       printMode,
       printMarks: {
-        preparerSignatureImageUrl:
-          withPreparerSignature && preparerSignatureUrl ? preparerSignatureUrl : undefined,
-        authorizedSignatureImageUrl:
-          withAuthorizedSignature && authorizedReady ? invoice.authorizedSignatory?.signatureImageUrl : undefined,
-        stampImageUrl: withStamp && stampUrl ? stampUrl : undefined,
+        preparerSignatureImageUrl: images.preparer,
+        authorizedSignatureImageUrl: images.authorized,
+        stampImageUrl: images.stamp,
       },
     });
     if (

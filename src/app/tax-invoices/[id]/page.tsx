@@ -101,6 +101,11 @@ import { PrintMarksChoices, PrintMarksDialog } from '@/components/documents/prin
 import { usePersistedPrintMarks } from '@/components/documents/use-persisted-print-marks';
 import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
 import { authorizedSignatureReady } from '@/lib/types/document-signature';
+import {
+  inlineCompanyStampForPrint,
+  inlineUserSignatureForPrint,
+  userIdFromSignatureUrl,
+} from '@/lib/storage/print-signature-image';
 import { TaxInvoiceLinesTable } from '@/components/documents/tax-invoice-lines-table';
 import { Checkbox } from '@/components/ui/checkbox';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
@@ -652,14 +657,24 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const executeTaxInvoicePrint = async (sheets: TaxInvoicePrintSheet[]) => {
     if (!invoice) return;
     const authorizedReady = authorizedSignatureReady(invoice.authorizedSignatory);
-    const stampUrl = (companyProfile?.documentHeaderStampUrl || '').trim();
-    if (includePreparerSignature && !preparerSignatureUrl) {
+    const preparerImage = includePreparerSignature
+      ? await inlineUserSignatureForPrint(preparerUid)
+      : undefined;
+    const authorizedImage =
+      includeAuthorizedSignature && authorizedReady
+        ? await inlineUserSignatureForPrint(
+            invoice.authorizedSignatory?.signerUid ||
+              userIdFromSignatureUrl(invoice.authorizedSignatory?.signatureImageUrl),
+          )
+        : undefined;
+    const stampImage = includeStamp ? await inlineCompanyStampForPrint() : undefined;
+    if (includePreparerSignature && !preparerImage) {
       toast({ title: 'ยังไม่มีลายเซ็นผู้จัดเตรียมเอกสาร', description: 'พิมพ์ช่องซ้ายโดยไม่มีรูปลายเซ็น' });
     }
-    if (includeAuthorizedSignature && !authorizedReady) {
+    if (includeAuthorizedSignature && (!authorizedReady || !authorizedImage)) {
       toast({ title: 'ยังไม่มีลายเซ็นผู้มีอำนาจลงนาม', description: 'พิมพ์ช่องกลางโดยไม่มีรูปลายเซ็น' });
     }
-    if (includeStamp && !stampUrl) {
+    if (includeStamp && !stampImage) {
       toast({ title: 'ยังไม่มีตรายาง', description: 'พิมพ์โดยไม่มีตรายาง — ตั้งได้ที่หัวเอกสารบริษัท' });
     }
     const body = buildTaxInvoicePrintHtml({
@@ -673,13 +688,9 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       locale: printLocale,
       sheets,
       printMarks: {
-        preparerSignatureImageUrl:
-          includePreparerSignature && preparerSignatureUrl ? preparerSignatureUrl : undefined,
-        authorizedSignatureImageUrl:
-          includeAuthorizedSignature && authorizedReady
-            ? invoice.authorizedSignatory?.signatureImageUrl
-            : undefined,
-        stampImageUrl: includeStamp && stampUrl ? stampUrl : undefined,
+        preparerSignatureImageUrl: preparerImage,
+        authorizedSignatureImageUrl: authorizedImage,
+        stampImageUrl: stampImage,
       },
     });
     if (

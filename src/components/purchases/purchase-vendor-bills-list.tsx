@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
@@ -32,7 +32,10 @@ import {
 } from 'firebase/firestore';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canMarkPurchaseVendorBillPaid, canView, isAccountingStaff, isSystemAdmin } from '@/lib/permissions';
-import { confirmPurchaseCancellationWithoutRefund } from '@/lib/purchases/purchase-cancellation';
+import {
+  confirmPurchaseCancellationWithoutRefund,
+  repairPlaceholderCancellationBills,
+} from '@/lib/purchases/purchase-cancellation';
 import { isSimpleAdmin } from '@/lib/simple-tier-model';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -116,11 +119,11 @@ function statusBadge(bill: Pick<PurchaseVendorBill, 'status' | 'vendorBillDocume
     case 'DRAFT':
       return <Badge variant="outline">ฉบับร่าง</Badge>;
     case 'SUBMITTED':
-      return bill.cancellationSettlement ? (
-        <Badge className="bg-amber-700">รอยืนยันยกเลิก</Badge>
-      ) : (
-        <Badge className="bg-amber-600">รอจ่ายเงิน</Badge>
-      );
+      return <Badge className="bg-amber-600">รอจ่ายเงิน</Badge>;
+    case 'PENDING_CANCELLATION':
+      return <Badge className="bg-amber-700">รอยกเลิก</Badge>;
+    case 'CANCELLED':
+      return <Badge variant="secondary">ยกเลิก</Badge>;
     case 'PARTIALLY_PAID':
       return <Badge className="bg-orange-600">จ่ายบางส่วน</Badge>;
     case 'CLOSED':
@@ -190,6 +193,23 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
   }, [firestore, ok]);
 
   const { data: bills, isLoading: billsLoading } = useCollection<PurchaseVendorBill>(billsQuery as any);
+  const repairedPurchaseIds = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (!firestore || !bills?.length) return;
+    const purchaseIds = [
+      ...new Set(
+        bills
+          .filter((b) => b.cancellationSettlement && !repairedPurchaseIds.current.has(b.purchaseId))
+          .map((b) => b.purchaseId),
+      ),
+    ];
+    if (!purchaseIds.length) return;
+    for (const id of purchaseIds) repairedPurchaseIds.current.add(id);
+    void Promise.all(purchaseIds.map((id) => repairPlaceholderCancellationBills(firestore, id))).catch((e) => {
+      console.error(e);
+    });
+  }, [firestore, bills]);
 
   const purchasesQuery = useMemoFirebase(() => {
     if (!firestore || !okStore || mode !== 'store') return null;
@@ -222,7 +242,13 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
       tab === 'all'
         ? bills
         : tab === 'SUBMITTED'
-          ? bills.filter((b) => b.status === 'SUBMITTED' || b.status === 'PARTIALLY_PAID')
+          ? bills.filter(
+              (b) =>
+                b.status === 'SUBMITTED' ||
+                b.status === 'PARTIALLY_PAID' ||
+                b.status === 'PENDING_CANCELLATION' ||
+                b.status === 'CANCELLED',
+            )
           : tab === 'PAID'
             ? bills.filter(
                 (b) =>
@@ -231,6 +257,7 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                   effectiveVendorBillStatus(b) === 'CLOSED',
               )
             : bills.filter((b) => b.status === tab);
+    list = list.filter((b) => !b.cancellationSettlement);
     list = list.filter((b) => {
       if (billVendorId !== 'all' && b.vendorId !== billVendorId) return false;
       if (!ymMatchesYearMonthScope(vendorBillCreatedYm(b), yearFilterCe, monthScope)) return false;
@@ -261,7 +288,10 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
   }, [billsFiltered, listPage]);
 
   const billsFilteredBillAmountSum = useMemo(() => {
-    return billsFiltered.reduce((sum, b) => sum + (Number(b.billAmount) || 0), 0);
+    return billsFiltered.reduce((sum, b) => {
+      if (b.status === 'PENDING_CANCELLATION' || b.status === 'CANCELLED') return sum;
+      return sum + (Number(b.billAmount) || 0);
+    }, 0);
   }, [billsFiltered]);
 
   const selectablePurchases = useMemo(() => {
@@ -582,7 +612,17 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                           </TableCell>
                           <TableCell className="py-2.5 text-sm">{formatYmdLocalThaiBE(b.billingReceivedDate)}</TableCell>
                           <TableCell className="py-2.5 text-sm">{formatYmdLocalThaiBE(b.plannedPaymentDate)}</TableCell>
-                          <TableCell className="py-2.5">{statusBadge(b)}</TableCell>
+                          <TableCell className="py-2.5">
+                            <div className="space-y-1">
+                              {statusBadge(b)}
+                              {b.status === 'PENDING_CANCELLATION' || b.status === 'CANCELLED' ? (
+                                <p className="max-w-[220px] text-[10px] leading-snug text-muted-foreground">
+                                  {[b.cancellationReason, b.cancellationApproverNote].filter(Boolean).join(' · ') ||
+                                    'เก็บบันทึกเหตุผลการยกเลิกไว้ที่ใบสั่งซื้อเดิม'}
+                                </p>
+                              ) : null}
+                            </div>
+                          </TableCell>
                           {showBillDeleteColumn && (
                             <TableCell className="w-14 px-2 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
                               {billTrashVisible ? (
@@ -601,7 +641,9 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                           )}
                           <TableCell className="py-2.5 pr-4 text-right" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center justify-end gap-1">
-                              {canConfirmCancellation && b.cancellationSettlement && b.status === 'SUBMITTED' ? (
+                              {canConfirmCancellation &&
+                              b.status === 'PENDING_CANCELLATION' &&
+                              b.cancellationRefundMode !== 'REFUND_REQUIRED' ? (
                                 <Button
                                   type="button"
                                   size="sm"
@@ -614,7 +656,6 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                                       firestore,
                                       currentUser,
                                       b.purchaseId,
-                                      b.id,
                                     )
                                       .then(() => {
                                         toast({
