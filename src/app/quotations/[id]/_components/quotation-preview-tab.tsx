@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import type { Quotation, QuotationLine, Customer } from '@/lib/types';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
+import type { DocumentPrintMarks } from '@/lib/types/document-signature';
 import {
   buildQuotationPrintHtml,
   wrapStandardPrintDocument,
@@ -37,6 +38,8 @@ interface QuotationPreviewTabProps {
   totals: Totals;
   /** ภาษาเดียวกับปุ่มพิมพ์ — ให้พรีวิวตรงเอกสารที่พิมพ์ */
   printLocale?: PrintDocumentLocale;
+  /** ลายเซ็น/ตรายางที่เลือกแนบ — ให้พรีวิวตรงกับตอนพิมพ์ */
+  printMarks?: DocumentPrintMarks;
 }
 
 export function QuotationPreviewTab({
@@ -47,6 +50,7 @@ export function QuotationPreviewTab({
   editedHeader,
   totals,
   printLocale = 'th',
+  printMarks,
 }: QuotationPreviewTabProps) {
   const previewHtml = useMemo(() => {
     const headerSlice = { ...quotation, ...editedHeader } as Quotation;
@@ -64,6 +68,7 @@ export function QuotationPreviewTab({
       },
       printedAtMs: Date.now(),
       locale: printLocale,
+      printMarks,
     });
     return wrapStandardPrintDocument(quotation.quotationNo || 'quotation', body, {
       lang: printLocale,
@@ -80,6 +85,7 @@ export function QuotationPreviewTab({
     totals.grandTotal,
     totals.taxPercent,
     printLocale,
+    printMarks,
   ]);
 
   return (

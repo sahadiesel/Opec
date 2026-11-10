@@ -1512,6 +1512,9 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
   const billClosed = isVendorBillFullyClosed(bill);
   const displayBillStatus = effectiveVendorBillStatus(bill);
+  const showDocWarning = isVendorBillPaymentComplete(bill) && !billClosed;
+  const showSavedDocs = bill.status !== 'DRAFT';
+  const showDocRail = showDocWarning || showSavedDocs;
 
   /** งวดที่ตรงกับ cashbook หลักของใบ (หลังจ่ายครบ — ใช้สำหรับหนังสือรับรองหัก ณ ที่จ่าย) */
   const isPrimaryPaidCashbookRow = (row: VendorBillPaymentInstallment) =>
@@ -1561,7 +1564,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
-      <div className="max-w-3xl mx-auto space-y-6">
+      <div className="mx-auto w-full max-w-6xl space-y-6">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" asChild>
             <Link href={vendorBillsListHref}>
@@ -1609,17 +1612,14 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
           </div>
         </div>
 
-        {isVendorBillPaymentComplete(bill) && !billClosed && (
-          <Card className="border-amber-200 bg-amber-50/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base text-amber-950">ยังไม่ปิดเรื่องเอกสาร</CardTitle>
-              <CardDescription className="text-amber-950/90">
-                จ่ายเงินครบแล้ว แต่สถานะสมบูรณ์ทางธุรการตามนโยบายคือได้รับ{' '}
-                <strong>ใบกำกับภาษี</strong> และ <strong>ใบเสร็จรับเงิน</strong> ครบและปิดเช็คลิสด้านล่าง
-              </CardDescription>
-            </CardHeader>
-          </Card>
-        )}
+        <div
+          className={
+            showDocRail
+              ? 'grid items-start gap-6 md:grid-cols-[minmax(0,1fr)_20rem]'
+              : undefined
+          }
+        >
+          <div className="min-w-0 space-y-6">
 
         {(bill.status === 'PENDING_CANCELLATION' || bill.status === 'CANCELLED') && (
           <Card className="border-amber-200 bg-amber-50/50">
@@ -2454,15 +2454,6 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                   <> · บันทึกยอดในใบนี้ ฿{bill.billAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</>
                 ) : null}
               </p>
-
-              {bill.status !== 'DRAFT' && (
-                <div className="border-t pt-3 space-y-2">
-                  <p className="text-xs font-semibold">เอกสารประกอบที่บันทึกไว้</p>
-                  <SupportingDocReadOnly title="1. ใบส่งของ" link={bill.supportingDeliveryNote} />
-                  <SupportingDocReadOnly title="2. ใบกำกับภาษี" link={bill.supportingTaxInvoice} />
-                  <SupportingDocReadOnly title="3. ใบเสร็จรับเงิน (คู่ค้า)" link={bill.supportingMoneyReceipt} />
-                </div>
-              )}
             </CardContent>
           </Card>
         )}
@@ -2505,8 +2496,8 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                 </div>
               ) : (
                 <>
-                  <div className="flex flex-wrap items-start gap-3">
-                    <div className="pt-0.5">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
                       <Checkbox
                         id="doc-close-tax-inv"
                         checked={docCloseTiChecked}
@@ -2516,23 +2507,19 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                           if (!on) setDocCloseTiNo('');
                         }}
                       />
-                    </div>
-                    <div className="flex-1 min-w-[min(100%,14rem)] space-y-1.5">
-                      <Label htmlFor="doc-close-tax-inv" className="font-semibold cursor-pointer">
+                      <Label htmlFor="doc-close-tax-inv" className="shrink-0 cursor-pointer font-semibold">
                         ใบกำกับภาษี
                       </Label>
                       <Input
                         id="doc-close-tax-inv-no"
-                        className="h-9 font-mono"
+                        className="h-9 min-w-0 flex-1 font-mono"
                         placeholder="เลขที่ใบกำกับภาษี"
                         value={docCloseTiNo}
                         onChange={(e) => setDocCloseTiNo(e.target.value)}
                         disabled={!docCloseTiChecked}
                       />
                     </div>
-                  </div>
-                  <div className="flex flex-wrap items-start gap-3">
-                    <div className="pt-0.5">
+                    <div className="flex min-w-0 items-center gap-2">
                       <Checkbox
                         id="doc-close-receipt"
                         checked={docCloseRcChecked}
@@ -2542,14 +2529,12 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                           if (!on) setDocCloseRcNo('');
                         }}
                       />
-                    </div>
-                    <div className="flex-1 min-w-[min(100%,14rem)] space-y-1.5">
-                      <Label htmlFor="doc-close-receipt" className="font-semibold cursor-pointer">
+                      <Label htmlFor="doc-close-receipt" className="shrink-0 cursor-pointer font-semibold">
                         ใบเสร็จรับเงิน (คู่ค้า)
                       </Label>
                       <Input
                         id="doc-close-receipt-no"
-                        className="h-9 font-mono"
+                        className="h-9 min-w-0 flex-1 font-mono"
                         placeholder="เลขที่ใบเสร็จรับเงิน"
                         value={docCloseRcNo}
                         onChange={(e) => setDocCloseRcNo(e.target.value)}
@@ -2875,6 +2860,36 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
 
           </CardContent>
         </Card>
+
+          </div>
+          {showDocRail ? (
+            <aside className="space-y-4 md:sticky md:top-4">
+              {showDocWarning ? (
+                <Card className="border-amber-200 bg-amber-50/50">
+                  <CardHeader className="space-y-1.5 p-4">
+                    <CardTitle className="text-sm text-amber-950">ยังไม่ปิดเรื่องเอกสาร</CardTitle>
+                    <CardDescription className="text-xs leading-relaxed text-amber-950/90">
+                      จ่ายเงินครบแล้ว แต่สถานะสมบูรณ์ทางธุรการตามนโยบายคือได้รับ{' '}
+                      <strong>ใบกำกับภาษี</strong> และ <strong>ใบเสร็จรับเงิน</strong> ครบและปิดเช็คลิสต์ด้านซ้าย
+                    </CardDescription>
+                  </CardHeader>
+                </Card>
+              ) : null}
+              {showSavedDocs ? (
+                <Card>
+                  <CardHeader className="space-y-1 p-4 pb-2">
+                    <CardTitle className="text-sm">เอกสารประกอบที่บันทึกไว้</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2 px-4 pb-4 pt-0">
+                    <SupportingDocReadOnly title="1. ใบส่งของ" link={bill.supportingDeliveryNote} />
+                    <SupportingDocReadOnly title="2. ใบกำกับภาษี" link={bill.supportingTaxInvoice} />
+                    <SupportingDocReadOnly title="3. ใบเสร็จรับเงิน (คู่ค้า)" link={bill.supportingMoneyReceipt} />
+                  </CardContent>
+                </Card>
+              ) : null}
+            </aside>
+          ) : null}
+        </div>
 
         <Dialog open={whtHubOpen} onOpenChange={setWhtHubOpen}>
           <DialogContent className="max-h-[90vh] w-[min(96vw,72rem)] max-w-[min(96vw,72rem)] translate-y-[-48%] gap-0 overflow-hidden p-0 flex flex-col sm:max-w-[min(96vw,72rem)]">

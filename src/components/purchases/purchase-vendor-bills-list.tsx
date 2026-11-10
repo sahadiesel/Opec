@@ -246,14 +246,14 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
               (b) =>
                 b.status === 'SUBMITTED' ||
                 b.status === 'PARTIALLY_PAID' ||
-                b.status === 'PENDING_CANCELLATION' ||
-                b.status === 'CANCELLED',
+                b.status === 'PENDING_CANCELLATION',
             )
           : tab === 'PAID'
             ? bills.filter(
                 (b) =>
                   b.status === 'PAID' ||
                   b.status === 'CLOSED' ||
+                  b.status === 'CANCELLED' ||
                   effectiveVendorBillStatus(b) === 'CLOSED',
               )
             : bills.filter((b) => b.status === tab);

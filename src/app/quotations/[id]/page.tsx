@@ -128,6 +128,38 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     includeStamp,
     setIncludeStamp,
   } = usePersistedPrintMarks('quotations', id);
+  const [previewPrintMarks, setPreviewPrintMarks] = useState<{
+    preparer?: string;
+    authorized?: string;
+    stamp?: string;
+  }>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const authorizedReady = authorizedSignatureReady(quotation?.authorizedSignatory);
+    void loadDocumentPrintImages({
+      includePreparer: includePreparerSignature,
+      preparerUid: quotation?.createdByUid,
+      includeAuthorized: includeAuthorizedSignature && authorizedReady,
+      signerUid:
+        quotation?.authorizedSignatory?.signerUid ||
+        userIdFromSignatureUrl(quotation?.authorizedSignatory?.signatureImageUrl),
+      includeStamp: includeStamp && includeAuthorizedSignature,
+    }).then((images) => {
+      if (!cancelled) setPreviewPrintMarks(images);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    includePreparerSignature,
+    includeAuthorizedSignature,
+    includeStamp,
+    quotation?.createdByUid,
+    quotation?.authorizedSignatory?.signerUid,
+    quotation?.authorizedSignatory?.signatureImageUrl,
+    quotation?.authorizedSignatory?.status,
+  ]);
 
   const [isEditMode, setIsEditMode] = useState(false);
   const [editedHeader, setEditedHeader] = useState<Partial<Quotation>>({});
@@ -1142,6 +1174,11 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
               editedHeader={editedHeader}
               totals={computeTotals(displayLines, editedHeader)}
               printLocale={printLocale}
+              printMarks={{
+                preparerSignatureImageUrl: previewPrintMarks.preparer,
+                authorizedSignatureImageUrl: previewPrintMarks.authorized,
+                stampImageUrl: previewPrintMarks.stamp,
+              }}
             />
           </TabsContent>
 
