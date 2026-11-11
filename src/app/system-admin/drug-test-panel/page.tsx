@@ -12,7 +12,12 @@ import { User, DrugTestPanelConfig, DrugTestPanelSubstance } from '@/lib/types';
 import { isSystemAdmin } from '@/lib/permissions';
 import { useToast } from '@/hooks/use-toast';
 import { Loader2, Plus, Trash2, FlaskConical, Save } from 'lucide-react';
-import { DRUG_TEST_PANEL_DOC_PATH } from '@/lib/drug-test-panel';
+import {
+  DRUG_TEST_PANEL_DOC_PATH,
+  DRUG_TEST_VALIDITY_DAYS,
+  DRUG_TEST_VALIDITY_DAYS_MAX,
+  resolveDrugTestValidityDays,
+} from '@/lib/drug-test-panel';
 
 const PANEL_DOC_ID = DRUG_TEST_PANEL_DOC_PATH[1];
 
@@ -22,6 +27,7 @@ export default function DrugTestPanelSettingsPage() {
   const { isUserLoading } = useUser();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [rows, setRows] = useState<DrugTestPanelSubstance[]>([]);
+  const [validityDaysInput, setValidityDaysInput] = useState(String(DRUG_TEST_VALIDITY_DAYS));
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -47,6 +53,7 @@ export default function DrugTestPanelSettingsPage() {
     } else {
       setRows([]);
     }
+    setValidityDaysInput(String(resolveDrugTestValidityDays(panelDoc?.validityDays)));
   }, [panelDoc]);
 
   const isAdmin = useMemo(() => isSystemAdmin(currentUser), [currentUser]);
@@ -66,18 +73,28 @@ export default function DrugTestPanelSettingsPage() {
     const cleaned = rows
       .map((x) => ({ id: x.id, label: x.label.trim() }))
       .filter((x) => x.label.length > 0);
+    const validityDays = Number(validityDaysInput.trim());
+    if (!Number.isInteger(validityDays) || validityDays < 1 || validityDays > DRUG_TEST_VALIDITY_DAYS_MAX) {
+      toast({
+        variant: 'destructive',
+        title: 'จำนวนวันไม่ถูกต้อง',
+        description: `ใส่จำนวนเต็ม 1–${DRUG_TEST_VALIDITY_DAYS_MAX} วัน`,
+      });
+      return;
+    }
     setIsSaving(true);
     try {
       await setDoc(
         doc(firestore, DRUG_TEST_PANEL_DOC_PATH[0], PANEL_DOC_ID),
         {
           substances: cleaned,
+          validityDays,
           updatedAt: Date.now(),
           updatedBy: currentUser.displayName || currentUser.email,
         } as DrugTestPanelConfig,
         { merge: true }
       );
-      toast({ title: 'บันทึกแล้ว', description: 'รายการสารสำหรับแผงตรวจถูกอัปเดต' });
+      toast({ title: 'บันทึกแล้ว', description: 'รายการสารและระยะหมดอายุผลตรวจถูกอัปเดต' });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'บันทึกไม่สำเร็จ';
       toast({ variant: 'destructive', title: 'Error', description: msg });
@@ -105,14 +122,14 @@ export default function DrugTestPanelSettingsPage() {
             ตั้งค่าแผงตรวจสารเสพติด
           </h1>
           <p className="text-muted-foreground mt-1">
-            กำหนดรายการสารที่ต้องตรวจ — หน้าบันทึกผลคนงานและสรุปบนแดชบอร์ดจะอ้างอิงจากรายการนี้
+            กำหนดรายการสารที่ต้องตรวจและจำนวนวันก่อนผลตรวจหมดอายุ — หน้าบันทึกผลคนงานและเงื่อนไข mob ใช้ค่านี้
           </p>
         </div>
 
         <Card>
           <CardHeader>
             <CardTitle>รายการสาร (Substances)</CardTitle>
-            <CardDescription>เพิ่ม/ลบแถวได้ตามนโยบายองค์กร (ไม่มีวันหมดอายุในระบบ)</CardDescription>
+            <CardDescription>เพิ่ม/ลบแถวได้ตามนโยบายองค์กร</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {isLoading ? (
@@ -154,6 +171,34 @@ export default function DrugTestPanelSettingsPage() {
                 </div>
               </>
             )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>ระยะเวลาหมดอายุผลตรวจ</CardTitle>
+            <CardDescription>
+              นับจากวันตรวจ ตรวจวันที่ 1 และตั้ง 3 วัน จะหมดอายุวันที่ 4 ถ้ายังไม่บันทึก ระบบใช้ {DRUG_TEST_VALIDITY_DAYS} วัน
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="max-w-xs space-y-1">
+              <Label htmlFor="drug-validity-days">จำนวนวันก่อนหมดอายุ</Label>
+              <Input
+                id="drug-validity-days"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={DRUG_TEST_VALIDITY_DAYS_MAX}
+                step={1}
+                value={validityDaysInput}
+                onChange={(e) => setValidityDaysInput(e.target.value)}
+              />
+            </div>
+            <Button type="button" onClick={handleSave} disabled={isSaving || isLoading} className="gap-2">
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              บันทึกการตั้งค่า
+            </Button>
           </CardContent>
         </Card>
       </div>

@@ -36,6 +36,8 @@ export interface DrugTestPanelSubstance {
 
 export interface DrugTestPanelConfig {
   substances: DrugTestPanelSubstance[];
+  /** จำนวนวันนับจากวันตรวจจนถึงวันหมดอายุ — ตรวจวันที่ 1 ตั้ง 3 วัน = หมดอายุวันที่ 4 */
+  validityDays?: number;
   updatedAt: number;
   updatedBy?: string;
 }

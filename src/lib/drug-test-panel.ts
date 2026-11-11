@@ -7,12 +7,22 @@ import type {
   WorkerDrugTestKitResult,
 } from '@/lib/types';
 import { formatOptionalDateThaiBE, timestampToHtmlDateValue } from '@/lib/date-thai';
-import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
+import { addDaysToYmd, thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 
 export const DRUG_TEST_PANEL_DOC_PATH = ['system', 'drug_test_panel'] as const;
 
-/** ผลตรวจ negative ใช้ได้ไม่เกินกี่วันปฏิทินหลังวันตรวจ (วันที่ 11 = expired) */
+/** ค่าเริ่มต้นเมื่อ system/drug_test_panel ยังไม่ระบุ — วันตรวจ + N วัน = วันหมดอายุ */
 export const DRUG_TEST_VALIDITY_DAYS = 10;
+export const DRUG_TEST_VALIDITY_DAYS_MAX = 365;
+
+/** อ่านจำนวนวันหมดอายุจากค่าที่แอดมินบันทึก ค่าว่างหรือไม่ถูกต้องใช้ค่าเริ่มต้น 10 */
+export function resolveDrugTestValidityDays(raw: unknown): number {
+  const n = typeof raw === 'number' ? raw : Number(String(raw ?? '').trim());
+  if (!Number.isFinite(n)) return DRUG_TEST_VALIDITY_DAYS;
+  const days = Math.floor(n);
+  if (days < 1 || days > DRUG_TEST_VALIDITY_DAYS_MAX) return DRUG_TEST_VALIDITY_DAYS;
+  return days;
+}
 
 export type DrugPanelSummaryKind = 'pending' | 'partial' | 'pass' | 'positive' | 'none_panel';
 
@@ -225,10 +235,32 @@ function timestampToBangkokYmd(ms: number): string {
   }).format(new Date(ms));
 }
 
-/** สถานะ valid/expired ต่อแถวผลตรวจ — อิง negative + ไม่เกิน DRUG_TEST_VALIDITY_DAYS วันหลังวันตรวจ */
+/** วันหมดอายุ = วันตรวจ + จำนวนวันที่ตั้งไว้ (ตรวจวันที่ 1 ตั้ง 3 วัน = หมดอายุวันที่ 4) */
+export function drugTestExpiryYmdFromTestYmd(
+  testYmd: string,
+  validityDays: number = DRUG_TEST_VALIDITY_DAYS,
+): string | null {
+  const ymd = testYmd.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+  return addDaysToYmd(ymd, resolveDrugTestValidityDays(validityDays));
+}
+
+export function drugTestExpiryYmd(
+  test: Pick<WorkerDrugTest, 'testDate'>,
+  validityDays: number = DRUG_TEST_VALIDITY_DAYS,
+): string | null {
+  const testMs = coerceTestDateMs(test.testDate);
+  if (testMs <= 0) return null;
+  const testYmd = timestampToBangkokYmd(testMs);
+  if (!testYmd) return null;
+  return drugTestExpiryYmdFromTestYmd(testYmd, validityDays);
+}
+
+/** สถานะ valid/expired ต่อแถวผลตรวจ — NEGATIVE และยังไม่ถึงวันหมดอายุ */
 export function computeDrugTestRowValidityStatus(
   test: WorkerDrugTest,
   referenceYmd: string = thailandTodayYmd(),
+  validityDays: number = DRUG_TEST_VALIDITY_DAYS,
 ): DrugTestRowValidityStatus {
   if (test.result !== 'negative') return 'n/a';
   const testMs = coerceTestDateMs(test.testDate);
@@ -237,20 +269,21 @@ export function computeDrugTestRowValidityStatus(
   if (!testYmd) return 'n/a';
   const days = calendarDaysBetweenYmd(testYmd, referenceYmd);
   if (days == null || days < 0) return 'expired';
-  if (days > DRUG_TEST_VALIDITY_DAYS) return 'expired';
+  if (days >= resolveDrugTestValidityDays(validityDays)) return 'expired';
   return 'valid';
 }
 
-/** Valid ของรอบตรวจ — มีอย่างน้อยหนึ่งชุด NEGATIVE และยังอยู่ในช่วง 10 วัน */
+/** Valid ของรอบตรวจ — มีอย่างน้อยหนึ่งชุด NEGATIVE และยังไม่ถึงวันหมดอายุ */
 export function computeDrugTestRecordValidityStatus(
   test: WorkerDrugTest,
   referenceYmd: string = thailandTodayYmd(),
+  validityDays: number = DRUG_TEST_VALIDITY_DAYS,
 ): DrugTestRowValidityStatus {
   const kits = kitResultsForDisplay(test);
   if (kits.some((k) => k.result === 'negative')) {
-    return computeDrugTestRowValidityStatus({ ...test, result: 'negative' }, referenceYmd);
+    return computeDrugTestRowValidityStatus({ ...test, result: 'negative' }, referenceYmd, validityDays);
   }
-  return computeDrugTestRowValidityStatus(test, referenceYmd);
+  return computeDrugTestRowValidityStatus(test, referenceYmd, validityDays);
 }
 
 export function drugTestRowValidityLabelTh(status: DrugTestRowValidityStatus): string {
@@ -311,6 +344,7 @@ export function computeCurrentPanelDrugMobReady(
   panelSubstances: DrugTestPanelSubstance[],
   tests: WorkerDrugTest[],
   referenceYmd: string = thailandTodayYmd(),
+  validityDays: number = DRUG_TEST_VALIDITY_DAYS,
 ): boolean {
   if (panelSubstances.length === 0) return true;
 
@@ -324,7 +358,7 @@ export function computeCurrentPanelDrugMobReady(
     const ok =
       !!row &&
       row.result === 'negative' &&
-      computeDrugTestRowValidityStatus(row, referenceYmd) === 'valid';
+      computeDrugTestRowValidityStatus(row, referenceYmd, validityDays) === 'valid';
     if (ok) anyValidOnPanel = true;
     else allStrictOk = false;
   }
@@ -338,7 +372,7 @@ export function computeCurrentPanelDrugMobReady(
   if (
     latestOverall &&
     latestOverall.result === 'negative' &&
-    computeDrugTestRowValidityStatus(latestOverall, referenceYmd) === 'valid'
+    computeDrugTestRowValidityStatus(latestOverall, referenceYmd, validityDays) === 'valid'
   ) {
     const latestByKey = getLatestDrugTestBySubstance(tests);
     for (const row of latestByKey.values()) {
@@ -355,13 +389,18 @@ export function computeDrugPanelMobDrugOk(
   panelSubstances: DrugTestPanelSubstance[],
   tests: WorkerDrugTest[],
   mobReferenceDateYmd?: string,
+  validityDays: number = DRUG_TEST_VALIDITY_DAYS,
 ): boolean {
   void mobReferenceDateYmd;
-  return computeCurrentPanelDrugMobReady(panelSubstances, tests, thailandTodayYmd());
+  return computeCurrentPanelDrugMobReady(panelSubstances, tests, thailandTodayYmd(), validityDays);
 }
 
-export const MOB_DRUG_TEST_GATE_MESSAGE_TH =
-  'ผลตรวจสารเสพติดยังไม่ Valid — ตรวจใหม่ให้ NEGATIVE และอยู่ในช่วง 10 วัน แล้วจึง mob ได้';
+export function mobDrugTestGateMessageTh(validityDays: number = DRUG_TEST_VALIDITY_DAYS): string {
+  const days = resolveDrugTestValidityDays(validityDays);
+  return `ผลตรวจสารเสพติดยังไม่ Valid — ตรวจใหม่ให้ NEGATIVE และยังไม่ถึงวันหมดอายุ (${days} วันนับจากวันตรวจ) แล้วจึง mob ได้`;
+}
+
+export const MOB_DRUG_TEST_GATE_MESSAGE_TH = mobDrugTestGateMessageTh();
 
 export function resolveMobReferenceDateYmd(
   assignment: Pick<Assignment, 'mobStandbyDate' | 'mobilizationDate' | 'assignedDate' | 'startDate'>,
@@ -391,11 +430,12 @@ export function computeMobDrugTestChecklistStatus(
   panelSubstances: DrugTestPanelSubstance[],
   tests: WorkerDrugTest[],
   _mobReferenceDateYmd?: string,
+  validityDays: number = DRUG_TEST_VALIDITY_DAYS,
 ): ChecklistItemStatus {
   if (panelSubstances.length === 0) return 'pass';
   const referenceYmd = thailandTodayYmd();
 
-  if (computeCurrentPanelDrugMobReady(panelSubstances, tests, referenceYmd)) return 'pass';
+  if (computeCurrentPanelDrugMobReady(panelSubstances, tests, referenceYmd, validityDays)) return 'pass';
 
   for (const s of panelSubstances) {
     const row = resolveLatestPanelDrugTest(s, tests);

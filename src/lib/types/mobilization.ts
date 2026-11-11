@@ -271,7 +271,7 @@ export interface Assignment {
     toolsIssued: ChecklistItemStatus;
     overlapClear: ChecklistItemStatus;
     clientApproved: ChecklistItemStatus;
-    /** ผลตรวจสารเสพติด — negative ครบแผง + valid ภายใน 10 วันหลังวันตรวจ (เช็คตอน mob) */
+    /** ผลตรวจสารเสพติด — negative และยังไม่ถึงวันหมดอายุตามที่แอดมินตั้ง (เช็คตอน mob) */
     drugTestValid?: ChecklistItemStatus;
   };
   clientComments?: string;

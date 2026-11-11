@@ -74,6 +74,7 @@ import {
   computeDrugPanelWorkerFields,
   computeDrugPanelMobDrugOk,
   DRUG_TEST_PANEL_DOC_PATH,
+  resolveDrugTestValidityDays,
 } from '@/lib/drug-test-panel';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { effectiveWorkerJobStatus } from '@/lib/ops/worker-effective-job-status';
@@ -255,6 +256,7 @@ function WorkerDetailContent({ id }: { id: string }) {
   const { data: workerMobilizations } = useCollection<Assignment>(workerMobsQuery as any);
 
   const panelSubstances = drugPanelConfig?.substances ?? [];
+  const drugValidityDays = resolveDrugTestValidityDays(drugPanelConfig?.validityDays);
 
   // --- UI state ---
   const [isEditing, setIsEditing] = useState(false);
@@ -716,6 +718,7 @@ function WorkerDetailContent({ id }: { id: string }) {
       panelSubstances,
       drugTests || [],
       thailandTodayYmd(),
+      drugValidityDays,
     );
 
     if (newStatus === 'READY') {
@@ -820,6 +823,7 @@ function WorkerDetailContent({ id }: { id: string }) {
     requirementSkips?.length,
     workerDocCatalog?.length,
     panelSubstances.length,
+    drugValidityDays,
     workerMobilizations?.length,
   ]);
 
@@ -1020,6 +1024,7 @@ function WorkerDetailContent({ id }: { id: string }) {
               drugTests={drugTests}
               drugTestsQuery={drugTestsQuery as any}
               panelSubstances={panelSubstances}
+              validityDays={drugValidityDays}
               canEdit={canMutateWorkerRecords}
               currentUser={currentUser}
             />

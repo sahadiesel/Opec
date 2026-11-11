@@ -143,7 +143,8 @@ import {
   computeDrugPanelMobDrugOk,
   computeMobDrugTestChecklistStatus,
   DRUG_TEST_PANEL_DOC_PATH,
-  MOB_DRUG_TEST_GATE_MESSAGE_TH,
+  mobDrugTestGateMessageTh,
+  resolveDrugTestValidityDays,
   resolveMobReferenceDateYmd,
 } from '@/lib/drug-test-panel';
 import {
@@ -226,11 +227,13 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     () => (firestore ? doc(firestore, DRUG_TEST_PANEL_DOC_PATH[0], DRUG_TEST_PANEL_DOC_PATH[1]) : null),
     [firestore],
   );
-  const { data: drugPanelDoc } = useDoc<{ substances?: DrugTestPanelSubstance[] }>(panelDocRef as any);
+  const { data: drugPanelDoc } = useDoc<{ substances?: DrugTestPanelSubstance[]; validityDays?: number }>(panelDocRef as any);
   const panelSubstances = useMemo(
     () => (drugPanelDoc?.substances ?? []).filter((s) => s?.id && (s.label || '').trim()),
     [drugPanelDoc?.substances],
   );
+  const drugValidityDays = resolveDrugTestValidityDays(drugPanelDoc?.validityDays);
+  const drugGateMessage = mobDrugTestGateMessageTh(drugValidityDays);
 
   const mobReferenceYmd = useMemo(() => {
     if (!assignment) return thailandTodayYmd();
@@ -238,12 +241,12 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
   }, [assignment]);
 
   const mobDrugOk = useMemo(() => {
-    return computeDrugPanelMobDrugOk(panelSubstances, workerDrugTests || [], mobReferenceYmd);
-  }, [panelSubstances, workerDrugTests, mobReferenceYmd]);
+    return computeDrugPanelMobDrugOk(panelSubstances, workerDrugTests || [], mobReferenceYmd, drugValidityDays);
+  }, [panelSubstances, workerDrugTests, mobReferenceYmd, drugValidityDays]);
 
   const drugTestChecklistStatus = useMemo((): ChecklistItemStatus => {
-    return computeMobDrugTestChecklistStatus(panelSubstances, workerDrugTests || [], mobReferenceYmd);
-  }, [panelSubstances, workerDrugTests, mobReferenceYmd]);
+    return computeMobDrugTestChecklistStatus(panelSubstances, workerDrugTests || [], mobReferenceYmd, drugValidityDays);
+  }, [panelSubstances, workerDrugTests, mobReferenceYmd, drugValidityDays]);
 
   const posRef = useMemoFirebase(() => (firestore && assignment ? doc(firestore, 'positions', assignment.positionId) : null), [firestore, assignment?.positionId]);
   const { data: position } = useDoc<Position>(posRef as any);
@@ -456,14 +459,14 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     return canSaveFinalClearancePreMob(assignment, {
       editingExisting: clearanceFormEditing || clearanceEditMode === 1,
       drugOk: mobDrugOk,
-      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+      drugMessage: drugGateMessage,
       travelReady,
     });
   }, [assignment, clearanceFormEditing, clearanceEditMode, mobDrugOk, travelReady]);
 
   const mobSaveGate = useMemo(() => {
     if (!assignment) return { ok: false as const, message: '' };
-    const drugOpts = { drugOk: mobDrugOk, drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH, travelReady };
+    const drugOpts = { drugOk: mobDrugOk, drugMessage: drugGateMessage, travelReady };
     if (clearanceFormEditing || clearanceEditMode === 2) {
       return canSaveFinalClearanceMob(assignment, { editingExisting: true, ...drugOpts });
     }
@@ -472,7 +475,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
 
   const step3SaveGate = useMemo(() => {
     if (!assignment) return { ok: false as const, message: '' };
-    const drugOpts = { drugOk: mobDrugOk, drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH };
+    const drugOpts = { drugOk: mobDrugOk, drugMessage: drugGateMessage };
     if (clearanceFormEditing || clearanceEditMode === 3) {
       return canSaveFinalClearanceWorkStart(assignment, { editingExisting: true, ...drugOpts });
     }
@@ -575,7 +578,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     const gate = canSaveFinalClearancePreMob(assignment, {
       editingExisting: editing,
       drugOk: mobDrugOk,
-      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+      drugMessage: drugGateMessage,
       travelReady,
     });
     if (!gate.ok) {
@@ -687,7 +690,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     const gate = canSaveFinalClearancePreMob(assignment, {
       editingExisting: editing,
       drugOk: mobDrugOk,
-      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+      drugMessage: drugGateMessage,
       travelReady,
     });
     if (!gate.ok) {
@@ -792,7 +795,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     const gate = canSaveFinalClearanceMob(assignment, {
       editingExisting: editing,
       drugOk: mobDrugOk,
-      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+      drugMessage: drugGateMessage,
       travelReady,
     });
     if (!gate.ok) {
@@ -934,7 +937,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     const gate = canSaveFinalClearanceMob(assignment, {
       editingExisting: editing,
       drugOk: mobDrugOk,
-      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+      drugMessage: drugGateMessage,
       travelReady,
     });
     if (!gate.ok) {
@@ -1101,7 +1104,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     const gate = canSaveFinalClearanceWorkStart(assignment, {
       editingExisting: editing,
       drugOk: mobDrugOk,
-      drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+      drugMessage: drugGateMessage,
     });
     if (!gate.ok) {
       toast({ variant: 'destructive', title: 'ยังทำขั้นนี้ไม่ได้', description: gate.message });
@@ -1388,7 +1391,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         const gate = canSaveFinalClearancePreMob(assignment, {
           editingExisting: true,
           drugOk: mobDrugOk,
-          drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+          drugMessage: drugGateMessage,
           travelReady,
         });
         if (!gate.ok) {
@@ -1403,7 +1406,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         const gate = canSaveFinalClearanceMob(assignment, {
           editingExisting: true,
           drugOk: mobDrugOk,
-          drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+          drugMessage: drugGateMessage,
           travelReady,
         });
         if (!gate.ok) {
@@ -1428,7 +1431,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         const gate = canSaveFinalClearanceWorkStart(assignment, {
           editingExisting: true,
           drugOk: mobDrugOk,
-          drugMessage: MOB_DRUG_TEST_GATE_MESSAGE_TH,
+          drugMessage: drugGateMessage,
         });
         if (!gate.ok) {
           toast({ variant: 'destructive', title: 'บันทึกวันเริ่มงานไม่ได้', description: gate.message });
@@ -1681,7 +1684,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           <TableCell className="font-medium text-sm">
                             ผลตรวจสารเสพติด (Drug test)
                             <span className="block text-[10px] font-normal text-muted-foreground">
-                              ผลตรวจใหม่ต้อง NEGATIVE และ Valid ภายใน 10 วันหลังวันตรวจ — ตรวจซ้ำผ่านแล้วสามารถ mob ได้
+                              ผลตรวจใหม่ต้อง NEGATIVE และยังไม่ถึงวันหมดอายุ ({drugValidityDays} วันนับจากวันตรวจ) — ตรวจซ้ำผ่านแล้วสามารถ mob ได้
                             </span>
                           </TableCell>
                           <TableCell className="text-left capitalize text-xs">

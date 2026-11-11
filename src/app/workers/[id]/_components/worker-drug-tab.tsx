@@ -17,6 +17,7 @@ import {
   formatOptionalDateThaiBE,
   formatDateThaiBE,
   formatDateTimeThaiBE,
+  formatYmdLocalThaiBE,
 } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -30,6 +31,9 @@ import {
   sortDrugTestsNewestFirst,
   computeDrugTestRecordValidityStatus,
   drugTestRowValidityLabelTh,
+  drugTestExpiryYmd,
+  drugTestExpiryYmdFromTestYmd,
+  DRUG_TEST_VALIDITY_DAYS,
   kitResultsForDisplay,
   listWorkerDrugTestAttachments,
   formatDrugTestBloodPressure,
@@ -54,6 +58,8 @@ interface WorkerDrugTabProps {
   drugTests: WorkerDrugTest[] | null;
   drugTestsQuery: CollectionReference | null;
   panelSubstances: DrugTestPanelSubstance[];
+  /** จำนวนวันก่อนหมดอายุจากตั้งค่าระบบ — วันตรวจ + จำนวนนี้ = วันหมดอายุ */
+  validityDays?: number;
   canEdit?: boolean;
   currentUser?: User | null;
 }
@@ -91,6 +97,7 @@ export function WorkerDrugTab({
   drugTests,
   drugTestsQuery,
   panelSubstances,
+  validityDays = DRUG_TEST_VALIDITY_DAYS,
   canEdit = false,
   currentUser = null,
 }: WorkerDrugTabProps) {
@@ -122,6 +129,10 @@ export function WorkerDrugTab({
 
   const sortedRecords = useMemo(() => sortDrugTestsNewestFirst(drugTests || []), [drugTests]);
   const formReadOnly = dialogMode === 'view' || !canEdit;
+  const formExpiryLabel = useMemo(() => {
+    const ymd = drugTestExpiryYmdFromTestYmd(drugFormDate, validityDays);
+    return ymd ? formatYmdLocalThaiBE(ymd) : '—';
+  }, [drugFormDate, validityDays]);
 
   const substanceLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -457,7 +468,8 @@ export function WorkerDrugTab({
             <TableBody>
               {sortedRecords.map((row) => {
                 const kits = kitResultsForDisplay(row);
-                const validity = computeDrugTestRecordValidityStatus(row, thailandTodayYmd());
+                const validity = computeDrugTestRecordValidityStatus(row, thailandTodayYmd(), validityDays);
+                const expiryYmd = drugTestExpiryYmd(row, validityDays);
                 const validityLabel = drugTestRowValidityLabelTh(validity);
                 const thumbs = listWorkerDrugTestAttachments(row);
                 const recordedAt = row.recordedAt || row.createdAt;
@@ -512,6 +524,9 @@ export function WorkerDrugTab({
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
+                      {expiryYmd ? (
+                        <p className="mt-1 text-[11px] text-muted-foreground">หมดอายุ {formatYmdLocalThaiBE(expiryYmd)}</p>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-xs">
                       <div className="font-medium text-foreground">{row.recordedByName || '—'}</div>
@@ -666,7 +681,12 @@ export function WorkerDrugTab({
             </DialogHeader>
             <div className="space-y-4 py-2">
               <div className="space-y-2">
-                <Label>1. ชุดตรวจ (ติ๊กชุดที่ใช้ — เลือกได้ 1 หรือทั้ง 2 ชุด)</Label>
+                <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+                  <Label>1. ชุดตรวจ (ติ๊กชุดที่ใช้ — เลือกได้ 1 หรือทั้ง 2 ชุด)</Label>
+                  <p className="text-right text-sm font-semibold text-red-600">
+                    ถ้าตรวจภายในวันที่ที่กำหนดจะหมดอายุในวันที่ {formExpiryLabel}
+                  </p>
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   {panelSubstances.map((s) => {
                     const checked = selectedKitIds.includes(s.id);
