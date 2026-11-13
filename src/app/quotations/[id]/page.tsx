@@ -30,7 +30,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection, useUser } from '@/firebase';
-import { doc, collection, updateDoc, addDoc, deleteDoc, deleteField, query, where, getDocs, limit } from 'firebase/firestore';
+import { doc, collection, updateDoc, addDoc, deleteDoc, deleteField, query, where, getDocs, getDoc, limit } from 'firebase/firestore';
 import { Quotation, QuotationLine, QuotationStatus, User, Customer, PurchaseOrder } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -68,6 +68,14 @@ import { QuotationPreviewTab } from './_components/quotation-preview-tab';
 import { QuotationHistoryTab } from './_components/quotation-history-tab';
 import { QuotationLineDialog } from './_components/quotation-line-dialog';
 import { sanitizeFirestorePayload } from '@/lib/utils';
+import {
+  isQuotationLatestEditable,
+  isQuotationSuperseded,
+  quotationFamilyBaseNo,
+  quotationRevisionNoOf,
+  resolveNextQuotationRevisionNo,
+} from '@/lib/commercial/quotation-revision';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 type CompanyDocumentProfile = {
   companyNameTh?: string;
@@ -239,15 +247,20 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     ? ['rejected', 'cancelled', 'expired'].includes(quotation.status)
     : false;
   const isRevised = quotation?.status === 'revised';
-  const isEditLocked = isRevised || isTerminalClosed || isLinkedToInvoice;
+  const isSuperseded = !!quotation && isQuotationSuperseded(quotation);
+  const isEditLocked = isSuperseded || isTerminalClosed || isLinkedToInvoice;
   const canStartEdit =
     !!quotation &&
     canEditQuotations &&
     !isEditLocked &&
+    isQuotationLatestEditable(quotation) &&
     (isDraft || isSent || isAccepted);
   const isEditable = isEditMode && canStartEdit;
   const canSaveInPlace = isDraft || isAccepted;
   const statusDisplay = quotation?.status === 'revised' ? 'มีการแก้ไข' : quotation?.status;
+  const latestRevisionHref = quotation?.supersededByQuotationId
+    ? `/quotations/${quotation.supersededByQuotationId}`
+    : null;
   const displayLines = isEditMode ? draftLines : [...(lines || [])].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 
   const computeTotals = (currentLines: QuotationLine[], header: Partial<Quotation>) => {
@@ -329,7 +342,15 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
       toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์', description: 'คุณไม่มีสิทธิ์แก้ไขสถานะใบเสนอราคา' });
       return;
     }
-    if (!quotationRef) return;
+    if (!quotationRef || !quotation) return;
+    if (!isQuotationLatestEditable(quotation)) {
+      toast({
+        variant: 'destructive',
+        title: 'ฉบับนี้ดูได้อย่างเดียว',
+        description: 'เปลี่ยนสถานะได้เฉพาะฉบับล่าสุดของชุดนี้',
+      });
+      return;
+    }
     const patch: Record<string, unknown> = { status: newStatus, updatedAt: Date.now() };
     if (newStatus === 'sent') {
       patch.customerRevisionRequestedAt = deleteField();
@@ -383,6 +404,15 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     }
     if (!firestore || !quotation || !quotationRef || !currentUser) return;
     if (quotation.status !== 'draft' && quotation.status !== 'accepted') return;
+    if (!isQuotationLatestEditable(quotation)) {
+      toast({
+        variant: 'destructive',
+        title: 'ฉบับนี้ดูได้อย่างเดียว',
+        description: 'เอกสารรุ่นนี้ถูกแทนที่แล้ว — บันทึกไม่ได้',
+      });
+      setIsEditMode(false);
+      return;
+    }
     const paymentError = quotationPaymentTermError(editedHeader);
     if (paymentError) {
       toast({ variant: 'destructive', title: 'การจ่ายเงินไม่ครบ', description: paymentError });
@@ -492,8 +522,15 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
       });
       return;
     }
-    if (quotation.status === 'revised') {
-      toast({ variant: 'destructive', title: 'เอกสารถูกแก้ไขแล้ว', description: 'ฉบับนี้เปิดแก้ไขต่อไม่ได้ ให้เปิดที่ฉบับล่าสุดแทน' });
+    if (!isQuotationLatestEditable(quotation)) {
+      toast({
+        variant: 'destructive',
+        title: 'ฉบับนี้ดูได้อย่างเดียว',
+        description: 'เอกสารถูกแทนที่แล้ว — แก้ไขได้เฉพาะฉบับล่าสุดของชุดนี้',
+      });
+      if (quotation.supersededByQuotationId) {
+        router.push(`/quotations/${quotation.supersededByQuotationId}`);
+      }
       return;
     }
     const paymentError = quotationPaymentTermError(editedHeader);
@@ -502,32 +539,63 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
       return;
     }
 
-    const baseNo = quotation.baseQuotationNo || quotation.quotationNo;
-    const nextRevisionNo = (quotation.revisionNo || 0) + 1;
-    const revisedNo = `${baseNo}R${nextRevisionNo}`;
-
     try {
+      // อ่านค่าล่าสุดก่อนสร้าง — กันกดซ้ำ/แข่งกันจนได้เลข R ซ้ำ
+      const fresh = await getDoc(quotationRef);
+      if (!fresh.exists()) {
+        toast({ variant: 'destructive', title: 'ไม่พบเอกสาร', description: 'ใบเสนอราคานี้อาจถูกลบแล้ว' });
+        return;
+      }
+      const freshQuotation = { id: fresh.id, ...(fresh.data() as object) } as Quotation;
+      if (!isQuotationLatestEditable(freshQuotation)) {
+        toast({
+          variant: 'destructive',
+          title: 'ฉบับนี้ดูได้อย่างเดียว',
+          description: 'มีฉบับใหม่กว่าแล้ว — เปิดฉบับล่าสุดเพื่อแก้ไข',
+        });
+        if (freshQuotation.supersededByQuotationId) {
+          router.push(`/quotations/${freshQuotation.supersededByQuotationId}`);
+        }
+        return;
+      }
+
+      const baseNo = quotationFamilyBaseNo(freshQuotation);
+      const { nextRevisionNo, revisedNo } = await resolveNextQuotationRevisionNo(firestore, baseNo, {
+        atLeastAbove: quotationRevisionNoOf(freshQuotation),
+      });
+
       const totals = computeTotals(draftLines, editedHeader);
-      const { id: revisionId } = await addDoc(collection(firestore, 'quotations'), stripStaleQuotationPaymentFields({
-        ...quotation,
-        ...editedHeader,
-        quotationNo: revisedNo,
-        baseQuotationNo: baseNo,
-        revisionNo: nextRevisionNo,
-        revisedFromQuotationId: quotation.id,
-        supersededByQuotationId: null,
-        status: 'draft',
-        subtotal: totals.subtotal,
-        taxAmount: totals.taxAmount,
-        grandTotal: totals.grandTotal,
-        discountAmount: totals.discountAmount,
-        taxPercent: totals.taxPercent,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        createdBy: currentUser.displayName,
-        createdByUid: currentUser.id,
-        updatedBy: currentUser.id,
-      }, editedHeader));
+      const {
+        id: _omitId,
+        supersededByQuotationId: _omitSup,
+        ...quotationRest
+      } = freshQuotation;
+
+      const { id: revisionId } = await addDoc(
+        collection(firestore, 'quotations'),
+        stripStaleQuotationPaymentFields(
+          {
+            ...quotationRest,
+            ...editedHeader,
+            quotationNo: revisedNo,
+            baseQuotationNo: baseNo,
+            revisionNo: nextRevisionNo,
+            revisedFromQuotationId: quotation.id,
+            status: 'draft',
+            subtotal: totals.subtotal,
+            taxAmount: totals.taxAmount,
+            grandTotal: totals.grandTotal,
+            discountAmount: totals.discountAmount,
+            taxPercent: totals.taxPercent,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            createdBy: currentUser.displayName,
+            createdByUid: currentUser.id,
+            updatedBy: currentUser.id,
+          },
+          editedHeader,
+        ),
+      );
 
       for (const line of draftLines) {
         const { id: _ignore, ...lineData } = line;
@@ -544,8 +612,11 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
 
       await updateDoc(quotationRef, {
         status: 'revised',
+        baseQuotationNo: baseNo,
+        revisionNo: quotationRevisionNoOf(freshQuotation),
         supersededByQuotationId: revisionId,
         updatedAt: Date.now(),
+        updatedBy: currentUser.id,
       });
 
       toast({ title: 'สร้างเอกสาร Revision สำเร็จ', description: `เลขที่ใหม่ ${revisedNo}` });
@@ -566,6 +637,14 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
       return;
     }
     if (!quotation) return;
+    if (!isQuotationLatestEditable(quotation)) {
+      toast({
+        variant: 'destructive',
+        title: 'ฉบับนี้ดูได้อย่างเดียว',
+        description: 'แก้ไขได้เฉพาะฉบับล่าสุดของชุดนี้',
+      });
+      return;
+    }
     setEditedHeader(quotation);
     setDraftLines([...(lines || [])].sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0)));
     setIsEditMode(true);
@@ -818,10 +897,29 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
           </TabsList>
 
           <TabsContent value="edit" className="mt-6 space-y-6 print:hidden">
+            {isSuperseded && (
+              <Alert className="border-violet-300 bg-violet-50 text-violet-950">
+                <Lock className="h-4 w-4 text-violet-700" />
+                <AlertTitle className="font-bold">ฉบับนี้ดูได้อย่างเดียว</AlertTitle>
+                <AlertDescription className="text-sm">
+                  เอกสารถูกแทนที่ด้วยฉบับแก้ไขใหม่แล้ว — แก้ไขได้เฉพาะฉบับล่าสุดของชุดนี้
+                  {latestRevisionHref ? (
+                    <>
+                      {' '}
+                      <Link href={latestRevisionHref} className="font-semibold underline">
+                        เปิดฉบับล่าสุด
+                      </Link>
+                    </>
+                  ) : null}
+                </AlertDescription>
+              </Alert>
+            )}
             <PageGuidance 
               title="สถานะปัจจุบัน (Document Stage)"
               tips={[
-                isDraft
+                isSuperseded
+                  ? "ฉบับเก่า (Revised): เปิดดูได้อย่างเดียว — แก้ไขได้เฉพาะฉบับล่าสุดของชุดนี้"
+                  : isDraft
                   ? "ฉบับร่าง (Draft): สามารถกด 'แก้ไขเอกสาร' แล้วค่อยปรับข้อมูลได้"
                   : isSent
                     ? "ส่งแล้ว (Sent): หากลูกค้าต่อรองราคา ให้กด 'แก้ไขเอกสาร' และบันทึกเป็น Revision ใหม่"

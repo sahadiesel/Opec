@@ -163,6 +163,8 @@ export default function QuotationsPage() {
         ...newQuotation,
         ...quotationPaymentCreateFields(newQuotation),
         quotationNo: finalNo,
+        baseQuotationNo: finalNo,
+        revisionNo: 0,
         customerNameSnapshot: customer?.name || '',
         billingAddressSnapshot: customer?.billingAddress || '',
         createdAt: Date.now(),
