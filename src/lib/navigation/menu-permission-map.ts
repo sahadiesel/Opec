@@ -36,7 +36,7 @@ export const MENU_PERMISSION_GROUPS: MenuPermissionGroup[] = [
     label: 'ภาพรวม (Overview)',
     audience: 'internal',
     items: [
-      { moduleKey: 'overview_dashboard', label: 'แดชบอร์ดหลัก (Dashboard)', path: '/' },
+      { moduleKey: 'overview_dashboard', label: 'แดชบอร์ดหลัก (Dashboard)', path: '/ops' },
       { moduleKey: 'employee_self_profile', label: 'โปรไฟล์ของฉัน (My Profile)', path: '/my-profile' },
     ],
   },

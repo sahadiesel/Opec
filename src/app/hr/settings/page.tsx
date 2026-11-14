@@ -911,7 +911,7 @@ export default function HrSettingsPage() {
       <AppShell user={currentUser} onLogout={() => {}}>
         <div className="max-w-lg mx-auto py-20 text-center space-y-4">
           <p className="text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงหน้านี้</p>
-          <Button variant="outline" onClick={() => router.push('/')}>
+          <Button variant="outline" onClick={() => router.push('/ops')}>
             กลับหน้าหลัก
           </Button>
         </div>

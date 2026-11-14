@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
   <div class="box">
     <h1>เซิร์ฟเวอร์ทำงานปกติ</h1>
     <p>นี่คือหน้า <strong>/health</strong> — ถ้าเห็นข้อความนี้แปลว่า Next dev ตอบสนองแล้ว</p>
-    <p><a href="/">ไปหน้าแรก (ล็อกอิน)</a></p>
+    <p><a href="/ops">ไปหน้าแรก (ล็อกอิน)</a></p>
     <pre>${JSON.stringify({ ok: true, t }, null, 2)}</pre>
   </div>
 </body>

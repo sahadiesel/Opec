@@ -42,7 +42,7 @@ export function ClientPortalShell({ children }: { children: React.ReactNode }) {
   const handleLogout = async () => {
     markFirestoreLoggingOut();
     localStorage.removeItem('opsflow_user');
-    router.push('/');
+    router.push('/ops');
     try {
       await signOut(auth);
     } catch (e) {
@@ -132,12 +132,12 @@ export function ClientPortalShell({ children }: { children: React.ReactNode }) {
               <Link href="/system-admin/enter-client-portal">{t('portalAdminPickCustomer')}</Link>
             </Button>
             <Button asChild variant="outline">
-              <Link href="/">หน้าหลัก OPEC</Link>
+              <Link href="/ops">หน้าหลัก OPEC</Link>
             </Button>
           </div>
         ) : (
           <Button asChild variant="outline">
-            <Link href="/">หน้าหลัก</Link>
+            <Link href="/ops">หน้าหลัก</Link>
           </Button>
         )}
       </div>

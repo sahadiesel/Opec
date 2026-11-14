@@ -225,7 +225,7 @@ export default function MainContractsPage() {
           <p className="text-sm text-muted-foreground">กรุณาเข้าสู่ระบบแล้วเปิดหน้านี้อีกครั้ง</p>
         </div>
         <Button asChild>
-          <Link href="/">ไปหน้าแรก</Link>
+          <Link href="/ops">ไปหน้าแรก</Link>
         </Button>
       </div>
     );

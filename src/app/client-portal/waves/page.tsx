@@ -135,7 +135,7 @@ export default function ClientManpowerPage() {
     } catch {
       /* ignore */
     }
-    router.push('/');
+    router.push('/ops');
   };
 
   return (

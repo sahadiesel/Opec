@@ -286,7 +286,7 @@ function patchOverviewDashboardForHrPillar(user: User, groups: NavGroup[]): NavG
     return {
       ...g,
       items: g.items.map((it) =>
-        it.key === 'overview_dashboard' && (it.href === '/' || it.href === '')
+        it.key === 'overview_dashboard' && (it.href === '/ops' || it.href === '/' || it.href === '')
           ? { ...it, href: '/hr/dashboard' }
           : it
       ),
@@ -299,7 +299,7 @@ const navGroups: NavGroup[] = [
     label: 'ภาพรวม (Overview)',
     audience: 'internal',
     items: [
-      { key: 'overview_dashboard', title: UI_LABELS.DASHBOARD, href: '/', icon: LayoutDashboard },
+      { key: 'overview_dashboard', title: UI_LABELS.DASHBOARD, href: '/ops', icon: LayoutDashboard },
       {
         key: 'employee_self_profile',
         title: 'My Profile',
@@ -900,7 +900,7 @@ export function SidebarNav({
               return false;
             }
             if (
-              item.href === '/' &&
+              (item.href === '/ops' || item.href === '/') &&
               item.key === 'overview_dashboard' &&
               isSimpleInternalEligible(user) &&
               !isClient(user)

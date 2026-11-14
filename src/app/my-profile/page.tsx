@@ -1222,7 +1222,7 @@ export default function MyProfilePage() {
                   </CardTitle>
                   <CardDescription>
                     ใช้ได้เมื่อเข้าระบบด้วยอีเมลและรหัสผ่าน — ถ้าลืมรหัสให้ใช้ลิงก์{' '}
-                    <Link href="/" className="text-primary underline font-medium">
+                    <Link href="/ops" className="text-primary underline font-medium">
                       Forgot password
                     </Link>{' '}
                     ที่หน้าเข้าสู่ระบบ (ส่งลิงก์รีเซ็ตไปที่อีเมล)

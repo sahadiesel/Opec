@@ -546,7 +546,7 @@ export default function PurchasesPage() {
         <p className="text-muted-foreground max-w-md">
           ยังโหลดโปรไฟล์ผู้ใช้ไม่สำเร็จ — ลองรีเฟรช หรือเข้าสู่ระบบใหม่ (ถ้าหน้านี้ว่างนานผิดปกติ ตรวจสอบการเชื่อมต่อและสิทธิ์ Firestore)
         </p>
-        <Button type="button" variant="outline" onClick={() => router.push('/')}>
+        <Button type="button" variant="outline" onClick={() => router.push('/ops')}>
           กลับหน้าหลัก
         </Button>
       </div>

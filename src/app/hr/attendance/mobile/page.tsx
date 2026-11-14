@@ -128,7 +128,7 @@ function MobileAttendanceLoginGate({
             </Button>
           </form>
           <p className="text-xs text-center text-muted-foreground">
-            <Link href="/" className="text-primary underline-offset-2 hover:underline">
+            <Link href="/ops" className="text-primary underline-offset-2 hover:underline">
               กลับหน้าเข้าสู่ระบบหลัก
             </Link>
           </p>
@@ -352,7 +352,7 @@ function MobileAttendanceInner() {
             : 'ไม่พบข้อมูลผู้ใช้ในระบบ — ติดต่อผู้ดูแลเพื่อเปิดบัญชีพนักงานภายใน'}
         </p>
         <Button type="button" variant="outline" asChild>
-          <Link href="/">กลับหน้าเข้าสู่ระบบ</Link>
+          <Link href="/ops">กลับหน้าเข้าสู่ระบบ</Link>
         </Button>
       </div>
     );

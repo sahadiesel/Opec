@@ -155,7 +155,7 @@ export default function SetupAdminPage() {
 
       toast({ title: "ตั้งค่าระบบสำเร็จ", description: "บัญชี System Admin และโปรไฟล์สิทธิ์ถูกสร้างเรียบร้อยแล้ว" });
       localStorage.removeItem('opsflow_user');
-      router.push('/');
+      router.push('/ops');
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error", description: error.message });
     } finally {
@@ -195,7 +195,7 @@ export default function SetupAdminPage() {
 
       toast({ title: "ซ่อมแซมสิทธิ์สำเร็จ", description: `บัญชีได้รับการปรับปรุงเป็น ${repairRole} แล้ว` });
       localStorage.removeItem('opsflow_user');
-      setTimeout(() => router.push('/'), 2000);
+      setTimeout(() => router.push('/ops'), 2000);
     } catch (error: any) {
       toast({ variant: "destructive", title: "Error", description: error.message });
     } finally {
@@ -337,7 +337,7 @@ export default function SetupAdminPage() {
                 {isSubmitting ? <Loader2 className="animate-spin mr-2 h-5 w-5" /> : <UserCheck className="mr-2" />}
                 ซ่อมแซมสิทธิ์บัญชีนี้ (Apply Repair)
               </Button>
-              <Button variant="ghost" onClick={() => router.push('/')} className="w-full">กลับไปหน้าหลัก</Button>
+              <Button variant="ghost" onClick={() => router.push('/ops')} className="w-full">กลับไปหน้าหลัก</Button>
             </CardFooter>
           </TabsContent>
         </Tabs>

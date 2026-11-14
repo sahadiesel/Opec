@@ -1,1018 +1,145 @@
-'use client';
-
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { useRouter } from 'next/navigation';
-import { AppShell } from '@/components/layout/app-shell';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { User } from '@/lib/types';
-import { 
-  ShieldCheck, 
-  Users, 
-  HardHat, 
-  ShieldAlert, 
-  Loader2, 
-  Wrench, 
-  Info, 
-  Briefcase, 
-  Waves, 
-  Truck, 
-  Warehouse, 
-  Coins, 
-  ArrowRight, 
-  ChevronRight, 
-  CheckCircle2, 
-  Clock, 
-  LayoutGrid, 
-  TrendingUp,
-  Building2,
-  UserPlus,
-  MailQuestion,
-  Eye,
-  EyeOff,
-} from 'lucide-react';
-import { useFirestore, useAuth, useUser, useDoc, useMemoFirebase } from '@/firebase';
-import {
-  signInWithEmailAndPassword,
-  signOut,
-  sendPasswordResetEmail,
-  createUserWithEmailAndPassword,
-  deleteUser,
-} from 'firebase/auth';
-import { doc, getDoc, getDocFromServer, updateDoc, setDoc } from 'firebase/firestore';
-import { sanitizeFirestorePayload } from '@/lib/utils';
-import { useToast } from '@/hooks/use-toast';
-import { markFirestoreLoggingOut } from '@/firebase/firestore/suppress-logout-permission-error';
-import { BUSINESS_ROLES, deriveBusinessRoleKey } from '@/lib/auth-mapping';
-import { usePermissions } from '@/hooks/use-permissions';
-import { UI_LABELS } from '@/lib/constants/labels';
-import { HELP_TEXTS } from '@/lib/constants/help-texts';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import type { Metadata } from 'next';
 import Link from 'next/link';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogDescription, 
-  DialogFooter, 
-  DialogHeader, 
-  DialogTitle 
-} from '@/components/ui/dialog';
-import { PlaceHolderImages } from '@/lib/placeholder-images';
-import {
-  normalizeCurrentUserPermissions,
-  isSystemAdmin,
-  isStoreOfficer,
-  isTimekeeper,
-  getPrimaryLegacyRole,
-  canSeeHrPillarUi,
-  canSeeSalesPillarUi,
-  canSeeOperationsPillarUi,
-  canSeeStorePillarUi,
-  canSeeAccountingPillarUi,
-} from '@/lib/permissions';
-import type { ReactNode } from 'react';
-import { PoStaffingQueueCard } from '@/components/dashboard/po-staffing-queue-card';
+import { CompanySiteShell } from '@/components/company-site/site-shell';
+import { CHAIN, COMPANY, PILLARS } from '@/components/company-site/content';
 
-/** Same Storage image as login form — keep all pre-dashboard full-screen states visually consistent. */
-const LOGIN_BG_URL = PlaceHolderImages.find((img) => img.id === 'login-bg')?.imageUrl ?? '';
+const LOGIN_BG_URL = 'https://firebasestorage.googleapis.com/v0/b/opec-data-sg/o/OPEC_Image_2.png?alt=media';
 
-function LoginStageBackdrop({ children }: { children: ReactNode }) {
+export const metadata: Metadata = {
+  title: 'OPEC | Offshore Manpower & Marine Supply',
+  description: COMPANY.tagline,
+};
+
+export default function CompanyHomePage() {
   return (
-    <div
-      className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-sky-100 p-4"
-      data-ai-hint="offshore oil rig"
-    >
-      {LOGIN_BG_URL ? (
-        <div
-          className="pointer-events-none absolute inset-0 z-0 bg-cover bg-top bg-no-repeat brightness-[1.08] saturate-[1.12] contrast-[1.02]"
-          style={{ backgroundImage: `url(${LOGIN_BG_URL})` }}
-          aria-hidden
+    <CompanySiteShell>
+      <section className="relative h-[min(70vh,640px)] min-h-[380px] bg-[#071426]">
+        <img
+          src={LOGIN_BG_URL}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover object-top"
         />
-      ) : null}
-      {/* เบาลงมากจากเดิม — คง vignette นิดหน่อยให้การ์ดอ่านง่าย ไม่กลบสีต้นฉบับ */}
-      <div
-        className="pointer-events-none absolute inset-0 z-[1] bg-gradient-to-b from-slate-900/15 via-transparent to-slate-900/20"
-        aria-hidden
-      />
-      {children}
-    </div>
-  );
-}
+      </section>
 
-export default function Home() {
-  const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
-  /** ถ้า Firebase Auth ไม่ตอบ (เครือข่าย/VPN) ไม่ให้ค้างที่ "กำลังเตรียมระบบ" ตลอดไป */
-  const [authBootstrapTimedOut, setAuthBootstrapTimedOut] = useState(false);
-  const [authSlowHint, setAuthSlowHint] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
-
-  const [showForgotPasswordDialog, setShowForgotPasswordDialog] = useState(false);
-  const [forgotEmail, setForgotEmail] = useState('');
-  const [isSendingResetEmail, setIsSendingResetEmail] = useState(false);
-
-  const [showRegisterDialog, setShowRegisterDialog] = useState(false);
-  const [regDisplayName, setRegDisplayName] = useState('');
-  const [regPhone, setRegPhone] = useState('');
-  const [regEmail, setRegEmail] = useState('');
-  const [regPassword, setRegPassword] = useState('');
-  const [regPasswordConfirm, setRegPasswordConfirm] = useState('');
-  const [isRegistering, setIsRegistering] = useState(false);
-  /** After self-registration: show confirmation on login shell until user dismisses */
-  const [registrationSuccessEmail, setRegistrationSuccessEmail] = useState<string | null>(null);
-  /** True while handleSelfRegister runs — avoids useEffect(PENDING) toast/logout racing the submit handler */
-  const selfRegisterInProgressRef = useRef(false);
-  /** True from synchronous start of handleLogin until its finally — avoids useDoc firing cached PENDING before getDoc finishes */
-  const loginInProgressRef = useRef(false);
-
-  const firestore = useFirestore();
-  const auth = useAuth();
-  const { user: firebaseUser, isUserLoading, userError } = useUser();
-  const { toast } = useToast();
-  
-  const userDocRef = useMemoFirebase(() => (firestore && firebaseUser ? doc(firestore, 'users', firebaseUser.uid) : null), [firestore, firebaseUser]);
-  const { data: rawUserDoc, isLoading: isDocLoading, isDataFromCache: isUserDocFromCache } =
-    useDoc<User>(userDocRef as any);
-
-  // Normalize user doc as soon as it arrives
-  const latestUserDoc = useMemo(() => {
-    return rawUserDoc ? normalizeCurrentUserPermissions(rawUserDoc) : null;
-  }, [rawUserDoc]);
-
-  useEffect(() => {
-    const t = window.setTimeout(() => setAuthSlowHint(true), 12_000);
-    return () => window.clearTimeout(t);
-  }, []);
-
-  useEffect(() => {
-    const escape = window.setTimeout(() => setAuthBootstrapTimedOut(true), 12_000);
-    return () => window.clearTimeout(escape);
-  }, []);
-
-  useEffect(() => {
-    const stored = localStorage.getItem('opsflow_user');
-    if (stored) {
-      try {
-        // Try to normalize cached data too
-        const parsed = JSON.parse(stored);
-        setUser(normalizeCurrentUserPermissions(parsed));
-      } catch (e) { console.error(e); }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!isUserLoading && !firebaseUser) {
-      setUser(null);
-      localStorage.removeItem('opsflow_user');
-    }
-  }, [firebaseUser, isUserLoading]);
-
-  useEffect(() => {
-    if (latestUserDoc) {
-      if (latestUserDoc.userType !== 'customer_portal' && latestUserDoc.approvalStatus === 'PENDING') {
-        if (selfRegisterInProgressRef.current || loginInProgressRef.current) {
-          return;
-        }
-        if (isUserDocFromCache) {
-          return;
-        }
-        toast({
-          title: 'Pending administrator approval',
-          description:
-            'Your account is not yet approved or assigned a role. An admin will process it in User management.',
-        });
-        handleLogout();
-        return;
-      }
-      // Security Guard: Check inactivity
-      if (!latestUserDoc.isActive || latestUserDoc.approvalStatus === 'SUSPENDED') {
-        toast({ variant: "destructive", title: "Access Blocked", description: "Your account has been suspended." });
-        handleLogout();
-        return;
-      }
-
-      // Customer Portal Redirect (replace — ไม่ให้ค้างหน้า / ที่ AppShell ปฏิเสธสิทธิ์ลูกค้า)
-      if (latestUserDoc.userType === 'customer_portal') {
-        router.replace('/client-portal/dashboard');
-      }
-
-      if (latestUserDoc.userType !== 'customer_portal' && isStoreOfficer(latestUserDoc)) {
-        router.replace('/store');
-      } else if (latestUserDoc.userType !== 'customer_portal' && isTimekeeper(latestUserDoc)) {
-        router.replace('/hr/attendance/kiosk');
-      } else if (latestUserDoc.userType !== 'customer_portal') {
-        const rk = getPrimaryLegacyRole(latestUserDoc);
-        if (rk === 'hr_officer' || rk === 'payroll_officer' || rk === 'hr_manager') {
-          router.replace('/hr/dashboard');
-        }
-      }
-
-      // Sync State and Cache with Normalized Data
-      setUser(latestUserDoc);
-      localStorage.setItem('opsflow_user', JSON.stringify(latestUserDoc));
-    }
-  }, [latestUserDoc, router, isUserDocFromCache]);
-
-  const isInternalAuthorized = useMemo(() => {
-    if (isDocLoading || !latestUserDoc) return false;
-    return latestUserDoc.isActive && latestUserDoc.approvalStatus === 'ACTIVE';
-  }, [latestUserDoc, isDocLoading]);
-
-  const { check, profile } = usePermissions(latestUserDoc ?? user);
-
-  const u = latestUserDoc ?? user;
-  const showHrUi = useMemo(() => canSeeHrPillarUi(u, profile), [u, profile]);
-  const showSalesUi = useMemo(() => canSeeSalesPillarUi(u, profile), [u, profile]);
-  const showOpsUi = useMemo(() => canSeeOperationsPillarUi(u, profile), [u, profile]);
-  const showStoreUi = useMemo(() => canSeeStorePillarUi(u, profile), [u, profile]);
-  const showAccountingUi = useMemo(() => canSeeAccountingPillarUi(u, profile), [u, profile]);
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    loginInProgressRef.current = true;
-    setIsLoggingIn(true);
-    try {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      const docRef = doc(firestore!, 'users', cred.user.uid);
-      let snap = await getDocFromServer(docRef).catch(() => getDoc(docRef));
-      
-      if (snap.exists()) {
-        const userData = normalizeCurrentUserPermissions(snap.data());
-        if (!userData) throw new Error("Invalid user data");
-        
-        // 1. Pending approval (internal)
-        if (userData.userType !== 'customer_portal' && userData.approvalStatus === 'PENDING') {
-          toast({
-            title: 'Pending approval',
-            description:
-              'Your account has not been approved or assigned a role by an administrator yet. You can use the app after an admin approves it.',
-          });
-          await signOut(auth);
-          setIsLoggingIn(false);
-          return;
-        }
-        // 2. Check Activity Status
-        if (!userData.isActive || userData.approvalStatus === 'SUSPENDED' || userData.approvalStatus === 'REJECTED') {
-          toast({
-            variant: "destructive",
-            title: "Access Restricted",
-            description: "Your account is inactive or has been suspended.",
-          });
-          await signOut(auth);
-          setIsLoggingIn(false);
-          return;
-        }
-
-        // 3. Log login time
-        await updateDoc(docRef, { lastLoginAt: Date.now() });
-
-        setUser(userData);
-        localStorage.setItem('opsflow_user', JSON.stringify(userData));
-        toast({ title: "Signed in successfully" });
-
-        if (userData.userType === 'customer_portal') {
-          router.replace('/client-portal/dashboard');
-        } else if (isStoreOfficer(userData)) {
-          router.replace('/store');
-        } else if (isTimekeeper(userData)) {
-          router.replace('/hr/attendance/kiosk');
-        } else {
-          const rk = getPrimaryLegacyRole(userData);
-          if (rk === 'hr_officer' || rk === 'payroll_officer' || rk === 'hr_manager') {
-            router.replace('/hr/dashboard');
-          }
-        }
-      } else {
-        await signOut(auth);
-        toast({
-          variant: 'destructive',
-          title: 'User profile not found',
-          description:
-            'This account has no user profile in Firestore yet. Contact an administrator or register a new user.',
-        });
-      }
-    } catch (err: any) {
-      toast({ variant: "destructive", title: "Login failed", description: "Incorrect email or password." });
-    } finally {
-      loginInProgressRef.current = false;
-      setIsLoggingIn(false);
-    }
-  };
-
-  const handleSendPasswordResetEmail = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const addr = forgotEmail.trim();
-    if (!addr) {
-      toast({ variant: 'destructive', title: 'Email required', description: 'Enter the email you used to register.' });
-      return;
-    }
-    setIsSendingResetEmail(true);
-    try {
-      await sendPasswordResetEmail(auth, addr);
-      toast({
-        title: 'Password reset link sent',
-        description: 'Check your inbox (and spam) and use the link from Firebase to set a new password.',
-      });
-      setShowForgotPasswordDialog(false);
-      setForgotEmail('');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Request failed';
-      toast({ variant: 'destructive', title: 'Could not send email', description: msg });
-    } finally {
-      setIsSendingResetEmail(false);
-    }
-  };
-
-  const handleSelfRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!firestore || !auth) return;
-    const name = regDisplayName.trim();
-    const phone = regPhone.trim();
-    const em = regEmail.trim();
-    if (!name || !phone || !em) {
-      toast({ variant: 'destructive', title: 'Missing information', description: 'Enter your full name, phone, and email.' });
-      return;
-    }
-    if (regPassword.length < 8) {
-      toast({ variant: 'destructive', title: 'Password too short', description: 'Use at least 8 characters.' });
-      return;
-    }
-    if (regPassword !== regPasswordConfirm) {
-      toast({ variant: 'destructive', title: 'Passwords do not match', description: 'Enter the same password in both fields.' });
-      return;
-    }
-
-    const withTimeout = <T,>(promise: Promise<T>, ms: number, timeoutMsg: string): Promise<T> =>
-      Promise.race([
-        promise,
-        new Promise<T>((_, reject) => setTimeout(() => reject(new Error(timeoutMsg)), ms)),
-      ]);
-
-    let newUid: string | null = null;
-    selfRegisterInProgressRef.current = true;
-    setIsRegistering(true);
-    try {
-      const cred = await withTimeout(
-        createUserWithEmailAndPassword(auth, em, regPassword),
-        90_000,
-        'Account creation timed out. Check your connection and try again.'
-      );
-      newUid = cred.user.uid;
-      const now = Date.now();
-      const newUser: User = {
-        id: newUid,
-        email: em,
-        displayName: name,
-        phone,
-        userType: 'internal',
-        department: 'operations',
-        level: 'viewer',
-        roleIds: [],
-        isActive: false,
-        approvalStatus: 'PENDING',
-        createdAt: now,
-        updatedAt: now,
-      };
-      await withTimeout(
-        setDoc(doc(firestore, 'users', newUid), sanitizeFirestorePayload(newUser)),
-        45_000,
-        'Saving to the system timed out. Check your network or the latest Firestore security rules deploy.'
-      );
-      try {
-        await signOut(auth);
-      } catch {
-        /* non-fatal */
-      }
-      setUser(null);
-      localStorage.removeItem('opsflow_user');
-      setShowRegisterDialog(false);
-      setRegDisplayName('');
-      setRegPhone('');
-      setRegEmail('');
-      setRegPassword('');
-      setRegPasswordConfirm('');
-      setRegistrationSuccessEmail(em);
-      toast({
-        title: 'Registration request sent',
-        description: 'An administrator will approve and assign a role in User management. You can then sign in with this email.',
-      });
-    } catch (err: unknown) {
-      const raw = err instanceof Error ? err.message : String(err);
-      const lower = raw.toLowerCase();
-      if (newUid && auth.currentUser?.uid === newUid) {
-        try {
-          await deleteUser(auth.currentUser);
-        } catch {
-          /* ลบใน Auth ไม่สำเร็จ — ให้แอดมินจัดการใน Console */
-        }
-      }
-      let description = raw;
-      if (lower.includes('permission') || lower.includes('insufficient')) {
-        description =
-          'No permission to save the profile in Firestore (security rules). A temporary Auth user may have been created and removed. Try again after the rules are deployed, or contact an administrator.';
-      } else if (lower.includes('email-already') || lower.includes('already in use')) {
-        description = 'This email is already registered. Try signing in, or use a different email.';
-      }
-      toast({ variant: 'destructive', title: 'Registration failed', description });
-    } finally {
-      selfRegisterInProgressRef.current = false;
-      setIsRegistering(false);
-    }
-  };
-
-  const handleLogout = async () => {
-    markFirestoreLoggingOut();
-    localStorage.removeItem('opsflow_user');
-    setUser(null);
-    await signOut(auth);
-  };
-
-  if (isUserLoading && !authBootstrapTimedOut) {
-    return (
-      <LoginStageBackdrop>
-        <div className="relative z-10 flex max-w-md flex-col items-center justify-center gap-3 px-4 text-center">
-          <Loader2 className="h-10 w-10 animate-spin text-primary" />
-          <p className="text-sm text-white/85">Preparing the app…</p>
-          {authSlowHint && (
-            <p className="text-xs text-white/60">
-              If this takes too long, confirm you are running <span className="font-mono">npm run dev</span> on the
-              port shown in the terminal (default 9003), then try a hard refresh (Ctrl+Shift+R) or check your
-              network / VPN.
-            </p>
-          )}
-        </div>
-      </LoginStageBackdrop>
-    );
-  }
-
-  // Wait for Firestore user profile after Firebase Auth (avoid flashing wrong UI)
-  if (firebaseUser && isDocLoading) {
-    return (
-      <LoginStageBackdrop>
-        <div className="relative z-10 flex items-center justify-center">
-          <Loader2 className="h-12 w-12 animate-spin text-primary" />
-        </div>
-      </LoginStageBackdrop>
-    );
-  }
-
-  const profileMissing = Boolean(firebaseUser && !isDocLoading && !rawUserDoc);
-  const internalNotActive = Boolean(
-    latestUserDoc &&
-    latestUserDoc.userType !== 'customer_portal' &&
-    (latestUserDoc.approvalStatus !== 'ACTIVE' || latestUserDoc.isActive === false)
-  );
-  const portalNotActive = Boolean(
-    latestUserDoc &&
-    latestUserDoc.userType === 'customer_portal' &&
-    (latestUserDoc.approvalStatus !== 'ACTIVE' || latestUserDoc.isActive === false)
-  );
-
-  const mustShowLoginShell =
-    !firebaseUser || profileMissing || internalNotActive || portalNotActive;
-
-  // Login / register shell (never show main dashboard for inactive or missing profile)
-  if (mustShowLoginShell) {
-    return (
-      <LoginStageBackdrop>
-        <Card className="relative z-10 w-full max-w-md border-t-8 border-t-primary bg-white shadow-2xl">
-          <CardHeader className="space-y-1 text-center">
-            {userError && (
-              <Alert variant="destructive" className="mb-4 text-left">
-                <AlertTitle>Could not connect to the app</AlertTitle>
-                <AlertDescription className="text-sm">
-                  {userError.message}
-                </AlertDescription>
-              </Alert>
-            )}
-            {authBootstrapTimedOut && isUserLoading && !userError && (
-              <Alert className="mb-4 text-left border-amber-200 bg-amber-50 text-amber-950">
-                <AlertTitle>Connecting to Firebase…</AlertTitle>
-                <AlertDescription className="text-sm">
-                  Sign-in state did not arrive in time. Try a hard refresh (Ctrl+Shift+R) or check your internet,
-                  VPN, or firewall.
-                </AlertDescription>
-              </Alert>
-            )}
-            <div className="mx-auto bg-primary/10 p-4 rounded-full w-fit mb-4">
-              <ShieldCheck className="h-10 w-10 text-primary" />
+      <section className="border-b border-[#d7e0ea] bg-white">
+        <div className="mx-auto grid max-w-6xl grid-cols-2 divide-x divide-y divide-[#e6edf4] md:grid-cols-4 md:divide-y-0">
+          {[
+            ['2014', 'Established in Songkhla'],
+            ['5', 'Integrated service pillars'],
+            ['Offshore', 'Workforce and field support'],
+            ['Gulf of Thailand', 'Primary operating environment'],
+          ].map(([value, label]) => (
+            <div key={label} className="px-5 py-6">
+              <p className="text-xl font-black text-[#0b1c33]">{value}</p>
+              <p className="mt-1 text-sm text-[#5c6b7a]">{label}</p>
             </div>
-            <CardTitle className="text-3xl font-bold tracking-tight text-primary">OPEC OpsFlow</CardTitle>
-            <CardDescription className="text-base font-medium">Enterprise Manpower Supply Operations</CardDescription>
-            {registrationSuccessEmail && (
-              <Alert className="mt-4 text-left border-green-200 bg-green-50 text-green-900">
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <AlertTitle className="text-green-900 font-bold">Registered — pending approval</AlertTitle>
-                <AlertDescription className="text-sm text-green-800 space-y-2">
-                  <p>
-                    A request for <span className="font-mono font-semibold">{registrationSuccessEmail}</span> has
-                    been submitted. An administrator will approve and assign permissions in <b>User management</b>{' '}
-                    (Pending tab).
-                  </p>
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="mt-1 bg-green-700 hover:bg-green-800"
-                    onClick={() => setRegistrationSuccessEmail(null)}
-                  >
-                    Got it — return to sign in
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            )}
-          </CardHeader>
-          <form onSubmit={handleLogin}>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="email" className="font-bold">Email</Label>
-                <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@company.com" required className="h-11" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="password" title="Password" className="font-bold">Password</Label>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    className="h-11 pr-11"
-                    autoComplete="current-password"
-                  />
-                  <button
-                    type="button"
-                    className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowPassword((v) => !v)}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    tabIndex={-1}
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-              </div>
-            </CardContent>
-            <CardFooter className="flex flex-col gap-1">
-              <Button type="submit" className="w-full h-12 text-lg font-bold shadow-lg bg-primary" disabled={isLoggingIn}>
-                {isLoggingIn ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : null}
-                Sign in
-              </Button>
-              <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 justify-center text-sm pt-2 w-full">
-                <button
-                  type="button"
-                  className="text-primary font-semibold hover:underline inline-flex items-center justify-center gap-1"
-                  onClick={() => {
-                    setForgotEmail(email);
-                    setShowForgotPasswordDialog(true);
-                  }}
-                >
-                  <MailQuestion className="h-3.5 w-3.5" />
-                  Forgot password
-                </button>
-                <span className="hidden sm:inline text-muted-foreground">|</span>
-                <button
-                  type="button"
-                  className="text-primary font-semibold hover:underline inline-flex items-center justify-center gap-1"
-                  onClick={() => {
-                    setRegistrationSuccessEmail(null);
-                    setShowRegisterDialog(true);
-                  }}
-                >
-                  <UserPlus className="h-3.5 w-3.5" />
-                  Register new user
-                </button>
-              </div>
-            </CardFooter>
-          </form>
-        </Card>
-
-        <Dialog open={showForgotPasswordDialog} onOpenChange={setShowForgotPasswordDialog}>
-          <DialogContent className="sm:max-w-md border-t-8 border-t-primary">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">Forgot password</DialogTitle>
-              <DialogDescription>
-                Enter the email you used to register. Firebase will send a password reset link to this address
-                (check spam as well).
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleSendPasswordResetEmail} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="forgot-email">Email</Label>
-                <Input
-                  id="forgot-email"
-                  type="email"
-                  value={forgotEmail}
-                  onChange={(e) => setForgotEmail(e.target.value)}
-                  placeholder="name@company.com"
-                  required
-                  className="h-11"
-                />
-              </div>
-              <DialogFooter className="gap-2 sm:gap-0">
-                <Button type="button" variant="outline" onClick={() => setShowForgotPasswordDialog(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={isSendingResetEmail}>
-                  {isSendingResetEmail ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  Send reset link
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-
-        <Dialog open={showRegisterDialog} onOpenChange={setShowRegisterDialog}>
-          <DialogContent className="sm:max-w-lg border-t-8 border-t-primary max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">Register new user</DialogTitle>
-              <DialogDescription>
-                Fill in all fields. After registration, an administrator will approve and assign a role in User
-                management before you can sign in.
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleSelfRegister} className="space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="reg-name">Full name</Label>
-                <Input
-                  id="reg-name"
-                  value={regDisplayName}
-                  onChange={(e) => setRegDisplayName(e.target.value)}
-                  required
-                  className="h-11"
-                  autoComplete="name"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="reg-phone">Phone</Label>
-                <Input
-                  id="reg-phone"
-                  type="tel"
-                  value={regPhone}
-                  onChange={(e) => setRegPhone(e.target.value)}
-                  required
-                  className="h-11"
-                  autoComplete="tel"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="reg-email">Email (for sign-in)</Label>
-                <Input
-                  id="reg-email"
-                  type="email"
-                  value={regEmail}
-                  onChange={(e) => setRegEmail(e.target.value)}
-                  required
-                  className="h-11"
-                  autoComplete="email"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="reg-pw">Password (at least 8 characters)</Label>
-                <Input
-                  id="reg-pw"
-                  type="password"
-                  value={regPassword}
-                  onChange={(e) => setRegPassword(e.target.value)}
-                  required
-                  minLength={8}
-                  className="h-11"
-                  autoComplete="new-password"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="reg-pw2">Confirm password</Label>
-                <Input
-                  id="reg-pw2"
-                  type="password"
-                  value={regPasswordConfirm}
-                  onChange={(e) => setRegPasswordConfirm(e.target.value)}
-                  required
-                  minLength={8}
-                  className="h-11"
-                  autoComplete="new-password"
-                />
-              </div>
-              <DialogFooter className="gap-2 pt-2">
-                <Button type="button" variant="outline" onClick={() => setShowRegisterDialog(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={isRegistering}>
-                  {isRegistering ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  Submit registration
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </LoginStageBackdrop>
-    );
-  }
-
-  if (!latestUserDoc) {
-    return (
-      <LoginStageBackdrop>
-        <div className="relative z-10 flex items-center justify-center">
-          <Loader2 className="h-12 w-12 animate-spin text-primary" />
+          ))}
         </div>
-      </LoginStageBackdrop>
-    );
-  }
+      </section>
 
-  /** ลูกค้า portal — ไม่เรนเดอร์แดชบอร์ดภายใน (/) เพราะ AppShell จะบล็อก path ที่ไม่ใช่ /client-portal/* */
-  if (latestUserDoc.userType === 'customer_portal') {
-    return (
-      <LoginStageBackdrop>
-        <div className="relative z-10 flex flex-col items-center justify-center gap-4 px-4 text-center">
-          <Loader2 className="h-12 w-12 animate-spin text-primary" />
-          <p className="text-sm font-medium text-white/90">Opening client portal…</p>
-        </div>
-      </LoginStageBackdrop>
-    );
-  }
-
-  // Home / Dashboard Content (use central helper for primary role)
-  const primaryRoleKey = deriveBusinessRoleKey(latestUserDoc);
-  const roleInfo = BUSINESS_ROLES[primaryRoleKey];
-  const primaryDept = roleInfo?.dept;
-  const allDepts = primaryDept ? [primaryDept] : (latestUserDoc.department ? [latestUserDoc.department] : []);
-
-  return (
-    <AppShell user={latestUserDoc} onLogout={handleLogout}>
-      <div className="space-y-8 max-w-[1600px] mx-auto">
-        {/* Header */}
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold text-primary tracking-tight">{UI_LABELS.DASHBOARD}</h1>
-          <p className="text-muted-foreground text-lg">{HELP_TEXTS.DASHBOARD}</p>
-        </div>
-
-        {/* Welcome Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <Card className="lg:col-span-2 border-none shadow-md bg-white overflow-hidden">
-            <div className="h-2 bg-primary" />
-            <CardHeader className="pb-4">
-              <div className="flex items-start justify-between">
-                <div className="space-y-1">
-                  <p className="text-sm font-medium text-muted-foreground uppercase tracking-widest">ยินดีต้อนรับ (Welcome)</p>
-                  <CardTitle className="text-3xl font-black text-primary">{latestUserDoc.displayName}</CardTitle>
-                </div>
-                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 px-3 py-1 font-bold">
-                  <CheckCircle2 className="h-3 w-3 mr-1" /> Account Verified
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
-                <p className="text-[10px] font-black text-slate-400 uppercase mb-1">บทบาทหลัก (Primary Role)</p>
-                <p className="font-bold text-lg text-primary">{roleInfo?.labelTh || 'ผู้ใช้งานระบบ'}</p>
-                <p className="text-xs text-muted-foreground uppercase">{roleInfo?.labelEn || 'System User'}</p>
-              </div>
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-100">
-                <p className="text-[10px] font-black text-slate-400 uppercase mb-1">สิทธิ์การเข้าถึง (Access Scope)</p>
-                <div className="flex flex-wrap items-center gap-2 mt-1">
-                  {allDepts.length > 0 ? allDepts.map(d => (
-                    <Badge key={d} variant="secondary" className="capitalize font-black flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-100">
-                      <Building2 className="h-2.5 w-2.5" /> {d}
-                    </Badge>
-                  )) : <Badge variant="outline">{latestUserDoc.department}</Badge>}
-                  <span className="text-muted-foreground text-xs mx-1">/</span>
-                  <Badge variant="outline" className="capitalize font-bold border-primary/20">{roleInfo?.level ?? latestUserDoc.level}</Badge>
-                </div>
-                {roleInfo?.descriptionTh && (
-                  <p className="text-[11px] text-muted-foreground mt-2 leading-snug">{roleInfo.descriptionTh}</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-none shadow-md bg-primary text-primary-foreground">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Info className="h-5 w-5 opacity-80" /> งานที่ต้องติดตาม (My Pending Actions)
-              </CardTitle>
-              <CardDescription className="text-primary-foreground/60 text-xs">รายการสำคัญที่คุณต้องดำเนินการตามบทบาท</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {showHrUi && (
-                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/hr/dashboard')}>
-                  <div className="flex items-center gap-3">
-                    <Users className="h-4 w-4" />
-                    <span className="text-sm font-medium">ตรวจงาน HR Dashboard</span>
-                  </div>
-                  <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
-                </div>
-              )}
-              {showSalesUi && (
-                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/sales/dashboard')}>
-                  <div className="flex items-center gap-3">
-                    <TrendingUp className="h-4 w-4" />
-                    <span className="text-sm font-medium">ตรวจงาน Sales Dashboard</span>
-                  </div>
-                  <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
-                </div>
-              )}
-              {showAccountingUi && (
-                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/accounting/dashboard')}>
-                  <div className="flex items-center gap-3">
-                    <Coins className="h-4 w-4" />
-                    <span className="text-sm font-medium">ตรวจงาน Accounting Dashboard</span>
-                  </div>
-                  <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
-                </div>
-              )}
-              {showOpsUi && (
-                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/operations/dashboard')}>
-                  <div className="flex items-center gap-3">
-                    <HardHat className="h-4 w-4" />
-                    <span className="text-sm font-medium">ตรวจงาน Operations Dashboard</span>
-                  </div>
-                  <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
-                </div>
-              )}
-              {isSystemAdmin(latestUserDoc) && (
-                <div className="flex items-center justify-between p-3 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer group" onClick={() => router.push('/users')}>
-                  <div className="flex items-center gap-3">
-                    <ShieldCheck className="h-4 w-4" />
-                    <span className="text-sm font-medium">อนุมัติสิทธิ์ผู้ใช้ใหม่</span>
-                  </div>
-                  <ChevronRight className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-all" />
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        <PoStaffingQueueCard
-          enabled={
-            showHrUi ||
-            showOpsUi ||
-            check('customer_pos', 'view') ||
-            isSystemAdmin(latestUserDoc)
-          }
-        />
-
-        {/* Action Grid */}
-        <div className="space-y-6">
-          <div className="flex items-center gap-2">
-            <LayoutGrid className="h-5 w-5 text-primary" />
-            <h2 className="text-xl font-bold text-primary">ทางลัดตามบทบาท (Role Command)</h2>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-            {showHrUi && (
-              <>
-                {(check('office_staff', 'view') || check('office_payroll', 'view')) && (
-                  <ShortcutGroup title="HR — Office Payroll" icon={Building2} color="border-l-indigo-600">
-                    {check('office_staff', 'view') && (
-                      <ShortcutLink href="/office-staff" label="ทะเบียนพนักงานออฟฟิศ" sub="รายเดือน · ไม่ใช้ timesheet รายวัน" />
-                    )}
-                    {check('office_payroll', 'view') && (
-                      <ShortcutLink href="/office-payroll" label="งวดจ่ายเงินเดือนออฟฟิศ" sub="Office payroll run" />
-                    )}
-                  </ShortcutGroup>
-                )}
-                {(check('workers', 'view') ||
-                  check('timesheets', 'view') ||
-                  check('worker_payroll', 'view')) && (
-                  <ShortcutGroup title="HR — Worker Payroll" icon={HardHat} color="border-l-amber-600">
-                    {check('workers', 'view') && (
-                      <ShortcutLink href="/workers" label="ทะเบียนลูกจ้าง" sub="Timesheet + batch" />
-                    )}
-                    {check('timesheets', 'view') && (
-                      <>
-                        <ShortcutLink href="/timesheets/wave-board" label="คีย์ลงเวลา (Wave)" sub="Worker timesheet" />
-                        <ShortcutLink href="/timesheets/wave-month" label="สรุปลงเวลารายเดือน (Wave)" sub="ส่งตรวจรอบเดือน" />
-                      </>
-                    )}
-                    {check('worker_payroll', 'view') && (
-                      <ShortcutLink
-                        href="/payroll/batches"
-                        label="งวดจ่ายลูกจ้าง (Batches)"
-                        sub="เลือกรอบบัญชี · สร้าง payroll batch"
-                      />
-                    )}
-                  </ShortcutGroup>
-                )}
-                {(check('hr_hub', 'view') || check('positions', 'view') || check('workers', 'view')) && (
-                  <ShortcutGroup title="HR — ภาพรวมและตั้งค่า" icon={Users} color="border-l-orange-500">
-                    {check('hr_hub', 'view') && (
-                      <ShortcutLink href="/hr/settings" label="ตั้งค่า HR" sub="ภาษี · ประกันสังคม" />
-                    )}
-                    {check('positions', 'view') && (
-                      <ShortcutLink href="/positions" label="ตำแหน่งงาน" sub="Positions" />
-                    )}
-                    {(check('worker_documents', 'view') || check('workers', 'view')) && (
-                      <ShortcutLink href="/worker-document-catalog" label="เอกสารกลาง" sub="Document catalog" />
-                    )}
-                  </ShortcutGroup>
-                )}
-              </>
-            )}
-
-            {showSalesUi && (
-              <ShortcutGroup title="ฝ่ายขาย (Sales)" icon={Briefcase} color="border-l-blue-600">
-                {check('customers', 'view') && (
-                  <ShortcutLink href="/customers" label="ทะเบียนลูกค้า" sub="Customers" />
-                )}
-                {check('main_contracts', 'view') && (
-                  <ShortcutLink href="/main-contracts" label="สัญญาหลัก" sub="Contracts" />
-                )}
-                {check('customer_pos', 'view') && (
-                  <ShortcutLink href="/purchase-orders" label="ใบสั่งซื้อลูกค้า" sub="POs" />
-                )}
-              </ShortcutGroup>
-            )}
-
-            {showOpsUi && (
-              <ShortcutGroup title="ฝ่ายปฏิบัติการ (Ops)" icon={HardHat} color="border-l-emerald-600">
-                {(check('waves', 'view') || check('assignments', 'view')) && (
-                  <ShortcutLink href="/po-active-quota-queue" label="คิวเติมโควต้า (PO Active)" sub="ชุดลูกค้า×งานจากสัญญา" />
-                )}
-                {check('assignments', 'view') && (
-                  <ShortcutLink href="/assignments" label="มอบหมายงาน" sub="Assignments" />
-                )}
-                {check('mobilization', 'view') && (
-                  <ShortcutLink href="/mobilization" label="เตรียมส่งตัว" sub="Mobilization" />
-                )}
-              </ShortcutGroup>
-            )}
-
-            {showAccountingUi && (
-              <ShortcutGroup title="บัญชีและการเงิน (Finance)" icon={Coins} color="border-l-purple-600">
-                {check('draft_invoices', 'view') && (
-                  <ShortcutLink href="/draft-invoices" label="การออกใบแจ้งหนี้ (Invoice)" sub="Timesheet หรือ PO ใบเสนอราคา" />
-                )}
-                {check('cashbook', 'view') && (
-                  <ShortcutLink href="/cashbook" label="รายรับรายจ่าย" sub="Cashbook" />
-                )}
-                {check('ap_bills', 'view') && (
-                  <ShortcutLink href="/ap-bills" label="รับวางบิลเจ้าหนี้" sub="AP Bills" />
-                )}
-              </ShortcutGroup>
-            )}
-
-            {showStoreUi && (
-              <ShortcutGroup title="คลังและจัดซื้อ (Store)" icon={Warehouse} color="border-l-amber-500">
-                {check('store_inventory', 'view') && (
-                  <ShortcutLink href="/store" label="คลังอุปกรณ์" sub="Inventory" />
-                )}
-                {check('vendors', 'view') && <ShortcutLink href="/vendors" label="ทะเบียนคู่ค้า" sub="Vendors" />}
-                {check('purchases', 'view') && (
-                  <ShortcutLink href="/purchases" label="ใบสั่งซื้อ(PO)" sub="Purchase Order" />
-                )}
-              </ShortcutGroup>
-            )}
+      <section className="mx-auto grid max-w-6xl items-center gap-10 px-4 py-16 sm:px-6 lg:grid-cols-2">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#e36f1e]">About OPEC</p>
+          <h2 className="mt-2 text-3xl font-black text-[#0b1c33]">
+            One coordinated platform for people, engineering, equipment and marine logistics
+          </h2>
+          <div className="mt-5 space-y-4 text-sm leading-relaxed text-[#3d4d5e]">
+            <p>
+              Offshore Power Engineering Corporation Co., Ltd. (OPEC) was established on {COMPANY.established} by a
+              group of engineers with experience in design engineering, Front-End Engineering Design (FEED),
+              construction and project support for the oil and gas, refinery, LNG, petrochemical, power generation,
+              pipeline and offshore industries.
+            </p>
+            <p>
+              Today, manpower supply is OPEC&apos;s core business. From a local base in Southern Thailand and the Gulf
+              of Thailand, the company coordinates offshore equipment, materials, marine logistics, diesel fuel and
+              engineering and construction services.
+            </p>
+            <p>
+              OPEC&apos;s purpose is to reduce operational complexity for clients by coordinating the resources required
+              to mobilize, execute and support offshore work safely and efficiently.
+            </p>
           </div>
         </div>
-
-        {/* Restricted Access Warning */}
-        {!isInternalAuthorized && !isDocLoading && (
-          <Alert variant="destructive" className="bg-destructive/5 border-destructive/20">
-            <ShieldAlert className="h-6 w-6" />
-            <AlertTitle className="font-bold text-lg">Access Pending (รอนุมัติสิทธิ์เข้าใช้งาน)</AlertTitle>
-            <AlertDescription className="space-y-4">
-              <p>บัญชีของคุณยังไม่ได้รับการอนุมัติให้เข้าใช้งานส่วนงานภายใน กรุณาติดต่อผู้ดูแลระบบเพื่อกำหนดบทบาท (Role Assignment)</p>
-              <Button variant="outline" className="gap-2 bg-white" onClick={() => router.push('/setup-admin')}>
-                <Wrench className="h-4 w-4" /> กู้คืนสิทธิ์แอดมิน (Repair Admin)
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
-
-      </div>
-    </AppShell>
-  );
-}
-
-function ShortcutGroup({ title, icon: Icon, color, children }: { title: string; icon: any; color: string; children: React.ReactNode }) {
-  return (
-    <Card className={`border-none shadow-sm overflow-hidden bg-white border-l-4 ${color}`}>
-      <CardHeader className="p-4 pb-2">
-        <CardTitle className="text-xs font-black text-muted-foreground uppercase flex items-center gap-2">
-          <Icon className="h-3 w-3" /> {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-2 pt-0 space-y-1">
-        {children}
-      </CardContent>
-    </Card>
-  );
-}
-
-function ShortcutLink({ href, label, sub }: { href: string; label: string; sub: string }) {
-  return (
-    <Link href={href} className="block group">
-      <div className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 transition-colors">
-        <div className="flex flex-col">
-          <span className="text-sm font-bold text-primary group-hover:text-blue-600 transition-colors">{label}</span>
-          <span className="text-[10px] text-muted-foreground uppercase tracking-tighter">{sub}</span>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <img
+            src="/company/crew.jpg"
+            alt="OPEC crew at a crew-change check-in"
+            className="h-64 w-full rounded-lg object-cover sm:col-span-2 sm:h-72"
+          />
+          <img
+            src="/company/office.jpg"
+            alt="OPEC team in company coveralls"
+            className="h-48 w-full rounded-lg object-cover"
+          />
+          <img
+            src="/company/facility-hero.jpg"
+            alt="Walkway alongside an offshore process platform"
+            className="h-48 w-full rounded-lg object-cover"
+          />
         </div>
-        <ArrowRight className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-all translate-x-[-4px] group-hover:translate-x-0" />
-      </div>
-    </Link>
+      </section>
+
+      <section className="bg-[#0b1c33] py-16 text-white">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#e36f1e]">Local capability. Integrated delivery.</p>
+          <h2 className="mt-2 max-w-2xl text-3xl font-black">Practical support designed around client schedules and site conditions</h2>
+          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {CHAIN.map((item) => (
+              <div key={item.title} className="border border-white/10 bg-white/5 p-5">
+                <p className="text-lg font-black">{item.title}</p>
+                <p className="mt-2 text-sm leading-relaxed text-white/70">{item.text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#e36f1e]">Core services</p>
+            <h2 className="mt-2 text-3xl font-black text-[#0b1c33]">One partner across the offshore support chain</h2>
+          </div>
+          <Link href="/services" className="text-sm font-bold text-[#e36f1e] hover:underline">
+            All services
+          </Link>
+        </div>
+        <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {PILLARS.map((pillar, i) => (
+            <Link
+              key={pillar.key}
+              href={`/services#${pillar.key}`}
+              className="group border border-[#d7e0ea] bg-white p-5 hover:border-[#e36f1e]"
+            >
+              <p className="text-xs font-bold tracking-[0.16em] text-[#e36f1e]">0{i + 1}</p>
+              <h3 className="mt-2 text-lg font-black text-[#0b1c33] group-hover:text-[#e36f1e]">{pillar.title}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-[#5c6b7a]">{pillar.text}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section className="bg-[#071426] px-5 py-14 text-white sm:px-10">
+        <div className="mx-auto max-w-6xl">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#e36f1e]">From shore base to offshore site</p>
+          <h2 className="mt-2 max-w-xl text-3xl font-black">Coordinated resources for continuous operations</h2>
+          <p className="mt-3 max-w-xl text-sm leading-relaxed text-white/75">
+            OPEC supports the movement of people, materials and fuel required to maintain offshore project schedules.
+          </p>
+          <Link href="/products" className="mt-5 inline-block text-sm font-bold text-[#e36f1e] hover:underline">
+            See products and logistics
+          </Link>
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-6xl px-4 py-16 text-center sm:px-6">
+        <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#e36f1e]">Ready to support your next offshore project</p>
+        <h2 className="mt-3 text-3xl font-black text-[#0b1c33]">Qualified people. Practical resources. Responsive local coordination.</h2>
+        <Link href="/contact" className="mt-8 inline-block rounded-md bg-[#0b1c33] px-5 py-3 text-sm font-bold text-white hover:bg-[#e36f1e]">
+          Contact Us
+        </Link>
+      </section>
+    </CompanySiteShell>
   );
 }

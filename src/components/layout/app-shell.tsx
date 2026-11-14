@@ -79,7 +79,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
       await Promise.race([write, new Promise((resolve) => setTimeout(resolve, 1500))]);
     }
 
-    router.push('/');
+    router.push('/ops');
 
     try {
       await signOut(auth);
@@ -199,7 +199,7 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
               <div className="mx-auto flex max-w-lg flex-col items-center gap-4 py-20 text-center">
                 <p className="text-muted-foreground">คุณไม่มีสิทธิ์เข้าถึงหน้านี้</p>
                 <Button asChild variant="default">
-                  <Link href={isClient(user) ? '/client-portal/dashboard' : '/'}>
+                  <Link href={isClient(user) ? '/client-portal/dashboard' : '/ops'}>
                     {isClient(user) ? 'ไปพอร์ทัลลูกค้า' : 'กลับแดชบอร์ด'}
                   </Link>
                 </Button>

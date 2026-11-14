@@ -360,7 +360,7 @@ export function userMayAccessPath(user: User, profile: PermissionProfile | null,
     }
   }
 
-  if (p === '/' || p === '') {
+  if (p === '/ops' || p === '/' || p === '') {
     return canView(user, 'overview_dashboard', profile);
   }
 

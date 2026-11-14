@@ -50,7 +50,7 @@ export default function EnterClientPortalPage() {
     } catch {
       /* ignore */
     }
-    router.push('/');
+    router.push('/ops');
   };
 
   const openPortalAs = (customerId: string) => {
