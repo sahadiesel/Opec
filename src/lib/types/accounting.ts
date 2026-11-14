@@ -573,7 +573,7 @@ export interface CommercialInvoice {
   linkedTaxInvoiceId?: string;
   /**
    * เอกสารสนับสนุนที่ OPEC แนบให้ลูกค้าเปิดดูตอนตรวจใบวางบิล
-   * (รูป/PDF · สูงสุด 5 ไฟล์ · ไม่เกิน 2 MB ต่อไฟล์)
+   * (รูปบีบไม่เกิน 500 KB หรือ PDF ไม่เกิน 2 MB · สูงสุด 5 ไฟล์)
    */
   attachments?: CommercialInvoiceAttachment[];
   /**

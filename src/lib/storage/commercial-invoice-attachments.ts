@@ -2,7 +2,7 @@ import type { FirebaseApp } from 'firebase/app';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { getNamedStorage } from '@/firebase/named-storage';
 import type { CommercialInvoiceAttachment } from '@/lib/types';
-import { compressImageFileToMaxSize } from '@/lib/storage/image-compress';
+import { compressImageFileToMaxSize, MAX_STORED_IMAGE_BYTES } from '@/lib/storage/image-compress';
 
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
@@ -61,11 +61,9 @@ export async function uploadCommercialInvoiceAttachment(
   let safeName: string;
 
   if (IMAGE_TYPES.has(file.type)) {
-    blob = await compressImageFileToMaxSize(file, MAX_COMMERCIAL_INVOICE_ATTACHMENT_BYTES);
-    if (blob.size > MAX_COMMERCIAL_INVOICE_ATTACHMENT_BYTES) {
-      throw new Error(
-        `ไฟล์รูปยังใหญ่เกิน ${MAX_COMMERCIAL_INVOICE_ATTACHMENT_BYTES / (1024 * 1024)} MB หลังบีบอัด — โปรดลดขนาดแล้วลองใหม่`,
-      );
+    blob = await compressImageFileToMaxSize(file, MAX_STORED_IMAGE_BYTES);
+    if (blob.size > MAX_STORED_IMAGE_BYTES) {
+      throw new Error('ไฟล์รูปยังใหญ่เกิน 500 KB หลังบีบอัด — โปรดลดขนาดแล้วลองใหม่');
     }
     contentType = blob.type || 'image/jpeg';
     safeName = safeFileSegment(file.name.replace(/\.[^.]+$/, '') + '.jpg');

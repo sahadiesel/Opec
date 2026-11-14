@@ -3,7 +3,10 @@
  * Target: under maxBytes (default 500 KB) using canvas + JPEG re-encode.
  */
 
-const DEFAULT_MAX_BYTES = 500 * 1024;
+/** รูปที่บันทึกเข้าระบบต้องไม่เกินขนาดนี้ — ไฟล์ใหญ่กว่านี้ถูกบีบก่อนอัปโหลด */
+export const MAX_STORED_IMAGE_BYTES = 500 * 1024;
+
+const DEFAULT_MAX_BYTES = MAX_STORED_IMAGE_BYTES;
 
 function loadImageFromFile(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {

@@ -1,9 +1,9 @@
 import type { FirebaseApp } from 'firebase/app';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getNamedStorage } from '@/firebase/named-storage';
-import { compressImageFileToMaxSize } from '@/lib/storage/image-compress';
+import { compressImageFileToMaxSize, MAX_STORED_IMAGE_BYTES } from '@/lib/storage/image-compress';
 
-const MAX_AFTER_COMPRESS = 800 * 1024;
+const MAX_AFTER_COMPRESS = MAX_STORED_IMAGE_BYTES;
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 const STORAGE_PATH: Record<'logo' | 'stamp', string> = {

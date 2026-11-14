@@ -1,6 +1,7 @@
 import type { FirebaseApp } from 'firebase/app';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getNamedStorage } from '@/firebase/named-storage';
+import { compressImageFileToMaxSize, MAX_STORED_IMAGE_BYTES } from '@/lib/storage/image-compress';
 
 const MAX_PROOF_BYTES = 10 * 1024 * 1024;
 
@@ -65,6 +66,27 @@ export function validateVendorBillPaymentProofPdf(file: File): string | null {
   return validateVendorBillPaymentProof(file);
 }
 
+/** รูปที่ใหญ่กว่า 500 KB ถูกบีบเป็น JPEG ก่อนอัปโหลด — PDF ส่งตามไฟล์เดิม */
+export async function prepareProofUploadBody(file: File): Promise<{
+  body: Blob;
+  contentType: string;
+  ext: string;
+}> {
+  const contentType = resolvedVendorBillProofContentType(file);
+  if (!contentType.startsWith('image/')) {
+    const ext =
+      proofStorageExtensionFromFilename(file.name) ??
+      (contentType === 'application/pdf' ? '.pdf' : '.bin');
+    return { body: file, contentType, ext };
+  }
+  const blob = await compressImageFileToMaxSize(file, MAX_STORED_IMAGE_BYTES);
+  if (blob === file) {
+    const ext = proofStorageExtensionFromFilename(file.name) ?? '.jpg';
+    return { body: file, contentType, ext };
+  }
+  return { body: blob, contentType: blob.type || 'image/jpeg', ext: '.jpg' };
+}
+
 export async function uploadVendorBillPaymentProofPdf(
   firebaseApp: FirebaseApp,
   vendorBillId: string,
@@ -78,14 +100,12 @@ export async function uploadVendorBillPaymentProofPdf(
       ? crypto.randomUUID()
       : `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   const stem = file.name.replace(/\.[^.]+$/, '');
-  const ext =
-    proofStorageExtensionFromFilename(file.name) ??
-    (resolvedVendorBillProofContentType(file) === 'application/pdf' ? '.pdf' : '.jpg');
-  const safeName = safeFileSegment(`${stem}${ext}`);
+  const prepared = await prepareProofUploadBody(file);
+  const safeName = safeFileSegment(`${stem}${prepared.ext}`);
   const path = `vendor_bill_payment_proofs/${uploaderUid}/${vendorBillId}/${Date.now()}_${id.slice(0, 8)}_${safeName}`;
   const storage = getNamedStorage(firebaseApp);
   const r = ref(storage, path);
-  await uploadBytes(r, file, { contentType: resolvedVendorBillProofContentType(file) });
+  await uploadBytes(r, prepared.body, { contentType: prepared.contentType });
   const downloadUrl = await getDownloadURL(r);
   return { downloadUrl, fileName: file.name, storagePath: path };
 }
@@ -104,14 +124,12 @@ export async function uploadVendorBillWhtProofPdf(
       ? crypto.randomUUID()
       : `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   const stem = file.name.replace(/\.[^.]+$/, '');
-  const ext =
-    proofStorageExtensionFromFilename(file.name) ??
-    (resolvedVendorBillProofContentType(file) === 'application/pdf' ? '.pdf' : '.jpg');
-  const safeName = safeFileSegment(`${stem}${ext}`);
+  const prepared = await prepareProofUploadBody(file);
+  const safeName = safeFileSegment(`${stem}${prepared.ext}`);
   const path = `vendor_bill_wht_payment_proofs/${uploaderUid}/${vendorBillId}/${Date.now()}_${id.slice(0, 8)}_${safeName}`;
   const storage = getNamedStorage(firebaseApp);
   const r = ref(storage, path);
-  await uploadBytes(r, file, { contentType: resolvedVendorBillProofContentType(file) });
+  await uploadBytes(r, prepared.body, { contentType: prepared.contentType });
   const downloadUrl = await getDownloadURL(r);
   return { downloadUrl, fileName: file.name, storagePath: path };
 }

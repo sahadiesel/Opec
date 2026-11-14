@@ -2,21 +2,12 @@ import type { FirebaseApp } from 'firebase/app';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getNamedStorage } from '@/firebase/named-storage';
 import {
-  resolvedVendorBillProofContentType,
+  prepareProofUploadBody,
   validateVendorBillPaymentProof,
 } from '@/lib/storage/vendor-bill-payment-proofs';
 
 function safeFileSegment(name: string): string {
   return name.replace(/[^\w.\-()\u0E00-\u0E7F]+/g, '_').slice(0, 80) || 'file';
-}
-
-function proofStorageExtensionFromFilename(name: string): string | null {
-  const m = name.match(/(\.[a-z0-9]+)$/i);
-  if (!m) return null;
-  const e = m[1].toLowerCase();
-  if (e === '.jpeg') return '.jpg';
-  if (['.pdf', '.png', '.jpg', '.webp', '.gif'].includes(e)) return e;
-  return null;
 }
 
 async function uploadRentalProof(
@@ -33,14 +24,12 @@ async function uploadRentalProof(
       ? crypto.randomUUID()
       : `${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
   const stem = file.name.replace(/\.[^.]+$/, '');
-  const ext =
-    proofStorageExtensionFromFilename(file.name) ??
-    (resolvedVendorBillProofContentType(file) === 'application/pdf' ? '.pdf' : '.jpg');
-  const safeName = safeFileSegment(`${stem}${ext}`);
+  const prepared = await prepareProofUploadBody(file);
+  const safeName = safeFileSegment(`${stem}${prepared.ext}`);
   const path = `${folder}/${uploaderUid}/${payableId}/${Date.now()}_${id.slice(0, 8)}_${safeName}`;
   const storage = getNamedStorage(firebaseApp);
   const r = ref(storage, path);
-  await uploadBytes(r, file, { contentType: resolvedVendorBillProofContentType(file) });
+  await uploadBytes(r, prepared.body, { contentType: prepared.contentType });
   const downloadUrl = await getDownloadURL(r);
   return { downloadUrl, fileName: file.name, storagePath: path };
 }

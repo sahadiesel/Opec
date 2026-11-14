@@ -627,7 +627,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       }
       toast({
         title: 'แนบเอกสารแล้ว',
-        description: `ลูกค้าจะเปิดดูไฟล์เหล่านี้ได้ตอนตรวจใบวางบิล (สูงสุด ${MAX_COMMERCIAL_INVOICE_ATTACHMENTS} ไฟล์ · ไม่เกิน ${MAX_COMMERCIAL_INVOICE_ATTACHMENT_BYTES / (1024 * 1024)} MB ต่อไฟล์)`,
+        description: `ลูกค้าจะเปิดดูไฟล์เหล่านี้ได้ตอนตรวจใบวางบิล (สูงสุด ${MAX_COMMERCIAL_INVOICE_ATTACHMENTS} ไฟล์ · รูปบีบไม่เกิน 500 KB · PDF ไม่เกิน ${MAX_COMMERCIAL_INVOICE_ATTACHMENT_BYTES / (1024 * 1024)} MB)`,
       });
     } catch (err) {
       console.error(err);
@@ -2038,7 +2038,7 @@ function CommercialInvoiceAttachmentsPanel({
   onRemove: (att: CommercialInvoiceAttachment) => void;
   layout?: 'vertical' | 'horizontal';
 }) {
-  const maxMb = MAX_COMMERCIAL_INVOICE_ATTACHMENT_BYTES / (1024 * 1024);
+  const maxPdfMb = MAX_COMMERCIAL_INVOICE_ATTACHMENT_BYTES / (1024 * 1024);
   const horizontal = layout === 'horizontal';
   return (
     <Card className="border-2 border-blue-400 bg-blue-50/50 dark:border-blue-600 dark:bg-blue-950/25 shadow-sm w-full">
@@ -2058,7 +2058,7 @@ function CommercialInvoiceAttachmentsPanel({
             </Badge>
           </div>
           <p className="text-xs text-blue-900/70 dark:text-blue-100/70">
-            รูปหรือ PDF · ไม่เกิน {maxMb} MB ต่อไฟล์ · สูงสุด {MAX_COMMERCIAL_INVOICE_ATTACHMENTS} ไฟล์ — ลูกค้าเปิดดูได้ตอนตรวจใบวางบิล
+            รูปบีบไม่เกิน 500 KB หรือ PDF ไม่เกิน {maxPdfMb} MB · สูงสุด {MAX_COMMERCIAL_INVOICE_ATTACHMENTS} ไฟล์ — ลูกค้าเปิดดูได้ตอนตรวจใบวางบิล
           </p>
         </div>
 
