@@ -25,6 +25,7 @@ import {
 } from '@/lib/payroll/work-day-payslip-split';
 import type { SingleTimesheetGrossContext } from '@/lib/payroll/single-timesheet-gross';
 import { isLumpSumPayrollLine, laborContextForWorker } from '@/lib/payroll/lump-sum-worker';
+import { companyLogoUrlForPrint } from '@/lib/storage/print-signature-image';
 
 export const PAYSLIP_DEFAULT_COMPANY_TH = 'โอพีอีซี ออปส์โฟลว์';
 export const PAYSLIP_DEFAULT_COMPANY_EN = 'OPEC OpsFlow';
@@ -1211,7 +1212,7 @@ export function buildPayslipFromWorkerLine(
     return {
       companyNameTh,
       companyNameEn,
-      companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
+      companyLogoUrl: companyLogoUrlForPrint(companyProfile),
       employeeName: line.workerNameSnapshot || line.workerId,
       periodLabel,
       payrollTypeLabel: isLumpSumPayrollLine(line)
@@ -1324,7 +1325,7 @@ export function buildPayslipFromWorkerLine(
   return {
     companyNameTh,
     companyNameEn,
-    companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
+    companyLogoUrl: companyLogoUrlForPrint(companyProfile),
     employeeName: line.workerNameSnapshot || line.workerId,
     periodLabel,
     payrollTypeLabel: isLumpSumPayrollLine(line)
@@ -1471,7 +1472,7 @@ export function buildPayslipFromOfficeLine(
   return {
     companyNameTh,
     companyNameEn,
-    companyLogoUrl: companyProfile?.documentHeaderLogoUrl?.trim() || undefined,
+    companyLogoUrl: companyLogoUrlForPrint(companyProfile),
     employeeName: line.staffName,
     periodLabel: formatOfficePayrollRunPeriodLabelThaiBE(run),
     payrollTypeLabel:

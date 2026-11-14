@@ -76,6 +76,7 @@ function buildMoneyReceiptPrintHtmlSinglePage(params: {
       { line: printT(L, 'docIssuedAsSet') },
     ],
     locale: L,
+    showLogo: true,
   });
   const partyHtml = buildStandardPartyBoxHtml({
     boxLabel: printT(L, 'customerBuyer'),

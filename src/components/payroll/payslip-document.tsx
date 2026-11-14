@@ -6,7 +6,8 @@ const PAYSLIP_STYLES = `
 .payslip-root { font-family: "Sarabun", "Segoe UI", system-ui, sans-serif; color: #111827; font-size: 13px; line-height: 1.45; max-width: min(100%, 52rem); margin: 0 auto; background: #fff; }
 .payslip-root * { box-sizing: border-box; }
 .payslip-head { border-bottom: 3px solid #0f766e; padding-bottom: 14px; margin-bottom: 18px; }
-.payslip-header-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.payslip-header-row { display: flex; align-items: flex-start; justify-content: flex-start; gap: 14px; }
+.payslip-header-row .payslip-header-brand { text-align: left; padding-left: 0; }
 .payslip-header-solo { display: block; }
 .payslip-header-solo .payslip-header-brand { width: 100%; padding-left: 0; }
 .payslip-logo-box { flex: 0 0 auto; width: 1in; height: 1in; border: none; background: transparent; display: flex; align-items: center; justify-content: center; overflow: hidden; }

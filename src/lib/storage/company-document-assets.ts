@@ -1,7 +1,7 @@
 import type { FirebaseApp } from 'firebase/app';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getNamedStorage } from '@/firebase/named-storage';
-import { compressImageFileToMaxSize, MAX_STORED_IMAGE_BYTES } from '@/lib/storage/image-compress';
+import { compressImageKeepingTransparency, MAX_STORED_IMAGE_BYTES } from '@/lib/storage/image-compress';
 
 const MAX_AFTER_COMPRESS = MAX_STORED_IMAGE_BYTES;
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -22,7 +22,8 @@ export function validateDocumentHeaderImageFile(file: File): string | null {
 }
 
 /**
- * อัปโหลดโลโก้/ตรายางหัวเอกสาร — บีบอัดก่อน ใช้ path คงที่ (อัปโหลดซ้ำทับไฟล์เดิม)
+ * อัปโหลดโลโก้/ตรายางหัวเอกสาร — ย่อให้ไม่เกิน 500 KB โดยคงพื้นหลังโปร่งใสของ PNG/WebP
+ * ใช้ path คงที่ (อัปโหลดซ้ำทับไฟล์เดิม)
  */
 export async function uploadDocumentHeaderImage(
   firebaseApp: FirebaseApp,
@@ -31,7 +32,7 @@ export async function uploadDocumentHeaderImage(
 ): Promise<string> {
   const err = validateDocumentHeaderImageFile(file);
   if (err) throw new Error(err);
-  const blob = await compressImageFileToMaxSize(file, MAX_AFTER_COMPRESS);
+  const blob = await compressImageKeepingTransparency(file, MAX_AFTER_COMPRESS);
   const contentType = blob.type && blob.type.startsWith('image/') ? blob.type : 'image/jpeg';
   const path = STORAGE_PATH[kind];
   const storage = getNamedStorage(firebaseApp);

@@ -128,6 +128,13 @@ export interface Purchase {
   approvalDecisionByName?: string;
   approvalComment?: string | null;
   rejectionReason?: string | null;
+  /**
+   * PO อ้าง PR — ผู้ที่กด「ยืนยัน PO」(ยืนยันรายละเอียดก่อนพิมพ์/ส่งคู่ค้า)
+   * ไม่ใช่ผู้อนุมัติ: ผู้อนุมัติคือผู้จัดการที่อนุมัติ PR (`approvalDecisionBy*`)
+   */
+  poConfirmedAt?: number;
+  poConfirmedByUid?: string;
+  poConfirmedByName?: string;
   /** ยืนยันว่าส่ง PO/เอกสารให้คู่ค้าแล้ว (หลัง APPROVED → ISSUED) */
   issuedAt?: number;
   issuedByUid?: string;

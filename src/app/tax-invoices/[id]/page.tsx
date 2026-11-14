@@ -99,7 +99,7 @@ import { DocumentShareButton } from '@/components/documents/document-share-contr
 import { AuthorizedSignatoryActions } from '@/components/documents/authorized-signatory-actions';
 import { PrintMarksChoices, PrintMarksDialog } from '@/components/documents/print-marks-dialog';
 import { usePersistedPrintMarks } from '@/components/documents/use-persisted-print-marks';
-import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
+import { useResolvedUserSignature, useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
 import { authorizedSignatureReady } from '@/lib/types/document-signature';
 import {
   inlineCompanyStampForPrint,
@@ -158,14 +158,6 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const [savingNotes, setSavingNotes] = useState(false);
   const [printPresetOpen, setPrintPresetOpen] = useState(false);
   const [marksDialogOpen, setMarksDialogOpen] = useState(false);
-  const {
-    includePreparerSignature,
-    setIncludePreparerSignature,
-    includeAuthorizedSignature,
-    setIncludeAuthorizedSignature,
-    includeStamp,
-    setIncludeStamp,
-  } = usePersistedPrintMarks('tax_invoices', id);
   const [accountingPrintPreset, setAccountingPrintPreset] = useState<'p1' | 'p2' | 'p3' | 'p4'>('p1');
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelReasonDraft, setCancelReasonDraft] = useState('');
@@ -176,9 +168,21 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const invRef = useMemoFirebase(() => (firestore ? doc(firestore, 'tax_invoices', id) : null), [firestore, id]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: invoice, isLoading: isInvLoading } = useDoc<TaxInvoice>(invRef as any);
+  const {
+    includePreparerSignature,
+    setIncludePreparerSignature,
+    includeAuthorizedSignature,
+    setIncludeAuthorizedSignature,
+    includeStamp,
+    setIncludeStamp,
+  } = usePersistedPrintMarks(
+    'tax_invoices',
+    id,
+    invoice && invoice.id === id ? authorizedSignatureReady(invoice.authorizedSignatory) : undefined,
+  );
   const preparerUid = (invoice?.issuedByUid || invoice?.createdByUid || '').trim();
   const preparerName = (invoice?.issuedByName || invoice?.createdByName || '').trim();
-  const preparerSignatureUrl = useUserSignatureUrl(preparerUid);
+  const preparerSignature = useResolvedUserSignature(preparerUid, preparerName);
 
   const showWhtBlock = useMemo(() => {
     if (!invoice) return false;
@@ -658,7 +662,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     if (!invoice) return;
     const authorizedReady = authorizedSignatureReady(invoice.authorizedSignatory);
     const preparerImage = includePreparerSignature
-      ? await inlineUserSignatureForPrint(preparerUid)
+      ? await inlineUserSignatureForPrint(preparerSignature.uid)
       : undefined;
     const authorizedImage =
       includeAuthorizedSignature && authorizedReady
@@ -1804,9 +1808,10 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
           onPreparerSignature={setIncludePreparerSignature}
           onAuthorizedSignature={setIncludeAuthorizedSignature}
           onStamp={setIncludeStamp}
-          preparerReady={Boolean(preparerSignatureUrl)}
+          preparerReady={Boolean(preparerSignature.url)}
           preparerName={preparerName}
           authorizedReady={authorizedSignatureReady(invoice.authorizedSignatory)}
+          authorizedPending={invoice.authorizedSignatory?.status === 'PENDING'}
           authorizedName={invoice.authorizedSignatory?.signerName}
           stampReady={Boolean((companyProfile?.documentHeaderStampUrl || '').trim())}
           onConfirm={() => {
@@ -1846,9 +1851,10 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               onPreparerSignature={setIncludePreparerSignature}
               onAuthorizedSignature={setIncludeAuthorizedSignature}
               onStamp={setIncludeStamp}
-              preparerReady={Boolean(preparerSignatureUrl)}
+              preparerReady={Boolean(preparerSignature.url)}
               preparerName={preparerName}
               authorizedReady={authorizedSignatureReady(invoice.authorizedSignatory)}
+              authorizedPending={invoice.authorizedSignatory?.status === 'PENDING'}
               authorizedName={invoice.authorizedSignatory?.signerName}
               stampReady={Boolean((companyProfile?.documentHeaderStampUrl || '').trim())}
             />

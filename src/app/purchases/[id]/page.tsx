@@ -80,6 +80,11 @@ import { salesOfficerCanAccessDocument } from '@/lib/documents/own-created-list'
 import { Switch } from '@/components/ui/switch';
 import { computePurchaseTotalsFromLines, sumLineAmounts } from '@/lib/purchase/pr-totals';
 import { PurchaseCancellationPanel } from '@/components/purchases/purchase-cancellation-panel';
+import { PrintMarksDialog, type PrintMarksCopy } from '@/components/documents/print-marks-dialog';
+import { usePersistedPrintMarks } from '@/components/documents/use-persisted-print-marks';
+import { useResolvedUserSignature, useUserSignatureState } from '@/components/documents/use-user-signature-url';
+import { loadDocumentPrintImages } from '@/lib/storage/print-signature-image';
+import { isPurchaseRequestApproved, resolvePurchaseOpsApprover } from '@/lib/purchases/purchase-approver';
 
 function escapeHtml(s: string): string {
   return s
@@ -160,17 +165,54 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
 
   const hasPurchaseRequisition = Boolean(purchase?.purchaseRequestId);
 
-  /** ผู้อนุมัติทางธุรกิจ: ถ้า PO อ้าง PR ใช้ชื่อจาก PR (`decidedByName`) ไม่ใช่ผู้ที่กดยืนยัน PO */
-  const displayOpsApproverName = useMemo(() => {
-    if (
-      purchase?.purchaseRequestId?.trim() &&
-      linkedPr?.status === 'APPROVED' &&
-      linkedPr.decidedByName?.trim()
-    ) {
-      return linkedPr.decidedByName.trim();
-    }
-    return purchase?.approvalDecisionByName?.trim() || '';
-  }, [purchase?.purchaseRequestId, purchase?.approvalDecisionByName, linkedPr?.status, linkedPr?.decidedByName]);
+  /**
+   * ผู้อนุมัติทางธุรกิจ: PO อ้าง PR = ผู้จัดการที่อนุมัติ PR ในหน้าอนุมัติ
+   * ไม่ใช่ผู้ที่กด「ยืนยัน PO」— เจ้าหน้าที่ผู้จัดทำอนุมัติเอกสารเองไม่ได้
+   */
+  const opsApprover = useMemo(
+    () => resolvePurchaseOpsApprover(purchase, linkedPr),
+    [purchase, linkedPr],
+  );
+  const displayOpsApproverName = opsApprover?.name || '';
+  const opsApprovalDecidedAt = opsApprover?.decidedAt;
+
+  /** PO อ้าง PR: ผู้ยืนยันรายละเอียด PO (ไม่ใช่ผู้อนุมัติ) — รายการเก่าเก็บไว้ในช่องผู้อนุมัติของ PO */
+  const poConfirmation = (() => {
+    if (!purchase?.purchaseRequestId?.trim()) return null;
+    const legacy = purchase.poConfirmedAt == null;
+    const at = legacy ? purchase.approvalDecidedAt : purchase.poConfirmedAt;
+    const legacyName = purchase.approvalDecisionByName?.trim() || '';
+    const name = legacy
+      ? legacyName && legacyName !== displayOpsApproverName
+        ? legacyName
+        : ''
+      : purchase.poConfirmedByName?.trim() || '';
+    if (at == null && !name) return null;
+    return { at, name };
+  })();
+
+  /** ลายเซ็นบนใบพิมพ์: ผู้จัดทำ = ผู้สร้าง PO · ผู้อนุมัติ = ผู้จัดการที่อนุมัติ (ไม่ต้องกดขอลายเซ็นซ้ำ) */
+  const preparerSignature = useResolvedUserSignature(purchase?.createdByUid, purchase?.createdByName);
+  const approverSignature = useUserSignatureState(opsApprover?.uid);
+  const approvalSourceLoaded =
+    !!purchase && purchase.id === id && (!purchase.purchaseRequestId?.trim() || !!linkedPr || purchase.poConfirmedAt != null);
+  /** `undefined` = ยังโหลดข้อมูลผู้อนุมัติไม่เสร็จ — ยังไม่ล้างติ๊กที่จำไว้ */
+  const approverSignatureReady: boolean | undefined = !approvalSourceLoaded
+    ? undefined
+    : !opsApprover?.uid
+      ? false
+      : approverSignature.loaded
+        ? Boolean(approverSignature.url)
+        : undefined;
+  const {
+    includePreparerSignature,
+    setIncludePreparerSignature,
+    includeAuthorizedSignature,
+    setIncludeAuthorizedSignature,
+    includeStamp,
+    setIncludeStamp,
+  } = usePersistedPrintMarks('purchases', id, approverSignatureReady);
+  const [marksDialogOpen, setMarksDialogOpen] = useState(false);
 
   const linesQuery = useMemoFirebase(
     () => (firestore && canViewPurchases ? collection(firestore, 'purchases', id, 'lines') : null),
@@ -192,6 +234,8 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
     email?: string;
     addressLine1?: string;
     addressLine2?: string;
+    documentHeaderLogoUrl?: string;
+    documentHeaderStampUrl?: string;
   };
   const companyProfileRef = useMemoFirebase(
     () => (firestore && canViewPurchases ? doc(firestore, 'system', 'company_profile') : null),
@@ -435,22 +479,34 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       toast({ variant: 'destructive', title: 'ไม่พบ PR', description: 'ไม่สามารถอ่านเอกสาร PR ที่อ้างอิงได้' });
       return;
     }
+    /** การอนุมัติทำได้ในหน้าอนุมัติ PR เท่านั้น — ผู้กดยืนยัน PO ไม่ใช่ผู้อนุมัติ */
+    if (!isPurchaseRequestApproved(linkedPr)) {
+      toast({
+        variant: 'destructive',
+        title: 'PR ยังไม่ได้รับอนุมัติ',
+        description: 'ต้องให้ผู้จัดการอนุมัติ PR ในหน้าอนุมัติก่อน จึงจะยืนยัน PO ได้',
+      });
+      return;
+    }
     if (!validateBeforeFinalizePo(true)) return;
+    const now = Date.now();
+    const prApproverName = linkedPr?.decidedByName?.trim() || '';
+    const prApproverUid = linkedPr?.decidedByUid?.trim() || '';
     const confirmerName = currentUser?.displayName || currentUser?.email || '';
-    const confirmerUid = currentUser?.id;
-    const prApproverName = linkedPr?.decidedByName?.trim();
-    const prApproverUid = linkedPr?.decidedByUid;
-    const usePrApprover =
-      linkedPr?.status === 'APPROVED' && !!prApproverName;
+    const confirmerUid = currentUser?.id || '';
     try {
       await updateDocumentNonBlocking(purchaseRef, {
         status: 'APPROVED' as PurchaseStatus,
-        approvalDecidedAt: Date.now(),
+        /** ผู้อนุมัติ = ผู้จัดการที่อนุมัติ PR (เวลาอนุมัติของ PR) — ไม่บันทึกผู้กดยืนยัน PO เป็นผู้อนุมัติ */
+        approvalDecidedAt: linkedPr?.decidedAt ?? now,
         approvalRequestedAt: deleteField(),
-        approvalDecisionByUid: usePrApprover && prApproverUid ? prApproverUid : confirmerUid,
-        approvalDecisionByName: usePrApprover ? prApproverName : confirmerName,
+        approvalDecisionByUid: prApproverUid || deleteField(),
+        approvalDecisionByName: prApproverName || deleteField(),
         approvalComment: 'อนุมัติทางธุรกิจตาม PR ที่อนุมัติแล้ว — ยืนยันรายละเอียด PO',
-        updatedAt: Date.now(),
+        poConfirmedAt: now,
+        ...(confirmerUid ? { poConfirmedByUid: confirmerUid } : {}),
+        ...(confirmerName ? { poConfirmedByName: confirmerName } : {}),
+        updatedAt: now,
       });
       toast({ title: 'ยืนยัน PO แล้ว', description: 'สามารถพิมพ์และยืนยันส่งคู่ค้าได้' });
     } catch (e) {
@@ -521,6 +577,33 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       purchase.issuedAt != null ||
       (hasPurchaseRequisition && purchase.status === 'APPROVED'));
 
+  const stampReady = Boolean((companyProfile?.documentHeaderStampUrl || '').trim());
+
+  /** ใบสั่งซื้อไม่มีปุ่มขอลายเซ็น — ลายเซ็นผู้อนุมัติมาพร้อมการอนุมัติของผู้จัดการ */
+  const printMarksCopy: PrintMarksCopy = {
+    preparerLabel: 'ลายเซ็นผู้จัดทำ',
+    authorizedLabel: 'ลายเซ็นผู้อนุมัติ',
+    authorizedSlot: 'ช่องขวา',
+    authorizedReadyNote: 'ลายเซ็นของผู้จัดการที่อนุมัติ',
+    authorizedBlockedNote: !opsApprover
+      ? 'ยังไม่มีผู้จัดการอนุมัติ — ยังติ๊กไม่ได้'
+      : !opsApprover.uid
+        ? 'ไม่พบบัญชีผู้อนุมัติในระบบ — ยังติ๊กไม่ได้'
+        : approverSignatureReady === undefined
+          ? 'กำลังโหลดลายเซ็น'
+          : 'ผู้อนุมัติยังไม่มีลายเซ็นในโปรไฟล์ — ยังติ๊กไม่ได้',
+    authorizedBlockedTip: !opsApprover
+      ? 'ยังไม่มีผู้จัดการอนุมัติเอกสารนี้ — ลายเซ็นผู้อนุมัติจะมาเองเมื่อผู้จัดการกดอนุมัติในหน้าอนุมัติ ไม่ต้องกดขอลายเซ็น'
+      : !opsApprover.uid
+        ? 'เอกสารนี้บันทึกไว้เฉพาะชื่อผู้อนุมัติ ไม่มีบัญชีผู้ใช้ จึงดึงลายเซ็นมาแสดงไม่ได้'
+        : approverSignatureReady === undefined
+          ? 'กำลังโหลดลายเซ็นผู้อนุมัติ — ลองอีกครั้งในอีกสักครู่'
+          : `${opsApprover.name || 'ผู้อนุมัติ'} ยังไม่ได้อัปโหลดลายเซ็นในโปรไฟล์ — ให้อัปโหลดที่หน้าจัดการผู้ใช้งาน แล้วจึงจะติ๊กได้ (ไม่ต้องกดขอลายเซ็น)`,
+    stampPlacement: 'วางกึ่งกลางระหว่างผู้จัดทำกับผู้อนุมัติ',
+    dialogDescription:
+      'ตัวเลือกถูกจำไว้กับเอกสารนี้ ลายเซ็นผู้อนุมัติมาจากผู้จัดการที่อนุมัติ ไม่ต้องขอลายเซ็นซ้ำ — เลือกแสดงหรือไม่แสดงก็ได้',
+  };
+
   const handlePrint = async () => {
     if (!purchase) return;
     if (!canPrintPurchase) {
@@ -534,6 +617,15 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
       return;
     }
     try {
+      /** ใส่เฉพาะรูปที่ติ๊กไว้และมีไฟล์จริง — ไม่มีลายเซ็นในโปรไฟล์ = พิมพ์ช่องว่างให้เซ็นมือ */
+      const withApprover = includeAuthorizedSignature && approverSignatureReady === true;
+      const images = await loadDocumentPrintImages({
+        includePreparer: includePreparerSignature && Boolean(preparerSignature.url),
+        preparerUid: preparerSignature.uid,
+        includeAuthorized: withApprover,
+        signerUid: opsApprover?.uid,
+        includeStamp: withApprover && includeStamp && stampReady,
+      });
       const body = buildPurchaseOrderPrintHtml({
         company: companyProfile ?? undefined,
         purchase,
@@ -543,6 +635,11 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
         linkedPurchaseRequest: linkedPr ?? undefined,
         printedAtMs: Date.now(),
         locale: printLocale,
+        printMarks: {
+          preparerSignatureImageUrl: images.preparer,
+          authorizedSignatureImageUrl: images.authorized,
+          stampImageUrl: images.stamp,
+        },
       });
       if (
         !(await openStandardPrintWindow({
@@ -756,7 +853,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
             {canPrintPurchase && (
               <>
                 <DocumentPrintLocaleToggle printLocale={printLocale} setPrintLocale={setPrintLocale} showLabel />
-                <Button variant="outline" className="font-bold gap-2" onClick={handlePrint}>
+                <Button variant="outline" className="font-bold gap-2" onClick={() => setMarksDialogOpen(true)}>
                   <Printer className="h-4 w-4" /> พิมพ์เอกสาร
                 </Button>
               </>
@@ -768,6 +865,27 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
             )}
           </div>
         </div>
+
+        <PrintMarksDialog
+          open={marksDialogOpen}
+          onOpenChange={setMarksDialogOpen}
+          includePreparerSignature={includePreparerSignature}
+          includeAuthorizedSignature={includeAuthorizedSignature}
+          includeStamp={includeStamp}
+          onPreparerSignature={setIncludePreparerSignature}
+          onAuthorizedSignature={setIncludeAuthorizedSignature}
+          onStamp={setIncludeStamp}
+          preparerReady={Boolean(preparerSignature.url)}
+          preparerName={purchase.createdByName}
+          authorizedReady={approverSignatureReady === true}
+          authorizedName={displayOpsApproverName}
+          stampReady={stampReady}
+          copy={printMarksCopy}
+          onConfirm={() => {
+            setMarksDialogOpen(false);
+            void handlePrint();
+          }}
+        />
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* โซนซ้าย: รายการ + สรุปยอด + หัก ณ ที่จ่าย (การชำระผ่านใบรับวางบิล — ไม่จัดการใน PO) */}
@@ -1271,14 +1389,25 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                     {(purchase.status === 'APPROVED' ||
                       purchase.status === 'REJECTED' ||
                       purchase.status === 'RETURNED_FOR_REVISION') &&
-                      (displayOpsApproverName || purchase.approvalDecidedAt) && (
+                      (displayOpsApproverName || opsApprovalDecidedAt) && (
                         <p className="text-xs text-muted-foreground">
-                          {displayOpsApproverName ? `โดย ${displayOpsApproverName}` : ''}
-                          {purchase.approvalDecidedAt
-                            ? ` · ${new Date(purchase.approvalDecidedAt).toLocaleString('th-TH')}`
+                          {displayOpsApproverName
+                            ? `${hasPurchaseRequisition ? 'อนุมัติ PR โดย' : 'โดย'} ${displayOpsApproverName}`
+                            : ''}
+                          {opsApprovalDecidedAt
+                            ? ` · ${new Date(opsApprovalDecidedAt).toLocaleString('th-TH')}`
                             : ''}
                         </p>
                       )}
+                    {purchase.status === 'APPROVED' && poConfirmation && (
+                      <p className="text-xs text-muted-foreground">
+                        ยืนยันรายละเอียด PO
+                        {poConfirmation.name ? ` โดย ${poConfirmation.name}` : ''}
+                        {poConfirmation.at
+                          ? ` · ${new Date(poConfirmation.at).toLocaleString('th-TH')}`
+                          : ''}
+                      </p>
+                    )}
                   </>
                 )}
               </CardContent>
@@ -1320,9 +1449,7 @@ export default function PurchaseDetailPage({ params }: { params: Promise<{ id: s
                   <>
                     <p className="text-sm text-white/90">
                       อนุมัติโดย {displayOpsApproverName || '—'}{' '}
-                      {purchase.approvalDecidedAt
-                        ? new Date(purchase.approvalDecidedAt).toLocaleString('th-TH')
-                        : ''}
+                      {opsApprovalDecidedAt ? new Date(opsApprovalDecidedAt).toLocaleString('th-TH') : ''}
                     </p>
                     {canEditPurchases && (
                       <Button

@@ -34,8 +34,19 @@ function writePrefs(kind: string, id: string, prefs: PrintMarkPrefs) {
   window.localStorage.setItem(storageKey(kind, id), JSON.stringify(prefs));
 }
 
-/** จำติ๊กลายเซ็น/ตรายางของเอกสารนี้ไว้ จนกว่าจะติ๊กออก */
-export function usePersistedPrintMarks(kind: string, id: string | null | undefined) {
+/**
+ * จำติ๊กลายเซ็น/ตรายางของเอกสารนี้ไว้ จนกว่าจะติ๊กออก
+ *
+ * `authorizedReady` — เอกสารมีลายเซ็นผู้มีอำนาจลงนามที่แนบหรืออนุมัติแล้วหรือไม่
+ * (`undefined` = เอกสารยังโหลดไม่เสร็จ) ถ้ายังไม่มีลายเซ็น:
+ * ติ๊กลายเซ็นผู้มีอำนาจลงนามและตรายางไม่ได้ และติ๊กที่เคยจำไว้จะถูกเอาออก
+ * ต้องติ๊กใหม่เองหลังลายเซ็นได้รับอนุมัติ
+ */
+export function usePersistedPrintMarks(
+  kind: string,
+  id: string | null | undefined,
+  authorizedReady: boolean | undefined,
+) {
   const [includePreparerSignature, setPreparerState] = useState(false);
   const [includeAuthorizedSignature, setAuthorizedState] = useState(false);
   const [includeStamp, setStampState] = useState(false);
@@ -63,33 +74,43 @@ export function usePersistedPrintMarks(kind: string, id: string | null | undefin
     [kind, id],
   );
 
+  /** ไม่มีลายเซ็นผู้มีอำนาจลงนาม — เอาติ๊กที่จำไว้ออก (ต้องอยู่หลัง effect ที่อ่านค่าที่จำไว้) */
+  useEffect(() => {
+    if (authorizedReady !== false) return;
+    if (!prefsRef.current.authorized && !prefsRef.current.stamp) return;
+    apply({ ...prefsRef.current, authorized: false, stamp: false });
+  }, [authorizedReady, apply]);
+
   const setIncludePreparerSignature = useCallback(
     (value: boolean) => apply({ ...prefsRef.current, preparer: value }),
     [apply],
   );
   const setIncludeAuthorizedSignature = useCallback(
-    (value: boolean) =>
+    (value: boolean) => {
+      const on = value && authorizedReady === true;
       apply({
         ...prefsRef.current,
-        authorized: value,
-        stamp: value ? prefsRef.current.stamp : false,
-      }),
-    [apply],
+        authorized: on,
+        stamp: on ? prefsRef.current.stamp : false,
+      });
+    },
+    [apply, authorizedReady],
   );
   const setIncludeStamp = useCallback(
     (value: boolean) => {
-      if (!prefsRef.current.authorized) return;
+      if (!prefsRef.current.authorized || authorizedReady !== true) return;
       apply({ ...prefsRef.current, stamp: value });
     },
-    [apply],
+    [apply, authorizedReady],
   );
 
+  const authorizedOn = includeAuthorizedSignature && authorizedReady === true;
   return {
     includePreparerSignature,
     setIncludePreparerSignature,
-    includeAuthorizedSignature,
+    includeAuthorizedSignature: authorizedOn,
     setIncludeAuthorizedSignature,
-    includeStamp,
+    includeStamp: authorizedOn && includeStamp,
     setIncludeStamp,
   };
 }

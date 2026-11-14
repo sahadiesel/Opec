@@ -138,6 +138,7 @@ export function buildQuotationPrintHtml(params: {
       ...(paymentTermLine ? [{ line: paymentTermLine }] : []),
     ],
     locale: L,
+    showLogo: true,
   });
   const partyHtml = buildStandardPartyBoxHtml({
     boxLabel: printT(L, 'customerInfo'),

@@ -265,6 +265,10 @@ export default function DocumentProfileAdminPage() {
               <p className="text-sm text-muted-foreground">
                 อัปโหลดแล้วกดบันทึก — กล่องตัวอย่างสะท้อนขนาดมาตรฐานบน print (1&quot; = 1 นิ้ว)
               </p>
+              <p className="text-sm text-muted-foreground">
+                ใช้ไฟล์ PNG พื้นหลังโปร่งใส ระบบคงพื้นโปร่งใสไว้ และย่อไฟล์ที่ใหญ่กว่า 500 KB ให้อัตโนมัติ · ไฟล์ JPEG
+                ไม่มีพื้นโปร่งใส
+              </p>
               <div className="flex flex-col lg:flex-row flex-wrap items-end justify-between gap-6 pt-1">
                 <div className="flex flex-col sm:flex-row flex-wrap gap-6">
                   <input

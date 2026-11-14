@@ -37,9 +37,73 @@ function canvasToJpegBlob(canvas: HTMLCanvasElement, quality: number): Promise<B
   });
 }
 
+function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error('บีบอัดรูปไม่สำเร็จ'));
+    }, 'image/png');
+  });
+}
+
+/** โลโก้ / ตรายางแสดงบนเอกสารไม่เกิน ~2 นิ้ว — 1600 px ยังคมที่ 600 dpi */
+const TRANSPARENT_MAX_DIMENSION = 1600;
+const TRANSPARENT_MIN_DIMENSION = 320;
+
+/**
+ * สำหรับโลโก้ / ตรายาง: ลดขนาดให้ไม่เกิน maxBytes โดย **คงพื้นหลังโปร่งใส**
+ * PNG/WebP ถูกย่อแล้วเก็บเป็น PNG (ไม่แปลงเป็น JPEG เพราะ JPEG ไม่มีช่องโปร่งใส)
+ * JPEG ไม่มีพื้นโปร่งใสอยู่แล้ว จึงใช้การบีบแบบ JPEG ตามปกติ
+ */
+export async function compressImageKeepingTransparency(
+  file: File,
+  maxBytes: number = DEFAULT_MAX_BYTES
+): Promise<Blob> {
+  if (file.size <= maxBytes) {
+    return file;
+  }
+  if (file.type === 'image/jpeg') {
+    return compressImageFileToMaxSize(file, maxBytes);
+  }
+
+  const img = await loadImageFromFile(file);
+  const srcW = img.naturalWidth || img.width;
+  const srcH = img.naturalHeight || img.height;
+  if (!srcW || !srcH) throw new Error('ไม่สามารถโหลดรูปได้');
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('ไม่รองรับการประมวลผลรูปในเบราว์เซอร์นี้');
+
+  const longest = Math.max(srcW, srcH);
+  let scale = Math.min(1, TRANSPARENT_MAX_DIMENSION / longest);
+  for (;;) {
+    const w = Math.max(1, Math.round(srcW * scale));
+    const h = Math.max(1, Math.round(srcH * scale));
+    // ตั้งขนาดใหม่ = ล้างผืนผ้าเป็นโปร่งใสทั้งหมด ห้ามเทสีพื้นก่อนวาด
+    canvas.width = w;
+    canvas.height = h;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, w, h);
+    const blob = await canvasToPngBlob(canvas);
+    if (blob.size <= maxBytes) return blob;
+    if (Math.max(w, h) <= TRANSPARENT_MIN_DIMENSION) break;
+    // ขนาดไฟล์ PNG แปรตามพื้นที่โดยประมาณ — กระโดดไปใกล้เป้าแทนการลดทีละน้อย
+    const estimate = Math.sqrt(maxBytes / blob.size) * 0.97;
+    const nextScale = scale * Math.min(0.9, estimate);
+    scale = Math.max(nextScale, TRANSPARENT_MIN_DIMENSION / longest);
+  }
+
+  throw new Error(
+    `ย่อแล้วยังใหญ่กว่า ${Math.round(maxBytes / 1024)} KB — ลองใช้รูปที่ความละเอียดต่ำลง`
+  );
+}
+
 /**
  * Returns a Blob (JPEG) at or below maxBytes when possible.
  * PNG/WebP are converted to JPEG for predictable size reduction.
+ * ห้ามใช้กับรูปที่ต้องคงพื้นโปร่งใส (โลโก้ / ตรายาง) — ใช้ compressImageKeepingTransparency
  */
 export async function compressImageFileToMaxSize(
   file: File,

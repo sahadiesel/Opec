@@ -1,6 +1,7 @@
 import { FIREBASE_STORAGE_BUCKET } from '@/firebase/config';
 
 export const COMPANY_STAMP_STORAGE_PATH = 'company_profile_branding/document_header_stamp';
+export const COMPANY_LOGO_STORAGE_PATH = 'company_profile_branding/document_header_logo';
 
 /** ดึงรหัสผู้ใช้จากลิงก์ลายเซ็นเก่า ถ้าเอกสารไม่ได้เก็บ signerUid */
 export function userIdFromSignatureUrl(url: string | null | undefined): string {
@@ -23,6 +24,17 @@ export function publicStorageMediaUrl(path: string): string {
   const clean = path.trim().replace(/^\/+/, '');
   const bucket = FIREBASE_STORAGE_BUCKET.replace(/^gs:\/\//, '');
   return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(clean)}?alt=media`;
+}
+
+/**
+ * โลโก้หัวเอกสาร — แสดงเมื่อโปรไฟล์บริษัทมีโลโก้ (ผู้ดูแลกด "เอาออก" แล้วบันทึก = ไม่แสดง)
+ * ใช้ URL ของถังปัจจุบันตาม path คงที่ ไม่ใช้ลิงก์ที่บันทึกไว้ซึ่งอาจยังชี้ถังเก่า
+ */
+export function companyLogoUrlForPrint(
+  profile: { documentHeaderLogoUrl?: string | null } | null | undefined,
+): string | undefined {
+  if (!(profile?.documentHeaderLogoUrl || '').trim()) return undefined;
+  return publicStorageMediaUrl(COMPANY_LOGO_STORAGE_PATH);
 }
 
 /**

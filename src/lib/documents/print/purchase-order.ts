@@ -15,6 +15,8 @@ import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { sumLineAmounts } from '@/lib/purchase/pr-totals';
+import { resolvePurchaseOpsApprover } from '@/lib/purchases/purchase-approver';
+import type { DocumentPrintMarks } from '@/lib/types/document-signature';
 import {
   type CompanyProfilePrint,
   appendPartyBranchParenToName,
@@ -73,6 +75,8 @@ export function buildPurchaseOrderPrintHtml(params: {
   linkedPurchaseRequest?: Pick<PurchaseRequest, 'decidedByName' | 'status'> | null;
   printedAtMs?: number;
   locale?: PrintDocumentLocale;
+  /** ลายเซ็นผู้จัดทำ (ซ้าย) · ลายเซ็นผู้อนุมัติ (ขวา) · ตรายาง (กลาง) — ตามที่ผู้ใช้ติ๊กตอนพิมพ์ */
+  printMarks?: DocumentPrintMarks;
 }): string {
   const { company, purchase, vendor, lines, milestones, printedAtMs, linkedPurchaseRequest } = params;
   const L = params.locale ?? 'th';
@@ -176,6 +180,7 @@ export function buildPurchaseOrderPrintHtml(params: {
       { line: `${printT(L, 'docNo')}: ${purchase.purchaseNo || '—'}` },
     ],
     locale: L,
+    showLogo: true,
   });
 
   const partyHtml = buildStandardPartyBoxHtml({
@@ -219,17 +224,21 @@ export function buildPurchaseOrderPrintHtml(params: {
   ${whtLine}
   ${notesBlock}`;
 
-  const prApproverDisplay =
-    purchase.purchaseRequestId?.trim() &&
-    (linkedPurchaseRequest?.status === 'APPROVED' ||
-      linkedPurchaseRequest?.status === 'PO_ISSUED') &&
-    linkedPurchaseRequest.decidedByName?.trim()
-      ? linkedPurchaseRequest.decidedByName.trim()
-      : purchase.approvalDecisionByName?.trim() || '';
+  const prApproverDisplay = resolvePurchaseOpsApprover(purchase, linkedPurchaseRequest)?.name || '';
 
   const footerHtml = buildStandardSignFooterHtml({
-    left: { roleLine: printT(L, 'signPreparedPurchasing'), name: purchase.createdByName || '—' },
-    right: { roleLine: printT(L, 'signApproverOps'), name: prApproverDisplay || '—' },
+    left: {
+      roleLine: printT(L, 'signPreparedPurchasing'),
+      name: purchase.createdByName || '—',
+      imageUrl: params.printMarks?.preparerSignatureImageUrl,
+    },
+    right: {
+      roleLine: printT(L, 'signApproverOps'),
+      name: prApproverDisplay || '—',
+      imageUrl: params.printMarks?.authorizedSignatureImageUrl,
+    },
+    pairedMarks: true,
+    centerStampUrl: params.printMarks?.stampImageUrl,
     belowHtml: approvalNotice,
   });
 

@@ -35,7 +35,7 @@ import {
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
 import { DocumentShareButton } from '@/components/documents/document-share-controls';
-import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
+import { useResolvedUserSignature } from '@/components/documents/use-user-signature-url';
 import { inlineCompanyStampForPrint, inlineUserSignatureForPrint } from '@/lib/storage/print-signature-image';
 import { detectMoneyReceiptWhtUndercharge } from '@/lib/accounting/money-receipt-wht-amount';
 import { fixMoneyReceiptWhtAmount } from '@/lib/services/money-receipt-wht-fix-service';
@@ -80,7 +80,8 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
     [firestore, id, allowed],
   );
   const { data: receipt, isLoading } = useDoc<MoneyReceipt>(rRef as any);
-  const receiverSignatureUrl = useUserSignatureUrl(receipt?.createdByUid);
+  const receiverSignature = useResolvedUserSignature(receipt?.createdByUid, receipt?.createdByName);
+  const receiverSignatureUrl = receiverSignature.url;
 
   const tRef = useMemoFirebase(
     () => (firestore && receipt ? doc(firestore, 'tax_invoices', receipt.taxInvoiceId) : null),
@@ -130,10 +131,10 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
 
   useEffect(() => {
     let cancelled = false;
-    if (!showSignature || !receipt?.createdByUid) {
+    if (!showSignature || !receiverSignature.uid) {
       setPrintSignatureUrl(undefined);
     } else {
-      void inlineUserSignatureForPrint(receipt.createdByUid).then((url) => {
+      void inlineUserSignatureForPrint(receiverSignature.uid).then((url) => {
         if (!cancelled) setPrintSignatureUrl(url);
       });
     }
@@ -147,7 +148,7 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
     return () => {
       cancelled = true;
     };
-  }, [showSignature, showStamp, receipt?.createdByUid]);
+  }, [showSignature, showStamp, receiverSignature.uid]);
 
   const previewReceipt = useMemo(() => {
     if (!receipt) return null;
@@ -162,7 +163,7 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
     async (sheets: TaxInvoicePrintSheet[]) => {
       if (!previewReceipt || !taxInv || !receipt) return;
       const receiverImage = showSignature
-        ? printSignatureUrl || (await inlineUserSignatureForPrint(receipt.createdByUid))
+        ? printSignatureUrl || (await inlineUserSignatureForPrint(receiverSignature.uid))
         : undefined;
       const stampImage = showStamp ? printStampUrl || (await inlineCompanyStampForPrint()) : undefined;
       if (showSignature && !receiverImage) {
@@ -198,7 +199,7 @@ export default function MoneyReceiptDetailPage({ params }: { params: Promise<{ i
         });
       }
     },
-    [previewReceipt, receipt, taxInv, companyProfile, customer, printLocale, toast, showSignature, showStamp, printSignatureUrl, printStampUrl],
+    [previewReceipt, receipt, taxInv, companyProfile, customer, printLocale, toast, showSignature, showStamp, printSignatureUrl, printStampUrl, receiverSignature.uid],
   );
 
   /** พรีวิวหน้าจอ — รูปแบบเดียวกับตอนพิมพ์ (ต้นฉบับ 1 แผ่น) */

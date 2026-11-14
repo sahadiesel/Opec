@@ -110,7 +110,7 @@ import { DocumentShareButton } from '@/components/documents/document-share-contr
 import { AuthorizedSignatoryActions } from '@/components/documents/authorized-signatory-actions';
 import { PrintMarksDialog } from '@/components/documents/print-marks-dialog';
 import { usePersistedPrintMarks } from '@/components/documents/use-persisted-print-marks';
-import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
+import { useResolvedUserSignature } from '@/components/documents/use-user-signature-url';
 import { authorizedSignatureReady } from '@/lib/types/document-signature';
 import { loadDocumentPrintImages, userIdFromSignatureUrl } from '@/lib/storage/print-signature-image';
 import {
@@ -237,7 +237,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     [firestore, canSee, id]
   );
   const { data: invoice, isLoading } = useDoc<CommercialInvoice>(invRef as any);
-  const preparerSignatureUrl = useUserSignatureUrl(invoice?.createdByUid);
+  const preparerSignature = useResolvedUserSignature(invoice?.createdByUid, invoice?.createdByName);
 
   const bankListQ = useMemoFirebase(() => {
     if (!firestore || !isAccountingActor) return null;
@@ -334,7 +334,11 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     setIncludeAuthorizedSignature,
     includeStamp,
     setIncludeStamp,
-  } = usePersistedPrintMarks('commercial_invoices', id);
+  } = usePersistedPrintMarks(
+    'commercial_invoices',
+    id,
+    invoice && invoice.id === id ? authorizedSignatureReady(invoice.authorizedSignatory) : undefined,
+  );
 
   /** โหมด ENG ขณะแก้ไข — คงข้อความบรรทัดเป็นอังกฤษ (ไม่ต้องสลับไทย) */
   useEffect(() => {
@@ -450,7 +454,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
     const authorizedReady = authorizedSignatureReady(invoice.authorizedSignatory);
     const images = await loadDocumentPrintImages({
       includePreparer: withPreparerSignature,
-      preparerUid: invoice.createdByUid,
+      preparerUid: preparerSignature.uid,
       includeAuthorized: withAuthorizedSignature && authorizedReady,
       signerUid:
         invoice.authorizedSignatory?.signerUid ||
@@ -1015,6 +1019,19 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
       (canAct || canCreateTax),
   );
 
+  /** ปุ่มขออนุมัติลายเซ็นต์ — ISSUED แสดงในกล่องขั้นตอนบัญชี สถานะอื่นแสดงใต้ปุ่มพิมพ์ */
+  const signatoryActions =
+    invoice.status !== 'VOID' && currentUser ? (
+      <AuthorizedSignatoryActions
+        sourceCollection="commercial_invoices"
+        sourceId={invoice.id}
+        documentNo={invoice.invoiceNo}
+        documentLabel="ใบแจ้งหนี้"
+        mark={invoice.authorizedSignatory}
+        currentUser={currentUser}
+      />
+    ) : null;
+
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-6 p-4 md:p-6 max-w-7xl mx-auto">
@@ -1103,16 +1120,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               </p>
             </PopoverContent>
           </Popover>
-          {invoice.status !== 'VOID' && currentUser ? (
-            <AuthorizedSignatoryActions
-              sourceCollection="commercial_invoices"
-              sourceId={invoice.id}
-              documentNo={invoice.invoiceNo}
-              documentLabel="ใบแจ้งหนี้"
-              mark={invoice.authorizedSignatory}
-              currentUser={currentUser}
-            />
-          ) : null}
+          {/* ยืนยันเรียกเก็บแล้ว (ISSUED) — ปุ่มย้ายไปอยู่ในกล่องขั้นตอนบัญชีด้านล่าง */}
+          {invoice.status !== 'ISSUED' ? signatoryActions : null}
           </div>
         </div>
         <PrintMarksDialog
@@ -1124,9 +1133,10 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
           onPreparerSignature={setIncludePreparerSignature}
           onAuthorizedSignature={setIncludeAuthorizedSignature}
           onStamp={setIncludeStamp}
-          preparerReady={Boolean(preparerSignatureUrl)}
+          preparerReady={Boolean(preparerSignature.url)}
           preparerName={invoice.createdByName}
           authorizedReady={authorizedSignatureReady(invoice.authorizedSignatory)}
+          authorizedPending={invoice.authorizedSignatory?.status === 'PENDING'}
           authorizedName={invoice.authorizedSignatory?.signerName}
           stampReady={Boolean((companyProfile?.documentHeaderStampUrl || '').trim())}
           onConfirm={() => {
@@ -1280,7 +1290,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                 สร้าง <strong>ใบวางบิล + ใบกำกับภาษี (ตัวจริง)</strong> จากใบนี้เพื่อส่งลูกค้า — <strong>ใบเสร็จรับเงิน</strong> ออก
                 หลังลูกค้าโอนและบัญชียืนยันรับเงิน (พิมพ์/ e-Tax ตามนโยบายบริษัท)
               </p>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-end gap-2">
               {invoice.linkedTaxInvoiceId ? (
                 <Button variant="default" className="gap-2 w-fit" asChild>
                   <Link href={`/tax-invoices/${invoice.linkedTaxInvoiceId}`}>
@@ -1350,6 +1360,7 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                   แก้ไข
                 </Button>
               ) : null}
+              {signatoryActions ? <div className="ml-auto">{signatoryActions}</div> : null}
               </div>
             </AlertDescription>
           </Alert>

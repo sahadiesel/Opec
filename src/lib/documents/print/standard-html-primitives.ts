@@ -16,6 +16,7 @@ import {
 } from '@/lib/date-thai';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
+import { companyLogoUrlForPrint } from '@/lib/storage/print-signature-image';
 
 export type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 
@@ -30,6 +31,8 @@ export type CompanyProfilePrint = {
   /** จาก Document Header Profile — แสดงท้ายชื่อบริษัทบนเอกสาร */
   branchType?: 'head_office' | 'branch';
   branchNo?: string;
+  /** โลโก้จาก Document Header Profile — เอกสารที่เปิด `showLogo` วางไว้ซ้ายชื่อบริษัท */
+  documentHeaderLogoUrl?: string | null;
 };
 
 /** ฟิลด์สาขาที่ใช้ต่อท้ายชื่อบริษัท/ลูกค้าบนเอกสาร */
@@ -301,6 +304,26 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     white-space: nowrap;
     line-height: 1.2;
   }
+  /** โลโก้ซ้าย + ข้อมูลบริษัทขวา — โลโก้สูงเท่าบล็อกชื่อและที่อยู่โดยประมาณ */
+  .sd-company-col--logo {
+    display: flex;
+    align-items: flex-start;
+    gap: 2mm;
+  }
+  .sd-company-logo {
+    flex: 0 0 auto;
+    width: 19.8mm;
+    height: 19.8mm;
+    object-fit: contain;
+    object-position: left top;
+  }
+  .sd-company-col--logo .sd-company-text { flex: 1 1 auto; min-width: 0; }
+  /** มีโลโก้ — ขยายคอลัมน์บริษัทและลดขนาดชื่อเล็กน้อยให้ชื่อบริษัทอยู่บรรทัดเดียว */
+  .sd-header--logo .sd-company-col { flex: 1 1 0; max-width: none; }
+  /** คอลัมน์หัวเอกสารกว้างเท่าเนื้อหาจริง (เลขที่/วันที่) — พื้นที่ที่เหลือทั้งหมดเป็นของชื่อบริษัท */
+  .sd-header--logo .sd-title-col { flex: 0 0 auto; max-width: 36%; }
+  /** ชื่อยาวเกินพื้นที่จริง ๆ ยอมให้ขึ้นบรรทัดใหม่แทนการล้นไปทับหัวเอกสาร */
+  .sd-company-col--logo .sd-company-name { font-size: 8.8pt; white-space: normal; }
   .sd-company-line { margin: 0; color: #404040; font-size: 8pt; line-height: 1.25; }
   .sd-company-addr { white-space: normal; overflow-wrap: break-word; word-wrap: break-word; }
   .sd-doc-title {
@@ -537,11 +560,11 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     position: absolute;
     left: 50%;
     bottom: -4mm;
-    width: 28mm;
-    height: 28mm;
+    width: 43.2mm;
+    height: 43.2mm;
     transform: translateX(-50%);
     object-fit: contain;
-    z-index: 2;
+    z-index: 4;
     pointer-events: none;
   }
   .sd-sign-block--slot .sd-sign-line {
@@ -550,28 +573,40 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
   .sd-sign-footer--receipt { position: relative; }
   .sd-sign-footer--receipt .sd-signatures { align-items: end; }
   .sd-sign-footer--between { position: relative; }
+  /** ตรายางขนาดเดียวกันทุกเอกสาร — ไฟล์ PNG โปร่งแสง วางทับเส้นและข้อความได้ */
   .sd-sign-between-stamp {
     position: absolute;
     left: calc((100% - 32px) / 3 + 8px);
-    bottom: 8mm;
-    width: 26mm;
-    height: 26mm;
+    bottom: 0;
+    width: 43.2mm;
+    height: 43.2mm;
     object-fit: contain;
     transform: translateX(-50%);
-    opacity: 0.88;
-    z-index: 2;
+    z-index: 4;
+    pointer-events: none;
+  }
+  /** สองฝั่งเป็นลายเซ็นฝ่ายบริษัททั้งคู่ (ใบสั่งซื้อ) */
+  .sd-signatures-wrap { position: relative; }
+  .sd-sign-center-stamp {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    width: 43.2mm;
+    height: 43.2mm;
+    object-fit: contain;
+    transform: translateX(-50%);
+    z-index: 4;
     pointer-events: none;
   }
   .sd-receipt-gap-stamp {
     position: absolute;
     left: 50%;
-    bottom: 3mm;
-    width: 36mm;
-    height: 36mm;
+    bottom: 0;
+    width: 43.2mm;
+    height: 43.2mm;
     object-fit: contain;
     transform: translateX(-50%);
-    opacity: 0.55;
-    z-index: 2;
+    z-index: 4;
     pointer-events: none;
   }
   .sd-signatures--3 .sd-sign-line,
@@ -850,7 +885,7 @@ export function buildStandardCompanyColumnHtml(
     addrBlock = `<p class="sd-company-line sd-company-addr">${escapeHtmlDoc(normalizedAddr)}</p>`;
   }
 
-  return `<div>
+  return `<div class="sd-company-text">
       <p class="sd-company-name">${escapeHtmlDoc(cn)}</p>
       ${addrBlock}
       ${phoneP}
@@ -904,10 +939,15 @@ export function buildStandardDocumentHeaderHtml(params: {
   subtitleUnderTitle?: string;
   metaRows: StandardDocMetaRow[];
   locale?: PrintDocumentLocale;
+  /** วางโลโก้บริษัทซ้ายชื่อบริษัท (ถ้าโปรไฟล์บริษัทมีโลโก้) */
+  showLogo?: boolean;
 }): string {
   const locale = params.locale ?? 'th';
-  return `<header class="sd-header">
-    <div class="sd-company-col">${buildStandardCompanyColumnHtml(params.company, locale)}</div>
+  const logoUrl = params.showLogo ? companyLogoUrlForPrint(params.company) : undefined;
+  const logoHtml = logoUrl ? `<img class="sd-company-logo" src="${escapeHtmlDoc(logoUrl)}" alt="" />` : '';
+  const companyColClass = logoUrl ? 'sd-company-col sd-company-col--logo' : 'sd-company-col';
+  return `<header class="${logoUrl ? 'sd-header sd-header--logo' : 'sd-header'}">
+    <div class="${companyColClass}">${logoHtml}${buildStandardCompanyColumnHtml(params.company, locale)}</div>
     ${buildStandardTitleColumnHtml({
       documentTitleTh: params.documentTitleTh,
       documentTitleEn: params.documentTitleEn,
@@ -1069,12 +1109,26 @@ export function buildStandardSignFooterHtml(params: {
   gapStampUrl?: string;
   /** ตรายางระหว่างผู้จัดเตรียมกับผู้มีอำนาจลงนาม — ไม่ทับรูปลายเซ็น */
   betweenStampUrl?: string;
+  /**
+   * สองฝั่งเป็นลายเซ็นฝ่ายบริษัททั้งคู่ (ใบสั่งซื้อ: ผู้จัดทำ / ผู้อนุมัติ)
+   * — รูปลายเซ็นได้ทั้งซ้ายและขวา ชิดเส้นลงนาม และวาง `centerStampUrl` กึ่งกลางระหว่างสองฝั่งได้
+   */
+  pairedMarks?: boolean;
+  /** ตรายางกึ่งกลางระหว่างสองลายเซ็น — ใช้คู่กับ `pairedMarks` อยู่ในแถวลายเซ็น ไม่ทับข้อความใต้ฟุตเตอร์ */
+  centerStampUrl?: string;
 }): string {
   const below = params.belowHtml ?? '';
   const three = Boolean(params.middle);
+  const paired = !three && params.pairedMarks === true;
   const gridClass = three ? 'sd-signatures sd-signatures--3' : 'sd-signatures';
   const middle = params.middle ? standardSignBlockHtml(params.middle, true) : '';
-  const leftSlot = three || Boolean(params.left.imageUrl?.trim());
+  /** สองฝั่ง: เผื่อช่องรูปเมื่อฝั่งใดฝั่งหนึ่งมีลายเซ็น — ให้เส้นลงนามทั้งสองฝั่งอยู่ระดับเดียวกัน */
+  const leftSlot =
+    three || Boolean(params.left.imageUrl?.trim()) || Boolean(params.right.imageUrl?.trim());
+  const centerStamp =
+    paired && leftSlot && params.centerStampUrl?.trim()
+      ? `<img class="sd-sign-center-stamp" src="${escapeHtmlDoc(params.centerStampUrl.trim())}" alt="" />`
+      : '';
   const gapStamp = params.gapStampUrl?.trim()
     ? `<img class="sd-receipt-gap-stamp" src="${escapeHtmlDoc(params.gapStampUrl.trim())}" alt="" />`
     : '';
@@ -1088,12 +1142,15 @@ export function buildStandardSignFooterHtml(params: {
   ]
     .filter(Boolean)
     .join(' ');
-  return `<footer class="${footerClass}">
-  <div class="${gridClass}">
+  const gridHtml = `<div class="${gridClass}">
     ${standardSignBlockHtml(params.left, leftSlot)}
     ${middle}
     ${standardSignBlockHtml(params.right, leftSlot)}
-  </div>
+  </div>`;
+  return `<footer class="${footerClass}">
+  ${
+    paired ? `<div class="sd-signatures-wrap">${gridHtml}${centerStamp}</div>` : gridHtml
+  }
   ${gapStamp}
   ${betweenStamp}
   ${below}

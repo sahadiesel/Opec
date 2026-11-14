@@ -61,7 +61,7 @@ import { DocumentShareButton } from '@/components/documents/document-share-contr
 import { AuthorizedSignatoryActions } from '@/components/documents/authorized-signatory-actions';
 import { PrintMarksDialog } from '@/components/documents/print-marks-dialog';
 import { usePersistedPrintMarks } from '@/components/documents/use-persisted-print-marks';
-import { useUserSignatureUrl } from '@/components/documents/use-user-signature-url';
+import { useResolvedUserSignature } from '@/components/documents/use-user-signature-url';
 import { loadDocumentPrintImages, userIdFromSignatureUrl } from '@/lib/storage/print-signature-image';
 import { authorizedSignatureReady } from '@/lib/types/document-signature';
 import { QuotationPreviewTab } from './_components/quotation-preview-tab';
@@ -104,7 +104,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     [firestore, canViewQuotations, id]
   );
   const { data: quotation, isLoading: isQuoLoading, error: quotationLoadError } = useDoc<Quotation>(quotationRef as any);
-  const preparerSignatureUrl = useUserSignatureUrl(quotation?.createdByUid);
+  const preparerSignature = useResolvedUserSignature(quotation?.createdByUid, quotation?.createdBy);
 
   const linesQuery = useMemoFirebase(
     () => (firestore && canViewQuotations ? collection(firestore, 'quotations', id, 'lines') : null),
@@ -135,7 +135,11 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     setIncludeAuthorizedSignature,
     includeStamp,
     setIncludeStamp,
-  } = usePersistedPrintMarks('quotations', id);
+  } = usePersistedPrintMarks(
+    'quotations',
+    id,
+    quotation && quotation.id === id ? authorizedSignatureReady(quotation.authorizedSignatory) : undefined,
+  );
   const [previewPrintMarks, setPreviewPrintMarks] = useState<{
     preparer?: string;
     authorized?: string;
@@ -147,7 +151,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     const authorizedReady = authorizedSignatureReady(quotation?.authorizedSignatory);
     void loadDocumentPrintImages({
       includePreparer: includePreparerSignature,
-      preparerUid: quotation?.createdByUid,
+      preparerUid: preparerSignature.uid,
       includeAuthorized: includeAuthorizedSignature && authorizedReady,
       signerUid:
         quotation?.authorizedSignatory?.signerUid ||
@@ -163,7 +167,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     includePreparerSignature,
     includeAuthorizedSignature,
     includeStamp,
-    quotation?.createdByUid,
+    preparerSignature.uid,
     quotation?.authorizedSignatory?.signerUid,
     quotation?.authorizedSignatory?.signatureImageUrl,
     quotation?.authorizedSignatory?.status,
@@ -234,7 +238,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   /** ใช้เฉพาะ Firebase Auth — อย่า redirect เมื่อแค่โปรไฟล์ Firestore ยังโหลดไม่เสร็จ (มิฉะนั้นจะเด้งไป `/` ทั้งที่ล็อกอินอยู่) */
   useEffect(() => {
     if (!isUserLoading && !firebaseUser) {
-      router.replace('/');
+      router.replace('/ops');
     }
   }, [isUserLoading, firebaseUser, router]);
 
@@ -284,7 +288,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     const authorizedReady = authorizedSignatureReady(quotation.authorizedSignatory);
     const images = await loadDocumentPrintImages({
       includePreparer: withPreparerSignature,
-      preparerUid: quotation.createdByUid,
+      preparerUid: preparerSignature.uid,
       includeAuthorized: withAuthorizedSignature && authorizedReady,
       signerUid:
         quotation.authorizedSignatory?.signerUid ||
@@ -751,7 +755,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
         <p className="max-w-md text-center text-muted-foreground">
           โหลดข้อมูลผู้ใช้จากระบบไม่สำเร็จ — ลองรีเฟรชหรือล็อกอินใหม่
         </p>
-        <Button type="button" variant="outline" onClick={() => router.push('/')}>
+        <Button type="button" variant="outline" onClick={() => router.push('/ops')}>
           กลับหน้าหลัก
         </Button>
       </div>
@@ -878,9 +882,10 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
           onPreparerSignature={setIncludePreparerSignature}
           onAuthorizedSignature={setIncludeAuthorizedSignature}
           onStamp={setIncludeStamp}
-          preparerReady={Boolean(preparerSignatureUrl)}
+          preparerReady={Boolean(preparerSignature.url)}
           preparerName={quotation.createdBy}
           authorizedReady={authorizedSignatureReady(quotation.authorizedSignatory)}
+          authorizedPending={quotation.authorizedSignatory?.status === 'PENDING'}
           authorizedName={quotation.authorizedSignatory?.signerName}
           stampReady={Boolean((companyProfile?.documentHeaderStampUrl || '').trim())}
           onConfirm={() => {

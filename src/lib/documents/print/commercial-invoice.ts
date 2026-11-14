@@ -354,6 +354,7 @@ export function buildCommercialInvoicePrintHtml(params: {
       { line: `${printT(L, 'docNo')}: ${invoice.invoiceNo}` },
     ],
     locale: L,
+    showLogo: true,
   });
   const emptyLines = printT(L, 'noLines');
   const colCount = 3 + (isDelivery ? 1 : 0) + (showPrices ? 2 : 0);
