@@ -2,11 +2,12 @@
 
 import type { Firestore } from 'firebase/firestore';
 import { collection, doc, getDoc, getDocs, limit, query, where } from 'firebase/firestore';
-import type { OfficeStaff, Worker } from '@/lib/types';
+import type { ExecutivePayrollStaff, OfficeStaff, Worker } from '@/lib/types';
 
 export type LinkedPersonnel =
   | { kind: 'office_staff'; record: OfficeStaff }
-  | { kind: 'worker'; record: Worker };
+  | { kind: 'worker'; record: Worker }
+  | { kind: 'executive_staff'; record: ExecutivePayrollStaff };
 
 /** ค้นหาทะเบียนที่ผูกกับบัญชีล็อกอิน (linkedUserId) */
 export async function fetchLinkedPersonnelForUser(
@@ -24,6 +25,12 @@ export async function fetchLinkedPersonnelForUser(
   if (!workerSnap.empty) {
     const d = workerSnap.docs[0];
     return { kind: 'worker', record: { id: d.id, ...(d.data() as object) } as Worker };
+  }
+  const execQ = query(collection(db, 'executive_payroll_staff'), where('linkedUserId', '==', uid), limit(1));
+  const execSnap = await getDocs(execQ);
+  if (!execSnap.empty) {
+    const d = execSnap.docs[0];
+    return { kind: 'executive_staff', record: { id: d.id, ...(d.data() as object) } as ExecutivePayrollStaff };
   }
   return null;
 }

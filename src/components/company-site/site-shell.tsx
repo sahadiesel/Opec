@@ -5,6 +5,8 @@ import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { COMPANY } from './content';
+import { companyNavBarStyle } from './nav-bar-style';
+import { CompanyLogoMark } from '@/components/brand/company-logo-mark';
 
 const LINKS = [
   { href: '/', label: 'Home' },
@@ -27,17 +29,12 @@ export function CompanySiteNav() {
 
   return (
     <header
-      className="sticky top-0 z-50 bg-[#f4f7f8] shadow-[0_6px_14px_rgba(15,23,42,0.08)]"
-      style={{
-        backgroundImage: 'url(/company/nav-pattern-bar.png)',
-        backgroundRepeat: 'no-repeat',
-        backgroundPosition: 'center',
-        backgroundSize: '100% 100%',
-      }}
+      className="sticky top-0 z-50 overflow-hidden shadow-[0_4px_15px_rgba(11,25,44,0.08)]"
+      style={companyNavBarStyle()}
     >
-      <div className="flex h-[108px] w-full items-center gap-4 overflow-x-auto px-3 sm:px-6">
+      <div className="flex h-[100px] w-full items-center justify-between gap-4 overflow-x-auto px-8">
         <Link href="/" className="flex shrink-0 items-center gap-3" aria-label="OPEC home">
-          <img src="/company/nav-compass.png" alt="" className="h-[76px] w-auto" />
+          <CompanyLogoMark fallbackSrc="/company/nav-compass.png" alt="" className="h-[76px] w-auto" />
           <span className="h-12 w-[3px] shrink-0 rounded-full bg-gradient-to-b from-[#10233f] to-[#e36f1e]" />
           <span className="flex flex-col justify-center leading-none">
             <span className="text-[40px] font-black tracking-tight text-[#10233f]">
@@ -103,7 +100,6 @@ export function CompanySiteShell({ children }: { children: React.ReactNode }) {
       <footer className="bg-[#071426] text-white">
         <div className="mx-auto grid max-w-6xl gap-8 px-4 py-12 sm:px-6 md:grid-cols-3">
           <div>
-            <img src="/company/logo.png" alt="" className="mb-4 h-16 w-16 object-contain" />
             <p className="text-sm font-semibold">{COMPANY.legalName}</p>
             <p className="mt-2 text-sm leading-relaxed text-white/70">{COMPANY.tagline}</p>
           </div>

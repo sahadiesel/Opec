@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { AppShell } from '@/components/layout/app-shell';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -18,7 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Loader2, UserCircle, KeyRound, Clock } from 'lucide-react';
+import { Loader2, UserCircle, KeyRound, Clock, ImagePlus, Save, Trash2, ZoomIn, ZoomOut, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { SubjectAttendanceHistory } from '@/components/attendance/subject-attendance-history';
 import { SelfLeavePanel } from '@/components/leaves/self-leave-panel';
 import { OfficeStaffPayslipHistory } from '@/components/payroll/office-staff-payslip-history';
@@ -27,7 +27,7 @@ import {
   SelfProfileOfficeWhtPrintButton,
   SelfProfileWorkerWhtPrintButton,
 } from '@/components/payroll/self-profile-wht-print-button';
-import { useFirestore, useCollection, useMemoFirebase, useAuth } from '@/firebase';
+import { useFirestore, useCollection, useMemoFirebase, useAuth, useFirebaseApp } from '@/firebase';
 import { EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
 import {
   addDoc,
@@ -35,6 +35,7 @@ import {
   doc,
   getDoc,
   query,
+  deleteField,
   updateDoc,
   where,
 } from 'firebase/firestore';
@@ -66,6 +67,9 @@ import {
 } from '@/lib/payroll/fetch-self-payroll-lines';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
+import { compressProfilePhotoCanvas } from '@/lib/profile/compress-profile-photo';
+import { uploadUserProfilePhoto } from '@/lib/storage/user-profile-photo';
+import { resolveUserSignatureDisplayUrl, uploadUserSignatureImage } from '@/lib/storage/user-signature';
 
 function workerBatchLineLumpWhtBaht(line: PayrollBatchLine): number {
   const br = line.deductionsBreakdown || {};
@@ -122,6 +126,451 @@ function employmentTypeLabel(t?: OfficeStaff['employmentType']) {
   return '—';
 }
 
+const PHOTO_FRAME = 160;
+const SIGN_W = 245;
+const SIGN_H = Math.round(SIGN_W * (15 / 35));
+
+export function ProfilePhotoEditor({
+  photoUrl,
+  letter,
+  busy,
+  onSave,
+  onDelete,
+  retainDraft = false,
+}: {
+  photoUrl?: string;
+  letter: string;
+  busy: boolean;
+  onSave: (blob: Blob) => Promise<void>;
+  onDelete: () => void;
+  /** Keep the arranged picture on screen. The parent dialog saves it later. */
+  retainDraft?: boolean;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const [draftUrl, setDraftUrl] = useState<string | null>(null);
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [ox, setOx] = useState(0);
+  const [oy, setOy] = useState(0);
+
+  useEffect(() => {
+    return () => {
+      if (draftUrl) URL.revokeObjectURL(draftUrl);
+    };
+  }, [draftUrl]);
+
+  const place = () => {
+    if (!natural) return null;
+    const cover = Math.max(PHOTO_FRAME / natural.w, PHOTO_FRAME / natural.h);
+    const w = natural.w * cover * zoom;
+    const h = natural.h * cover * zoom;
+    const maxX = Math.max(0, (w - PHOTO_FRAME) / 2);
+    const maxY = Math.max(0, (h - PHOTO_FRAME) / 2);
+    const cx = Math.min(maxX, Math.max(-maxX, ox));
+    const cy = Math.min(maxY, Math.max(-maxY, oy));
+    return { w, h, left: (PHOTO_FRAME - w) / 2 + cx, top: (PHOTO_FRAME - h) / 2 + cy };
+  };
+
+  const laid = draftUrl ? place() : null;
+
+  const nudge = (dx: number, dy: number) => {
+    setOx((v) => v + dx);
+    setOy((v) => v + dy);
+  };
+
+  const cropBlob = async () => {
+    const box = place();
+    if (!draftUrl || !box) throw new Error('ยังไม่ได้เลือกรูป');
+    const img = new Image();
+    img.src = draftUrl;
+    await img.decode();
+    const out = 512;
+    const scale = out / PHOTO_FRAME;
+    const canvas = document.createElement('canvas');
+    canvas.width = out;
+    canvas.height = out;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('ไม่สามารถตัดรูปได้');
+    ctx.drawImage(img, box.left * scale, box.top * scale, box.w * scale, box.h * scale);
+    return compressProfilePhotoCanvas(canvas);
+  };
+
+  return (
+    <div className="flex w-fit flex-col items-center gap-2">
+      <div
+        className="relative overflow-hidden rounded-md border border-[#cbd5e1] bg-[#10233f] shadow-sm"
+        style={{ width: PHOTO_FRAME, height: PHOTO_FRAME, touchAction: 'none' }}
+        onPointerDown={(e) => {
+          if (!draftUrl) return;
+          (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+          dragRef.current = { x: e.clientX, y: e.clientY, ox, oy };
+        }}
+        onPointerMove={(e) => {
+          const drag = dragRef.current;
+          if (!drag) return;
+          setOx(drag.ox + (e.clientX - drag.x));
+          setOy(drag.oy + (e.clientY - drag.y));
+        }}
+        onPointerUp={() => {
+          dragRef.current = null;
+        }}
+      >
+        {draftUrl ? (
+          <>
+            <img
+              src={draftUrl}
+              alt=""
+              draggable={false}
+              className="absolute max-w-none select-none"
+              style={
+                laid
+                  ? { width: laid.w, height: laid.h, left: laid.left, top: laid.top }
+                  : { width: '100%', height: '100%', objectFit: 'cover' }
+              }
+              onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+            />
+            <div className="pointer-events-none absolute inset-0">
+              <div className="absolute inset-y-0 left-1/3 w-px bg-white/70" />
+              <div className="absolute inset-y-0 left-2/3 w-px bg-white/70" />
+              <div className="absolute inset-x-0 top-1/3 h-px bg-white/70" />
+              <div className="absolute inset-x-0 top-2/3 h-px bg-white/70" />
+            </div>
+          </>
+        ) : photoUrl ? (
+          <img src={photoUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center text-4xl font-black text-white">{letter}</span>
+        )}
+        {busy ? (
+          <span className="absolute inset-0 flex items-center justify-center bg-black/40">
+            <Loader2 className="h-6 w-6 animate-spin text-white" />
+          </span>
+        ) : null}
+      </div>
+      {draftUrl ? (
+        <div className="flex items-center gap-1">
+          <Button type="button" size="icon" variant="outline" className="h-7 w-7" title="เล็กลง" onClick={() => setZoom((z) => Math.max(1, Math.round((z - 0.1) * 10) / 10))}>
+            <ZoomOut className="h-3.5 w-3.5" />
+          </Button>
+          <Button type="button" size="icon" variant="outline" className="h-7 w-7" title="ใหญ่ขึ้น" onClick={() => setZoom((z) => Math.min(4, Math.round((z + 0.1) * 10) / 10))}>
+            <ZoomIn className="h-3.5 w-3.5" />
+          </Button>
+          <Button type="button" size="icon" variant="outline" className="h-7 w-7" title="ซ้าย" onClick={() => nudge(-12, 0)}>
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </Button>
+          <Button type="button" size="icon" variant="outline" className="h-7 w-7" title="ขวา" onClick={() => nudge(12, 0)}>
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+          <Button type="button" size="icon" variant="outline" className="h-7 w-7" title="ขึ้น" onClick={() => nudge(0, -12)}>
+            <ChevronUp className="h-3.5 w-3.5" />
+          </Button>
+          <Button type="button" size="icon" variant="outline" className="h-7 w-7" title="ลง" onClick={() => nudge(0, 12)}>
+            <ChevronDown className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      ) : null}
+      <div className="flex items-center gap-1">
+        <Button type="button" size="icon" variant="outline" className="h-8 w-8" title="อัปโหลดรูป" disabled={busy} onClick={() => fileRef.current?.click()}>
+          <ImagePlus className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          className="h-8 w-8"
+          title="บันทึก"
+          disabled={busy || !draftUrl}
+          onClick={() => {
+            void (async () => {
+              try {
+                const blob = await cropBlob();
+                await onSave(blob);
+                if (!retainDraft) {
+                  setDraftUrl((prev) => {
+                    if (prev) URL.revokeObjectURL(prev);
+                    return null;
+                  });
+                  setNatural(null);
+                  setZoom(1);
+                  setOx(0);
+                  setOy(0);
+                }
+              } catch (e: unknown) {
+                console.error(e);
+              }
+            })();
+          }}
+        >
+          <Save className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="outline"
+          className="h-8 w-8 text-destructive hover:text-destructive"
+          title="ลบรูป"
+          disabled={busy || (!photoUrl && !draftUrl)}
+          onClick={() => {
+            setDraftUrl((prev) => {
+              if (prev) URL.revokeObjectURL(prev);
+              return null;
+            });
+            setNatural(null);
+            setZoom(1);
+            setOx(0);
+            setOy(0);
+            if (photoUrl || retainDraft) onDelete();
+          }}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        className="sr-only"
+        disabled={busy}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (!file || !file.type.startsWith('image/')) return;
+          setZoom(1);
+          setOx(0);
+          setOy(0);
+          setDraftUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return URL.createObjectURL(file);
+          });
+        }}
+      />
+    </div>
+  );
+}
+
+function ProfileSignatureEditor({
+  userId,
+  storedUrl,
+  busy,
+  onSave,
+  onDelete,
+}: {
+  userId: string;
+  storedUrl?: string;
+  busy: boolean;
+  onSave: (blob: Blob) => Promise<void>;
+  onDelete: () => void;
+}) {
+  const firebaseApp = useFirebaseApp();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const [displayUrl, setDisplayUrl] = useState<string | null>(null);
+  const [draftUrl, setDraftUrl] = useState<string | null>(null);
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [ox, setOx] = useState(0);
+  const [oy, setOy] = useState(0);
+
+  useEffect(() => {
+    return () => {
+      if (draftUrl) URL.revokeObjectURL(draftUrl);
+    };
+  }, [draftUrl]);
+
+  useEffect(() => {
+    if (!storedUrl) {
+      setDisplayUrl(null);
+      return;
+    }
+    let cancel = false;
+    void resolveUserSignatureDisplayUrl(firebaseApp, userId, storedUrl).then((url) => {
+      if (!cancel) setDisplayUrl(url || null);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [firebaseApp, userId, storedUrl]);
+
+  const place = () => {
+    if (!natural) return null;
+    const fit = SIGN_W / natural.w;
+    const w = natural.w * fit * zoom;
+    const h = natural.h * fit * zoom;
+    return { w, h, left: ox, top: (SIGN_H - natural.h * fit) / 2 + oy };
+  };
+
+  const laid = draftUrl ? place() : null;
+
+  const nudge = (dx: number, dy: number) => {
+    setOx((v) => v + dx);
+    setOy((v) => v + dy);
+  };
+
+  const cropBlob = async () => {
+    const box = place();
+    if (!draftUrl || !box) throw new Error('ยังไม่ได้เลือกลายเซ็น');
+    const img = new Image();
+    img.src = draftUrl;
+    await img.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = 700;
+    canvas.height = 300;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('ไม่สามารถจัดลายเซ็นได้');
+    const scale = 700 / SIGN_W;
+    ctx.clearRect(0, 0, 700, 300);
+    ctx.drawImage(img, box.left * scale, box.top * scale, box.w * scale, box.h * scale);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('ไม่สามารถบันทึกลายเซ็นได้');
+    return blob;
+  };
+
+  return (
+    <div className="flex w-fit flex-col items-center gap-2">
+      <p className="text-xs font-medium text-muted-foreground">ลายเซ็น</p>
+      <div
+        className="relative overflow-hidden rounded-md border-2 border-dashed border-primary/40 bg-white"
+        style={{ width: SIGN_W, height: SIGN_H, touchAction: 'none' }}
+        onPointerDown={(e) => {
+          if (!draftUrl) return;
+          (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+          dragRef.current = { x: e.clientX, y: e.clientY, ox, oy };
+        }}
+        onPointerMove={(e) => {
+          const drag = dragRef.current;
+          if (!drag) return;
+          setOx(drag.ox + (e.clientX - drag.x));
+          setOy(drag.oy + (e.clientY - drag.y));
+        }}
+        onPointerUp={() => {
+          dragRef.current = null;
+        }}
+      >
+        {draftUrl ? (
+          <img
+            src={draftUrl}
+            alt=""
+            draggable={false}
+            className="absolute max-w-none select-none"
+            style={
+              laid
+                ? { width: laid.w, height: laid.h, left: laid.left, top: laid.top }
+                : undefined
+            }
+            onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+          />
+        ) : displayUrl ? (
+          <img src={displayUrl} alt="ลายเซ็น" className="h-full w-full object-contain" />
+        ) : (
+          <span className="flex h-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
+            {storedUrl ? 'กำลังโหลดลายเซ็น…' : 'ยังไม่มีลายเซ็น'}
+          </span>
+        )}
+        {busy ? (
+          <span className="absolute inset-0 flex items-center justify-center bg-white/70">
+            <Loader2 className="h-5 w-5 animate-spin" />
+          </span>
+        ) : null}
+      </div>
+      {draftUrl ? (
+        <div className="flex items-center gap-1">
+          <Button type="button" size="icon" variant="outline" className="h-7 w-7" title="เล็กลง" onClick={() => setZoom((z) => Math.max(0.4, Math.round((z - 0.1) * 10) / 10))}>
+            <ZoomOut className="h-3.5 w-3.5" />
+          </Button>
+          <Button type="button" size="icon" variant="outline" className="h-7 w-7" title="ใหญ่ขึ้น" onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.1) * 10) / 10))}>
+            <ZoomIn className="h-3.5 w-3.5" />
+          </Button>
+          <Button type="button" size="icon" variant="outline" className="h-7 w-7" title="ซ้าย" onClick={() => nudge(-12, 0)}>
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </Button>
+          <Button type="button" size="icon" variant="outline" className="h-7 w-7" title="ขวา" onClick={() => nudge(12, 0)}>
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+          <Button type="button" size="icon" variant="outline" className="h-7 w-7" title="ขึ้น" onClick={() => nudge(0, -8)}>
+            <ChevronUp className="h-3.5 w-3.5" />
+          </Button>
+          <Button type="button" size="icon" variant="outline" className="h-7 w-7" title="ลง" onClick={() => nudge(0, 8)}>
+            <ChevronDown className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      ) : null}
+      <div className="flex items-center gap-1">
+        <Button type="button" size="icon" variant="outline" className="h-8 w-8" title="เลือกไฟล์ลายเซ็น" disabled={busy} onClick={() => fileRef.current?.click()}>
+          <ImagePlus className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          className="h-8 w-8"
+          title="บันทึกลายเซ็น"
+          disabled={busy || !draftUrl}
+          onClick={() => {
+            void (async () => {
+              try {
+                const blob = await cropBlob();
+                await onSave(blob);
+                setDraftUrl((prev) => {
+                  if (prev) URL.revokeObjectURL(prev);
+                  return null;
+                });
+                setNatural(null);
+                setZoom(1);
+                setOx(0);
+                setOy(0);
+              } catch (e: unknown) {
+                console.error(e);
+              }
+            })();
+          }}
+        >
+          <Save className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="outline"
+          className="h-8 w-8 text-destructive hover:text-destructive"
+          title="ลบลายเซ็น"
+          disabled={busy || (!storedUrl && !draftUrl)}
+          onClick={() => {
+            setDraftUrl((prev) => {
+              if (prev) URL.revokeObjectURL(prev);
+              return null;
+            });
+            setNatural(null);
+            setZoom(1);
+            setOx(0);
+            setOy(0);
+            if (storedUrl) onDelete();
+          }}
+        >
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="sr-only"
+        disabled={busy}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (!file || !file.type.startsWith('image/')) return;
+          setZoom(1);
+          setOx(0);
+          setOy(0);
+          setNatural(null);
+          setDraftUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return URL.createObjectURL(file);
+          });
+        }}
+      />
+    </div>
+  );
+}
+
 function ssStatusLabel(s?: OfficeStaff['socialSecurityStatus']) {
   if (s === 'ENROLLED') return 'รับประกันสังคม';
   if (s === 'EXEMPT') return 'ไม่รับประกันสังคม / ยกเว้น';
@@ -131,6 +580,7 @@ function ssStatusLabel(s?: OfficeStaff['socialSecurityStatus']) {
 export default function MyProfilePage() {
   const router = useRouter();
   const firestore = useFirestore();
+  const firebaseApp = useFirebaseApp();
   const auth = useAuth();
   const { toast } = useToast();
   const { currentUser, isLoading: userLoading } = useAppUser();
@@ -234,6 +684,92 @@ export default function MyProfilePage() {
   const [passwordBusy, setPasswordBusy] = useState(false);
 
   const [officePersonalBusy, setOfficePersonalBusy] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [signatureBusy, setSignatureBusy] = useState(false);
+
+  const saveProfilePhoto = async (blob: Blob) => {
+    if (!firestore || !currentUser) return;
+    setPhotoBusy(true);
+    try {
+      const url = await uploadUserProfilePhoto(firebaseApp, currentUser.id, blob);
+      await updateDoc(doc(firestore, 'users', currentUser.id), {
+        profilePhotoUrl: url,
+        updatedAt: Date.now(),
+      });
+      toast({ title: 'บันทึกรูปโปรไฟล์แล้ว', description: `ขนาดไฟล์ ${(blob.size / 1024).toFixed(0)} KB` });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'อัปโหลดรูปไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+      throw e;
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const saveSignature = async (blob: Blob) => {
+    if (!firestore || !currentUser) return;
+    setSignatureBusy(true);
+    try {
+      const url = await uploadUserSignatureImage(firebaseApp, currentUser.id, blob);
+      await updateDoc(doc(firestore, 'users', currentUser.id), {
+        signatureImageUrl: url,
+        updatedAt: Date.now(),
+      });
+      toast({ title: 'บันทึกลายเซ็นแล้ว' });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'บันทึกลายเซ็นไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+      throw e;
+    } finally {
+      setSignatureBusy(false);
+    }
+  };
+
+  const deleteSignature = async () => {
+    if (!firestore || !currentUser) return;
+    setSignatureBusy(true);
+    try {
+      await updateDoc(doc(firestore, 'users', currentUser.id), {
+        signatureImageUrl: deleteField(),
+        updatedAt: Date.now(),
+      });
+      toast({ title: 'ลบลายเซ็นแล้ว' });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ลบลายเซ็นไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setSignatureBusy(false);
+    }
+  };
+
+  const deleteProfilePhoto = async () => {
+    if (!firestore || !currentUser) return;
+    setPhotoBusy(true);
+    try {
+      await updateDoc(doc(firestore, 'users', currentUser.id), {
+        profilePhotoUrl: deleteField(),
+        updatedAt: Date.now(),
+      });
+      toast({ title: 'ลบรูปโปรไฟล์แล้ว' });
+    } catch (e: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'ลบรูปไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
   const [officeForm, setOfficeForm] = useState({
     fullName: '',
     nickname: '',
@@ -366,6 +902,10 @@ export default function MyProfilePage() {
       toast({ variant: 'destructive', title: 'ยังไม่มีทะเบียนผูกบัญชี — ติดต่อ HR' });
       return;
     }
+    if (linked.kind === 'executive_staff') {
+      toast({ variant: 'destructive', title: 'ผู้บริหารยังไม่เปิดคำขอเบิกจากหน้านี้' });
+      return;
+    }
     const amt = Number(advAmount);
     if (!Number.isFinite(amt) || amt <= 0) {
       toast({ variant: 'destructive', title: 'จำนวนเงินไม่ถูกต้อง' });
@@ -465,7 +1005,7 @@ export default function MyProfilePage() {
             <CardHeader>
               <CardTitle className="text-base text-amber-900">ยังไม่พบการผูกทะเบียน</CardTitle>
               <CardDescription className="text-amber-800">
-                ให้ HR ตั้งค่า <strong>linkedUserId</strong> ในแฟ้มพนักงานออฟฟิศหรือลูกจ้างให้ตรงกับ UID บัญชีนี้
+                ให้ HR ตั้งค่า <strong>linkedUserId</strong> ในแฟ้มพนักงานออฟฟิศ ลูกจ้าง หรือผู้บริหารให้ตรงกับ UID บัญชีนี้
               </CardDescription>
             </CardHeader>
           </Card>
@@ -499,7 +1039,16 @@ export default function MyProfilePage() {
             </TabsList>
 
             <TabsContent value="attendance" className="mt-4">
-              {firestore ? (
+              {linked.kind === 'executive_staff' ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">ประวัติการลงเวลา</CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-sm text-muted-foreground">
+                    ทะเบียนผู้บริหารไม่ได้เก็บประวัติลงเวลา
+                  </CardContent>
+                </Card>
+              ) : firestore ? (
                 <SubjectAttendanceHistory
                   firestore={firestore}
                   subjectType={linked.kind === 'worker' ? 'worker' : 'office_staff'}
@@ -518,10 +1067,39 @@ export default function MyProfilePage() {
 
             <TabsContent value="personal" className="mt-4">
               <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">
-                    {linked.kind === 'worker' ? 'ลูกจ้าง' : 'พนักงานออฟฟิศ'}
-                  </CardTitle>
+                <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+                  <div className="min-w-0 space-y-1">
+                    <CardTitle className="text-base">
+                      {linked.kind === 'worker'
+                        ? 'ลูกจ้าง'
+                        : linked.kind === 'executive_staff'
+                          ? 'ผู้บริหาร'
+                          : 'พนักงานออฟฟิศ'}
+                    </CardTitle>
+                    {linked.kind === 'executive_staff' ? (
+                      <p className="text-xs text-muted-foreground">
+                        ดูข้อมูลทะเบียนผู้บริหารที่ผูกกับบัญชีนี้ — แก้ไขที่เมนูบัญชี
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="ml-auto flex shrink-0 items-start gap-4">
+                    <ProfileSignatureEditor
+                      userId={currentUser.id}
+                      storedUrl={currentUser.signatureImageUrl}
+                      busy={signatureBusy}
+                      onSave={saveSignature}
+                      onDelete={deleteSignature}
+                    />
+                    {linked.kind === 'executive_staff' ? (
+                      <ProfilePhotoEditor
+                        photoUrl={currentUser.profilePhotoUrl}
+                        letter={(currentUser.displayName || linked.record.fullName || '?').charAt(0)}
+                        busy={photoBusy}
+                        onSave={saveProfilePhoto}
+                        onDelete={deleteProfilePhoto}
+                      />
+                    ) : null}
+                  </div>
                 </CardHeader>
                 <CardContent className="grid gap-2 text-sm sm:grid-cols-2">
                   {linked.kind === 'worker' ? (
@@ -602,6 +1180,63 @@ export default function MyProfilePage() {
                         </div>
                       </div>
                     </>
+                  ) : linked.kind === 'executive_staff' ? (
+                    <div className="sm:col-span-2 w-full">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div className="space-y-2">
+                          <Label>ชื่อ-นามสกุล</Label>
+                          <Input readOnly disabled value={linked.record.fullName} className="bg-muted/80 cursor-not-allowed opacity-100" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>รหัส</Label>
+                          <Input readOnly disabled value={linked.record.staffCode} className="bg-muted/80 cursor-not-allowed opacity-100 font-mono" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>สถานะ</Label>
+                          <Input readOnly disabled value={linked.record.status} className="bg-muted/80 cursor-not-allowed opacity-100" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>แผนก</Label>
+                          <Input readOnly disabled value={linked.record.department} className="bg-muted/80 cursor-not-allowed opacity-100" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>ตำแหน่ง</Label>
+                          <Input readOnly disabled value={linked.record.positionTitle} className="bg-muted/80 cursor-not-allowed opacity-100" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>ประเภทการจ้าง</Label>
+                          <Input readOnly disabled value={employmentTypeLabel(linked.record.employmentType)} className="bg-muted/80 cursor-not-allowed opacity-100" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>รูปแบบเงินเดือน</Label>
+                          <Input readOnly disabled value={salaryTypeLabel(linked.record.salaryType)} className="bg-muted/80 cursor-not-allowed opacity-100" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>เงินเดือน (บาท/เดือน)</Label>
+                          <Input readOnly disabled value={fmtBahtDisplay(linked.record.monthlySalary)} className="bg-muted/80 cursor-not-allowed opacity-100 font-mono text-right" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>เลขบัตรประชาชน</Label>
+                          <Input readOnly disabled value={linked.record.nationalId ?? ''} className="bg-muted/80 cursor-not-allowed opacity-100 font-mono" placeholder="—" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>เลขผู้เสียภาษี</Label>
+                          <Input readOnly disabled value={linked.record.taxId ?? ''} className="bg-muted/80 cursor-not-allowed opacity-100 font-mono" placeholder="—" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>ชื่อธนาคาร</Label>
+                          <Input readOnly disabled value={linked.record.bankName ?? ''} className="bg-muted/80 cursor-not-allowed opacity-100" placeholder="—" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>เลขที่บัญชี</Label>
+                          <Input readOnly disabled value={linked.record.bankAccountNumber ?? ''} className="bg-muted/80 cursor-not-allowed opacity-100 font-mono" placeholder="—" />
+                        </div>
+                        <div className="space-y-2 sm:col-span-3">
+                          <Label>ที่อยู่</Label>
+                          <Textarea readOnly disabled value={linked.record.address ?? ''} className="min-h-[88px] bg-muted/80 cursor-not-allowed opacity-100" />
+                        </div>
+                      </div>
+                    </div>
                   ) : (
                     <div className="sm:col-span-2 space-y-4 w-full">
                       {canSelfEditOfficeStaffProfile ? (
@@ -945,6 +1580,15 @@ export default function MyProfilePage() {
                     ทะเบียนพนักงานของคุณไม่ได้อยู่ในสถานะ ACTIVE — ไม่แสดงสลิปใน My Profile
                   </CardContent>
                 </Card>
+              ) : linked.kind === 'executive_staff' ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">สลิปเงินเดือน</CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-sm text-muted-foreground">
+                    สลิปผู้บริหารอยู่ในเมนูบัญชี ทะเบียนนี้ผูกกับบัญชีคุณแล้ว
+                  </CardContent>
+                </Card>
               ) : linked.kind === 'office_staff' ? (
                 <OfficeStaffPayslipHistory
                   staffId={linked.record.id}
@@ -972,6 +1616,15 @@ export default function MyProfilePage() {
                   </CardHeader>
                   <CardContent className="text-sm text-muted-foreground">
                     ทะเบียนพนักงานของคุณไม่ได้อยู่ในสถานะ ACTIVE — ไม่แสดงใบหัก ณ ที่จ่ายใน My Profile
+                  </CardContent>
+                </Card>
+              ) : linked.kind === 'executive_staff' ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">ใบหัก ณ ที่จ่าย (ภงด.1 และ 50ทวิ)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-sm text-muted-foreground">
+                    ใบหัก ณ ที่จ่ายผู้บริหารออกจากเมนูบัญชี
                   </CardContent>
                 </Card>
               ) : (
@@ -1120,6 +1773,17 @@ export default function MyProfilePage() {
             </TabsContent>
 
             <TabsContent value="advances" className="mt-4 space-y-4">
+              {linked.kind === 'executive_staff' ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">เบิกล่วงหน้า</CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-sm text-muted-foreground">
+                    ผู้บริหารยังไม่เปิดคำขอเบิกจากหน้านี้
+                  </CardContent>
+                </Card>
+              ) : (
+              <>
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">สร้างคำขอเบิกล่วงหน้า (ด้วยตนเอง)</CardTitle>
@@ -1212,6 +1876,8 @@ export default function MyProfilePage() {
                   )}
                 </CardContent>
               </Card>
+              </>
+              )}
             </TabsContent>
 
             <TabsContent value="password" className="mt-4">

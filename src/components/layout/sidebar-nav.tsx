@@ -30,7 +30,6 @@ import {
   Inbox,
   Banknote,
   LockKeyhole,
-  Settings,
   FileSignature,
   Hash,
   History,
@@ -64,6 +63,8 @@ import {
   SidebarMenuSubItem,
   useSidebar,
 } from '@/components/ui/sidebar';
+import { companySidebarPanelStyle, COMPANY_NAV_BAR_HEIGHT } from '@/components/company-site/nav-bar-style';
+import { CompanyLogoMark } from '@/components/brand/company-logo-mark';
 import { User, PermissionProfile } from '@/lib/types';
 import {
   ModuleKey,
@@ -555,21 +556,26 @@ export function SidebarNav({
   };
 
   return (
-    <Sidebar variant="sidebar" collapsible="icon">
-      <SidebarHeader className="border-b p-4 bg-primary text-primary-foreground">
-        <div className="flex items-center gap-3 font-bold">
-          <div className="bg-white text-primary p-1.5 rounded shadow-sm">
-            <Settings className="h-5 w-5" />
-          </div>
-          <div className="flex flex-col group-data-[collapsible=icon]:hidden overflow-hidden">
-            <span className="text-base tracking-tight truncate leading-tight">OPEC OpsFlow</span>
-            <span className="text-[8px] opacity-60 uppercase tracking-widest font-black truncate">Platform v2.0</span>
+    <Sidebar variant="sidebar" collapsible="icon" panelStyle={companySidebarPanelStyle()}>
+      <SidebarHeader
+        className="shrink-0 justify-center border-b-0 bg-transparent px-3 py-2 text-[#10233f] group-data-[collapsible=icon]:px-1"
+        style={{ height: COMPANY_NAV_BAR_HEIGHT }}
+      >
+        <div className="flex items-center gap-2.5 font-bold">
+          <CompanyLogoMark
+            fallbackSrc="/company/logo-compass.jpg"
+            className="h-[76px] w-[76px] shrink-0 object-contain group-data-[collapsible=icon]:h-8 group-data-[collapsible=icon]:w-8"
+          />
+          <div className="flex min-w-0 flex-col leading-none group-data-[collapsible=icon]:hidden">
+            <span className="text-[28px] font-black tracking-tight text-[#10233f]">OPEC</span>
+            <span className="mt-1 text-[10px] font-semibold tracking-wide text-[#5a6b80]">Platform Version 15.2.008</span>
+            <span className="mt-0.5 text-[10px] font-semibold tracking-wide text-[#5a6b80]">Copyright 11.2026 By Joe</span>
           </div>
           {isMobile ? (
             <button
               type="button"
               onClick={() => setOpenMobile(false)}
-              className="ml-auto rounded-md p-2 text-primary-foreground/80 hover:bg-white/10 hover:text-primary-foreground"
+              className="ml-auto rounded-md p-2 text-[#10233f]/80 hover:bg-black/5 hover:text-[#10233f]"
               aria-label="ปิดเมนู"
               title="ปิดเมนู"
             >

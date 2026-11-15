@@ -14,6 +14,7 @@ import { useAppUser } from '@/hooks/use-app-user';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { useToast } from '@/hooks/use-toast';
 import { uploadDocumentHeaderImage } from '@/lib/storage/company-document-assets';
+import { companyLogoUrlForPrint } from '@/lib/storage/print-signature-image';
 import { Loader2, ShieldAlert, Building2, Save, ImageIcon, Upload, X } from 'lucide-react';
 
 type CompanyDocumentProfile = {
@@ -284,9 +285,9 @@ export default function DocumentProfileAdminPage() {
                       className="border border-dashed border-muted-foreground/40 bg-muted/30 rounded-md flex items-center justify-center overflow-hidden"
                       style={{ width: '1in', height: '1in' }}
                     >
-                      {draft.documentHeaderLogoUrl ? (
+                      {companyLogoUrlForPrint(draft) ? (
                         <img
-                          src={draft.documentHeaderLogoUrl}
+                          src={companyLogoUrlForPrint(draft)}
                           alt="โลโก้บริษัท"
                           className="max-w-full max-h-full w-auto h-auto object-contain"
                         />

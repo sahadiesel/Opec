@@ -113,6 +113,8 @@ export interface User {
   notes?: string;
   /** รูปลายเซ็นที่ครอบในกรอบ 35×15 มม. แล้ว — ใช้เป็นผู้มีอำนาจลงนามบนเอกสารพิมพ์ */
   signatureImageUrl?: string;
+  /** รูปโปรไฟล์ที่ย่อแล้วไม่เกิน 100 KB */
+  profilePhotoUrl?: string;
   mustResetPassword?: boolean;
   allowedContractIds?: string[];
   allowedPurchaseOrderIds?: string[];

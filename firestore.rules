@@ -783,7 +783,8 @@ service cloud.firestore {
       allow write: if blockExecutiveWrite() && rs19();
     }
     match /executive_payroll_staff/{id} {
-      allow read: if rs19();
+      allow read: if rs19()
+        || (isSignedIn() && resource.data.linkedUserId == request.auth.uid);
       allow write: if blockExecutiveWrite() && rs19();
     }
     // ===== Administration - Match blocks =====

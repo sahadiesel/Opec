@@ -53,7 +53,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useFirebaseApp } from '@/firebase';
-import { collection, deleteField, doc } from 'firebase/firestore';
+import { collection, deleteField, doc, getDoc } from 'firebase/firestore';
 import { deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { Textarea } from '@/components/ui/textarea';
@@ -74,7 +74,9 @@ import { Separator } from '@/components/ui/separator';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { fixExecutiveSpelling } from '@/lib/executive-display-fix';
 import { SignatureFrameEditor } from '@/components/users/signature-frame-editor';
-import { uploadUserSignatureImage } from '@/lib/storage/user-signature';
+import { ProfilePhotoEditor } from '@/app/my-profile/page';
+import { resolveUserSignatureDisplayUrl, uploadUserSignatureImage } from '@/lib/storage/user-signature';
+import { uploadUserProfilePhoto } from '@/lib/storage/user-profile-photo';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getBusinessRoleKeysSortedForSelect, getRoleCatalogEntry } from '@/lib/roles/role-catalog';
 import {
@@ -107,6 +109,10 @@ export default function UsersPage() {
   const [editPhone, setEditPhone] = useState('');
   const [signatureBlob, setSignatureBlob] = useState<Blob | null>(null);
   const [clearSignature, setClearSignature] = useState(false);
+  const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
+  const [clearPhoto, setClearPhoto] = useState(false);
+  /** ลิงก์แสดงผลจากถังสิงคโปร์ ไม่ใช้ลิงก์เก่าที่ชี้ถังเดิม */
+  const [signaturePreviewUrl, setSignaturePreviewUrl] = useState<string | null>(null);
   const [isSavingDetails, setIsSavingDetails] = useState(false);
   const [showDetailsConfirmCancel, setShowDetailsConfirmCancel] = useState(false);
 
@@ -184,18 +190,37 @@ export default function UsersPage() {
       editEmail.trim() !== (detailsEditUser.email || '').trim() ||
       p1 !== p0 ||
       signatureBlob != null ||
-      clearSignature
+      clearSignature ||
+      photoBlob != null ||
+      clearPhoto
     );
-  }, [detailsEditUser, editDisplayName, editEmail, editPhone, signatureBlob, clearSignature]);
+  }, [detailsEditUser, editDisplayName, editEmail, editPhone, signatureBlob, clearSignature, photoBlob, clearPhoto]);
 
-  const handleOpenDetailsEdit = (user: User) => {
-    setDetailsEditUser(user);
-    setEditDisplayName(fixExecutiveSpelling(user.displayName || ''));
-    setEditEmail(user.email || '');
-    setEditPhone(user.phone || '');
+  const handleOpenDetailsEdit = async (user: User) => {
+    let fresh = user;
+    if (firestore) {
+      try {
+        const snap = await getDoc(doc(firestore, 'users', user.id));
+        if (snap.exists()) fresh = { id: user.id, ...(snap.data() as User) };
+      } catch {
+        fresh = user;
+      }
+    }
+    setDetailsEditUser(fresh);
+    setEditDisplayName(fixExecutiveSpelling(fresh.displayName || ''));
+    setEditEmail(fresh.email || '');
+    setEditPhone(fresh.phone || '');
     setSignatureBlob(null);
     setClearSignature(false);
+    setPhotoBlob(null);
+    setClearPhoto(false);
+    setSignaturePreviewUrl(null);
     setIsDetailsDialogOpen(true);
+    if ((fresh.signatureImageUrl || '').trim() && firebaseApp) {
+      void resolveUserSignatureDisplayUrl(firebaseApp, fresh.id, fresh.signatureImageUrl).then((url) => {
+        setSignaturePreviewUrl(url || null);
+      });
+    }
   };
 
   const handleDetailsOpenChange = (open: boolean) => {
@@ -237,11 +262,18 @@ export default function UsersPage() {
       } else if (clearSignature) {
         signatureImageUrl = deleteField();
       }
+      let profilePhotoUrl: string | ReturnType<typeof deleteField> | undefined;
+      if (photoBlob && firebaseApp) {
+        profilePhotoUrl = await uploadUserProfilePhoto(firebaseApp, detailsEditUser.id, photoBlob);
+      } else if (clearPhoto) {
+        profilePhotoUrl = deleteField();
+      }
       const payload = sanitizeFirestorePayload({
         displayName: fixExecutiveSpelling(dn),
         email: em,
         phone: phoneTrim ? phoneTrim : deleteField(),
         ...(signatureImageUrl !== undefined ? { signatureImageUrl } : {}),
+        ...(profilePhotoUrl !== undefined ? { profilePhotoUrl } : {}),
         updatedAt: Date.now(),
       });
       updateDocumentNonBlocking(userRef, payload);
@@ -546,7 +578,7 @@ export default function UsersPage() {
 
         {/* แก้ไขชื่อ / อีเมล / เบอร์ */}
         <Dialog open={isDetailsDialogOpen} onOpenChange={handleDetailsOpenChange}>
-          <DialogContent className="max-w-lg border-t-8 border-t-primary max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-3xl border-t-8 border-t-primary max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-xl flex items-center gap-2">
                 <Pencil className="h-6 w-6 text-primary" />
@@ -567,46 +599,77 @@ export default function UsersPage() {
                   autoComplete="name"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-email" className="flex items-center gap-1">
-                  <Mail className="h-3.5 w-3.5" /> อีเมล (ในเอกสารผู้ใช้)
-                </Label>
-                <Input
-                  id="edit-email"
-                  type="email"
-                  value={editEmail}
-                  onChange={(e) => setEditEmail(e.target.value)}
-                  className="h-11"
-                  autoComplete="email"
-                />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-email" className="flex items-center gap-1">
+                    <Mail className="h-3.5 w-3.5" /> อีเมล (ในเอกสารผู้ใช้)
+                  </Label>
+                  <Input
+                    id="edit-email"
+                    type="email"
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    className="h-11"
+                    autoComplete="email"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-phone" className="flex items-center gap-1">
+                    <Phone className="h-3.5 w-3.5" /> เบอร์โทร (ไม่บังคับ)
+                  </Label>
+                  <Input
+                    id="edit-phone"
+                    type="tel"
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    className="h-11"
+                    placeholder="เช่น +66812345678"
+                    autoComplete="tel"
+                  />
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-phone" className="flex items-center gap-1">
-                  <Phone className="h-3.5 w-3.5" /> เบอร์โทร (ไม่บังคับ)
-                </Label>
-                <Input
-                  id="edit-phone"
-                  type="tel"
-                  value={editPhone}
-                  onChange={(e) => setEditPhone(e.target.value)}
-                  className="h-11"
-                  placeholder="เช่น +66812345678"
-                  autoComplete="tel"
+              <div className="grid items-start gap-4 sm:grid-cols-2">
+                <SignatureFrameEditor
+                  key={`${detailsEditUser?.id || 'signature'}-sign`}
+                  existingUrl={clearSignature ? null : signaturePreviewUrl}
+                  fallbackUrl={clearSignature ? null : detailsEditUser?.signatureImageUrl}
+                  resolving={
+                    !clearSignature &&
+                    Boolean((detailsEditUser?.signatureImageUrl || '').trim()) &&
+                    signaturePreviewUrl === null
+                  }
+                  cleared={clearSignature}
+                  onCroppedBlob={(blob) => {
+                    setSignatureBlob(blob);
+                    if (blob) setClearSignature(false);
+                  }}
+                  onClearExisting={() => {
+                    setClearSignature(true);
+                    setSignatureBlob(null);
+                  }}
                 />
+                <div className="space-y-2">
+                  <Label>รูปโปรไฟล์</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    จัดขนาดและตำแหน่งในกรอบ แล้วกดไอคอนบันทึกรูป จากนั้นกดบันทึกด้านล่าง แอดมินเพิ่มหรือลบได้
+                  </p>
+                  <ProfilePhotoEditor
+                    key={`${detailsEditUser?.id || 'photo'}-photo`}
+                    photoUrl={clearPhoto ? undefined : detailsEditUser?.profilePhotoUrl}
+                    letter={(detailsEditUser?.displayName || '?').charAt(0)}
+                    busy={isSavingDetails}
+                    retainDraft
+                    onSave={async (blob) => {
+                      setPhotoBlob(blob);
+                      setClearPhoto(false);
+                    }}
+                    onDelete={() => {
+                      setPhotoBlob(null);
+                      setClearPhoto(true);
+                    }}
+                  />
+                </div>
               </div>
-              <SignatureFrameEditor
-                key={detailsEditUser?.id || 'signature'}
-                existingUrl={detailsEditUser?.signatureImageUrl}
-                cleared={clearSignature}
-                onCroppedBlob={(blob) => {
-                  setSignatureBlob(blob);
-                  if (blob) setClearSignature(false);
-                }}
-                onClearExisting={() => {
-                  setClearSignature(true);
-                  setSignatureBlob(null);
-                }}
-              />
             </div>
             <DialogFooter className="gap-2 sm:gap-0">
               <Button variant="outline" onClick={() => handleDetailsOpenChange(false)} disabled={isSavingDetails}>

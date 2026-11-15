@@ -2,10 +2,11 @@
 'use client';
 
 import * as React from 'react';
-import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
+import { SidebarProvider, SidebarInset, SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
+import { companyNavBarStyle, COMPANY_NAV_BAR_HEIGHT } from '@/components/company-site/nav-bar-style';
 import { SidebarNav } from './sidebar-nav';
 import { User, type AccessLevel, type DeptType } from '@/lib/types';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { LogOut, Shield, Building2 } from 'lucide-react';
 import { useFirestore, useAuth } from '@/firebase';
@@ -48,6 +49,119 @@ const ROLE_LEVEL_LABEL_TH: Record<AccessLevel, string> = {
   officer: 'เจ้าหน้าที่',
   viewer: 'ผู้ดู',
 };
+
+function OpsFlowTopBar({
+  user,
+  profiles,
+  onLogout,
+}: {
+  user: User;
+  profiles: { profileKey?: string; profileNameEn?: string; profileNameTh?: string }[] | null;
+  onLogout: () => void;
+}) {
+  const { state, isMobile } = useSidebar();
+  const patternOffset = isMobile
+    ? '0px'
+    : state === 'collapsed'
+      ? 'calc(var(--sidebar-width-icon) * -1)'
+      : 'calc(var(--sidebar-width) * -1)';
+
+  const dept = getEffectiveDepartment(user);
+  const level = getEffectiveLevel(user);
+  const resolvedRoleKey = deriveBusinessRoleKey(user);
+  const roleLine = BUSINESS_ROLES[resolvedRoleKey];
+  const effectiveProfileKey = getEffectivePermissionProfileKey(user);
+  const primaryProfile =
+    (effectiveProfileKey && profiles?.find((p) => p.profileKey === effectiveProfileKey)) || profiles?.[0];
+
+  return (
+    <header
+      className="sticky top-0 z-30 flex shrink-0 items-center justify-between px-4 shadow-[0_4px_15px_rgba(11,25,44,0.08)]"
+      style={{ ...companyNavBarStyle(patternOffset), height: COMPANY_NAV_BAR_HEIGHT }}
+    >
+      <div className="flex items-center gap-2">
+        <SidebarTrigger />
+        <div className="mx-2 h-4 w-px bg-border" />
+        <div className="flex flex-col">
+          <h1 className="hidden text-[26px] font-bold leading-tight text-[#1a56c4] sm:inline-block">
+            Offshore Power Engineering Corporation Co.,Ltd.
+          </h1>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              Enterprise Manpower Management
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <div className="hidden max-w-[220px] flex-col items-end md:flex">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-black text-primary">{fixExecutiveSpelling(user.displayName)}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="flex max-w-[220px] items-center justify-end gap-1 text-right text-[9px] font-bold leading-tight tracking-tighter text-muted-foreground">
+              <Building2 className="h-2.5 w-2.5 shrink-0" />
+              <span className="normal-case">
+                {roleLine ? (
+                  <>
+                    <span className="font-semibold text-foreground">{roleLine.labelTh}</span>
+                    <span className="font-medium text-muted-foreground"> · {roleLine.labelEn}</span>
+                    <span className="mt-0.5 block text-[8px] font-bold normal-case tracking-wide text-muted-foreground">
+                      {ROLE_DEPT_LABEL_TH[roleLine.dept] ?? roleLine.dept} · {ROLE_LEVEL_LABEL_TH[roleLine.level] ?? roleLine.level}
+                    </span>
+                  </>
+                ) : (
+                  <span className="uppercase">
+                    {ROLE_DEPT_LABEL_TH[dept] ?? dept} / {ROLE_LEVEL_LABEL_TH[level] ?? level}
+                  </span>
+                )}
+              </span>
+            </span>
+            {(roleLine || primaryProfile) && (
+              <Badge
+                variant="secondary"
+                title={roleLine?.labelEn ?? primaryProfile?.profileNameEn}
+                className="flex h-4 max-w-[200px] items-center gap-1 border-blue-100 bg-blue-50 px-1.5 py-0 text-[9px] font-black text-blue-700"
+              >
+                <Shield className="h-2.5 w-2.5 shrink-0" />
+                <span className="truncate">{roleLine?.labelTh ?? primaryProfile?.profileNameTh ?? 'ผู้ใช้งาน'}</span>
+                {profiles && profiles.length > 1 && <span className="ml-0.5 shrink-0 opacity-60">+{profiles.length - 1}</span>}
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        <Avatar className="h-[72px] w-[72px] border-2 border-white shadow-sm ring-2 ring-primary/10">
+          {user.profilePhotoUrl ? <AvatarImage src={user.profilePhotoUrl} alt="" className="object-cover" /> : null}
+          <AvatarFallback className="bg-primary text-2xl font-black text-primary-foreground">
+            {user.displayName.charAt(0)}
+          </AvatarFallback>
+        </Avatar>
+
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button variant="ghost" size="icon" title="ออกจากระบบ" className="h-9 w-9 rounded-full hover:bg-destructive/10 hover:text-destructive">
+              <LogOut className="h-4 w-4" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>ยืนยันการออกจากระบบ</AlertDialogTitle>
+              <AlertDialogDescription>คุณต้องการออกจากระบบ OpsFlow ใช่หรือไม่?</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
+              <AlertDialogAction onClick={onLogout} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                ตกลง
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </header>
+  );
+}
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -92,108 +206,12 @@ export function AppShell({ children, user, onLogout }: AppShellProps) {
 
   if (!user) return <>{children}</>;
 
-  const dept = getEffectiveDepartment(user);
-  const level = getEffectiveLevel(user);
-  const resolvedRoleKey = deriveBusinessRoleKey(user);
-  const roleLine = BUSINESS_ROLES[resolvedRoleKey];
-
-  // Primary profile identification for simple display (canonical doc id vs legacy casing on user doc)
-  const effectiveProfileKey = getEffectivePermissionProfileKey(user);
-  const primaryProfile =
-    (effectiveProfileKey && profiles?.find((p) => p.profileKey === effectiveProfileKey)) || profiles?.[0];
-
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
         <SidebarNav user={user} profiles={profiles} />
         <SidebarInset className="min-w-0">
-          <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center justify-between border-b bg-card/95 px-4 backdrop-blur transition-[width,height] ease-linear">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger />
-              <div className="h-4 w-px bg-border mx-2" />
-              <div className="flex flex-col">
-                <h1 className="font-bold text-foreground hidden sm:inline-block leading-tight">OPEC OpsFlow</h1>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">Enterprise Manpower Management</span>
-                </div>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-4">
-              <div className="hidden md:flex flex-col items-end max-w-[250px]">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-black truncate text-primary">{fixExecutiveSpelling(user.displayName)}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[9px] text-muted-foreground font-bold tracking-tighter flex items-center gap-1 max-w-[220px] justify-end text-right leading-tight">
-                    <Building2 className="h-2.5 w-2.5 shrink-0" />
-                    <span className="normal-case">
-                      {roleLine ? (
-                        <>
-                          <span className="text-foreground font-semibold">{roleLine.labelTh}</span>
-                          <span className="text-muted-foreground font-medium"> · {roleLine.labelEn}</span>
-                          <span className="block text-[8px] text-muted-foreground font-bold mt-0.5 tracking-wide normal-case">
-                            {ROLE_DEPT_LABEL_TH[roleLine.dept] ?? roleLine.dept} ·{' '}
-                            {ROLE_LEVEL_LABEL_TH[roleLine.level] ?? roleLine.level}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="uppercase">
-                          {ROLE_DEPT_LABEL_TH[dept] ?? dept} / {ROLE_LEVEL_LABEL_TH[level] ?? level}
-                        </span>
-                      )}
-                    </span>
-                  </span>
-                  {(roleLine || primaryProfile) && (
-                    <Badge
-                      variant="secondary"
-                      title={roleLine?.labelEn ?? primaryProfile?.profileNameEn}
-                      className="text-[9px] h-4 py-0 px-1.5 bg-blue-50 text-blue-700 border-blue-100 flex items-center gap-1 font-black max-w-[200px]"
-                    >
-                      <Shield className="h-2.5 w-2.5 shrink-0" />
-                      <span className="truncate">
-                        {roleLine?.labelTh ?? primaryProfile?.profileNameTh ?? 'ผู้ใช้งาน'}
-                      </span>
-                      {profiles && profiles.length > 1 && (
-                        <span className="ml-0.5 shrink-0 opacity-60">+{profiles.length - 1}</span>
-                      )}
-                    </Badge>
-                  )}
-                </div>
-              </div>
-              
-              <Avatar className="h-9 w-9 ring-2 ring-primary/10 border-2 border-white shadow-sm">
-                <AvatarFallback className="bg-primary text-primary-foreground font-black text-xs">
-                  {user.displayName.charAt(0)}
-                </AvatarFallback>
-              </Avatar>
-              
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="ghost" size="icon" title="ออกจากระบบ" className="h-9 w-9 rounded-full hover:bg-destructive/10 hover:text-destructive">
-                    <LogOut className="h-4 w-4" />
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>ยืนยันการออกจากระบบ</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      คุณต้องการออกจากระบบ OpsFlow ใช่หรือไม่?
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>ยกเลิก</AlertDialogCancel>
-                    <AlertDialogAction 
-                      onClick={handleLogout}
-                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                    >
-                      ตกลง
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </div>
-          </header>
+          <OpsFlowTopBar user={user} profiles={profiles} onLogout={handleLogout} />
           <main className="min-w-0 flex-1 p-6">
             {!routeAllowed ? (
               <div className="mx-auto flex max-w-lg flex-col items-center gap-4 py-20 text-center">

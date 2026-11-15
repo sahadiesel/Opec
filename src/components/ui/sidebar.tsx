@@ -162,6 +162,7 @@ const Sidebar = React.forwardRef<
     side?: "left" | "right"
     variant?: "sidebar" | "floating" | "inset"
     collapsible?: "offcanvas" | "icon" | "none"
+    panelStyle?: React.CSSProperties
   }
 >(
   (
@@ -171,6 +172,7 @@ const Sidebar = React.forwardRef<
       collapsible = "offcanvas",
       className,
       children,
+      panelStyle,
       ...props
     },
     ref
@@ -182,8 +184,10 @@ const Sidebar = React.forwardRef<
         <div
           className={cn(
             "flex h-full w-[--sidebar-width] flex-col bg-sidebar text-sidebar-foreground",
+            panelStyle && "bg-transparent",
             className
           )}
+          style={panelStyle}
           ref={ref}
           {...props}
         >
@@ -198,12 +202,14 @@ const Sidebar = React.forwardRef<
           <SheetContent
             data-sidebar="sidebar"
             data-mobile="true"
-            className="w-[--sidebar-width] bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
-            style={
-              {
-                "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
-              } as React.CSSProperties
-            }
+            className={cn(
+              "w-[--sidebar-width] bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden",
+              panelStyle && "bg-transparent"
+            )}
+            style={{
+              ...panelStyle,
+              "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
+            } as React.CSSProperties}
             side={side}
           >
             <SheetTitle className="sr-only">เมนู</SheetTitle>
@@ -250,7 +256,11 @@ const Sidebar = React.forwardRef<
         >
           <div
             data-sidebar="sidebar"
-            className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow"
+            className={cn(
+              "flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow",
+              panelStyle && "bg-transparent"
+            )}
+            style={panelStyle}
           >
             {children}
           </div>

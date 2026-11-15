@@ -4,38 +4,67 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 
-/** กรอบบนจอตรงสัดส่วน 35 มม. × 15 มม. */
-const FRAME_W = 350;
-const FRAME_H = 150;
+/** สัดส่วนกรอบพิมพ์ 35 มม. × 15 มม. ความกว้างบนจอตามคอลัมน์ */
+const ASPECT = 15 / 35;
 const EXPORT_W = 700;
 const EXPORT_H = 300;
 
 type Props = {
   existingUrl?: string | null;
+  /** ลิงก์เดิมในเอกสาร ใช้เมื่อไฟล์ในถังสิงคโปร์โหลดไม่ได้ */
+  fallbackUrl?: string | null;
   onCroppedBlob: (blob: Blob | null) => void;
   onClearExisting: () => void;
   cleared?: boolean;
+  resolving?: boolean;
 };
 
 /**
  * อัปโหลดลายเซ็นแล้วลาก/ซูมให้พอดีกรอบ 35×15 มม. ก่อนบันทึก
  */
-export function SignatureFrameEditor({ existingUrl, onCroppedBlob, onClearExisting, cleared }: Props) {
+export function SignatureFrameEditor({
+  existingUrl,
+  fallbackUrl,
+  onCroppedBlob,
+  onClearExisting,
+  cleared,
+  resolving,
+}: Props) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [fitScale, setFitScale] = useState(1);
   const [userScale, setUserScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const [frameW, setFrameW] = useState(280);
+  const frameH = Math.max(72, Math.round(frameW * ASPECT));
   const imgRef = useRef<HTMLImageElement | null>(null);
   const offsetRef = useRef({ x: 0, y: 0 });
   const scaleRef = useRef(1);
   const dragRef = useRef<{ px: number; py: number; ox: number; oy: number } | null>(null);
   const [natural, setNatural] = useState({ w: 0, h: 0 });
+  const [useFallback, setUseFallback] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    setUseFallback(false);
+    setLoadFailed(false);
+  }, [existingUrl, fallbackUrl]);
 
   useEffect(() => {
     return () => {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [objectUrl]);
+
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el) return;
+    const measure = () => setFrameW(Math.max(160, el.clientWidth));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const exportBlob = (img: HTMLImageElement, nextOffset: { x: number; y: number }, scale: number) => {
     const canvas = document.createElement('canvas');
@@ -44,7 +73,7 @@ export function SignatureFrameEditor({ existingUrl, onCroppedBlob, onClearExisti
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, EXPORT_W, EXPORT_H);
-    const ratio = EXPORT_W / FRAME_W;
+    const ratio = EXPORT_W / Math.max(1, frameRef.current?.clientWidth || frameW);
     ctx.drawImage(
       img,
       nextOffset.x * ratio,
@@ -65,9 +94,11 @@ export function SignatureFrameEditor({ existingUrl, onCroppedBlob, onClearExisti
     const img = new Image();
     img.onload = () => {
       imgRef.current = img;
-      const nextFit = FRAME_W / img.naturalWidth;
+      const boxW = frameRef.current?.clientWidth || frameW;
+      const boxH = Math.max(72, Math.round(boxW * ASPECT));
+      const nextFit = boxW / img.naturalWidth;
       const h = img.naturalHeight * nextFit;
-      const nextOffset = { x: 0, y: (FRAME_H - h) / 2 };
+      const nextOffset = { x: 0, y: (boxH - h) / 2 };
       offsetRef.current = nextOffset;
       scaleRef.current = nextFit;
       setNatural({ w: img.naturalWidth, h: img.naturalHeight });
@@ -80,7 +111,8 @@ export function SignatureFrameEditor({ existingUrl, onCroppedBlob, onClearExisti
 
   const scale = fitScale * userScale;
   const shown = objectUrl;
-  const previewExisting = !shown && !cleared && existingUrl;
+  const previewSrc = (useFallback ? fallbackUrl : existingUrl) || '';
+  const previewExisting = !shown && !cleared && Boolean(previewSrc) && !loadFailed;
 
   return (
     <div className="space-y-2">
@@ -89,8 +121,9 @@ export function SignatureFrameEditor({ existingUrl, onCroppedBlob, onClearExisti
         อัปโหลดรูป แล้วลากหรือซูมให้ลายเซ็นอยู่ในกรอบ — ขนาดนี้คือขนาดที่จะพิมพ์บนเอกสาร
       </p>
       <div
-        className="relative overflow-hidden rounded-md border-2 border-dashed border-primary/40 bg-white"
-        style={{ width: FRAME_W, maxWidth: '100%', height: FRAME_H, touchAction: 'none' }}
+        ref={frameRef}
+        className="relative w-full overflow-hidden rounded-md border-2 border-dashed border-primary/40 bg-white"
+        style={{ height: frameH, touchAction: 'none' }}
         onPointerDown={(e) => {
           if (!shown) return;
           (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -128,9 +161,27 @@ export function SignatureFrameEditor({ existingUrl, onCroppedBlob, onClearExisti
           />
         ) : previewExisting ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={existingUrl || ''} alt="" className="h-full w-full object-contain" />
+          <img
+            src={previewSrc}
+            alt="ลายเซ็น"
+            className="absolute inset-0 h-full w-full object-contain"
+            onError={() => {
+              const fallback = (fallbackUrl || '').trim();
+              if (!useFallback && fallback && fallback !== previewSrc) {
+                setUseFallback(true);
+                return;
+              }
+              setLoadFailed(true);
+            }}
+          />
         ) : (
-          <div className="flex h-full items-center justify-center text-xs text-muted-foreground">ยังไม่มีลายเซ็น</div>
+          <div className="flex h-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
+            {resolving
+              ? 'กำลังโหลดลายเซ็นจากถังสิงคโปร์…'
+              : loadFailed
+                ? 'ไม่พบไฟล์ลายเซ็นในถังสิงคโปร์ — อัปโหลดใหม่แล้วกดบันทึก'
+                : 'ยังไม่มีลายเซ็น'}
+          </div>
         )}
       </div>
       {shown ? (

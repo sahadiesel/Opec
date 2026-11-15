@@ -26,15 +26,26 @@ export function publicStorageMediaUrl(path: string): string {
   return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodeURIComponent(clean)}?alt=media`;
 }
 
+function storedMediaVersion(stored: string): string {
+  try {
+    const token = new URL(stored).searchParams.get('token');
+    if (token) return token;
+  } catch {
+    /* ลิงก์ที่บันทึกไว้อาจไม่ใช่ URL สมบูรณ์ */
+  }
+  return String(stored.length);
+}
+
 /**
- * โลโก้หัวเอกสาร — แสดงเมื่อโปรไฟล์บริษัทมีโลโก้ (ผู้ดูแลกด "เอาออก" แล้วบันทึก = ไม่แสดง)
- * ใช้ URL ของถังปัจจุบันตาม path คงที่ ไม่ใช้ลิงก์ที่บันทึกไว้ซึ่งอาจยังชี้ถังเก่า
+ * โลโก้หัวเอกสารและโลโก้บนเว็บ — แสดงเมื่อโปรไฟล์บริษัทมีโลโก้ (ผู้ดูแลกด "เอาออก" แล้วบันทึก = ไม่แสดง)
+ * ใช้ไฟล์ถังสิงคโปร์ path คงที่ พร้อมเวอร์ชันจากลิงก์ที่บันทึก เพื่อให้แก้รูปแล้วทั้งเว็บและเอกสารเปลี่ยนตาม
  */
 export function companyLogoUrlForPrint(
   profile: { documentHeaderLogoUrl?: string | null } | null | undefined,
 ): string | undefined {
-  if (!(profile?.documentHeaderLogoUrl || '').trim()) return undefined;
-  return publicStorageMediaUrl(COMPANY_LOGO_STORAGE_PATH);
+  const stored = (profile?.documentHeaderLogoUrl || '').trim();
+  if (!stored) return undefined;
+  return `${publicStorageMediaUrl(COMPANY_LOGO_STORAGE_PATH)}&v=${encodeURIComponent(storedMediaVersion(stored))}`;
 }
 
 /**
