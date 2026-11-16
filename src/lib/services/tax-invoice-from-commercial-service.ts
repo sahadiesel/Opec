@@ -56,6 +56,7 @@ function commercialLineToBillingLine(
     ...(line.eventType ? { eventType: line.eventType } : {}),
     ...(line.timesheetIds ? { timesheetIds: line.timesheetIds } : {}),
     quantity: line.quantity,
+    ...((line.unit || '').trim() ? { unit: (line.unit || '').trim() } : {}),
     unitPrice: line.unitPrice,
     amount: line.amount,
     createdAt: now,

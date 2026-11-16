@@ -19,6 +19,7 @@ import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
 import { formatMoney2, roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { collapseSameLocationMobDemobLines } from '@/lib/commercial/mob-demob-invoice-lines';
+import { presentDocumentLineUnit } from '@/lib/documents/line-unit';
 import {
   stripCommercialLinePoPrefix,
   translateCommercialLineDescriptionToEn,
@@ -64,16 +65,6 @@ function commercialInvoiceDocTitles(mode: CommercialInvoicePrintMode): { th: str
 export function commercialInvoicePrintModeLabel(mode: CommercialInvoicePrintMode, locale: PrintDocumentLocale): string {
   const t = commercialInvoiceDocTitles(mode);
   return locale === 'en' ? t.en : t.th;
-}
-
-/** หน่วยจากรายการ PO/ใบเสนอราคา ถูกเก็บท้ายคำอธิบายเป็น `ชื่อ (หน่วย)` หรือ `ชื่อ (หน่วย) — หมายเหตุ` */
-function splitLineUnitFromDescription(line: CommercialInvoiceLine, description: string): { description: string; unit: string } {
-  if (line.lineSource !== 'quotation_line' && line.lineSource !== 'po_line') {
-    return { description, unit: DOC_REF_EMPTY };
-  }
-  const m = /^(.*\S)\s+\(([^()]+)\)(\s+—\s+.*)?$/.exec(description);
-  if (!m) return { description, unit: DOC_REF_EMPTY };
-  return { description: `${m[1]}${m[3] ?? ''}`, unit: m[2].trim() };
 }
 
 function buildDeliverySignFooterHtml(L: PrintDocumentLocale): string {
@@ -289,17 +280,17 @@ export function buildCommercialInvoicePrintHtml(params: {
   );
   const lineRows = sortedCommercialForPrint
     .map((line, idx) => {
-      const sub = line.workerName ? ` (${line.workerName})` : '';
-      const rawDesc = stripCommercialLinePoPrefix(line.description || '—') + sub;
-      const descText = L === 'en' ? translateCommercialLineDescriptionToEn(rawDesc) : rawDesc;
-      const split = isDelivery ? splitLineUnitFromDescription(line, descText) : { description: descText, unit: '' };
-      const desc = escapeHtmlDoc(split.description);
+      const rawDesc = stripCommercialLinePoPrefix(line.description || '—');
+      const presented = presentDocumentLineUnit({ description: rawDesc, unit: line.unit });
+      const withWorker = line.workerName ? `${presented.description} (${line.workerName})` : presented.description;
+      const descText = L === 'en' ? translateCommercialLineDescriptionToEn(withWorker) : withWorker;
+      const desc = escapeHtmlDoc(descText);
       const qty = Number(line.quantity).toLocaleString(L === 'en' ? 'en-GB' : 'th-TH');
       const moneyLoc = L === 'en' ? 'en-GB' : 'th-TH';
       const up = formatMoney2(Number(line.unitPrice), moneyLoc);
       const amt = formatMoney2(Number(line.amount ?? line.quantity * line.unitPrice), moneyLoc);
       const seq = invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx);
-      const unitCell = isDelivery ? `<td class="sd-center">${escapeHtmlDoc(split.unit)}</td>` : '';
+      const unitCell = `<td class="sd-right">${escapeHtmlDoc(presented.unit)}</td>`;
       const priceCells = showPrices
         ? `<td class="sd-right">${up}</td>
         <td class="sd-right">${amt}</td>`
@@ -357,14 +348,14 @@ export function buildCommercialInvoicePrintHtml(params: {
     showLogo: true,
   });
   const emptyLines = printT(L, 'noLines');
-  const colCount = 3 + (isDelivery ? 1 : 0) + (showPrices ? 2 : 0);
+  const colCount = 4 + (showPrices ? 2 : 0);
   const tableHtml = `<table class="sd-table sd-table--commercial-lines">
     <thead>
       <tr>
         <th class="sd-num">${escapeHtmlDoc(printT(L, 'colNo'))}</th>
         <th>${escapeHtmlDoc(printT(L, 'description'))}</th>
         <th class="sd-right">${escapeHtmlDoc(printT(L, 'qty'))}</th>
-        ${isDelivery ? `<th class="sd-center">${escapeHtmlDoc(printT(L, 'unit'))}</th>` : ''}
+        <th class="sd-right">${escapeHtmlDoc(printT(L, 'unit'))}</th>
         ${
           showPrices
             ? `<th class="sd-right">${escapeHtmlDoc(printT(L, 'unitPrice'))}</th>

@@ -40,6 +40,7 @@ import {
   validateRentalPayablePaymentProof,
 } from '@/lib/storage/rental-payable-payment-proofs';
 import { resolveVendorBankAccounts, vendorBankAccountLabel } from '@/lib/vendors/vendor-bank-accounts';
+import { StorageProofLink } from '@/components/storage/storage-proof-link';
 
 type SupportingFormRow = { attached: boolean; documentNo: string; documentDate: string };
 
@@ -384,14 +385,9 @@ export function RentalPayablePayoutDialog({
                     </td>
                     <td className="py-2 px-3">
                       {payable.paymentProofUrl ? (
-                        <a
-                          href={payable.paymentProofUrl}
-                          className="text-primary font-semibold underline text-xs"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
+                        <StorageProofLink url={payable.paymentProofUrl} title="เปิดหลักฐานจ่าย">
                           {payable.paymentProofFileName || 'เปิดไฟล์'}
-                        </a>
+                        </StorageProofLink>
                       ) : (
                         '—'
                       )}

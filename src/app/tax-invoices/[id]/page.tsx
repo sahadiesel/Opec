@@ -1171,6 +1171,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                     no: 'ลำดับ',
                     description: 'รายการ',
                     qty: 'จำนวน',
+                    unit: 'หน่วย',
                     unitPrice: 'ราคา/หน่วย',
                     amount: 'จำนวนเงิน',
                   }}

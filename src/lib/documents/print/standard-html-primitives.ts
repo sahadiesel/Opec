@@ -240,6 +240,34 @@ export const STANDARD_DOCUMENT_PRINT_CSS = `
     margin: 0 auto;
     position: relative;
   }
+  /** หัวกระดาษซ้ำทุกหน้าเมื่อเอกสารล้น — ใช้กับทุกชนิดที่ประกอบผ่าน assembleStandardPrintPageHtml */
+  .sd-repeat-frame {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  .sd-repeat-frame > thead {
+    display: table-header-group;
+  }
+  .sd-repeat-frame > tbody {
+    display: table-row-group;
+  }
+  .sd-repeat-frame > thead > tr > td,
+  .sd-repeat-frame > tbody > tr > td {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    vertical-align: top;
+  }
+  @media print {
+    .sd-repeat-frame,
+    .sd-repeat-frame > tbody,
+    .sd-repeat-frame > tbody > tr,
+    .sd-repeat-frame > tbody > tr > td {
+      break-inside: auto;
+      page-break-inside: auto;
+    }
+  }
   .sd-status-watermark {
     position: absolute;
     inset: 18% 8% 22% 8%;
@@ -1180,9 +1208,14 @@ export function assembleStandardPrintPageHtml(params: {
 <div class="${pageClass}">
   ${watermark}
   ${buildStandardPrintStampHtml(params.printedAtMs, locale)}
-  ${params.headerHtml}
-  ${params.mainHtml}
-  ${params.footerHtml}
+  <table class="sd-repeat-frame">
+    <thead>
+      <tr><td>${params.headerHtml}</td></tr>
+    </thead>
+    <tbody>
+      <tr><td>${params.mainHtml}${params.footerHtml}</td></tr>
+    </tbody>
+  </table>
 </div>
 `;
 }

@@ -29,6 +29,7 @@ import {
   XCircle,
   FileSignature,
   Pencil,
+  Eye,
   FileBarChart
 } from 'lucide-react';
 import { 
@@ -68,6 +69,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView, canEdit, canDelete } from '@/lib/permissions';
 import { filterToOwnCreatedDocuments } from '@/lib/documents/own-created-list';
+import { isQuotationLatestInFamily } from '@/lib/commercial/quotation-revision';
 
 export default function CustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -947,7 +949,9 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {visibleCustomerQuos.map(quo => (
+                    {visibleCustomerQuos.map(quo => {
+                      const canEditThisQuo = isQuotationLatestInFamily(quo, visibleCustomerQuos);
+                      return (
                       <TableRow key={quo.id} className="cursor-pointer hover:bg-muted/5" onClick={() => router.push(`/quotations/${quo.id}`)}>
                         <TableCell className="pl-6 font-mono font-bold text-primary">{quo.quotationNo}</TableCell>
                         <TableCell className="text-sm font-medium">{quo.projectTitle}</TableCell>
@@ -960,9 +964,18 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                         </TableCell>
                         <TableCell className="text-right pr-6">
                           <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="icon" className="h-8 w-8" title="แก้ไข"
-                              onClick={(e) => { e.stopPropagation(); router.push(`/quotations/${quo.id}`); }}>
-                              <Pencil className="h-4 w-4 text-primary" />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              title={canEditThisQuo ? 'แก้ไขฉบับล่าสุด' : 'ดูอย่างเดียว (ไม่ใช่ฉบับล่าสุด)'}
+                              onClick={(e) => { e.stopPropagation(); router.push(`/quotations/${quo.id}`); }}
+                            >
+                              {canEditThisQuo ? (
+                                <Pencil className="h-4 w-4 text-primary" />
+                              ) : (
+                                <Eye className="h-4 w-4 text-muted-foreground" />
+                              )}
                             </Button>
                             {isBizExecutive && (
                               <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" title="ลบ"
@@ -973,7 +986,8 @@ export default function CustomerDetailPage({ params }: { params: Promise<{ id: s
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                      );
+                    })}
                     {visibleCustomerQuos.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={6} className="text-center py-10 text-muted-foreground italic">ไม่พบประวัติใบเสนอราคา</TableCell>

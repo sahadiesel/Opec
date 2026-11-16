@@ -462,6 +462,8 @@ export interface BillingNoteLine {
   eventType?: string;
   timesheetIds?: string[];
   quantity: number;
+  /** หน่วย เช่น EA, วัน — คอลัมน์เดียวกับใบเสนอราคา */
+  unit?: string;
   unitPrice: number;
   amount: number;
   /** ลำดับแสดง — อนุรักษ์จากลำดับรายการใบเรียกเก็บ (เดียวกับ Invoice) เพื่อสอดคล้องฉบับพิมพ์ */
@@ -488,6 +490,8 @@ export interface CommercialInvoiceLine {
   eventType?: string;
   timesheetIds?: string[];
   quantity: number;
+  /** หน่วย เช่น EA, วัน — คอลัมน์เดียวกับใบเสนอราคา */
+  unit?: string;
   unitPrice: number;
   amount: number;
   /** ลำดับแสดงบนใบเรียกเก็บ/ใบกำกับ (0-based) — ตรงกับ BillingNoteLine.displayOrder เมื่อสร้างชุดภาษี */

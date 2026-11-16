@@ -12,6 +12,7 @@ import { amountToEnglishBahtText } from '@/lib/documents/english-baht-text';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { printT } from '@/lib/documents/document-print-i18n';
 import { stripCommercialLinePoPrefix, translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
+import { presentDocumentLineUnit } from '@/lib/documents/line-unit';
 import { formatMoney2, roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import {
   type CompanyProfilePrint,
@@ -41,9 +42,10 @@ function buildCommercialLinesTableRowsForPrint(
   const sorted = sortCommercialInvoiceLinesForDisplay(lines);
   return sorted
     .map((line, idx) => {
-      const sub = line.workerName ? ` (${line.workerName})` : '';
-      const rawDesc = stripCommercialLinePoPrefix(line.description || '—') + sub;
-      const descText = L === 'en' ? translateCommercialLineDescriptionToEn(rawDesc) : rawDesc;
+      const rawDesc = stripCommercialLinePoPrefix(line.description || '—');
+      const presented = presentDocumentLineUnit({ description: rawDesc, unit: line.unit });
+      const withWorker = line.workerName ? `${presented.description} (${line.workerName})` : presented.description;
+      const descText = L === 'en' ? translateCommercialLineDescriptionToEn(withWorker) : withWorker;
       const desc = escapeHtmlDoc(descText);
       const qty = Number(line.quantity).toLocaleString(loc);
       const up = formatMoney2(Number(line.unitPrice), loc);
@@ -53,6 +55,7 @@ function buildCommercialLinesTableRowsForPrint(
         <td class="sd-num">${seq}</td>
         <td>${desc}</td>
         <td class="sd-right">${qty}</td>
+        <td class="sd-right">${escapeHtmlDoc(presented.unit)}</td>
         <td class="sd-right">${up}</td>
         <td class="sd-right">${amt}</td>
       </tr>`;
@@ -129,7 +132,8 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
         const sortedLines = sortBillingNoteLinesForDisplay(billingLines);
         return sortedLines
           .map((line, idx) => {
-            const desc = escapeHtmlDoc(line.description || '—');
+            const presented = presentDocumentLineUnit({ description: line.description || '—', unit: line.unit });
+            const desc = escapeHtmlDoc(presented.description);
             const qty = Number(line.quantity).toLocaleString(loc);
             const up = formatMoney2(Number(line.unitPrice), loc);
             const amt = formatMoney2(Number(line.amount), loc);
@@ -138,6 +142,7 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
         <td class="sd-num">${seq}</td>
         <td>${desc}</td>
         <td class="sd-right">${qty}</td>
+        <td class="sd-right">${escapeHtmlDoc(presented.unit)}</td>
         <td class="sd-right">${up}</td>
         <td class="sd-right">${amt}</td>
       </tr>`;
@@ -225,12 +230,13 @@ function buildTaxInvoicePrintHtmlSinglePage(params: {
         <th class="sd-num">${escapeHtmlDoc(printT(L, 'colNo'))}</th>
         <th>${escapeHtmlDoc(printT(L, 'description'))}</th>
         <th class="sd-right">${escapeHtmlDoc(printT(L, 'qty'))}</th>
+        <th class="sd-right">${escapeHtmlDoc(printT(L, 'unit'))}</th>
         <th class="sd-right">${escapeHtmlDoc(printT(L, 'unitPrice'))}</th>
         <th class="sd-right">${escapeHtmlDoc(printT(L, 'amount'))}</th>
       </tr>
     </thead>
     <tbody>
-      ${lineRows || `<tr><td colspan="5" style="text-align:center;color:#737373">${escapeHtmlDoc(emptyLines)}</td></tr>`}
+      ${lineRows || `<tr><td colspan="6" style="text-align:center;color:#737373">${escapeHtmlDoc(emptyLines)}</td></tr>`}
     </tbody>
   </table>`;
   const totalsHtml = buildStandardTotalsWithNotesRowHtml({

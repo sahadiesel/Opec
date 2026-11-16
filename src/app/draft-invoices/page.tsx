@@ -30,6 +30,7 @@ import {
   MainContract,
   PoMonthTimesheetReview,
   PurchaseOrder,
+  Quotation,
   Wave,
   WaveMonthTimesheetReview,
   Worker,
@@ -227,13 +228,34 @@ function commercialBillingKindLabel(inv: CommercialInvoice): string {
   return 'Monthly';
 }
 
-function commercialWavePeriodLabel(inv: CommercialInvoice): string {
+function quotationNosForInvoice(
+  inv: CommercialInvoice,
+  pos: PurchaseOrder[] | null | undefined,
+  quotationNoById: ReadonlyMap<string, string>,
+): string {
+  const poIds = [...new Set([inv.poId, ...(inv.sourcePoIds ?? [])].map((id) => (id || '').trim()).filter(Boolean))];
+  const nos: string[] = [];
+  const seen = new Set<string>();
+  for (const poId of poIds) {
+    const qid = (pos?.find((p) => p.id === poId)?.quotationId || '').trim();
+    const no = qid ? (quotationNoById.get(qid) || '').trim() : '';
+    if (!no || seen.has(no)) continue;
+    seen.add(no);
+    nos.push(no);
+  }
+  return nos.join(', ');
+}
+
+function commercialWavePeriodLabel(inv: CommercialInvoice, quotationNo?: string): string {
   if (inv.waveId === EQUIPMENT_RENTAL_WAVE_PLACEHOLDER || inv.equipmentRentalContractId) {
     return inv.equipmentRentalPeriodMonth
       ? `สัญญาเช่าอุปกรณ์ · ${inv.equipmentRentalPeriodMonth}`
       : 'สัญญาเช่าอุปกรณ์';
   }
-  if (inv.waveId === QUOTATION_PO_WAVE_PLACEHOLDER) return 'ใบเสนอราคา (ไม่มี Wave)';
+  if (inv.waveId === QUOTATION_PO_WAVE_PLACEHOLDER) {
+    const no = (quotationNo || '').trim();
+    return no ? `ใบเสนอราคา (${no})` : 'ใบเสนอราคา';
+  }
   if (inv.waveId === PO_MONTH_WAVE_PLACEHOLDER) return inv.waveCode || 'PO+งวด (รวม wave)';
   return inv.waveCode || `${inv.waveId.slice(0, 8)}…`;
 }
@@ -403,6 +425,20 @@ export default function DraftInvoicesPage() {
   );
   const { data: allPos } = useCollection<PurchaseOrder>(posLookupQuery as any);
 
+  const quotationsLookupQuery = useMemoFirebase(
+    () => (firestore && isAuthorized ? collection(firestore, 'quotations') : null),
+    [firestore, isAuthorized],
+  );
+  const { data: allQuotations } = useCollection<Quotation>(quotationsLookupQuery as any);
+  const quotationNoById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const q of allQuotations ?? []) {
+      const no = (q.quotationNo || '').trim();
+      if (no) m.set(q.id, no);
+    }
+    return m;
+  }, [allQuotations]);
+
   const workersLookupQuery = useMemoFirebase(
     () => (firestore && isAuthorized ? collection(firestore, 'workers') : null),
     [firestore, isAuthorized],
@@ -544,11 +580,11 @@ export default function DraftInvoicesPage() {
         customerName: customerLabel(inv.customerId),
         billingKindLabel: commercialBillingKindLabel(inv),
         issueDateLabel: formatStoredDateThaiBE(inv.issueDate),
-        wavePeriodLabel: commercialWavePeriodLabel(inv),
+        wavePeriodLabel: commercialWavePeriodLabel(inv, quotationNosForInvoice(inv, allPos, quotationNoById)),
         totalLabel: `฿${(inv.totalAmount ?? 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
         statusLabel: commercialStatusPrintLabel(inv, revisedInvoiceIds.has(inv.id)),
       })),
-    [customerLabel, revisedInvoiceIds],
+    [customerLabel, revisedInvoiceIds, allPos, quotationNoById],
   );
 
   const runCommercialInvoiceListPrint = useCallback(
@@ -2026,7 +2062,7 @@ export default function DraftInvoicesPage() {
                       </TableCell>
                       <TableCell className="whitespace-nowrap px-2 py-1.5 text-xs font-mono">
                         <div className="flex flex-nowrap items-center gap-1.5">
-                          {commercialWavePeriodLabel(inv)}
+                          {commercialWavePeriodLabel(inv, quotationNosForInvoice(inv, allPos, quotationNoById))}
                           {isPartialPoMonthCommercialInvoice(inv) ? (
                             <Badge variant="outline" className="text-[10px] font-normal">
                               Partial

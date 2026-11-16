@@ -24,6 +24,36 @@ service firebase.storage {
       allow write: if request.auth != null;
     }
 
+    // หลักฐานจ่าย — ลิงก์เปิดแท็บใหม่ไม่ส่ง Firebase Auth (กัน 403)
+    match /vendor_bill_payment_proofs/{rest=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    match /vendor_bill_wht_payment_proofs/{rest=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    match /rental_payable_payment_proofs/{rest=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    match /rental_payable_wht_payment_proofs/{rest=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    match /payroll_wht_tax_payment_proofs/{rest=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    match /payroll_sso_payment_proofs/{rest=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    match /commercial_payment_proofs/{rest=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
     // โฟลเดอร์ย่อย
     match /{folder}/{rest=**} {
       allow read: if request.auth != null;

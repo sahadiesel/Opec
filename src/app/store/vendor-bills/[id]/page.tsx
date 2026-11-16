@@ -60,6 +60,7 @@ import {
   WithholdingCertificateDocument,
 } from '@/lib/types';
 import { executeVendorBillPayment } from '@/lib/ops/vendor-bill-payment';
+import { StorageProofLink } from '@/components/storage/storage-proof-link';
 import {
   resolveVendorBankAccounts,
   vendorBankAccountLabel,
@@ -1705,14 +1706,9 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                               </td>
                               <td className="py-2 pr-3">
                                 {row.paymentProofUrl ? (
-                                  <a
-                                    href={row.paymentProofUrl}
-                                    className="text-primary font-semibold underline text-xs"
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
+                                  <StorageProofLink url={row.paymentProofUrl} title="เปิดหลักฐานจ่าย">
                                     {row.paymentProofFileName || 'เปิดไฟล์'}
-                                  </a>
+                                  </StorageProofLink>
                                 ) : (
                                   '—'
                                 )}
@@ -1751,14 +1747,9 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                             </td>
                             <td className="py-2 pr-3">
                               {bill.paymentProofUrl ? (
-                                <a
-                                  href={bill.paymentProofUrl}
-                                  className="text-primary font-semibold underline text-xs"
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
+                                <StorageProofLink url={bill.paymentProofUrl} title="เปิดหลักฐานจ่าย">
                                   {bill.paymentProofFileName || 'เปิดไฟล์'}
-                                </a>
+                                </StorageProofLink>
                               ) : (
                                 '—'
                               )}

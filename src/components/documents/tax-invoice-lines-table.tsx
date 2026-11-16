@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import type { BillingNoteLine, CommercialInvoiceLine } from '@/lib/types';
 import type { PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { stripCommercialLinePoPrefix, translateCommercialLineDescriptionToEn } from '@/lib/documents/commercial-line-description-en';
+import { presentDocumentLineUnit } from '@/lib/documents/line-unit';
 import {
   invoiceLineSequenceNumberFromDisplayOrder,
   sortBillingNoteLinesForDisplay,
@@ -31,6 +32,7 @@ export function TaxInvoiceLinesTable({
     no: string;
     description: string;
     qty: string;
+    unit: string;
     unitPrice: string;
     amount: string;
   };
@@ -43,31 +45,37 @@ export function TaxInvoiceLinesTable({
     () => sortCommercialInvoiceLinesForDisplay(commercialLines),
     [commercialLines],
   );
-  const rows: Array<{ key: string; lineNo: number; desc: string; q: number; up: number; am: number }> = useMemo(() => {
+  const rows: Array<{ key: string; lineNo: number; desc: string; unit: string; q: number; up: number; am: number }> = useMemo(() => {
     if (useCommercial) {
       return sortedCommercial.map((line, idx) => {
-        const sub = line.workerName ? ` (${line.workerName})` : '';
-        const rawDesc = stripCommercialLinePoPrefix(line.description || '—') + sub;
+        const rawDesc = stripCommercialLinePoPrefix(line.description || '—');
+        const presented = presentDocumentLineUnit({ description: rawDesc, unit: line.unit });
+        const withWorker = line.workerName ? `${presented.description} (${line.workerName})` : presented.description;
         const desc =
-          documentLocale === 'en' ? translateCommercialLineDescriptionToEn(rawDesc) : rawDesc;
+          documentLocale === 'en' ? translateCommercialLineDescriptionToEn(withWorker) : withWorker;
         return {
           key: line.id || `c-${idx}`,
           lineNo: invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx),
           desc,
+          unit: presented.unit,
           q: Number(line.quantity),
           up: Number(line.unitPrice),
           am: Number(line.amount ?? line.quantity * line.unitPrice),
         };
       });
     }
-    return sortedBilling.map((line, idx) => ({
-      key: line.id,
-      lineNo: invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx),
-      desc: line.description || '—',
-      q: Number(line.quantity),
-      up: Number(line.unitPrice),
-      am: Number(line.amount),
-    }));
+    return sortedBilling.map((line, idx) => {
+      const presented = presentDocumentLineUnit({ description: line.description || '—', unit: line.unit });
+      return {
+        key: line.id,
+        lineNo: invoiceLineSequenceNumberFromDisplayOrder(line.displayOrder, idx),
+        desc: presented.description,
+        unit: presented.unit,
+        q: Number(line.quantity),
+        up: Number(line.unitPrice),
+        am: Number(line.amount),
+      };
+    });
   }, [useCommercial, sortedCommercial, sortedBilling, documentLocale]);
 
   return (
@@ -78,6 +86,7 @@ export function TaxInvoiceLinesTable({
             <TableHead className="w-10 text-center font-semibold">{columnHeaders.no}</TableHead>
             <TableHead className="font-semibold min-w-[12rem]">{columnHeaders.description}</TableHead>
             <TableHead className="text-right font-semibold w-20">{columnHeaders.qty}</TableHead>
+            <TableHead className="text-right font-semibold w-24">{columnHeaders.unit}</TableHead>
             <TableHead className="text-right font-semibold w-24">{columnHeaders.unitPrice}</TableHead>
             <TableHead className="text-right font-semibold w-28">{columnHeaders.amount}</TableHead>
           </TableRow>
@@ -85,7 +94,7 @@ export function TaxInvoiceLinesTable({
         <TableBody>
           {rows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={5} className="text-center text-muted-foreground text-sm py-6">
+              <TableCell colSpan={6} className="text-center text-muted-foreground text-sm py-6">
                 {emptyLabel}
               </TableCell>
             </TableRow>
@@ -95,6 +104,7 @@ export function TaxInvoiceLinesTable({
                 <TableCell className="text-center tabular-nums text-muted-foreground">{row.lineNo}</TableCell>
                 <TableCell>{row.desc}</TableCell>
                 <TableCell className="text-right tabular-nums">{row.q.toLocaleString(numberLocale)}</TableCell>
+                <TableCell className="text-right">{row.unit}</TableCell>
                 <TableCell className="text-right tabular-nums">
                   {row.up.toLocaleString(numberLocale, { minimumFractionDigits: 2 })}
                 </TableCell>

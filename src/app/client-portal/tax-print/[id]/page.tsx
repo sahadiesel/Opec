@@ -381,6 +381,7 @@ export default function ClientTaxPrintPage({ params }: { params: Promise<{ id: s
               no: printT(docL, 'colNo'),
               description: printT(docL, 'description'),
               qty: printT(docL, 'qty'),
+              unit: printT(docL, 'unit'),
               unitPrice: printT(docL, 'unitPrice'),
               amount: printT(docL, 'amount'),
             }}

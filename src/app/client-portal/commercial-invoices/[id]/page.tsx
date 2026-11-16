@@ -31,6 +31,7 @@ import { DisputeService } from '@/lib/services/dispute-service';
 import { buildCommercialInvoicePrintHtml, openStandardPrintWindow } from '@/lib/documents/standard-document-print';
 import { collapseSameLocationMobDemobLines } from '@/lib/commercial/mob-demob-invoice-lines';
 import { stripCommercialLinePoPrefix, translateCommercialLineDescriptionToEn, translateCommercialWaveCodeToEn } from '@/lib/documents/commercial-line-description-en';
+import { presentDocumentLineUnit } from '@/lib/documents/line-unit';
 import { Separator } from '@/components/ui/separator';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
@@ -260,8 +261,8 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
 
   const col = (L: PrintDocumentLocale) =>
     L === 'en'
-      ? { desc: 'Description', qty: 'Qty', amt: 'Amount' }
-      : { desc: 'รายละเอียด', qty: 'จำนวน', amt: 'จำนวนเงิน' };
+      ? { desc: 'Description', qty: 'Qty', uom: 'Unit', amt: 'Amount' }
+      : { desc: 'รายละเอียด', qty: 'จำนวน', uom: 'หน่วย', amt: 'จำนวนเงิน' };
   const lineCols = col(printLocale);
 
   if (isUserLoading || userLoading) {
@@ -353,23 +354,28 @@ export default function ClientCommercialInvoicePage({ params }: { params: Promis
               <TableRow>
                 <TableHead>{lineCols.desc}</TableHead>
                 <TableHead className="text-right">{lineCols.qty}</TableHead>
+                <TableHead className="text-right">{lineCols.uom}</TableHead>
                 <TableHead className="text-right">{lineCols.amt}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {collapseSameLocationMobDemobLines(invoice.lines ?? []).map((line) => (
+              {collapseSameLocationMobDemobLines(invoice.lines ?? []).map((line) => {
+                const presented = presentDocumentLineUnit(line);
+                return (
                 <TableRow key={line.id}>
                   <TableCell className="max-w-md">
                     <div className="font-medium text-sm">
-                      {lineDescription(line.description || '—', line.workerName)}
+                      {lineDescription(presented.description, line.workerName)}
                     </div>
                   </TableCell>
                   <TableCell className="text-right">{line.quantity}</TableCell>
+                  <TableCell className="text-right">{presented.unit}</TableCell>
                   <TableCell className="text-right font-medium">
                     ฿{formatMoney2(line.amount, printLocale === 'en' ? 'en-GB' : 'th-TH')}
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </CardContent>

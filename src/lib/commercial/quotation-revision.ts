@@ -57,6 +57,34 @@ export function isQuotationLatestEditable(
   return !isQuotationSuperseded(q);
 }
 
+/**
+ * ฉบับล่าสุดของชุด (base เดียวกัน) — ใช้ในรายการ/ประวัติ
+ * ถ้ามี R2 แล้ว R1 แม้ยังเป็น draft ก็แก้ไม่ได้
+ */
+export function isQuotationLatestInFamily(
+  q: Pick<Quotation, 'id' | 'baseQuotationNo' | 'quotationNo' | 'revisionNo' | 'status' | 'supersededByQuotationId' | 'createdAt'>,
+  siblings: Pick<
+    Quotation,
+    'id' | 'baseQuotationNo' | 'quotationNo' | 'revisionNo' | 'status' | 'supersededByQuotationId' | 'createdAt'
+  >[],
+): boolean {
+  if (!isQuotationLatestEditable(q)) return false;
+  const base = quotationFamilyBaseNo(q);
+  const family = siblings.filter((s) => quotationFamilyBaseNo(s) === base);
+  let maxRev = 0;
+  for (const s of family) {
+    maxRev = Math.max(maxRev, quotationRevisionNoOf(s));
+  }
+  if (quotationRevisionNoOf(q) < maxRev) return false;
+
+  const tips = family.filter(
+    (s) => quotationRevisionNoOf(s) === maxRev && isQuotationLatestEditable(s),
+  );
+  if (tips.length <= 1) return tips.some((t) => t.id === q.id);
+  const best = tips.reduce((a, b) => ((b.createdAt || 0) > (a.createdAt || 0) ? b : a));
+  return best.id === q.id;
+}
+
 export function quotationFamilyBaseNo(
   q: Pick<Quotation, 'baseQuotationNo' | 'quotationNo'>,
 ): string {

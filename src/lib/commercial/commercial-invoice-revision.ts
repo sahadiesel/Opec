@@ -45,6 +45,14 @@ export function isCommercialInvoiceLatestEditable(
   return !isCommercialInvoiceSuperseded(inv);
 }
 
+/** ใบแจ้งหนี้ที่ยังล็อกใบเสนอราคา — ยกเลิก (VOID) หรือถูกแทนที่แล้วไม่ล็อก */
+export function commercialInvoiceLocksLinkedQuotation(
+  inv: Pick<CommercialInvoice, 'status' | 'supersededByInvoiceId'>,
+): boolean {
+  if (inv.status === 'VOID' || inv.status === 'REVISED') return false;
+  return !isCommercialInvoiceSuperseded(inv);
+}
+
 /** ใบที่ยืนยันแล้วและเป็นฉบับล่าสุด — ใช้เลือกออกใบกำกับภาษี */
 export function isConfirmedLatestCommercialInvoice(
   inv: Pick<CommercialInvoice, 'status' | 'supersededByInvoiceId'>,

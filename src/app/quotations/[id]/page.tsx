@@ -30,8 +30,8 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useCollection, useUser } from '@/firebase';
-import { doc, collection, updateDoc, addDoc, deleteDoc, deleteField, query, where, getDocs, getDoc, limit } from 'firebase/firestore';
-import { Quotation, QuotationLine, QuotationStatus, User, Customer, PurchaseOrder } from '@/lib/types';
+import { doc, collection, updateDoc, addDoc, deleteDoc, deleteField, query, where, getDocs, getDoc } from 'firebase/firestore';
+import { Quotation, QuotationLine, QuotationStatus, User, Customer, PurchaseOrder, CommercialInvoice } from '@/lib/types';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
@@ -75,6 +75,7 @@ import {
   quotationRevisionNoOf,
   resolveNextQuotationRevisionNo,
 } from '@/lib/commercial/quotation-revision';
+import { commercialInvoiceLocksLinkedQuotation } from '@/lib/commercial/commercial-invoice-revision';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 type CompanyDocumentProfile = {
@@ -180,7 +181,7 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
   const [isLineDialogOpen, setIsLineDialogOpen] = useState(false);
   const [editingLine, setEditingLine] = useState<Partial<QuotationLine> | null>(null);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
-  /** มีใบแจ้งหนี้ (commercial invoice) ที่อ้าง PO ของใบเสนอราคานี้แล้ว — ถึงจะล็อกแก้ */
+  /** มีใบแจ้งหนี้ที่ยังไม่ยกเลิกอ้าง PO ของใบเสนอราคานี้ — ใบที่ยกเลิกแล้วไม่ล็อก */
   const [isLinkedToInvoice, setIsLinkedToInvoice] = useState(false);
   const [invoiceLinkChecking, setInvoiceLinkChecking] = useState(false);
 
@@ -201,19 +202,35 @@ export default function QuotationDetailPage({ params }: { params: Promise<{ id: 
     void (async () => {
       try {
         const pos = linkedPurchaseOrders ?? [];
+        let linked = false;
         for (const po of pos) {
-          const invSnap = await getDocs(
-            query(collection(firestore, 'commercial_invoices'), where('poId', '==', po.id), limit(1)),
-          );
-          if (!invSnap.empty) {
-            if (!cancelled) setIsLinkedToInvoice(true);
-            return;
+          const [byPo, bySource] = await Promise.all([
+            getDocs(query(collection(firestore, 'commercial_invoices'), where('poId', '==', po.id))),
+            getDocs(
+              query(collection(firestore, 'commercial_invoices'), where('sourcePoIds', 'array-contains', po.id)),
+            ),
+          ]);
+          const seen = new Set<string>();
+          for (const d of [...byPo.docs, ...bySource.docs]) {
+            if (seen.has(d.id)) continue;
+            seen.add(d.id);
+            if (commercialInvoiceLocksLinkedQuotation(d.data() as CommercialInvoice)) {
+              linked = true;
+              break;
+            }
           }
+          if (linked) break;
         }
-        const bnSnap = await getDocs(
-          query(collection(firestore, 'billing_notes'), where('quotationId', '==', id), limit(1)),
-        );
-        if (!cancelled) setIsLinkedToInvoice(!bnSnap.empty);
+        if (!linked) {
+          const bnSnap = await getDocs(
+            query(collection(firestore, 'billing_notes'), where('quotationId', '==', id)),
+          );
+          linked = bnSnap.docs.some((d) => {
+            const status = String((d.data() as { status?: string }).status || '');
+            return status !== 'CANCELLED';
+          });
+        }
+        if (!cancelled) setIsLinkedToInvoice(linked);
       } catch {
         if (!cancelled) setIsLinkedToInvoice(false);
       } finally {

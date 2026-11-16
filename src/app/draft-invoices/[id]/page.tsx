@@ -103,6 +103,7 @@ import {
   type CommercialInvoicePrintMode,
 } from '@/lib/documents/standard-document-print';
 import { stripCommercialLinePoPrefix, translateCommercialLineDescriptionToEn, translateCommercialWaveCodeToEn } from '@/lib/documents/commercial-line-description-en';
+import { presentDocumentLineUnit } from '@/lib/documents/line-unit';
 import { printT, type PrintDocumentLocale } from '@/lib/documents/document-print-i18n';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
 import { DocumentPrintLocaleToggle } from '@/components/documents/document-print-locale-toggle';
@@ -427,22 +428,23 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
   }, [printLocale]);
 
   const waveDisplay = useMemo(() => {
+    if (invoice?.waveId === QUOTATION_PO_WAVE_PLACEHOLDER) {
+      const no = (quotation?.quotationNo || '').trim();
+      if (docEn) return no ? `Quotation (${no})` : 'Quotation';
+      return no ? `ใบเสนอราคา (${no})` : 'ใบเสนอราคา';
+    }
     const raw =
-      invoice?.waveId === QUOTATION_PO_WAVE_PLACEHOLDER
-        ? docEn
-          ? 'Quotation (no Wave / timesheet)'
-          : 'ใบเสนอราคา (ไม่มี Wave / timesheet)'
-        : invoice?.waveId === PO_MONTH_WAVE_PLACEHOLDER
-          ? invoice.waveCode || (docEn ? 'PO+month (all waves)' : 'PO+งวด (รวม wave)')
-          : invoice?.waveCode || '—';
+      invoice?.waveId === PO_MONTH_WAVE_PLACEHOLDER
+        ? invoice.waveCode || (docEn ? 'PO+month (all waves)' : 'PO+งวด (รวม wave)')
+        : invoice?.waveCode || '—';
     return docEn ? translateCommercialWaveCodeToEn(raw) : raw;
-  }, [invoice?.waveCode, invoice?.waveId, docEn]);
+  }, [invoice?.waveCode, invoice?.waveId, docEn, quotation?.quotationNo]);
 
   const lineCols = useMemo(() => {
     const L = printLocale as PrintDocumentLocale;
     return L === 'en'
-      ? { desc: 'Description', qty: 'Qty', unit: 'Unit price', amt: 'Amount' }
-      : { desc: 'รายละเอียด', qty: 'จำนวน', unit: 'ราคา/หน่วย', amt: 'จำนวนเงิน' };
+      ? { desc: 'Description', qty: 'Qty', uom: 'Unit', unit: 'Unit price', amt: 'Amount' }
+      : { desc: 'รายละเอียด', qty: 'จำนวน', uom: 'หน่วย', unit: 'ราคา/หน่วย', amt: 'จำนวนเงิน' };
   }, [printLocale]);
 
   const handlePrintCommercial = async (
@@ -1821,7 +1823,8 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
               <TableHeader>
                 <TableRow>
                   <TableHead className="pl-6">{lineCols.desc}</TableHead>
-                  <TableHead className="text-right w-28">{lineCols.qty}</TableHead>
+                  <TableHead className="text-right w-24">{lineCols.qty}</TableHead>
+                  <TableHead className="text-right w-24">{lineCols.uom}</TableHead>
                   <TableHead className="text-right w-36">{lineCols.unit}</TableHead>
                   <TableHead className="text-right pr-6 w-36">{lineCols.amt}</TableHead>
                   {canEditDraftLines && (
@@ -1837,14 +1840,16 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                     )
                 ).map((line) => {
                   const isManualLine = line.lineSource === 'manual';
-                  const displayDesc = lineDescription(line.description || '—', line.workerName);
+                  const presented = presentDocumentLineUnit(line);
+                  const displayDesc = lineDescription(presented.description, line.workerName);
+                  const displayUnit = presented.unit;
                   return (
                   <TableRow key={line.id}>
                     <TableCell className="pl-6 max-w-md align-top">
                       {canEditDraftLines ? (
                         <Input
                           className="font-medium text-sm h-9"
-                          value={line.description}
+                          value={presented.description}
                           onChange={(e) => patchDraftLine(line.id, { description: e.target.value })}
                         />
                       ) : (
@@ -1869,6 +1874,18 @@ export default function DraftInvoiceDetailPage({ params }: { params: Promise<{ i
                         />
                       ) : (
                         line.quantity
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right align-top">
+                      {canEditDraftLines ? (
+                        <Input
+                          className="text-right h-9 text-sm"
+                          value={line.unit ?? (displayUnit === '—' ? '' : displayUnit)}
+                          placeholder={lineCols.uom}
+                          onChange={(e) => patchDraftLine(line.id, { unit: e.target.value })}
+                        />
+                      ) : (
+                        displayUnit
                       )}
                     </TableCell>
                     <TableCell className="text-right align-top">

@@ -79,6 +79,7 @@ import {
   type RentalContractChangeLog,
 } from './_components/rental-contract-logs-tab';
 import { RentalPayablePayoutDialog } from './_components/rental-payable-payout-dialog';
+import { StorageProofLink } from '@/components/storage/storage-proof-link';
 
 function money(value: number): string {
   return Number(value || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -747,14 +748,9 @@ export default function RentalContractDetailPage({ params }: { params: Promise<{
                           </TableCell>
                           <TableCell>
                             {row.paymentProofUrl ? (
-                              <a
-                                href={row.paymentProofUrl}
-                                className="text-primary font-semibold underline text-xs"
-                                target="_blank"
-                                rel="noreferrer"
-                              >
+                              <StorageProofLink url={row.paymentProofUrl} title="เปิดหลักฐานจ่าย">
                                 {row.paymentProofFileName || 'เปิดไฟล์'}
-                              </a>
+                              </StorageProofLink>
                             ) : (
                               '—'
                             )}

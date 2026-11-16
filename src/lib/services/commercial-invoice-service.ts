@@ -445,6 +445,41 @@ async function findCommercialInvoiceByQuotationPoPeriod(
   return null;
 }
 
+/** รายการใบแจ้งหนี้จากบรรทัดใบเสนอราคา — ใช้เมื่อ PO สายใบเสนอราคาไม่มี PO Line */
+async function quotationLinesAsInvoiceLines(
+  db: Firestore,
+  quotationId: string,
+): Promise<CommercialInvoiceLine[]> {
+  const qLineSnap = await getDocs(collection(db, 'quotations', quotationId, 'lines'));
+  const quoLines: QuotationLine[] = qLineSnap.docs.map((d) => {
+    const raw = d.data() as Omit<QuotationLine, 'id'>;
+    return { ...raw, id: d.id };
+  });
+  quoLines.sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
+  return quoLines.map((line) => {
+    const qty = Math.max(0, Number(line.quantity) || 0);
+    const unit = roundMoney(Number(line.unitPrice) || 0);
+    const rawTotal = Number(line.lineTotal);
+    const amount = roundMoney(
+      Number.isFinite(rawTotal) && rawTotal !== 0 ? rawTotal : qty * unit,
+    );
+    const desc = (line.description || '').trim() || 'รายการ';
+    const unitLabel = (line.unit || '').trim();
+    const remarks = (line.remarks || '').trim();
+    const description = remarks ? `${desc} — ${remarks}` : desc;
+    return {
+      id: newLineId(),
+      displayOrder: line.displayOrder ?? 0,
+      description,
+      ...(unitLabel ? { unit: unitLabel } : {}),
+      quantity: qty,
+      unitPrice: unit,
+      amount,
+      lineSource: 'quotation_line' as const,
+    };
+  });
+}
+
 /**
  * สร้างใบแจ้งหนี้จาก PO สายใบเสนอราคา — ถ้ามี `po_lines` ใช้จาก PO ไม่เช่นนั้นดึงรายการจากใบเสนอราคาที่ PO อ้างอิง (ไม่ใช้ Wave / timesheet)
  */
@@ -499,12 +534,13 @@ export async function createCommercialDraftFromQuotationPoLines(
       );
       const amount = roundMoney(qty * unit);
       const loc = (line.workLocation || '').trim();
-      const unitLabel = line.billingUnitSnapshot || 'unit';
+      const unitLabel = (line.billingUnitSnapshot || '').trim();
       const baseLabel = loc || 'PO Line';
       return {
         id: newLineId(),
         displayOrder: idx,
-        description: unitLabel ? `${baseLabel} (${unitLabel})` : baseLabel,
+        description: baseLabel,
+        ...(unitLabel ? { unit: unitLabel } : {}),
         positionId: line.positionId,
         quantity: qty,
         unitPrice: unit,
@@ -520,39 +556,15 @@ export async function createCommercialDraftFromQuotationPoLines(
         'ไม่มีรายการใน PO และ PO ไม่ได้อ้างอิงใบเสนอราคา — เพิ่มรายการใน PO หรือเลือกใบเสนอราคาตอนลงทะเบียน PO',
       );
     }
-    const qLineSnap = await getDocs(collection(db, 'quotations', quotationIdRef, 'lines'));
-    const quoLines: QuotationLine[] = qLineSnap.docs.map((d) => {
-      const raw = d.data() as Omit<QuotationLine, 'id'>;
-      return { ...raw, id: d.id };
-    });
-    quoLines.sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
-    if (quoLines.length === 0) {
+    lines = (await quotationLinesAsInvoiceLines(db, quotationIdRef)).map((line, idx) => ({
+      ...line,
+      displayOrder: idx,
+    }));
+    if (lines.length === 0) {
       throw new Error(
         'ไม่มีรายการในใบเสนอราคา — เพิ่มรายการในใบเสนอราคาก่อน หรือเพิ่มรายการใน PO',
       );
     }
-    lines = quoLines.map((line, idx) => {
-      const qty = Math.max(0, Number(line.quantity) || 0);
-      const unit = roundMoney(Number(line.unitPrice) || 0);
-      const rawTotal = Number(line.lineTotal);
-      const amount = roundMoney(
-        Number.isFinite(rawTotal) && rawTotal !== 0 ? rawTotal : qty * unit,
-      );
-      const desc = (line.description || '').trim() || 'รายการ';
-      const unitLabel = (line.unit || '').trim();
-      const remarks = (line.remarks || '').trim();
-      const head = unitLabel ? `${desc} (${unitLabel})` : desc;
-      const description = remarks ? `${head} — ${remarks}` : head;
-      return {
-        id: newLineId(),
-        displayOrder: idx,
-        description,
-        quantity: qty,
-        unitPrice: unit,
-        amount,
-        lineSource: 'quotation_line' as const,
-      };
-    });
     generationWarnings = ['สร้างจากรายการใบเสนอราคาที่ PO อ้างอิง — ไม่มี timesheet / Wave'];
     auditLineSource = 'ใบเสนอราคา';
   }
@@ -1294,7 +1306,10 @@ export async function createCommercialInvoiceForQuotationPos(
   const warnings: string[] = ['สร้างจาก PO ใบเสนอราคา — ไม่ใช้ timesheet'];
   let customerId = '';
   let contractId: string | undefined;
+  let vatQuotationId: string | undefined;
+  let usedQuotationLines = false;
   const codes: string[] = [];
+  const linkedQuotationIds: string[] = [];
 
   for (const poId of poIds) {
     const poSnap = await getDoc(doc(db, 'purchase_orders', poId));
@@ -1308,35 +1323,73 @@ export async function createCommercialInvoiceForQuotationPos(
       throw new Error('รวมในใบแจ้งหนี้เดียวกันได้เฉพาะ PO ของลูกค้ารายเดียวกัน');
     }
     assertPurchaseOrderActiveForInvoice(po);
+    const periodDup = await findCommercialInvoiceByQuotationPoPeriod(
+      db,
+      poId,
+      params.periodStart,
+      params.periodEnd,
+    );
+    if (periodDup?.id) {
+      throw new Error(
+        `มีใบในงวดเดียวกันแล้ว (${periodDup.invoiceNo || periodDup.id}) — เปิดจากรายการด้านล่าง`,
+      );
+    }
     contractId = contractId || po.contractId || undefined;
     codes.push(po.poCode || poId);
+    const poLabel = po.poCode || poId;
+    const prefix = poIds.length > 1 ? `${poLabel} · ` : '';
     const linesSnap = await getDocs(collection(db, 'purchase_orders', poId, 'po_lines'));
     const poLines = linesSnap.docs
       .map((d) => ({ ...(d.data() as Omit<POLine, 'id'>), id: d.id }))
       .filter((l) => l.status !== 'cancelled');
-    if (poLines.length === 0) throw new Error(`${po.poCode || poId} ไม่มีรายการ PO Line`);
-    for (const line of poLines) {
-      const qty = Math.max(0, Number(line.quantity) || 0);
-      const unit = roundMoney(sellSnapshotForWorkMode(line, po.poWorkMode ?? 'OFFSHORE'));
-      const amount = roundMoney(qty * unit);
-      const loc = (line.workLocation || '').trim() || 'PO Line';
-      const prefix = poIds.length > 1 ? `${po.poCode || poId} · ` : '';
+    if (poLines.length > 0) {
+      for (const line of poLines) {
+        const qty = Math.max(0, Number(line.quantity) || 0);
+        const unit = roundMoney(sellSnapshotForWorkMode(line, po.poWorkMode ?? 'OFFSHORE'));
+        const amount = roundMoney(qty * unit);
+        const loc = (line.workLocation || '').trim() || 'PO Line';
+        const unitLabel = (line.billingUnitSnapshot || '').trim();
+        lines.push({
+          id: newLineId(),
+          displayOrder: lines.length,
+          description: `${prefix}${loc}`,
+          ...(unitLabel ? { unit: unitLabel } : {}),
+          positionId: line.positionId,
+          quantity: qty,
+          unitPrice: unit,
+          amount,
+          lineSource: 'po_line',
+        });
+      }
+      continue;
+    }
+    const quotationId = (po.quotationId || '').trim();
+    if (!quotationId) {
+      throw new Error(`${poLabel} ไม่มีรายการ PO Line และไม่ได้ผูกใบเสนอราคา`);
+    }
+    const fromQuotation = await quotationLinesAsInvoiceLines(db, quotationId);
+    if (fromQuotation.length === 0) {
+      throw new Error(`${poLabel} ไม่มีรายการ PO Line และใบเสนอราคาไม่มีรายการ`);
+    }
+    usedQuotationLines = true;
+    vatQuotationId = vatQuotationId || quotationId;
+    if (!linkedQuotationIds.includes(quotationId)) linkedQuotationIds.push(quotationId);
+    for (const line of fromQuotation) {
       lines.push({
-        id: newLineId(),
+        ...line,
         displayOrder: lines.length,
-        description: `${prefix}${loc}`,
-        positionId: line.positionId,
-        quantity: qty,
-        unitPrice: unit,
-        amount,
-        lineSource: 'po_line',
+        description: `${prefix}${line.description}`,
       });
     }
   }
 
+  if (usedQuotationLines) {
+    warnings.push('ไม่มี PO Line — ใช้รายการจากใบเสนอราคาที่ PO อ้างอิง');
+  }
+
   const amountBeforeTax = roundMoney(lines.reduce((s, l) => s + l.amount, 0));
-  if (amountBeforeTax <= 0) throw new Error('ยอดรวมเป็น 0 — ตรวจราคา/จำนวนใน PO Line');
-  const vatPercent = await resolveVatPercent(db, customerId, contractId);
+  if (amountBeforeTax <= 0) throw new Error('ยอดรวมเป็น 0 — ตรวจราคา/จำนวนในใบเสนอราคาหรือ PO Line');
+  const vatPercent = await resolveVatPercent(db, customerId, contractId, vatQuotationId);
   const totals = computeCommercialInvoiceVatTotals(amountBeforeTax, vatPercent);
 
   return writeCommercialDraftInvoiceCore(db, params.actor, {
@@ -1359,7 +1412,7 @@ export async function createCommercialInvoiceForQuotationPos(
       timesheetCount: 0,
     },
     auditEntityLabel: (invoiceNo) => `${invoiceNo} (PO ใบเสนอราคา ${poIds.length} ใบ)`,
-    auditLinkedIds: [customerId, ...poIds],
+    auditLinkedIds: [customerId, ...poIds, ...linkedQuotationIds],
     auditAfterSummary: (invoiceNo) => `สร้างใบแจ้งหนี้ ${invoiceNo} จาก PO ใบเสนอราคา ${codes.join(', ')}`,
   });
 }
