@@ -23,6 +23,12 @@ const FIREBASE_CONSOLE_INDEX_URL = /https:\/\/console\.firebase\.google\.com\/[^
 /** permission-denied จาก SDK — Next.js dev overlay จับ console.error แล้วบังทั้งหน้า */
 const FIRESTORE_PERMISSION_DENIED =
   /Missing or insufficient permissions|FirebaseError.*permission|permission-denied/i;
+/**
+ * Watch-target race ใน SDK (ca9 แล้วตามด้วย b815) — เป็นบั๊กของ Firestore client
+ * ไม่ใช่ข้อผิดพลาดของแอป และ Next.js จะเอา console.error มาบังทั้งหน้า
+ */
+const FIRESTORE_INTERNAL_ASSERTION =
+  /INTERNAL ASSERTION FAILED|Unexpected state \(ID: ca9\)|Unexpected state \(ID: b815\)/i;
 
 function shouldSuppressPermissionNoise(): boolean {
   try {
@@ -61,6 +67,12 @@ export function installFirestoreDevConsoleFilter(): void {
       if (FIRESTORE_PERMISSION_DENIED.test(text)) {
         if (shouldSuppressPermissionNoise()) return;
         console.warn('[Firestore] permission-denied —', text.slice(0, 240));
+        return;
+      }
+      if (FIRESTORE_INTERNAL_ASSERTION.test(text)) {
+        console.warn(
+          '[Firestore] ข้อผิดพลาดภายใน SDK (ca9/b815) — รีเฟรชหน้าถ้าข้อมูลไม่โหลด แอปไม่ได้ทำให้คิวรีพัง',
+        );
         return;
       }
       if (FIRESTORE_UNREACHABLE.test(text)) {

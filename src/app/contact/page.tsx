@@ -1,6 +1,11 @@
 import type { Metadata } from 'next';
 import { CompanySiteShell } from '@/components/company-site/site-shell';
-import { CLIENTS, COMPANY, LEADERS } from '@/components/company-site/content';
+import { CLIENTS, COMPANY } from '@/components/company-site/content';
+
+const MAPS_LINK = 'https://maps.app.goo.gl/m7gQSfW6bdnczJbD7';
+/** Official embed for บจก. ออฟชอร์ พาวเวอร์ เอ็นจิเนียริ่ง (place 7.1847427, 100.5971848). */
+const MAP_EMBED =
+  'https://www.google.com/maps/embed?pb=!1m4!3m2!1m1!4s12338726645619676303!6i17!3m1!1sth!5m1!1sth';
 
 export const metadata: Metadata = {
   title: 'Contact Us | OPEC',
@@ -45,23 +50,23 @@ export default function ContactPage() {
           </a>
         </div>
 
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#e36f1e]">Leadership</p>
-          <h2 className="mt-2 text-2xl font-black text-[#0b1c33]">Management team</h2>
-          <div className="mt-6 grid gap-4 sm:grid-cols-3">
-            {LEADERS.map((person) => (
-              <article key={person.email} className="border border-[#d7e0ea] bg-white">
-                <img src={person.image} alt={person.name} className="aspect-square w-full object-cover" />
-                <div className="p-4">
-                  <h3 className="text-sm font-black text-[#0b1c33]">{person.name}</h3>
-                  <p className="mt-1 text-xs text-[#5c6b7a]">{person.role}</p>
-                  <a href={`mailto:${person.email}`} className="mt-2 block text-xs font-semibold text-[#e36f1e] hover:underline">
-                    {person.email}
-                  </a>
-                </div>
-              </article>
-            ))}
-          </div>
+        <div className="flex min-h-[460px] flex-col border border-[#d7e0ea] bg-white lg:min-h-full">
+          <iframe
+            title="แผนที่สำนักงาน OPEC"
+            src={MAP_EMBED}
+            className="min-h-[380px] w-full flex-1 border-0"
+            loading="lazy"
+            allowFullScreen
+            referrerPolicy="no-referrer-when-downgrade"
+          />
+          <a
+            href={MAPS_LINK}
+            target="_blank"
+            rel="noreferrer"
+            className="block border-t border-[#d7e0ea] px-4 py-3 text-center text-sm font-semibold text-[#e36f1e] hover:underline"
+          >
+            คลิกเพื่อเปิดใน google map
+          </a>
         </div>
       </section>
 

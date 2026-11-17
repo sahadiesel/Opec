@@ -4,7 +4,6 @@ import { useMemo } from 'react';
 import { collection, limit, query, where } from 'firebase/firestore';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import type {
-  AccountsPayable,
   CashAdvanceRequest,
   OfficePayrollRun,
   PayrollBatch,
@@ -14,8 +13,19 @@ import type {
 import { canSeeAccountingPillarUi } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 
-const AP_PENDING_STATUSES = ['OPEN', 'PARTIALLY_PAID', 'OVERDUE'] as const;
 const VENDOR_BILL_PENDING_STATUSES = ['SUBMITTED', 'PARTIALLY_PAID'] as const;
+
+/** ใบรับวางบิลที่ยังมีงวดรอจ่าย — ใบที่ยกเลิกหรือจ่ายครบทุกงวดไม่นับ */
+function vendorBillHasUnpaidInstallment(bill: PurchaseVendorBill): boolean {
+  if (bill.cancellationSettlement) return false;
+  if (bill.status !== 'SUBMITTED' && bill.status !== 'PARTIALLY_PAID') return false;
+  const plan = bill.paymentInstallments;
+  if (plan && plan.length > 0) {
+    return plan.some((row) => row.payStatus === 'PENDING' && (Number(row.amountInclVat) || 0) > 0.005);
+  }
+  return true;
+}
+
 const WORKER_PAYROLL_PENDING_STATUSES = ['FINANCE_PREPARED', 'PAYMENT_EXPORTED'] as const;
 
 export function useAccountingSidebarAlerts(user: User | null | undefined) {
@@ -43,21 +53,12 @@ export function useAccountingSidebarAlerts(user: User | null | undefined) {
     );
   }, [firestore, enabled]);
 
-  const apQ = useMemoFirebase(() => {
-    if (!firestore || !enabled) return null;
-    return query(
-      collection(firestore, 'accounts_payable'),
-      where('status', 'in', [...AP_PENDING_STATUSES]),
-      limit(8),
-    );
-  }, [firestore, enabled]);
-
   const vendorBillQ = useMemoFirebase(() => {
     if (!firestore || !enabled) return null;
     return query(
       collection(firestore, 'purchase_vendor_bills'),
       where('status', 'in', [...VENDOR_BILL_PENDING_STATUSES]),
-      limit(1),
+      limit(40),
     );
   }, [firestore, enabled]);
 
@@ -77,7 +78,6 @@ export function useAccountingSidebarAlerts(user: User | null | undefined) {
 
   const { data: workerPending } = useCollection<PayrollBatch>(workerPayrollQ as any);
   const { data: officePending } = useCollection<OfficePayrollRun>(officePayrollQ as any);
-  const { data: apPending } = useCollection<AccountsPayable>(apQ as any);
   const { data: vendorBillsPending } = useCollection<PurchaseVendorBill>(vendorBillQ as any);
   const { data: rentalPayablesPending } = useCollection<{ id: string }>(rentalPayableQ as any);
   const { data: cashAdvancesPending } = useCollection<CashAdvanceRequest>(cashAdvanceQ as any);
@@ -86,16 +86,14 @@ export function useAccountingSidebarAlerts(user: User | null | undefined) {
   const workerPayrollAlert = (workerPending?.length ?? 0) > 0;
   const cashAdvanceAlert = (cashAdvancesPending?.length ?? 0) > 0;
   const vendorBillAlert =
-    (vendorBillsPending?.length ?? 0) > 0 || (rentalPayablesPending?.length ?? 0) > 0;
+    (vendorBillsPending ?? []).some(vendorBillHasUnpaidInstallment) ||
+    (rentalPayablesPending?.length ?? 0) > 0;
 
   const payrollAlert =
     officePayrollAlert || workerPayrollAlert || cashAdvanceAlert || vendorBillAlert;
 
-  const apAlert = useMemo(() => {
-    const apItems = apPending ?? [];
-    const hasApOutstanding = apItems.some((item) => (Number(item.outstandingAmount) || 0) > 0.005);
-    return hasApOutstanding || vendorBillAlert;
-  }, [apPending, vendorBillAlert]);
+  /** ไฟที่ระบบเจ้าหนี้ = มีงวดรอจ่ายจริง ไม่ใช้ยอดเจ้าหนี้ที่ค้างจากใบที่ยกเลิกแล้ว */
+  const apAlert = vendorBillAlert;
 
   return {
     payrollAlert,
