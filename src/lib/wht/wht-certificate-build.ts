@@ -122,14 +122,17 @@ function incomeFromWhtCategory(
   if (cat === 'TRANSPORT_FREIGHT') {
     return { code: 'OTHER', displayTh: 'ค่าขนส่ง' };
   }
-  if (cat === 'CONTRACT') {
-    return { code: 'SERVICE_CONTRACT', displayTh: 'ค่าจ้างเหมา' };
+  if (cat === 'ADVERTISING') {
+    return { code: 'OTHER', displayTh: 'ค่าโฆษณา' };
   }
-  if (cat === 'SERVICE') {
-    return { code: 'SERVICE_CONTRACT', displayTh: 'ค่าบริการ' };
+  if (cat === 'CONTRACT' || cat === 'SERVICE') {
+    return { code: 'SERVICE_CONTRACT', displayTh: 'ค่าบริการทั่วไป / ค่าจ้างทำของ' };
   }
   if (cat === 'RENT') {
-    return { code: 'OTHER', displayTh: 'ค่าเช่า' };
+    return { code: 'OTHER', displayTh: 'ค่าเช่าทรัพย์สิน' };
+  }
+  if (cat === 'COMMISSION') {
+    return { code: 'OTHER', displayTh: 'ค่านายหน้า / ค่าคอมมิชชั่น' };
   }
   return null;
 }
@@ -365,8 +368,10 @@ export function buildWithholdingCertificateDraft(params: BuildWhtDraftParams): O
   const presetCat = bill.vendorBillWhtPresetCategory ?? purchase.supplierWithholdingCategory;
   const hasWhtIncomePreset =
     presetCat === 'TRANSPORT_FREIGHT' ||
+    presetCat === 'ADVERTISING' ||
     presetCat === 'CONTRACT' ||
     presetCat === 'SERVICE' ||
+    presetCat === 'COMMISSION' ||
     presetCat === 'RENT';
 
   const jobDescriptionParts: string[] = [];

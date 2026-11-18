@@ -134,6 +134,9 @@ export async function createReplacementTaxInvoiceDraft(
   const created = await createTaxInvoiceDraftFromIssuedCommercial(db, commercialId, actor, {
     showWithholdingOnDocument: cancelled.showWithholdingOnDocument === true,
     withholdingTaxRatePercentOnDocument: cancelled.withholdingTaxRatePercentOnDocument ?? 3,
+    ...(cancelled.withholdingTaxCategoryOnDocument
+      ? { withholdingTaxCategoryOnDocument: cancelled.withholdingTaxCategoryOnDocument }
+      : {}),
   });
 
   const now = Date.now();

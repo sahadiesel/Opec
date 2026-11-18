@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import type { VendorBillWhtPresetCategory } from '@/lib/types';
 import {
-  SUPPLIER_WHT_CATEGORY_OPTIONS,
+  WHT_INCOME_CATEGORY_OPTIONS,
   isSupplierWithholdingCategory,
   supplierWhtCategoryDefaultRate,
   supplierWhtCategoryLabel,
@@ -37,8 +37,8 @@ export function PurchaseRequestWhtCard({
       <CardHeader className="pb-3">
         <CardTitle className="text-base">หัก ณ ที่จ่าย</CardTitle>
         <CardDescription>
-          เลือกประเภท (จ้างเหมา / งานบริการ / ค่าเช่า) และอัตรา % ตอนทำ PR — คัดลอกไป PO อัตโนมัติ ·
-          ถ้าตั้งผิด ฝ่ายบัญชีแก้ได้ตอนทำจ่ายใบวางบิล เพื่อให้ใบหัก ณ ที่จ่ายตรงกับสรรพากร
+          เลือกประเภทตามอัตราหัก ณ ที่จ่ายมาตรฐาน (บริการทั่วไป / ขนส่ง / โฆษณา / เช่า / นายหน้า) และอัตรา % ตอนทำ PR —
+          คัดลอกไป PO อัตโนมัติ · ถ้าตั้งผิด ฝ่ายบัญชีแก้ได้ตอนทำจ่ายใบวางบิล
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -90,7 +90,7 @@ export function PurchaseRequestWhtCard({
                   className="gap-2"
                   disabled={!enabled}
                 >
-                  {SUPPLIER_WHT_CATEGORY_OPTIONS.map((opt) => (
+                  {WHT_INCOME_CATEGORY_OPTIONS.map((opt) => (
                     <label
                       key={opt.id}
                       className="flex cursor-pointer items-start gap-3 rounded-md border border-muted bg-background px-3 py-2 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"

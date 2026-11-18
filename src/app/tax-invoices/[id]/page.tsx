@@ -32,6 +32,7 @@ import {
   TaxInvoice,
   TaxInvoiceStatus,
   User,
+  VendorBillWhtPresetCategory,
   Customer,
   BillingNote,
   BillingNoteLine,
@@ -109,6 +110,11 @@ import {
 import { TaxInvoiceLinesTable } from '@/components/documents/tax-invoice-lines-table';
 import { Checkbox } from '@/components/ui/checkbox';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
+import {
+  VENDOR_BILL_WHT_PRESET_OPTIONS,
+  inferVendorWhtPresetFromRate,
+  supplierWhtCategoryDefaultRate,
+} from '@/lib/ops/supplier-wht-category';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 
 const ACCOUNTING_TAX_INVOICE_PRINT_PRESETS: Record<
@@ -152,6 +158,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const issuerSignatureUrl = useUserSignatureUrl(currentUser?.id);
   const [editInvoiceOpen, setEditInvoiceOpen] = useState(false);
   const [editShowWht, setEditShowWht] = useState(false);
+  const [editWhtCategory, setEditWhtCategory] = useState<VendorBillWhtPresetCategory>('SERVICE');
   const [savingInvoiceEdit, setSavingInvoiceEdit] = useState(false);
   const [editNotesOpen, setEditNotesOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState('');
@@ -843,12 +850,13 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     }
     setSavingInvoiceEdit(true);
     try {
-      const ratePct = Math.max(0, Number(invoice.withholdingTaxRatePercentOnDocument ?? 3));
+      const ratePct = supplierWhtCategoryDefaultRate(editWhtCategory);
       const wht = editShowWht ? roundMoney2((invoice.taxableAmount * ratePct) / 100) : 0;
       const now = Date.now();
       const actorName = currentUser.displayName || currentUser.email || currentUser.id;
       await updateDoc(invRef, {
         showWithholdingOnDocument: editShowWht,
+        withholdingTaxCategoryOnDocument: editWhtCategory,
         withholdingTaxRatePercentOnDocument: ratePct,
         withholdingTaxAmount: wht,
         updatedAt: now,
@@ -1338,6 +1346,10 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                     type="button"
                     onClick={() => {
                       setEditShowWht(!!invoice.showWithholdingOnDocument);
+                      setEditWhtCategory(
+                        invoice.withholdingTaxCategoryOnDocument ??
+                          inferVendorWhtPresetFromRate(Number(invoice.withholdingTaxRatePercentOnDocument ?? 3)),
+                      );
                       setEditInvoiceOpen(true);
                     }}
                   >
@@ -1964,7 +1976,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
             <DialogHeader>
               <DialogTitle>แก้ไขการแสดงหัก ณ ที่จ่ายบนใบกำกับภาษี</DialogTitle>
               <DialogDescription>
-                ใช้ได้เฉพาะเอกสารร่าง (DRAFT) — ฐานหัก = ยอดก่อน VAT อัตรา {whtRateDisplay}% ตามที่ตั้งไว้ตอนสร้างชุดเอกสาร
+                ใช้ได้เฉพาะเอกสารร่าง (DRAFT) — ฐานหัก = ยอดก่อน VAT ตามประเภทที่เลือก
               </DialogDescription>
             </DialogHeader>
             <div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-4">
@@ -1983,6 +1995,41 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
                 </p>
               </div>
             </div>
+            {editShowWht ? (
+              <div className="space-y-2">
+                <Label>ประเภทหัก ณ ที่จ่าย</Label>
+                <RadioGroup
+                  value={editWhtCategory}
+                  onValueChange={(v) => setEditWhtCategory(v as VendorBillWhtPresetCategory)}
+                  className="gap-2"
+                >
+                  {VENDOR_BILL_WHT_PRESET_OPTIONS.map((opt) => (
+                    <label
+                      key={opt.id}
+                      className="flex cursor-pointer items-start gap-3 rounded-md border border-muted bg-muted/20 px-3 py-2.5 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"
+                    >
+                      <RadioGroupItem value={opt.id} id={`edit-wht-${opt.id}`} className="mt-0.5" />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold leading-tight">{opt.title}</span>
+                        <span className="text-xs text-muted-foreground">{opt.detail}</span>
+                      </span>
+                    </label>
+                  ))}
+                </RadioGroup>
+                <p className="text-xs text-muted-foreground">
+                  ฐานก่อน VAT{' '}
+                  {invoice.taxableAmount.toLocaleString('th-TH', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}{' '}
+                  × {supplierWhtCategoryDefaultRate(editWhtCategory)}% ={' '}
+                  {roundMoney2(
+                    (invoice.taxableAmount * supplierWhtCategoryDefaultRate(editWhtCategory)) / 100,
+                  ).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
+                  บาท
+                </p>
+              </div>
+            ) : null}
             <DialogFooter className="gap-2 sm:gap-0">
               <Button variant="outline" onClick={() => setEditInvoiceOpen(false)} disabled={savingInvoiceEdit}>
                 ยกเลิก

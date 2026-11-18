@@ -1,4 +1,5 @@
 import type { PaymentMethod } from './accounting';
+import type { VendorBillWhtPresetCategory } from './purchase';
 
 /** Domain types: tax (from master types.ts split). */
 
@@ -309,8 +310,10 @@ export interface TaxInvoice {
    * ถ้า false แสดงเฉพาะยอดเงินฐานภาษี + VAT + ยอดรวมสุทธิแบบเดิม
    */
   showWithholdingOnDocument?: boolean;
-  /** อัตราที่ใช้คำนวณบนเอกสารเมื่อแสดงหัก ณ ที่จ่าย (ค่าเริ่ม 3) */
+  /** อัตราที่ใช้คำนวณบนเอกสารเมื่อแสดงหัก ณ ที่จ่าย — เลือกตอนสร้าง (ขนส่ง 1 / เหมา·บริการ 3 / เช่า 5) */
   withholdingTaxRatePercentOnDocument?: number;
+  /** ประเภทเงินได้ที่เลือกตอนสร้างหรือตอนแก้ร่าง — คู่กับอัตราด้านบน */
+  withholdingTaxCategoryOnDocument?: VendorBillWhtPresetCategory;
   totalAmount: number;
   currency: string;
   status: TaxInvoiceStatus;

@@ -27,11 +27,18 @@ export type PurchaseRequestStatus =
 export type PurchaseType = 'CASH' | 'CREDIT';
 
 /**
- * ประเภทหัก ณ ที่จ่ายคู่ค้า — ตั้งบน PR/PO และแก้ได้บนใบวางบิลก่อนจ่าย
- * (อัตราแนะนำ: ขนส่ง 1% · จ้างเหมา/บริการ 3% · เช่า 5%)
+ * ประเภทหัก ณ ที่จ่าย — ใช้ร่วมฝั่งใบกำกับภาษีขาย และฝั่งคู่ค้า (PR/PO/ใบวางบิล)
+ * อัตรา: บริการทั่วไป·จ้างทำของ 3% · ขนส่ง 1% · โฆษณา 2% · เช่า 5% · นายหน้า/คอมมิชชั่น 3% (นิติบุคคล)
+ * CONTRACT = legacy (เดิมจ้างเหมา) — แสดง/คิดอัตราเหมือน SERVICE
  */
 
-export type VendorBillWhtPresetCategory = 'TRANSPORT_FREIGHT' | 'CONTRACT' | 'SERVICE' | 'RENT';
+export type VendorBillWhtPresetCategory =
+  | 'SERVICE'
+  | 'TRANSPORT_FREIGHT'
+  | 'ADVERTISING'
+  | 'RENT'
+  | 'COMMISSION'
+  | 'CONTRACT';
 
 /**
  * คำขออนุมัติสั่งซื้อ (PR) — ต้องอนุมัติก่อนสร้างใบสั่งซื้อ (1 PR สร้าง PO ได้หนึ่งฉบับ)
@@ -285,6 +292,41 @@ export interface VendorBillPaymentInstallment {
   vendorPayeeBankAccountNumber?: string;
 }
 
+/** หลังจ่ายแล้ว — ปรับปรุงยอดหรืออัตราหัก ณ ที่จ่าย */
+export type VendorBillAdjustmentKind = 'AMOUNT' | 'WHT_RATE';
+export type VendorBillAdjustmentStatus = 'PENDING_ACCOUNTING' | 'SETTLED' | 'CANCELLED';
+/** PAY_MORE = โอนเพิ่มให้คู่ค้า · REFUND = รับคืนจากคู่ค้า */
+export type VendorBillSettlementDirection = 'PAY_MORE' | 'REFUND' | 'NONE';
+
+export interface VendorBillPostPaymentAdjustment {
+  kind: VendorBillAdjustmentKind;
+  status: VendorBillAdjustmentStatus;
+  requestedAt: number;
+  requestedByUid: string;
+  requestedByName?: string;
+  reason: string;
+  originalGrossInclVat: number;
+  originalNetPaid: number;
+  originalWhtAmount: number;
+  originalWhtRatePercent: number;
+  originalWhtCategory?: VendorBillWhtPresetCategory;
+  proposedGrossInclVat: number;
+  proposedWhtCategory?: VendorBillWhtPresetCategory;
+  proposedWhtRatePercent: number;
+  proposedWhtAmount: number;
+  proposedNetPaid: number;
+  /** proposedNetPaid − originalNetPaid (>0 จ่ายเพิ่ม, <0 รับคืน) */
+  settlementDelta: number;
+  settlementDirection: VendorBillSettlementDirection;
+  settledAt?: number;
+  settledByUid?: string;
+  settledByName?: string;
+  settlementCashbookEntryId?: string;
+  settlementCashbookEntryNo?: string;
+  /** แก้หนังสือ ม.50 ฉบับเดิมแล้ว */
+  whtCertificateAmended?: boolean;
+}
+
 export interface PurchaseVendorBill {
   id: string;
   receiptNo: string;
@@ -370,6 +412,11 @@ export interface PurchaseVendorBill {
    * ใช้เมื่อฐานหักตามกฎไม่เท่ากับยอดก่อนภาษีที่แสดงในใบวางบิล (ค่าไม่เกินยอดรวมในใบก่อนหัก ณ ที่จ่าย)
    */
   supplierWithholdingTaxBaseBill?: number | null;
+  /**
+   * คำขอปรับปรุงหลังจ่ายแล้ว (ยอดจ่าย / อัตราหัก ณ ที่จ่าย)
+   * — ส่วนต่างส่งบัญชี: จ่ายเพิ่ม → เจ้าหนี้ · รับคืน → ลูกหนี้
+   */
+  postPaymentAdjustment?: VendorBillPostPaymentAdjustment;
   /**
    * ใบที่ระบบเคยสร้างแยกเป็นยอด 0 ตอนยกเลิก — ไม่ใช้แล้ว
    * รายการนี้ไม่แสดง และจะถูกลบเมื่อซิงก์สถานะกลับไปที่ใบวางบิลเดิม

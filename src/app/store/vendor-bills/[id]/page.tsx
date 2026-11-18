@@ -88,6 +88,10 @@ import {
   supplierWhtCategoryLabel,
 } from '@/lib/ops/supplier-wht-category';
 import {
+  VendorBillPostPaymentAdjustMenu,
+  VendorBillPostPaymentSettlePanel,
+} from '@/components/purchases/vendor-bill-post-payment-adjust-controls';
+import {
   buildWithholdingCertificateDocumentHtml,
   buildWithholdingCertificatePayeeCopies12Html,
   openWithholdingCertificatePrintWindow,
@@ -204,14 +208,14 @@ function inferWhtPresetFromEffectiveRate(
 ): VendorBillWhtPresetCategory {
   if (
     purchaseCategory === 'TRANSPORT_FREIGHT' ||
+    purchaseCategory === 'ADVERTISING' ||
     purchaseCategory === 'CONTRACT' ||
     purchaseCategory === 'SERVICE' ||
+    purchaseCategory === 'COMMISSION' ||
     purchaseCategory === 'RENT'
   ) {
-    return purchaseCategory;
+    return purchaseCategory === 'CONTRACT' ? 'SERVICE' : purchaseCategory;
   }
-  if (Math.abs(rate - 1) < 0.02) return 'TRANSPORT_FREIGHT';
-  if (Math.abs(rate - 5) < 0.02) return 'RENT';
   return inferSupplierWhtCategoryFromRate(rate);
 }
 
@@ -315,8 +319,8 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const { data: linkedMilestone } = useDoc<PurchasePaymentMilestone>(milestoneRef as any);
 
   const bankAccountsQuery = useMemoFirebase(
-    () => (firestore && canPay ? collection(firestore, 'bank_accounts') : null),
-    [firestore, canPay]
+    () => (firestore && (canPay || okAccounting) ? collection(firestore, 'bank_accounts') : null),
+    [firestore, canPay, okAccounting],
   );
   const { data: bankAccounts } = useCollection(bankAccountsQuery as any);
 
@@ -1610,6 +1614,14 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                 เอกสารครบ — ปิดเรื่องแล้ว
               </Badge>
             ) : null}
+            {currentUser && (bill.status === 'PAID' || bill.status === 'CLOSED') ? (
+              <VendorBillPostPaymentAdjustMenu
+                bill={bill}
+                purchase={purchase}
+                currentUser={currentUser as User}
+                size="default"
+              />
+            ) : null}
           </div>
         </div>
 
@@ -1642,11 +1654,22 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
             <CardHeader className="pb-2">
               <CardTitle className="text-base text-orange-950">จ่ายบางส่วนแล้ว</CardTitle>
               <CardDescription className="text-orange-950/90">
-                ยังมีงวดที่รอชำระ — ดูรายละเอียดงวดในแผนด้านล่าง เจ้าหนี้คงยอดค้างจนกว่าจะจ่ายครบทุกงวด
+                {bill.postPaymentAdjustment?.status === 'PENDING_ACCOUNTING' &&
+                bill.postPaymentAdjustment.settlementDirection === 'PAY_MORE'
+                  ? 'รอบัญชีจ่ายเพิ่มหลังปรับปรุงยอด/อัตราหัก ณ ที่จ่าย — ใช้แผงเคลียร์ส่วนต่างด้านล่าง หรือดูยอดค้างในเจ้าหนี้'
+                  : 'ยังมีงวดที่รอชำระ — ดูรายละเอียดงวดในแผนด้านล่าง เจ้าหนี้คงยอดค้างจนกว่าจะจ่ายครบทุกงวด'}
               </CardDescription>
             </CardHeader>
           </Card>
         )}
+
+        {currentUser && (okAccounting || canPay) ? (
+          <VendorBillPostPaymentSettlePanel
+            bill={bill}
+            currentUser={currentUser as User}
+            bankAccounts={(bankAccounts as BankAccount[] | null) ?? null}
+          />
+        ) : null}
 
         {purchase &&
           bill.status !== 'DRAFT' &&
@@ -2403,7 +2426,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                         กำหนดฐานหัก
                       </Button>
                       <p className="text-[11px] text-muted-foreground leading-snug min-w-0 flex-1">
-                        เลือกประเภทเงินได้ (ค่าขนส่ง 1% / ค่าบริการ 3% / ค่าเช่า 5%) — กำหนดฐานหักเมื่อยอดที่ต้องหักไม่เท่ากับยอดก่อนภาษีในใบ — ระบบจะคำนวณยอดหักและยอดโอนสุทธิใหม่
+                        เลือกประเภทเงินได้ตามอัตราหัก ณ ที่จ่ายมาตรฐาน (บริการ 3% / ขนส่ง 1% / โฆษณา 2% / เช่า 5% / นายหน้า 3%) — กำหนดฐานหักเมื่อยอดที่ต้องหักไม่เท่ากับยอดก่อนภาษีในใบ — ระบบจะคำนวณยอดหักและยอดโอนสุทธิใหม่
                         {hasVendorBillWhtPreset ? (
                           <span className="block mt-1 text-foreground font-medium">
                             ปัจจุบัน:{' '}

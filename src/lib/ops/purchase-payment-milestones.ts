@@ -176,13 +176,16 @@ export function supplierWithholdingOnVendorBill(
   return { wht, netPaid: roundMoney2(gross - wht), baseBeforeVat: baseForWht };
 }
 
-/** อัตราตามเมนูบัญชี (ค่าขนส่ง 1% / จ้างเหมา·บริการ 3% / ค่าเช่า 5%) */
+/** อัตราตามเมนูมาตรฐาน (บริการ 3% · ขนส่ง 1% · โฆษณา 2% · เช่า 5% · นายหน้า 3%) */
 export function vendorBillWhtPresetRatePercent(category: VendorBillWhtPresetCategory): number {
   switch (category) {
     case 'TRANSPORT_FREIGHT':
       return 1;
+    case 'ADVERTISING':
+      return 2;
     case 'CONTRACT':
     case 'SERVICE':
+    case 'COMMISSION':
       return 3;
     case 'RENT':
       return 5;
@@ -202,8 +205,10 @@ export function effectiveVendorBillWhtRatePercent(
   const cat = bill.vendorBillWhtPresetCategory;
   if (
     cat === 'TRANSPORT_FREIGHT' ||
+    cat === 'ADVERTISING' ||
     cat === 'CONTRACT' ||
     cat === 'SERVICE' ||
+    cat === 'COMMISSION' ||
     cat === 'RENT'
   ) {
     return vendorBillWhtPresetRatePercent(cat);

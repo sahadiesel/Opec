@@ -27,7 +27,11 @@ import {
   ymMatchesYearMonthScope,
 } from '@/lib/date/year-month-scope-filter';
 import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
-import { TaxInvoice, TaxInvoiceStatus, User, Customer, CommercialInvoice, MoneyReceipt } from '@/lib/types';
+import { TaxInvoice, TaxInvoiceStatus, User, Customer, CommercialInvoice, MoneyReceipt, VendorBillWhtPresetCategory } from '@/lib/types';
+import {
+  VENDOR_BILL_WHT_PRESET_OPTIONS,
+  supplierWhtCategoryDefaultRate,
+} from '@/lib/ops/supplier-wht-category';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { taxInvoiceStatusBadge } from '@/lib/tax/tax-invoice-status-badge';
@@ -53,6 +57,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
@@ -173,8 +178,12 @@ export default function TaxInvoicesPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [selectedCommercialId, setSelectedCommercialId] = useState<string>('');
-  /** แสดงยอดหัก ณ ที่จ่ายบนใบกำกับ (ฐานก่อน VAT × 3%) */
+  /** แสดงยอดหัก ณ ที่จ่ายบนใบกำกับ — อัตราตามประเภทเงินได้ที่เลือก */
   const [showWithholdingOnDocument, setShowWithholdingOnDocument] = useState(false);
+  const [whtCategory, setWhtCategory] = useState<VendorBillWhtPresetCategory>('SERVICE');
+  const whtRatePercent = supplierWhtCategoryDefaultRate(whtCategory);
+  const selectedCommercial = availableCommercialInvoices.find((c) => c.id === selectedCommercialId);
+  const whtPreviewAmount = roundMoney2(((selectedCommercial?.amountBeforeTax ?? 0) * whtRatePercent) / 100);
 
   const canAdminDelete = useMemo(() => !!currentUser && isSystemAdmin(currentUser), [currentUser]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -357,13 +366,15 @@ export default function TaxInvoicesPage() {
         currentUser as User,
         {
           showWithholdingOnDocument,
-          withholdingTaxRatePercentOnDocument: 3,
+          withholdingTaxCategoryOnDocument: whtCategory,
+          withholdingTaxRatePercentOnDocument: whtRatePercent,
         },
       );
 
       setIsDialogOpen(false);
       setSelectedCommercialId('');
       setShowWithholdingOnDocument(false);
+      setWhtCategory('SERVICE');
       toast({
         title: 'สร้างใบกำกับภาษีร่างสำเร็จ',
         description:
@@ -471,6 +482,7 @@ export default function TaxInvoicesPage() {
               if (!open) {
                 setSelectedCommercialId('');
                 setShowWithholdingOnDocument(false);
+                setWhtCategory('SERVICE');
               }
             }}
           >
@@ -525,10 +537,48 @@ export default function TaxInvoicesPage() {
                       แสดงยอดหัก ณ ที่จ่ายบนใบกำกับภาษี
                     </Label>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      ถ้าเลือก ระบบจะคำนวณจากยอดก่อน VAT × 3% และแสดงยอดสุทธิที่ต้องชำระหลังหัก — ถ้าไม่เลือก ออกยอดแบบปกติ (ฐานภาษี + VAT + ยอดรวมสุทธิ)
+                      ถ้าเลือก ระบบคำนวณจากยอดก่อน VAT ตามประเภทด้านล่าง และแสดงยอดสุทธิหลังหัก — ถ้าไม่เลือก ออกยอดแบบปกติ (ฐานภาษี + VAT + ยอดรวมสุทธิ) ไม่แสดงบรรทัดหัก
                     </p>
                   </div>
                 </div>
+                {showWithholdingOnDocument ? (
+                  <div className="space-y-2">
+                    <Label>ประเภทหัก ณ ที่จ่าย</Label>
+                    <RadioGroup
+                      value={whtCategory}
+                      onValueChange={(v) => setWhtCategory(v as VendorBillWhtPresetCategory)}
+                      className="gap-2"
+                    >
+                      {VENDOR_BILL_WHT_PRESET_OPTIONS.map((opt) => (
+                        <label
+                          key={opt.id}
+                          className="flex cursor-pointer items-start gap-3 rounded-md border border-muted bg-muted/20 px-3 py-2.5 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5"
+                        >
+                          <RadioGroupItem value={opt.id} id={`ti-wht-${opt.id}`} className="mt-0.5" />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-semibold leading-tight">{opt.title}</span>
+                            <span className="text-xs text-muted-foreground">{opt.detail}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </RadioGroup>
+                    {selectedCommercial ? (
+                      <p className="text-xs text-muted-foreground">
+                        ฐานก่อน VAT{' '}
+                        {selectedCommercial.amountBeforeTax.toLocaleString('th-TH', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}{' '}
+                        × {whtRatePercent}% ={' '}
+                        {whtPreviewAmount.toLocaleString('th-TH', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}{' '}
+                        บาท
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)} disabled={isCreating}>ยกเลิก</Button>

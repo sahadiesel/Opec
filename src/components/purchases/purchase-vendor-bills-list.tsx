@@ -78,6 +78,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import { RentalPayablesPayoutSection } from '@/components/accounting/rental-payables-payout-section';
+import { VendorBillPostPaymentAdjustMenu } from '@/components/purchases/vendor-bill-post-payment-adjust-controls';
 import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import {
   buildYearCeOptions,
@@ -679,6 +680,16 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                                     'ยืนยันยกเลิก'
                                   )}
                                 </Button>
+                              ) : null}
+                              {currentUser &&
+                              (b.status === 'PAID' || b.status === 'CLOSED') &&
+                              b.postPaymentAdjustment?.status !== 'PENDING_ACCOUNTING' ? (
+                                <VendorBillPostPaymentAdjustMenu bill={b} currentUser={currentUser as User} />
+                              ) : null}
+                              {b.postPaymentAdjustment?.status === 'PENDING_ACCOUNTING' ? (
+                                <Badge variant="outline" className="h-7 text-[10px] font-semibold border-amber-400 text-amber-800">
+                                  รอเคลียร์ส่วนต่าง
+                                </Badge>
                               ) : null}
                               <Button type="button" variant="ghost" size="icon" className="h-7 w-7" asChild>
                                 <Link href={detailHref}>

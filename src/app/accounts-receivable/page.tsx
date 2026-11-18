@@ -17,7 +17,8 @@ import {
   Printer,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { AccountsReceivable, ARStatus, User, Customer, TaxInvoice, CommercialInvoice, Purchase, Vendor, BankAccount } from '@/lib/types';
+import { AccountsReceivable, ARStatus, User, Customer, TaxInvoice, CommercialInvoice, Purchase, PurchaseVendorBill, Vendor, BankAccount } from '@/lib/types';
+import Link from 'next/link';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { arStatusBadge } from '@/lib/accounts-receivable/ar-status-badge';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
@@ -137,6 +138,13 @@ export default function AccountsReceivablePage() {
   }, [firestore, isAuthorized, showPoRefunds]);
   const { data: refundPurchases } = useCollection<Purchase>(refundPurchasesQuery as any);
 
+  /** ใบวางบิลที่จ่ายแล้ว แล้วปรับยอด/อัตราหัก — รอรับคืนจากคู่ค้า */
+  const adjRefundBillsQuery = useMemoFirebase(() => {
+    if (!firestore || !isAuthorized || !showPoRefunds) return null;
+    return query(collection(firestore, 'purchase_vendor_bills'), orderBy('updatedAt', 'desc'));
+  }, [firestore, isAuthorized, showPoRefunds]);
+  const { data: allVendorBillsForRefund } = useCollection<PurchaseVendorBill>(adjRefundBillsQuery as any);
+
   const refundVendorsQuery = useMemoFirebase(
     () => (firestore && showPoRefunds ? collection(firestore, 'vendors') : null),
     [firestore, showPoRefunds],
@@ -232,6 +240,14 @@ export default function AccountsReceivablePage() {
       (p) => p.status === 'PENDING_CANCELLATION' && p.cancellationRefundMode === 'REFUND_REQUIRED',
     );
   }, [refundPurchases]);
+
+  const billAdjustmentRefunds = useMemo(() => {
+    return (allVendorBillsForRefund ?? []).filter(
+      (b) =>
+        b.postPaymentAdjustment?.status === 'PENDING_ACCOUNTING' &&
+        b.postPaymentAdjustment.settlementDirection === 'REFUND',
+    );
+  }, [allVendorBillsForRefund]);
 
   const monthRefundReceivables = useMemo(() => {
     return refundReceivables.filter((p) =>
@@ -595,6 +611,51 @@ export default function AccountsReceivablePage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {billAdjustmentRefunds.map((bill) => {
+                    const amt = Math.abs(bill.postPaymentAdjustment?.settlementDelta ?? 0);
+                    return (
+                      <TableRow key={`bill-adj-refund-${bill.id}`} className="hover:bg-muted/20 bg-sky-50/50">
+                        <TableCell className="py-4 pl-6">
+                          <div className="flex items-center gap-2 text-sm font-bold text-primary">
+                            <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+                            {vendorNameById.get(bill.vendorId) || 'คู่ค้า'}
+                          </div>
+                          <p className="text-[10px] text-muted-foreground mt-1">
+                            รับคืนหลังปรับ{bill.postPaymentAdjustment?.kind === 'WHT_RATE' ? 'อัตราหัก ณ ที่จ่าย' : 'ยอดจ่าย'} — ไม่ออกใบเสร็จ
+                          </p>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs font-bold text-primary">
+                          {bill.receiptNo}
+                          {bill.purchaseNo ? (
+                            <span className="block text-[10px] text-muted-foreground font-medium">{bill.purchaseNo}</span>
+                          ) : null}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col text-[10px]">
+                            <span className="flex items-center gap-1 text-muted-foreground">
+                              <Calendar className="h-2.5 w-2.5" /> {formatStoredDateThaiBE(bill.billingReceivedDate)}
+                            </span>
+                            <span className="font-medium text-sky-800">รอรับคืนจากคู่ค้า</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right text-sm tabular-nums">
+                          ฿ {amt.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-right text-sm text-green-600 tabular-nums">฿ 0.00</TableCell>
+                        <TableCell className="text-right font-black text-primary tabular-nums">
+                          ฿ {amt.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge {...arStatusBadge('OPEN')} />
+                        </TableCell>
+                        <TableCell className="text-right pr-6">
+                          <Button type="button" size="sm" className="h-8" asChild>
+                            <Link href={`/store/vendor-bills/${bill.id}`}>เปิดใบวางบิล · เคลียร์</Link>
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                   {visibleRefundReceivables.map((purchase) => (
                     <TableRow key={`po-refund-${purchase.id}`} className="hover:bg-muted/20 bg-amber-50/40">
                       <TableCell className="py-4 pl-6">

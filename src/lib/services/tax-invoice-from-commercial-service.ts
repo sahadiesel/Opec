@@ -23,6 +23,7 @@ import { writeAuditLog } from '@/lib/services/audit-service';
 import { isConfirmedLatestCommercialInvoice } from '@/lib/commercial/commercial-invoice-revision';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
 import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
+import { supplierWhtCategoryDefaultRate } from '@/lib/ops/supplier-wht-category';
 
 function newLineId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID
@@ -76,6 +77,7 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
     /** แสดงยอดหัก ณ ที่จ่ายบนใบกำกับ — คำนวณจากฐานก่อน VAT × อัตรา */
     showWithholdingOnDocument?: boolean;
     withholdingTaxRatePercentOnDocument?: number;
+    withholdingTaxCategoryOnDocument?: TaxInvoice['withholdingTaxCategoryOnDocument'];
   },
 ): Promise<{ taxInvoiceId: string; billingNoteId: string; taxInvoiceNo: string }> {
   const comRef = doc(db, 'commercial_invoices', commercialInvoiceId);
@@ -117,7 +119,10 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
   const issueYmd = timestampToHtmlDateValue(now);
   const dueYmd = addDaysToHtmlDate(issueYmd, 30);
 
-  const ratePct = Math.max(0, Number(options?.withholdingTaxRatePercentOnDocument ?? 3));
+  const category = options?.withholdingTaxCategoryOnDocument;
+  const ratePct = category
+    ? supplierWhtCategoryDefaultRate(category)
+    : Math.max(0, Number(options?.withholdingTaxRatePercentOnDocument ?? 3));
   const showWht = options?.showWithholdingOnDocument === true;
   const withholdingForDocs = showWht ? roundMoney2((com.amountBeforeTax * ratePct) / 100) : 0;
 
@@ -165,6 +170,7 @@ export async function createTaxInvoiceDraftFromIssuedCommercial(
     withholdingTaxAmount: withholdingForDocs,
     showWithholdingOnDocument: showWht,
     withholdingTaxRatePercentOnDocument: ratePct,
+    ...(category ? { withholdingTaxCategoryOnDocument: category } : {}),
     totalAmount: com.totalAmount,
     currency: com.currency || 'THB',
     status: 'DRAFT',
