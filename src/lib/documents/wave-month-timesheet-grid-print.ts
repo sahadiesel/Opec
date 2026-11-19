@@ -63,7 +63,6 @@ export function buildWaveMonthTimesheetGridPrintHtml(params: {
             return `<tr>
               <td class="wm-worker">
                 <strong>${escapeHtmlDoc(r.workerName)}</strong><br />
-                <span class="wm-sub">${escapeHtmlDoc(r.waveCode)}</span><br />
                 <span class="wm-sub">${escapeHtmlDoc(r.positionLabel)}</span>
               </td>
               ${dayCells}

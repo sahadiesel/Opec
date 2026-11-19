@@ -36,6 +36,7 @@ import {
   shouldDeleteStalePoActiveAutoDailyRow,
 } from '@/lib/timesheet/po-active-auto-daily-build';
 import { purgeStalePrefixContinuityWorkDaysForMonth } from '@/lib/timesheet/mobilization-clearance-timesheet';
+import { assignmentUsingRegistryPosition } from '@/lib/timesheet/sync-open-mob-position';
 import { healOneTimesheetPerWorkerPoDayInMonth, deleteConflictingWorkerPoDayTimesheets, healZeroStandbyLikeHoursInMonth } from '@/lib/timesheet/enforce-one-timesheet-per-worker-po-day';
 import { defaultPackageHoursForWorkMode } from '@/lib/ops/mob-day-charge';
 import { lastDayOfCalendarMonth } from '@/lib/timesheet/wave-month-utils';
@@ -127,6 +128,8 @@ export async function syncPoActiveAutoDailyForAssignment(
     await updateDoc(mobRef, { waveId: wid, updatedAt: nowRepair });
     assignment = { ...assignment, waveId: wid };
   }
+
+  assignment = await assignmentUsingRegistryPosition(db, assignment);
 
   if (!isAssignmentEligibleForPoActiveAutoDaily(assignment)) {
     return { created: 0, updated: 0, skipped: 0 };
@@ -403,7 +406,8 @@ export async function applyPoActiveStandbyStopWindow(
   const mobRef = doc(db, 'mobilizations', assignmentId);
   const mobSnap = await getDoc(mobRef);
   if (!mobSnap.exists()) throw new Error('ไม่พบ mobilization');
-  const assignment = { id: mobSnap.id, ...(mobSnap.data() as object) } as Assignment;
+  let assignment = { id: mobSnap.id, ...(mobSnap.data() as object) } as Assignment;
+  assignment = await assignmentUsingRegistryPosition(db, assignment);
 
   if (!isAssignmentEligibleForPoActiveAutoDaily(assignment)) {
     throw new Error('เฉพาะรายที่ ACTIVE และผูก PO/Wave ครบเท่านั้น');
@@ -528,7 +532,8 @@ async function loadPoActiveAssignmentWriteContext(db: Firestore, assignmentId: s
   const mobRef = doc(db, 'mobilizations', assignmentId);
   const mobSnap = await getDoc(mobRef);
   if (!mobSnap.exists()) throw new Error('ไม่พบ mobilization');
-  const assignment = { id: mobSnap.id, ...(mobSnap.data() as object) } as Assignment;
+  let assignment = { id: mobSnap.id, ...(mobSnap.data() as object) } as Assignment;
+  assignment = await assignmentUsingRegistryPosition(db, assignment);
 
   if (!isAssignmentEligibleForPoActiveAutoDaily(assignment)) {
     throw new Error('เฉพาะรายที่ ACTIVE และผูก PO/Wave ครบเท่านั้น');
@@ -828,7 +833,8 @@ async function applyPoActiveStandbyStopWindowOpenEnded(
   const mobRef = doc(db, 'mobilizations', assignmentId);
   const mobSnap = await getDoc(mobRef);
   if (!mobSnap.exists()) throw new Error('ไม่พบ mobilization');
-  const assignment = { id: mobSnap.id, ...(mobSnap.data() as object) } as Assignment;
+  let assignment = { id: mobSnap.id, ...(mobSnap.data() as object) } as Assignment;
+  assignment = await assignmentUsingRegistryPosition(db, assignment);
 
   if (!isAssignmentEligibleForPoActiveAutoDaily(assignment)) {
     throw new Error('เฉพาะรายที่ ACTIVE และผูก PO/Wave ครบเท่านั้น');

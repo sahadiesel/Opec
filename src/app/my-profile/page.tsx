@@ -137,6 +137,8 @@ export function ProfilePhotoEditor({
   onSave,
   onDelete,
   retainDraft = false,
+  frameSize = PHOTO_FRAME,
+  shape = 'square',
 }: {
   photoUrl?: string;
   letter: string;
@@ -145,7 +147,11 @@ export function ProfilePhotoEditor({
   onDelete: () => void;
   /** Keep the arranged picture on screen. The parent dialog saves it later. */
   retainDraft?: boolean;
+  /** Side length of the crop frame. Default is the full editor size. */
+  frameSize?: number;
+  shape?: 'square' | 'circle';
 }) {
+  const frame = frameSize;
   const fileRef = useRef<HTMLInputElement>(null);
   const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const [draftUrl, setDraftUrl] = useState<string | null>(null);
@@ -162,14 +168,14 @@ export function ProfilePhotoEditor({
 
   const place = () => {
     if (!natural) return null;
-    const cover = Math.max(PHOTO_FRAME / natural.w, PHOTO_FRAME / natural.h);
+    const cover = Math.max(frame / natural.w, frame / natural.h);
     const w = natural.w * cover * zoom;
     const h = natural.h * cover * zoom;
-    const maxX = Math.max(0, (w - PHOTO_FRAME) / 2);
-    const maxY = Math.max(0, (h - PHOTO_FRAME) / 2);
+    const maxX = Math.max(0, (w - frame) / 2);
+    const maxY = Math.max(0, (h - frame) / 2);
     const cx = Math.min(maxX, Math.max(-maxX, ox));
     const cy = Math.min(maxY, Math.max(-maxY, oy));
-    return { w, h, left: (PHOTO_FRAME - w) / 2 + cx, top: (PHOTO_FRAME - h) / 2 + cy };
+    return { w, h, left: (frame - w) / 2 + cx, top: (frame - h) / 2 + cy };
   };
 
   const laid = draftUrl ? place() : null;
@@ -186,7 +192,7 @@ export function ProfilePhotoEditor({
     img.src = draftUrl;
     await img.decode();
     const out = 512;
-    const scale = out / PHOTO_FRAME;
+    const scale = out / frame;
     const canvas = document.createElement('canvas');
     canvas.width = out;
     canvas.height = out;
@@ -199,8 +205,8 @@ export function ProfilePhotoEditor({
   return (
     <div className="flex w-fit flex-col items-center gap-2">
       <div
-        className="relative overflow-hidden rounded-md border border-[#cbd5e1] bg-[#10233f] shadow-sm"
-        style={{ width: PHOTO_FRAME, height: PHOTO_FRAME, touchAction: 'none' }}
+        className={`relative overflow-hidden border border-[#cbd5e1] bg-[#10233f] shadow-sm ${shape === 'circle' ? 'rounded-full' : 'rounded-md'}`}
+        style={{ width: frame, height: frame, touchAction: 'none' }}
         onPointerDown={(e) => {
           if (!draftUrl) return;
           (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
@@ -240,7 +246,7 @@ export function ProfilePhotoEditor({
         ) : photoUrl ? (
           <img src={photoUrl} alt="" className="h-full w-full object-cover" />
         ) : (
-          <span className="flex h-full w-full items-center justify-center text-4xl font-black text-white">{letter}</span>
+          <span className={`flex h-full w-full items-center justify-center font-black text-white ${frame < 100 ? 'text-xl' : 'text-4xl'}`}>{letter}</span>
         )}
         {busy ? (
           <span className="absolute inset-0 flex items-center justify-center bg-black/40">

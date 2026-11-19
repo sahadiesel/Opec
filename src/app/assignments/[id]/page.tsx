@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, use, useEffect, useMemo } from 'react';
+import { useState, use, useEffect, useMemo, useRef } from 'react';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canAccessOpsSchedulingModules, hasMinimumLevel } from '@/lib/permission-core';
 import { canAccess, canEdit, canView, isMatrixControlledRole } from '@/lib/permissions';
@@ -73,6 +73,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { ExceptionRequestService } from '@/lib/services/exception-request-service';
+import {
+  mobStillUsesRegistryPosition,
+  openMobPositionId,
+  syncOpenMobPositionFromWorker,
+} from '@/lib/timesheet/sync-open-mob-position';
 
 /** yyyy-mm-dd จากค่าที่เก็บใน Firestore / ฟอร์ม */
 function normalizeStoredYmd(v: unknown): string {
@@ -139,6 +144,21 @@ export default function AssignmentDetailPage({ params }: { params: Promise<{ id:
     const pos = allPositions?.find((p) => p.id === pid);
     return pos ? positionListPrimaryName(pos as PositionDoc) : pid;
   }, [assignment?.positionId, allPositions]);
+
+  const positionSyncKeyRef = useRef('');
+  useEffect(() => {
+    if (!firestore || !assignment || !worker || !canEditAssignments) return;
+    if (!mobStillUsesRegistryPosition(assignment)) return;
+    const next = openMobPositionId(assignment, worker);
+    if (!next || next === (assignment.positionId || '').trim()) return;
+    const key = `${assignment.id}:${next}`;
+    if (positionSyncKeyRef.current === key) return;
+    positionSyncKeyRef.current = key;
+    void syncOpenMobPositionFromWorker(firestore, assignment, worker).catch((err) => {
+      positionSyncKeyRef.current = '';
+      console.error('[assignment position sync]', err);
+    });
+  }, [firestore, assignment, worker, canEditAssignments]);
 
   const isOpsOrSalesManager = useMemo(() => {
     if (!currentUser) return false;

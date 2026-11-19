@@ -61,6 +61,11 @@ import {
 import { compareAssignmentWorkerNamesTh } from '@/lib/ops/mobilization-worker-name';
 import { assignmentOverlapsYearMonthForPoDailyBoard } from '@/lib/ops/timesheet-hub-po-month';
 import { syncPoActiveAutoDailyForAssignment, purgeStalePoActiveAutoDailyForCalendarMonth } from '@/lib/timesheet/po-active-auto-daily-sync';
+import {
+  mobStillUsesRegistryPosition,
+  openMobPositionId,
+  syncOpenMobPositionFromWorker,
+} from '@/lib/timesheet/sync-open-mob-position';
 import { isAssignmentEligibleForPoActiveAutoDaily } from '@/lib/timesheet/po-active-auto-daily-build';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import {
@@ -1231,6 +1236,44 @@ export default function WaveMonthTimesheetSummaryPage() {
     }
     return m;
   }, [positionsCatalog]);
+
+  const positionSyncInflightRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!firestore || !canEditTs || mobAssignments.length === 0 || !allWorkers?.length) return;
+    const workerById = new Map(allWorkers.map((w) => [w.id, w]));
+    const targets = mobAssignments.filter((a) => {
+      const worker = workerById.get(a.workerId);
+      if (!worker || !mobStillUsesRegistryPosition(a)) return false;
+      const next = openMobPositionId(a, worker);
+      if (!next || next === (a.positionId || '').trim()) return false;
+      return !positionSyncInflightRef.current.has(`${a.id}:${next}`);
+    });
+    if (targets.length === 0) return;
+    void (async () => {
+      const updates = new Map<string, string>();
+      for (const assignment of targets) {
+        const worker = workerById.get(assignment.workerId);
+        const next = openMobPositionId(assignment, worker);
+        const key = `${assignment.id}:${next}`;
+        positionSyncInflightRef.current.add(key);
+        try {
+          const res = await syncOpenMobPositionFromWorker(firestore, assignment, worker);
+          if (res.updated) updates.set(assignment.id, res.positionId);
+        } catch (err) {
+          console.error('[wave-month position sync]', assignment.id, err);
+        } finally {
+          positionSyncInflightRef.current.delete(key);
+        }
+      }
+      if (updates.size === 0) return;
+      setMobAssignments((prev) =>
+        prev.map((m) => {
+          const nextId = updates.get(m.id);
+          return nextId ? { ...m, positionId: nextId } : m;
+        }),
+      );
+    })();
+  }, [firestore, canEditTs, mobAssignments, allWorkers]);
 
   const waveIdsWithEligibleMobInMonth = useMemo(() => {
     const s = new Set<string>();
@@ -3358,14 +3401,10 @@ export default function WaveMonthTimesheetSummaryPage() {
                               >
                                 <div className="flex min-w-0 flex-col gap-0.5">
                                   <span className="truncate text-xs font-medium leading-tight">{rw.name}</span>
-                                  <span className="truncate font-mono text-[10px] leading-tight text-muted-foreground">
-                                    {wave.waveCode?.trim() || wave.id}
-                                  </span>
                                   <span
-                                    className="truncate text-[10px] leading-tight text-foreground/90"
-                                    title="ชื่อตำแหน่งจากการมอบหมาย (ทะเบียนตำแหน่ง)"
+                                    className="truncate text-[10px] leading-tight text-foreground/80"
+                                    title="ตำแหน่ง"
                                   >
-                                    <span className="text-muted-foreground">ตำแหน่ง</span>{' '}
                                     {positionLabelById.get((rosterAssignment.positionId || '').trim()) ||
                                       (rosterAssignment.positionId ? rosterAssignment.positionId : '—')}
                                   </span>

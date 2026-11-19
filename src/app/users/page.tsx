@@ -78,6 +78,7 @@ import { ProfilePhotoEditor } from '@/app/my-profile/page';
 import { resolveUserSignatureDisplayUrl, uploadUserSignatureImage } from '@/lib/storage/user-signature';
 import { uploadUserProfilePhoto } from '@/lib/storage/user-profile-photo';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { getBusinessRoleKeysSortedForSelect, getRoleCatalogEntry } from '@/lib/roles/role-catalog';
 import {
   normalizeBusinessRoleKey,
@@ -504,8 +505,18 @@ export default function UsersPage() {
                     return (
                       <TableRow key={u.id} className="hover:bg-muted/30 group transition-all">
                         <TableCell className="py-4 pl-6">
-                          <div className="flex flex-col">
-                            <span className="font-bold text-base text-primary">{fixExecutiveSpelling(u.displayName)}</span>
+                          <div className="flex min-w-0 flex-col">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="truncate font-bold text-base text-primary">{fixExecutiveSpelling(u.displayName)}</span>
+                              <Avatar className="h-7 w-7 shrink-0 border border-border">
+                                {u.profilePhotoUrl ? (
+                                  <AvatarImage src={u.profilePhotoUrl} alt="" className="object-cover" />
+                                ) : null}
+                                <AvatarFallback className="bg-primary/10 text-[11px] font-bold text-primary">
+                                  {(u.displayName || '?').trim().charAt(0) || '?'}
+                                </AvatarFallback>
+                              </Avatar>
+                            </div>
                             <span className="text-[10px] text-muted-foreground flex items-center gap-1 font-medium">
                               <Mail className="h-2.5 w-2.5" /> {u.email}
                             </span>
@@ -589,15 +600,37 @@ export default function UsersPage() {
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
-              <div className="space-y-2">
-                <Label htmlFor="edit-display-name">ชื่อที่แสดง (Display name)</Label>
-                <Input
-                  id="edit-display-name"
-                  value={editDisplayName}
-                  onChange={(e) => setEditDisplayName(e.target.value)}
-                  className="h-11"
-                  autoComplete="name"
-                />
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Label htmlFor="edit-display-name">ชื่อที่แสดง (Display name)</Label>
+                  <Input
+                    id="edit-display-name"
+                    value={editDisplayName}
+                    onChange={(e) => setEditDisplayName(e.target.value)}
+                    className="h-11"
+                    autoComplete="name"
+                  />
+                </div>
+                <div className="shrink-0 space-y-2">
+                  <Label>รูปโปรไฟล์</Label>
+                  <ProfilePhotoEditor
+                    key={`${detailsEditUser?.id || 'photo'}-photo`}
+                    photoUrl={clearPhoto ? undefined : detailsEditUser?.profilePhotoUrl}
+                    letter={(editDisplayName || detailsEditUser?.displayName || '?').trim().charAt(0) || '?'}
+                    busy={isSavingDetails}
+                    retainDraft
+                    frameSize={72}
+                    shape="circle"
+                    onSave={async (blob) => {
+                      setPhotoBlob(blob);
+                      setClearPhoto(false);
+                    }}
+                    onDelete={() => {
+                      setPhotoBlob(null);
+                      setClearPhoto(true);
+                    }}
+                  />
+                </div>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
@@ -628,7 +661,7 @@ export default function UsersPage() {
                   />
                 </div>
               </div>
-              <div className="grid items-start gap-4 sm:grid-cols-2">
+              <div>
                 <SignatureFrameEditor
                   key={`${detailsEditUser?.id || 'signature'}-sign`}
                   existingUrl={clearSignature ? null : signaturePreviewUrl}
@@ -648,27 +681,6 @@ export default function UsersPage() {
                     setSignatureBlob(null);
                   }}
                 />
-                <div className="space-y-2">
-                  <Label>รูปโปรไฟล์</Label>
-                  <p className="text-[11px] text-muted-foreground">
-                    จัดขนาดและตำแหน่งในกรอบ แล้วกดไอคอนบันทึกรูป จากนั้นกดบันทึกด้านล่าง แอดมินเพิ่มหรือลบได้
-                  </p>
-                  <ProfilePhotoEditor
-                    key={`${detailsEditUser?.id || 'photo'}-photo`}
-                    photoUrl={clearPhoto ? undefined : detailsEditUser?.profilePhotoUrl}
-                    letter={(detailsEditUser?.displayName || '?').charAt(0)}
-                    busy={isSavingDetails}
-                    retainDraft
-                    onSave={async (blob) => {
-                      setPhotoBlob(blob);
-                      setClearPhoto(false);
-                    }}
-                    onDelete={() => {
-                      setPhotoBlob(null);
-                      setClearPhoto(true);
-                    }}
-                  />
-                </div>
               </div>
             </div>
             <DialogFooter className="gap-2 sm:gap-0">
