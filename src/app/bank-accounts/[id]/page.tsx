@@ -71,21 +71,11 @@ function MoneyAmountInput({
   allowEmpty?: boolean;
   placeholder?: string;
 }) {
-  const [focused, setFocused] = useState(false);
-  const [text, setText] = useState(() =>
-    allowEmpty && (value == null || !Number.isFinite(Number(value)))
-      ? ''
-      : formatBankMoneyDisplay(value ?? 0),
-  );
-
-  useEffect(() => {
-    if (focused) return;
-    if (allowEmpty && (value == null || !Number.isFinite(Number(value)))) {
-      setText('');
-      return;
-    }
-    setText(formatBankMoneyDisplay(value ?? 0));
-  }, [value, focused, allowEmpty]);
+  /** null = แสดงค่าที่ format แล้วจาก props; string = กำลังพิมพ์ */
+  const [draft, setDraft] = useState<string | null>(null);
+  const empty =
+    allowEmpty && (value == null || !Number.isFinite(Number(value)));
+  const display = draft !== null ? draft : empty ? '' : formatBankMoneyDisplay(value ?? 0);
 
   return (
     <Input
@@ -93,12 +83,12 @@ function MoneyAmountInput({
       inputMode="decimal"
       className={className}
       placeholder={placeholder}
-      value={text}
-      onFocus={() => setFocused(true)}
+      value={display}
+      onFocus={() => setDraft(empty ? '' : formatBankMoneyDisplay(value ?? 0))}
       onChange={(e) => {
         const raw = e.target.value;
         if (raw !== '' && !/^-?[\d,]*\.?\d*$/.test(raw)) return;
-        setText(raw);
+        setDraft(raw);
         if (allowEmpty && raw.trim() === '') {
           onChange(undefined);
           return;
@@ -106,15 +96,14 @@ function MoneyAmountInput({
         onChange(parseBankMoneyInput(raw));
       }}
       onBlur={() => {
-        setFocused(false);
-        if (allowEmpty && text.trim() === '') {
+        if (allowEmpty && (draft ?? '').trim() === '') {
           onChange(undefined);
-          setText('');
+          setDraft(null);
           return;
         }
-        const n = roundMoney2(parseBankMoneyInput(text));
+        const n = roundMoney2(parseBankMoneyInput(draft ?? display));
         onChange(n);
-        setText(formatBankMoneyDisplay(n));
+        setDraft(null);
       }}
     />
   );
