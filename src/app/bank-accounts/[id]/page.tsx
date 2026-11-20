@@ -30,7 +30,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { canCreate } from '@/lib/permissions';
 import { syncBankCurrentBalanceIfDrift } from '@/lib/services/bank-balance-reconcile';
-import { roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
+import { formatMoney2, roundMoney2 } from '@/lib/ops/purchase-payment-milestones';
 import { computeOdBalanceDelta, formatSignedBahtDelta, isCurrentBankAccount } from '@/lib/bank-account-od';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -44,6 +44,70 @@ import {
   matchesCashbookDirectionFilter,
   useCashbookDirectionFilter,
 } from '@/components/accounting/cashbook-direction-filter';
+
+/** แสดงเงินแบบ 123,456.78 */
+function formatBankMoneyDisplay(n: number | undefined | null): string {
+  return formatMoney2(Number(n || 0), 'en-US');
+}
+
+function parseBankMoneyInput(raw: string): number {
+  const cleaned = raw.replace(/,/g, '').trim();
+  if (cleaned === '' || cleaned === '-' || cleaned === '.') return 0;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function MoneyAmountInput({
+  value,
+  onChange,
+  className,
+  allowEmpty,
+  placeholder,
+}: {
+  value: number | undefined;
+  onChange: (n: number | undefined) => void;
+  className?: string;
+  /** วงเงิน OD — ว่างได้ */
+  allowEmpty?: boolean;
+  placeholder?: string;
+}) {
+  /** null = แสดงค่าที่ format แล้วจาก props; string = กำลังพิมพ์ */
+  const [draft, setDraft] = useState<string | null>(null);
+  const empty =
+    allowEmpty && (value == null || !Number.isFinite(Number(value)));
+  const display = draft !== null ? draft : empty ? '' : formatBankMoneyDisplay(value ?? 0);
+
+  return (
+    <Input
+      type="text"
+      inputMode="decimal"
+      className={className}
+      placeholder={placeholder}
+      value={display}
+      onFocus={() => setDraft(empty ? '' : formatBankMoneyDisplay(value ?? 0))}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (raw !== '' && !/^-?[\d,]*\.?\d*$/.test(raw)) return;
+        setDraft(raw);
+        if (allowEmpty && raw.trim() === '') {
+          onChange(undefined);
+          return;
+        }
+        onChange(parseBankMoneyInput(raw));
+      }}
+      onBlur={() => {
+        if (allowEmpty && (draft ?? '').trim() === '') {
+          onChange(undefined);
+          setDraft(null);
+          return;
+        }
+        const n = roundMoney2(parseBankMoneyInput(draft ?? display));
+        onChange(n);
+        setDraft(null);
+      }}
+    />
+  );
+}
 
 function endOfMonthYmd(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
@@ -572,41 +636,35 @@ function BankAccountDetailContent({ id }: { id: string }) {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label>ยอดเงินยกมา (Opening Balance)</Label>
-                  <Input 
-                    type="number" 
-                    value={formData.openingBalance} 
-                    onChange={e => setFormData({...formData, openingBalance: parseFloat(e.target.value)})} 
-                    className="text-lg font-bold"
+                  <MoneyAmountInput
+                    value={formData.openingBalance}
+                    onChange={(n) =>
+                      setFormData({ ...formData, openingBalance: n ?? 0 })
+                    }
+                    className="text-lg font-bold tabular-nums"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>ยอดเงินปัจจุบัน (Current Balance)</Label>
-                  <Input 
-                    type="number" 
-                    value={formData.currentBalance} 
-                    onChange={e => setFormData({...formData, currentBalance: parseFloat(e.target.value)})} 
-                    className="text-xl font-black text-primary"
+                  <MoneyAmountInput
+                    value={formData.currentBalance}
+                    onChange={(n) =>
+                      setFormData({ ...formData, currentBalance: n ?? 0 })
+                    }
+                    className="text-xl font-black text-primary tabular-nums"
                   />
                 </div>
                 {!isPettyAccount && isCurrentAccount ? (
                   <>
                     <div className="space-y-2">
                       <Label>วงเงิน OD</Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={formData.odLimit ?? ''}
-                        onChange={(e) => {
-                          const raw = e.target.value;
-                          if (raw === '') {
-                            setFormData({ ...formData, odLimit: undefined });
-                            return;
-                          }
-                          const n = parseFloat(raw);
-                          setFormData({ ...formData, odLimit: Number.isFinite(n) ? n : undefined });
-                        }}
-                        className="text-lg font-bold"
+                      <MoneyAmountInput
+                        value={formData.odLimit}
+                        allowEmpty
+                        onChange={(n) =>
+                          setFormData({ ...formData, odLimit: n })
+                        }
+                        className="text-lg font-bold tabular-nums"
                         placeholder="0.00"
                       />
                     </div>
@@ -699,56 +757,42 @@ function BankAccountDetailContent({ id }: { id: string }) {
                     <span>
                       <span className="text-muted-foreground">ยอดก่อนเดือนนี้ (ยกมา + รายการก่อน):</span>{' '}
                       <span className="font-mono font-bold text-primary">
-                        ฿{' '}
-                        {balanceAtStartOfSelectedMonth.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        ฿ {formatBankMoneyDisplay(balanceAtStartOfSelectedMonth)}
                       </span>
                     </span>
                     <span className="text-muted-foreground/60">|</span>
                     <span>
                       <span className="text-muted-foreground">รวมรับ:</span>{' '}
                       <span className="font-bold text-emerald-800">
-                        ฿ {monthTotals.totalIn.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        ฿ {formatBankMoneyDisplay(monthTotals.totalIn)}
                       </span>
                     </span>
                     <span>
                       <span className="text-muted-foreground">รวมจ่าย:</span>{' '}
                       <span className="font-bold text-red-800">
-                        ฿ {monthTotals.totalOut.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        ฿ {formatBankMoneyDisplay(monthTotals.totalOut)}
                       </span>
                     </span>
                     <span>
                       <span className="text-muted-foreground">สุทธิรายรับ-รายจ่ายเดือนนี้:</span>{' '}
                       <span className="font-black text-primary">
-                        ฿ {monthTotals.net.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        ฿ {formatBankMoneyDisplay(monthTotals.net)}
                       </span>
                     </span>
                     <span className="text-muted-foreground/60">|</span>
                     <span>
                       <span className="text-muted-foreground">ยอดสิ้นเดือน (คำนวณ):</span>{' '}
                       <span className="font-mono font-bold text-primary">
-                        ฿{' '}
-                        {balanceAtEndOfSelectedMonth.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        ฿ {formatBankMoneyDisplay(balanceAtEndOfSelectedMonth)}
                       </span>
                     </span>
                   </div>
                   {currentBalanceDrift ? (
                     <p className="mb-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
                       ยอดเงินปัจจุบันในบัตรบัญชี (฿{' '}
-                      {currentBalanceDrift.stored.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {formatBankMoneyDisplay(currentBalanceDrift.stored)}
                       ) ไม่ตรงยอดสิ้นเดือนที่คำนวณจากรายการ (฿{' '}
-                      {currentBalanceDrift.computed.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {formatBankMoneyDisplay(currentBalanceDrift.computed)}
                       ) — ระบบจะซิงค์อัตโนมัติเมื่อเปิดหน้า หรือตรวจยอดยกมา / รายการก่อนเดือนนี้
                     </p>
                   ) : null}
@@ -793,20 +837,15 @@ function BankAccountDetailContent({ id }: { id: string }) {
                                 </div>
                               </TableCell>
                               <TableCell className="text-right text-sm font-medium text-emerald-800">
-                                {inAm > 0
-                                  ? `฿ ${inAm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                  : '—'}
+                                {inAm > 0 ? `฿ ${formatBankMoneyDisplay(inAm)}` : '—'}
                                 {row.direction === 'IN' && <ArrowDownLeft className="ml-1 inline h-3.5 w-3.5 opacity-60" />}
                               </TableCell>
                               <TableCell className="text-right text-sm font-medium text-red-800">
-                                {outAm > 0
-                                  ? `฿ ${outAm.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                  : '—'}
+                                {outAm > 0 ? `฿ ${formatBankMoneyDisplay(outAm)}` : '—'}
                                 {row.direction === 'OUT' && <ArrowUpRight className="ml-1 inline h-3.5 w-3.5 opacity-60" />}
                               </TableCell>
                               <TableCell className="text-right text-sm font-bold text-primary">
-                                ฿{' '}
-                                {row.balanceAfter.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                ฿ {formatBankMoneyDisplay(row.balanceAfter)}
                               </TableCell>
                             </TableRow>
                           );
