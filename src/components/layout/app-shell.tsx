@@ -5,16 +5,16 @@ import * as React from 'react';
 import { SidebarProvider, SidebarInset, SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import { companyNavBarStyle, COMPANY_NAV_BAR_HEIGHT } from '@/components/company-site/nav-bar-style';
 import { SidebarNav } from './sidebar-nav';
-import { User, type AccessLevel, type DeptType } from '@/lib/types';
+import { User } from '@/lib/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
-import { LogOut, Shield, Building2 } from 'lucide-react';
+import { LogOut, Shield, Mail } from 'lucide-react';
 import { useFirestore, useAuth } from '@/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { usePermissionProfiles, getEffectivePermissionProfileKey } from '@/hooks/use-permission-profiles';
 import { signOut } from 'firebase/auth';
 import { markFirestoreLoggingOut } from '@/firebase/firestore/suppress-logout-permission-error';
-import { getEffectiveDepartment, getEffectiveLevel, deriveBusinessRoleKey, BUSINESS_ROLES } from '@/lib/auth-mapping';
+import { deriveBusinessRoleKey, BUSINESS_ROLES } from '@/lib/auth-mapping';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { userMayAccessPath } from '@/lib/navigation/nav-access';
@@ -33,22 +33,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
-const ROLE_DEPT_LABEL_TH: Record<DeptType, string> = {
-  admin: 'ผู้ดูแลระบบ',
-  hr: 'งานบุคคล',
-  sales: 'งานขายและสัญญา',
-  operations: 'งานปฏิบัติการ',
-  accounting: 'บัญชีและการเงิน',
-  store: 'คลัง / จัดซื้อ',
-  client: 'ลูกค้า',
-};
-
-const ROLE_LEVEL_LABEL_TH: Record<AccessLevel, string> = {
-  admin: 'ผู้ดูแลระบบ',
-  manager: 'ผู้จัดการ',
-  officer: 'เจ้าหน้าที่',
-  viewer: 'ผู้ดู',
-};
+/** Z.com SmarterMail webmail (opec.co.th) — open in new tab; login is separate from OpsFlow. */
+const COMPANY_WEBMAIL_URL = 'https://mailpro-04.zth.netdesignhost.com';
 
 function OpsFlowTopBar({
   user,
@@ -66,8 +52,6 @@ function OpsFlowTopBar({
       ? 'calc(var(--sidebar-width-icon) * -1)'
       : 'calc(var(--sidebar-width) * -1)';
 
-  const dept = getEffectiveDepartment(user);
-  const level = getEffectiveLevel(user);
   const resolvedRoleKey = deriveBusinessRoleKey(user);
   const roleLine = BUSINESS_ROLES[resolvedRoleKey];
   const effectiveProfileKey = getEffectivePermissionProfileKey(user);
@@ -96,41 +80,36 @@ function OpsFlowTopBar({
 
       <div className="flex items-center gap-3">
         <div className="hidden max-w-[220px] flex-col items-end md:flex">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-black text-primary">{fixExecutiveSpelling(user.displayName)}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="flex max-w-[220px] items-center justify-end gap-1 text-right text-[9px] font-bold leading-tight tracking-tighter text-muted-foreground">
-              <Building2 className="h-2.5 w-2.5 shrink-0" />
-              <span className="normal-case">
-                {roleLine ? (
-                  <>
-                    <span className="font-semibold text-foreground">{roleLine.labelTh}</span>
-                    <span className="font-medium text-muted-foreground"> · {roleLine.labelEn}</span>
-                    <span className="mt-0.5 block text-[8px] font-bold normal-case tracking-wide text-muted-foreground">
-                      {ROLE_DEPT_LABEL_TH[roleLine.dept] ?? roleLine.dept} · {ROLE_LEVEL_LABEL_TH[roleLine.level] ?? roleLine.level}
-                    </span>
-                  </>
-                ) : (
-                  <span className="uppercase">
-                    {ROLE_DEPT_LABEL_TH[dept] ?? dept} / {ROLE_LEVEL_LABEL_TH[level] ?? level}
-                  </span>
-                )}
-              </span>
-            </span>
-            {(roleLine || primaryProfile) && (
-              <Badge
-                variant="secondary"
-                title={roleLine?.labelEn ?? primaryProfile?.profileNameEn}
-                className="flex h-4 max-w-[200px] items-center gap-1 border-blue-100 bg-blue-50 px-1.5 py-0 text-[9px] font-black text-blue-700"
-              >
-                <Shield className="h-2.5 w-2.5 shrink-0" />
-                <span className="truncate">{roleLine?.labelTh ?? primaryProfile?.profileNameTh ?? 'ผู้ใช้งาน'}</span>
-                {profiles && profiles.length > 1 && <span className="ml-0.5 shrink-0 opacity-60">+{profiles.length - 1}</span>}
-              </Badge>
-            )}
-          </div>
+          <span className="truncate text-sm font-black text-primary">{fixExecutiveSpelling(user.displayName)}</span>
+          {(roleLine || primaryProfile) && (
+            <Badge
+              variant="secondary"
+              title={roleLine?.labelEn ?? primaryProfile?.profileNameEn}
+              className="mt-0.5 flex h-4 max-w-[200px] items-center gap-1 border-blue-100 bg-blue-50 px-1.5 py-0 text-[9px] font-black text-blue-700"
+            >
+              <Shield className="h-2.5 w-2.5 shrink-0" />
+              <span className="truncate">{roleLine?.labelTh ?? primaryProfile?.profileNameTh ?? 'ผู้ใช้งาน'}</span>
+              {profiles && profiles.length > 1 && <span className="ml-0.5 shrink-0 opacity-60">+{profiles.length - 1}</span>}
+            </Badge>
+          )}
         </div>
+
+        <Button
+          asChild
+          variant="ghost"
+          size="icon"
+          className="h-11 w-11 rounded-full text-orange-600 hover:bg-orange-50 hover:text-orange-700"
+        >
+          <a
+            href={COMPANY_WEBMAIL_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="เปิดอีเมลบริษัท (Webmail)"
+            aria-label="เปิดอีเมลบริษัท"
+          >
+            <Mail className="h-7 w-7" />
+          </a>
+        </Button>
 
         <Avatar className="h-[72px] w-[72px] border-2 border-white shadow-sm ring-2 ring-primary/10">
           {user.profilePhotoUrl ? <AvatarImage src={user.profilePhotoUrl} alt="" className="object-cover" /> : null}

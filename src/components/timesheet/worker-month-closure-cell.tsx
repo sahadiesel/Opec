@@ -7,7 +7,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Checkbox } from '@/components/ui/checkbox';
 import type { WorkerMonthClosureStatus, WorkerMonthTimesheetClosure } from '@/lib/types';
 import {
   canReopenWorkerMonthClosureForEdit,
@@ -31,12 +30,10 @@ function statusBadgeVariant(status: WorkerMonthClosureStatus | undefined): 'defa
   }
 }
 
+/** สถานะปิดงวดรายคนใต้ชื่อ — ไม่มีติ๊กเลือกในตาราง (เลือกตอนกดปุ่มปิดงวด / ส่งรอออกบิล) */
 export function WorkerMonthClosureCell(props: {
   closure: WorkerMonthTimesheetClosure | undefined;
   canEdit: boolean;
-  selected: boolean;
-  selectable: boolean;
-  onSelectedChange: (checked: boolean) => void;
   onMarkDeferred: () => void;
   onClearDeferred: () => void;
   /** ยกเลิกปิดงวดเพื่อกลับมาแก้ชม./OT (ยังไม่ล็อก payroll) */
@@ -46,9 +43,6 @@ export function WorkerMonthClosureCell(props: {
   const {
     closure,
     canEdit,
-    selected,
-    selectable,
-    onSelectedChange,
     onMarkDeferred,
     onClearDeferred,
     onReopenClosure,
@@ -60,15 +54,7 @@ export function WorkerMonthClosureCell(props: {
   const showMenu = canEdit && (!locked || canReopen || status === 'deferred');
 
   return (
-    <div className="flex items-center gap-1.5 min-w-[7.5rem]">
-      {selectable ? (
-        <Checkbox
-          checked={selected}
-          disabled={!canEdit || busy || locked || status === 'deferred'}
-          onCheckedChange={(v) => onSelectedChange(v === true)}
-          aria-label="เลือกปิดงวด"
-        />
-      ) : null}
+    <div className="flex items-center gap-1.5 min-w-0">
       {showMenu ? (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

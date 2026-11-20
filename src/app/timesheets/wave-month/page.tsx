@@ -871,7 +871,6 @@ export default function WaveMonthTimesheetSummaryPage() {
 
   const [workerClosureRows, setWorkerClosureRows] = useState<WorkerMonthTimesheetClosure[]>([]);
   const [workerClosureLoading, setWorkerClosureLoading] = useState(false);
-  const [selectedPartialKeys, setSelectedPartialKeys] = useState<Set<string>>(() => new Set());
   const [partialWorkflowBusy, setPartialWorkflowBusy] = useState(false);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [closePicks, setClosePicks] = useState<WaveMonthClosePick[]>([]);
@@ -3222,11 +3221,12 @@ export default function WaveMonthTimesheetSummaryPage() {
                               </>
                             ) : (
                               <>
-                                ปิดงวดจ่าย Payroll = เลือกรายชื่อและช่วงวันที่ก่อนสร้างสลิป (แก้ได้ เช่น 1–10 แทน 1–12)
+                                กดปุ่มแล้วเลือกใน popup ว่าจะปิดงวดใคร / ส่งบิลใคร — คนที่ยังไม่เลือกมาทำภายหลังได้
                                 {' · '}
                               </>
                             )}
-                            <strong className="text-foreground">ส่งรอออกบิล</strong> = วางบิลลูกค้า คนละเส้นทางกับ payroll ไม่รอผู้จัดการ
+                            <strong className="text-foreground">ปิดงวด</strong> = จ่ายค่าจ้าง ·{' '}
+                            <strong className="text-foreground">ส่งรอออกบิล</strong> = วางบิลลูกค้า คนละเส้นทาง
                           </p>
                           {overdueDeferredClosures.length > 0 ? (
                             <Alert variant="destructive" className="py-2">
@@ -3383,11 +3383,6 @@ export default function WaveMonthTimesheetSummaryPage() {
                             rowOtHoursMonthTotalByKey.get(`${wave.id}|${rw.workerId}|${rosterAssignment.id}`) ?? 0;
                           const rowClosure =
                             po?.id != null ? workerClosureByKey.get(`${po.id}|${rw.workerId}`) : undefined;
-                          const rowPartialKey = po?.id != null ? `${po.id}|${rw.workerId}` : '';
-                          const rowSelectable =
-                            !!po?.id &&
-                            rowClosure?.status !== 'deferred' &&
-                            !(rowClosure && isWorkerMonthClosureGridLocked(rowClosure.status));
                           const editableGrid =
                             canEditTs && !isRowLockedForWorker(po, monthReview, rw.workerId);
                           return (
@@ -3412,17 +3407,7 @@ export default function WaveMonthTimesheetSummaryPage() {
                                     <WorkerMonthClosureCell
                                       closure={rowClosure}
                                       canEdit={canEditTs}
-                                      selected={selectedPartialKeys.has(rowPartialKey)}
-                                      selectable={rowSelectable}
                                       busy={partialWorkflowBusy}
-                                      onSelectedChange={(checked) => {
-                                        setSelectedPartialKeys((prev) => {
-                                          const next = new Set(prev);
-                                          if (checked) next.add(rowPartialKey);
-                                          else next.delete(rowPartialKey);
-                                          return next;
-                                        });
-                                      }}
                                       onMarkDeferred={() =>
                                         void handleMarkWorkerDeferred(po.id, rw.workerId, rw.name)
                                       }
@@ -4276,8 +4261,8 @@ export default function WaveMonthTimesheetSummaryPage() {
           <DialogHeader>
             <DialogTitle>ปิดงวดจ่าย Payroll</DialogTitle>
             <DialogDescription>
-              เลือกคนงานและช่วงวันที่ที่จะปิดงวดนี้ ระบบเสนอจากวันที่มีใบงานที่ยังไม่ปิด — แก้เป็นช่วงสั้นกว่าได้ เช่น 1–10
-              แล้ว 11–12 ไปปิดรอบถัดไป
+              เลือกคนที่จะปิดงวดส่งคำนวณจ่ายเงินเดือนในรอบนี้ — คนที่ยังไม่เลือกมาปิดภายหลังได้ ระบบเสนอช่วงวันที่จากใบงานที่ยังไม่ปิด
+              (แก้เป็นช่วงสั้นกว่าได้ เช่น 1–10 แล้ว 11–12 ไปปิดรอบถัดไป)
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -4418,7 +4403,8 @@ export default function WaveMonthTimesheetSummaryPage() {
           <DialogHeader>
             <DialogTitle>ส่งรอออกบิล</DialogTitle>
             <DialogDescription>
-              เลือกคนที่ปิดงวดแล้ว ระบบส่งไปรอสร้างใบแจ้งหนี้ทันที ไม่เข้าคิวผู้จัดการ
+              เลือกคนที่จะส่งคำนวณทำ invoice วางบิล (ทริป / รายเดือนตามสัญญาเดิม) — คนที่ยังไม่เลือกมาส่งภายหลังได้
+              ไม่เข้าคิวผู้จัดการ
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
