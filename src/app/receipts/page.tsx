@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ChevronRight, Receipt, Building2, Calendar, Search, Printer, Loader2 } from 'lucide-react';
+import { ChevronRight, Receipt, Building2, Calendar, Printer, Loader2 } from 'lucide-react';
 import { formatStoredDateThaiBE } from '@/lib/date-thai';
 import {
   buildYearCeOptions,
@@ -23,7 +23,7 @@ import {
   currentYearCe,
   ymMatchesYearMonthScope,
 } from '@/lib/date/year-month-scope-filter';
-import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
+import { DocumentListFilterBar } from '@/components/documents/document-list-filter-bar';
 import type { Customer, MoneyReceipt, User } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
@@ -238,33 +238,25 @@ export default function MoneyReceiptsListPage() {
 
         <Card>
           <CardContent className="p-0">
-            <div className="flex flex-col gap-3 border-b p-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-md">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    type="search"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="ค้นหาเลขที่ใบเสร็จ, ใบกำกับ, ลูกค้า…"
-                    className="h-10 w-full pl-9"
-                    aria-label="ค้นหาใบเสร็จรับเงิน"
-                  />
-                </div>
-                <YearMonthScopeSelects
-                  idPrefix="receipt"
-                  yearCe={yearFilterCe}
-                  monthScope={monthScope}
-                  yearOptionsCe={yearOptionsCe}
-                  onYearCeChange={setYearFilterCe}
-                  onMonthScopeChange={setMonthScope}
-                />
-              </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <div className="border-b p-4">
+              <DocumentListFilterBar
+                idPrefix="receipt"
+                searchValue={searchTerm}
+                onSearchChange={setSearchTerm}
+                searchPlaceholder="ค้นหาเลขที่ใบเสร็จ, ใบกำกับ, ลูกค้า…"
+                searchAriaLabel="ค้นหาใบเสร็จรับเงิน"
+                yearCe={yearFilterCe}
+                monthScope={monthScope}
+                yearOptionsCe={yearOptionsCe}
+                onYearCeChange={setYearFilterCe}
+                onMonthScopeChange={setMonthScope}
+                className="border-0 bg-transparent p-0 shadow-none"
+                actions={
+                  <>
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-10 gap-2 whitespace-nowrap"
+                  className="h-11 gap-2 whitespace-nowrap"
                   disabled={isLoading || printBusy || allRows.length === 0}
                   onClick={() => setPrintDialogOpen(true)}
                 >
@@ -274,12 +266,14 @@ export default function MoneyReceiptsListPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-10 shrink-0 whitespace-nowrap"
+                  className="h-11 shrink-0 whitespace-nowrap"
                   onClick={() => router.push('/tax-invoices')}
                 >
                   ไปใบกำกับภาษี
                 </Button>
-              </div>
+                  </>
+                }
+              />
             </div>
             {isLoading ? (
               <p className="p-6 text-sm text-muted-foreground">…</p>

@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { FileQuestion, Plus, ChevronRight, Loader2, PackageSearch, Search, Trash2 } from 'lucide-react';
+import { FileQuestion, Plus, ChevronRight, Loader2, PackageSearch, Search, Trash2, Filter } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import {
   collection,
@@ -47,6 +47,13 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 
 async function deletePurchaseRequestCascade(firestore: Firestore, prId: string) {
   const linesSnap = await getDocs(collection(firestore, 'purchase_requests', prId, 'lines'));
@@ -75,7 +82,7 @@ function statusBadge(s: PurchaseRequestStatus) {
 }
 
 const PR_STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: 'all', label: 'ทั้งหมด' },
+  { value: 'all', label: 'ทุกสถานะ' },
   { value: 'DRAFT', label: 'ฉบับร่าง' },
   { value: 'PENDING_APPROVAL', label: 'รออนุมัติ' },
   { value: 'APPROVED', label: 'อนุมัติแล้ว' },
@@ -90,6 +97,12 @@ function statusFilterMatches(
 ): boolean {
   if (filter === 'all') return true;
   return effectivePrStatus(r) === filter;
+}
+
+function prCreatedYm(r: Pick<PurchaseRequest, 'createdAt'>): string {
+  const d = new Date(r.createdAt);
+  if (!Number.isFinite(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 export default function StorePurchaseRequestsPage() {
@@ -172,29 +185,19 @@ export default function StorePurchaseRequestsPage() {
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
   const [statusFilter, setStatusFilter] = useState('all');
-  const [monthYm, setMonthYm] = useState<string>('all');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
 
-  const monthOptions = useMemo(() => {
-    const set = new Set<string>();
-    (visibleList || []).forEach((r) => {
-      const d = new Date(r.createdAt);
-      if (!Number.isFinite(d.getTime())) return;
-      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      set.add(ym);
-    });
-    return [...set].sort().reverse();
-  }, [visibleList]);
+  const yearOptionsCe = useMemo(
+    () => buildYearCeOptions((visibleList || []).map((r) => prCreatedYm(r))),
+    [visibleList],
+  );
 
   const rows = useMemo(() => {
     const qq = q.trim().toLowerCase();
     return (visibleList || [])
       .filter((r) => statusFilterMatches(statusFilter, r))
-      .filter((r) => {
-        if (monthYm === 'all') return true;
-        const d = new Date(r.createdAt);
-        const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        return ym === monthYm;
-      })
+      .filter((r) => ymMatchesYearMonthScope(prCreatedYm(r), yearFilterCe, monthScope))
       .filter((r) => {
         if (!qq) return true;
         return (
@@ -203,7 +206,7 @@ export default function StorePurchaseRequestsPage() {
           (vendors?.find((v) => v.id === r.vendorId)?.vendorName || '').toLowerCase().includes(qq)
         );
       });
-  }, [visibleList, q, statusFilter, vendors, monthYm]);
+  }, [visibleList, q, statusFilter, vendors, yearFilterCe, monthScope]);
 
   if (isUserLoading || userLoading || !currentUser) {
     return (
@@ -223,30 +226,13 @@ export default function StorePurchaseRequestsPage() {
   return (
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="mx-auto max-w-[1600px] space-y-6">
-        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-          <div>
-            <h1 className="flex items-center gap-2 text-3xl font-bold text-primary">
-              <FileQuestion className="h-8 w-8" /> คำขออนุมัติสั่งซื้อ (PR)
-            </h1>
-            <p className="mt-1 text-muted-foreground">
-              สร้าง PR แล้วส่งให้ผู้จัดการฝ่ายปฏิบัติการอนุมัติ — อนุมัติแล้วแผนกคลัง/จัดซื้อจะสร้างใบสั่งซื้อโดยอ้างอิง PR
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" asChild>
-              <Link href="/purchases">
-                <PackageSearch className="mr-2 h-4 w-4" />
-                ใบสั่งซื้อ
-              </Link>
-            </Button>
-            {okStore && (
-              <Button className="font-bold" asChild>
-                <Link href="/store/purchase-requests/new">
-                  <Plus className="mr-2 h-4 w-4" /> สร้าง PR
-                </Link>
-              </Button>
-            )}
-          </div>
+        <div className="flex flex-col gap-1">
+          <h1 className="flex items-center gap-2 text-3xl font-bold tracking-tight text-primary">
+            <FileQuestion className="h-8 w-8" /> คำขออนุมัติสั่งซื้อ (PR)
+          </h1>
+          <p className="text-muted-foreground text-lg">
+            สร้าง PR แล้วส่งให้ผู้จัดการฝ่ายปฏิบัติการอนุมัติ — อนุมัติแล้วแผนกคลัง/จัดซื้อจะสร้างใบสั่งซื้อโดยอ้างอิง PR
+          </p>
         </div>
 
         {canApprove && (list || []).filter((r) => r.status === 'PENDING_APPROVAL').length > 0 && (
@@ -255,41 +241,60 @@ export default function StorePurchaseRequestsPage() {
           </p>
         )}
 
-        <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-0.5">
-          <div className="relative min-w-[12rem] flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="h-10 pl-9"
-              placeholder="ค้นหาเลขที่ หัวข้อ หรือคู่ค้า..."
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
+          <div className="flex flex-1 flex-wrap items-center gap-3">
+            <div className="relative w-full max-w-sm">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="h-11 pl-9"
+                placeholder="ค้นหาเลขที่ หัวข้อ หรือคู่ค้า..."
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
+            </div>
+            <YearMonthScopeSelects
+              idPrefix="purchase-requests"
+              yearCe={yearFilterCe}
+              monthScope={monthScope}
+              yearOptionsCe={yearOptionsCe}
+              onYearCeChange={setYearFilterCe}
+              onMonthScopeChange={setMonthScope}
+              yearTriggerClassName="h-11 w-[7.5rem]"
+              monthTriggerClassName="h-11 w-[9.5rem]"
             />
+            <div className="w-[210px]">
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="h-11 gap-2">
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-4 w-4" />
+                    <SelectValue placeholder="ตัวกรองสถานะ" />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  {PR_STATUS_FILTER_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-10 w-[11rem] shrink-0">
-              <SelectValue placeholder="สถานะ" />
-            </SelectTrigger>
-            <SelectContent>
-              {PR_STATUS_FILTER_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={monthYm} onValueChange={setMonthYm}>
-            <SelectTrigger className="h-10 w-[10.5rem] shrink-0 ml-auto">
-              <SelectValue placeholder="เดือน" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">ทุกเดือน</SelectItem>
-              {monthOptions.map((ym) => (
-                <SelectItem key={ym} value={ym}>
-                  {ym}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <Button variant="outline" className="h-11" asChild>
+              <Link href="/purchases">
+                <PackageSearch className="mr-2 h-4 w-4" />
+                ใบสั่งซื้อ
+              </Link>
+            </Button>
+            {okStore && (
+              <Button className="h-11 gap-2 px-6 font-bold shadow-md" asChild>
+                <Link href="/store/purchase-requests/new">
+                  <Plus className="h-5 w-5" /> สร้าง PR
+                </Link>
+              </Button>
+            )}
+          </div>
         </div>
 
         <Card className="border-none shadow-md">

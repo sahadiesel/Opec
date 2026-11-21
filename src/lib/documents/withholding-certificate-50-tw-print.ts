@@ -39,6 +39,13 @@ export interface WithholdingCertificateDocumentPrintOptions {
   showSignatureImage: boolean;
   showCompanyStamp: boolean;
   showSystemGeneratedNote: boolean;
+  /**
+   * ใช้แทน `doc.signatureImageUrl` เมื่อติ๊กแสดงลายเซ็นตอนพิมพ์
+   * (เช่น URL จาก company profile ที่ยังไม่ได้ snapshot ลงเอกสาร)
+   */
+  signatureImageUrlOverride?: string | null;
+  /** ใช้แทน `doc.companyStampImageUrl` เมื่อติ๊กแสดงตรายางตอนพิมพ์ */
+  companyStampImageUrlOverride?: string | null;
 }
 
 /** ตัวเลือกพิมพ์เมื่อสร้างหลายฉบับในไฟล์เดียว — ไม่มี copyVariant */
@@ -361,9 +368,26 @@ export function withholdingCertificatePrintCss(extra = ''): string {
     table.amounts td:last-child { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .checkbox-row { margin: 3px 0; font-size: 10.5px; }
     .certify-block { margin-top: 6px; font-size: 10.5px; }
-    .sign-grid { display: table; width: 100%; margin-top: 10px; }
-    .sign-cell { display: table-cell; width: 50%; vertical-align: top; padding-right: 12px; font-size: 10.5px; }
-    .sign-img { max-height: 56px; max-width: 180px; object-fit: contain; margin-top: 4px; }
+    .sign-grid { display: table; width: 100%; margin-top: 10px; table-layout: fixed; }
+    .sign-cell { display: table-cell; width: 50%; vertical-align: bottom; padding-right: 12px; font-size: 10.5px; }
+    .sign-cell-stamp { vertical-align: middle; text-align: center; padding-right: 0; padding-left: 8px; }
+    .sign-slot {
+      min-height: 48px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-start;
+      margin-bottom: 2px;
+    }
+    .stamp-slot {
+      min-height: 88px;
+      min-width: 88px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto;
+    }
+    .sign-img { max-height: 48px; max-width: 160px; object-fit: contain; display: block; }
+    .stamp-img { max-height: 84px; max-width: 84px; object-fit: contain; display: block; }
     .footer-sys {
       margin-top: 10px;
       padding-top: 6px;
@@ -416,8 +440,12 @@ function buildWithholdingCertificateBodyHtml(
 
   const whtWords = amountToThaiBahtText(doc.withholdingTaxAmount);
 
-  const sigUrl = opts.showSignatureImage ? (doc.signatureImageUrl || '').trim() : '';
-  const stampUrl = opts.showCompanyStamp ? (doc.companyStampImageUrl || '').trim() : '';
+  const sigUrl = opts.showSignatureImage
+    ? (opts.signatureImageUrlOverride || doc.signatureImageUrl || '').trim()
+    : '';
+  const stampUrl = opts.showCompanyStamp
+    ? (opts.companyStampImageUrlOverride || doc.companyStampImageUrl || '').trim()
+    : '';
 
   const banner = escapeHtml(copyVariantBannerTh(opts.copyVariant));
 
@@ -487,13 +515,19 @@ ${taxConditionChecks(doc.taxCondition, doc.taxConditionOtherRemark)}
 <div class="sec">5. ผู้จ่ายเงิน / ผู้รับรอง</div>
 <div class="certify-block">ข้าพเจ้าขอรับรองว่า ข้อความและตัวเลขข้างต้นถูกต้องตรงตามความเป็นจริงทุกประการ</div>
 <div class="sign-grid">
-  <div class="sign-cell">
+  <div class="sign-cell sign-cell-sig">
+    <div class="sign-slot">${
+      sigUrl ? `<img class="sign-img" src="${escapeHtml(sigUrl)}" alt="signature" />` : ''
+    }</div>
     <div><strong>ลงชื่อ</strong> ${escapeHtml(doc.authorizedSignerName || '_______________________')}</div>
     <div>${escapeHtml(doc.signerPosition || 'ตำแหน่ง _______________')}</div>
-    ${sigUrl ? `<img class="sign-img" src="${escapeHtml(sigUrl)}" alt="signature" />` : ''}
   </div>
-  <div class="sign-cell">
-    ${stampUrl ? `<div><strong>ตราประทับบริษัท</strong></div><img class="sign-img" src="${escapeHtml(stampUrl)}" alt="stamp" />` : '<div class="muted">ตราประทับ (ถ้ามี)</div>'}
+  <div class="sign-cell sign-cell-stamp">
+    <div class="stamp-slot">${
+      stampUrl
+        ? `<img class="stamp-img" src="${escapeHtml(stampUrl)}" alt="stamp" />`
+        : '<div class="muted">ตราประทับ (ถ้ามี)</div>'
+    }</div>
   </div>
 </div>
 <div class="field" style="margin-top:8px;">

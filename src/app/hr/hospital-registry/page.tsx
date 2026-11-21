@@ -231,24 +231,31 @@ export default function HospitalRegistryPage() {
                           <Badge variant="secondary">ปิด</Badge>
                         )}
                       </TableCell>
-                      <TableCell className="text-right space-x-1 align-top">
-                        {canManage && (
-                          <>
-                            <Button type="button" variant="ghost" size="icon" onClick={() => openEditHospital(h)} title="แก้ไข">
-                              <Pencil className="h-4 w-4" />
+                      <TableCell className="py-1.5 text-right align-middle">
+                        {canManage ? (
+                          <div className="inline-flex flex-row items-center justify-end gap-0.5 whitespace-nowrap">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 shrink-0"
+                              onClick={() => openEditHospital(h)}
+                              title="แก้ไข"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
                             </Button>
                             <Button
                               type="button"
                               variant="ghost"
                               size="icon"
-                              className="text-destructive"
+                              className="h-8 w-8 shrink-0 text-destructive"
                               onClick={() => setDeleteHospitalId(h.id)}
                               title="ลบ"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
-                          </>
-                        )}
+                          </div>
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}

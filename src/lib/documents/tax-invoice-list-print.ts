@@ -20,6 +20,7 @@ export type TaxInvoiceListPrintFilterSummary = {
   searchTerm: string;
   yearCe: number;
   monthScope: string;
+  statusFilter?: string;
 };
 
 const PRINT_ROW_LIMIT = 500;
@@ -42,6 +43,9 @@ export function formatTaxInvoiceSalesReportPeriodLabel(yearCe: number, monthScop
 export function describeTaxInvoiceListPrintFilters(f: TaxInvoiceListPrintFilterSummary): string[] {
   const lines: string[] = [];
   lines.push(`เดือนออกเอกสาร: ${formatTaxInvoiceSalesReportPeriodLabel(f.yearCe, f.monthScope)}`);
+  if (f.statusFilter && f.statusFilter !== 'all') {
+    lines.push(`สถานะ: ${f.statusFilter}`);
+  }
   if (f.searchTerm.trim()) {
     lines.push(`ค้นหา: "${f.searchTerm.trim()}"`);
   }

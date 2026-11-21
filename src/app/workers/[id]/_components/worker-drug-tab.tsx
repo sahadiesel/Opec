@@ -41,6 +41,7 @@ import {
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { MAX_WORKER_DRUG_TEST_ATTACHMENTS, uploadWorkerDrugTestPhoto } from '@/lib/storage/worker-drug-test-photos';
 import { isPdfAttachment, isPdfFile, validateWorkerCredentialAttachmentFile } from '@/lib/storage/worker-credential-attachment';
+import { WorkerCredentialAttachmentThumb } from '@/components/workers/worker-credential-attachment-thumb';
 import Link from 'next/link';
 import type {
   WorkerDrugTest,
@@ -534,33 +535,10 @@ export function WorkerDrugTab({
                     </TableCell>
                     <TableCell className="text-center">
                       {thumbs.length ? (
-                        <div className="inline-flex flex-wrap justify-center gap-1 max-w-[7.5rem]">
-                          {thumbs.slice(0, 5).map((att) =>
-                            isPdfAttachment(att) ? (
-                              <a
-                                key={att.id}
-                                href={att.downloadUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex h-10 w-10 items-center justify-center rounded border border-red-200 bg-red-50 text-red-800 hover:bg-red-100"
-                                title={att.fileName || 'PDF'}
-                              >
-                                <FileText className="h-5 w-5" />
-                              </a>
-                            ) : (
-                              <a
-                                key={att.id}
-                                href={att.downloadUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-block rounded border overflow-hidden hover:opacity-90"
-                                title="เปิดรูปแนบ"
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img src={att.downloadUrl} alt="" className="h-10 w-10 object-cover" />
-                              </a>
-                            ),
-                          )}
+                        <div className="inline-flex flex-wrap justify-center gap-1 max-w-[10rem]">
+                          {thumbs.slice(0, 5).map((att) => (
+                            <WorkerCredentialAttachmentThumb key={att.id} attachment={att} />
+                          ))}
                         </div>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
@@ -895,21 +873,7 @@ export function WorkerDrugTab({
                   <div className="flex flex-wrap gap-2 pt-1">
                     {keptExistingAttachments.map((att) => (
                       <div key={att.id} className="relative">
-                        {isPdfAttachment(att) ? (
-                          <a
-                            href={att.downloadUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex h-20 w-20 items-center justify-center rounded border bg-red-50 text-red-800"
-                          >
-                            <FileText className="h-8 w-8" />
-                          </a>
-                        ) : (
-                          <a href={att.downloadUrl} target="_blank" rel="noopener noreferrer" className="inline-block">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={att.downloadUrl} alt="" className="h-20 w-20 rounded border object-cover" />
-                          </a>
-                        )}
+                        <WorkerCredentialAttachmentThumb attachment={att} />
                         {!formReadOnly ? (
                           <button
                             type="button"

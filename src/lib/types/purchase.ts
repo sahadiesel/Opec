@@ -82,6 +82,11 @@ export interface PurchaseRequest {
   decidedByUid?: string;
   decidedByName?: string;
   rejectionReason?: string | null;
+  /** เหตุผลยกเลิกเอกสาร PR */
+  cancelReason?: string | null;
+  cancelledAt?: number;
+  cancelledByUid?: string;
+  cancelledByName?: string;
   /** PO ที่สร้างจาก PR นี้ (ผูก 1:1) */
   linkedPurchaseId?: string;
   createdAt: number;

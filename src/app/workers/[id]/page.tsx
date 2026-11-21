@@ -16,7 +16,6 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import {
-  Save,
   ArrowLeft,
   AlertTriangle,
   User,
@@ -41,8 +40,6 @@ import {
 import { updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { sanitizeFirestorePayload } from '@/lib/utils';
 import { isStoredExpiryPast } from '@/lib/date-thai';
-import type { WorkerNotReadyReasonCode } from '@/lib/hr/worker-not-ready-reason';
-import { formatWorkerNotReadyReasonDisplay } from '@/lib/hr/worker-not-ready-reason';
 import { describeWorkerRateEdit } from '@/lib/hr/worker-rate-edit-guard';
 import {
   Worker,
@@ -78,7 +75,8 @@ import {
 } from '@/lib/drug-test-panel';
 import { thailandTodayYmd } from '@/lib/ops/mobilization-final-clearance';
 import { effectiveWorkerJobStatus } from '@/lib/ops/worker-effective-job-status';
-import { commitEmploymentTenure } from '@/lib/hr/employment-tenure';
+import { commitEmploymentTenure, employmentEndReasonLabelTh } from '@/lib/hr/employment-tenure';
+import { normalizeStaffDateYmd } from '@/lib/payroll/office-staff-date-ymd';
 import {
   normalHoursCountedAsWork,
   otHoursCountedForWaveMonth,
@@ -259,12 +257,17 @@ function WorkerDetailContent({ id }: { id: string }) {
   const drugValidityDays = resolveDrugTestValidityDays(drugPanelConfig?.validityDays);
 
   // --- UI state ---
-  const [isEditing, setIsEditing] = useState(false);
+  /** แก้แยกส่วน: ข้อมูลส่วนตัว vs ตั้งค่าลูกจ้าง */
+  const [editingSection, setEditingSection] = useState<'profile' | 'settings' | null>(null);
   const [rateEditNotice, setRateEditNotice] = useState<ReturnType<typeof describeWorkerRateEdit>>(null);
   const [rateEditSaving, setRateEditSaving] = useState(false);
   const [editedWorker, setEditedWorker] = useState<Partial<Worker>>({});
   const [activateLoginBusy, setActivateLoginBusy] = useState(false);
   const [assignedLaborQuotes, setAssignedLaborQuotes] = useState<AssignedContractLaborQuote[] | null>(null);
+
+  const isEditingProfile = editingSection === 'profile';
+  const isEditingSettings = editingSection === 'settings';
+  const isEditingAny = editingSection !== null;
 
   useEffect(() => {
     if (!firestore || !workerMobilizations) return;
@@ -337,8 +340,6 @@ function WorkerDetailContent({ id }: { id: string }) {
     : check('workers', 'edit') || payroll('worker', 'edit');
   const workerOperable = !worker || isWorkerRegistryOperable(worker);
   const canMutateWorkerRecords = canEditWorker && workerOperable;
-  const canToggleWorkerReadiness =
-    check('workers', 'edit') || check('workers', 'approve') || payroll('worker', 'edit') || payroll('worker', 'approve');
   const canViewLaborCost = useMemo(() => canViewWorkerLaborCostFromUser(currentUser), [currentUser]);
   const canEditLaborCost = useMemo(
     () => canEditWorkerLaborCostFromUser(currentUser) && canEditWorker,
@@ -350,12 +351,24 @@ function WorkerDetailContent({ id }: { id: string }) {
   );
 
   const currentPositionForLabor = useMemo(() => {
-    const pid = (isEditing ? editedWorker.currentPositionId : worker?.currentPositionId) || '';
+    const pid = (isEditingAny ? editedWorker.currentPositionId : worker?.currentPositionId) || '';
     if (!pid || !allPositions?.length) return null;
     return allPositions.find((p) => p.id === pid) ?? null;
-  }, [isEditing, editedWorker.currentPositionId, worker?.currentPositionId, allPositions]);
+  }, [isEditingAny, editedWorker.currentPositionId, worker?.currentPositionId, allPositions]);
 
-  // --- Business logic: save master (unchanged) ---
+  const beginEditSection = (section: 'profile' | 'settings') => {
+    if (!worker || !canEditWorker) return;
+    setEditedWorker({ ...worker });
+    setEditingSection(section);
+  };
+
+  const cancelEditSection = () => {
+    setEditingSection(null);
+    setEditedWorker({});
+    setRateEditNotice(null);
+  };
+
+  // --- Business logic: save master ---
   const handleActivateWorkerLogin = async () => {
     if (!firebaseUser || !worker || !canEditWorker) return;
     const loginEmail = String(worker.email ?? '').trim().toLowerCase();
@@ -367,7 +380,7 @@ function WorkerDetailContent({ id }: { id: string }) {
       });
       return;
     }
-    if (isEditing) {
+    if (isEditingAny) {
       toast({
         variant: 'destructive',
         title: 'บันทึกการแก้ไขก่อน',
@@ -418,9 +431,59 @@ function WorkerDetailContent({ id }: { id: string }) {
 
   const tenurePatchRef = useRef<Partial<Worker> | undefined>(undefined);
 
-  const persistWorkerMaster = (extra?: Partial<Worker>) => {
+  const WORKER_PROFILE_KEYS = [
+    'thaiNationalId',
+    'nameTitle',
+    'firstNameTh',
+    'lastNameTh',
+    'nameTitleEn',
+    'firstName',
+    'lastName',
+    'nickname',
+    'nationality',
+    'contactPhone',
+    'email',
+    'currentPositionId',
+    'address',
+    'skills',
+    'emergencyContactName',
+    'emergencyContactPhone',
+    'bankName',
+    'bankAccountName',
+    'bankAccountNumber',
+    'socialSecurityHospital',
+    'disciplinaryNotes',
+  ] as const;
+
+  const WORKER_SETTINGS_KEYS = [
+    'payrollEngagementKind',
+    'startDate',
+    'employmentEndDate',
+    'employmentEndReason',
+    'employmentEndReasonNote',
+    'employmentTenures',
+    'laborCostUsePositionDefault',
+    'laborCostCustomOnshore',
+    'laborCostCustomOffshore',
+  ] as const;
+
+  const pickWorkerPatch = (
+    keys: readonly string[],
+    extra?: Partial<Worker>,
+  ): Partial<Worker> => {
+    const merged = { ...worker, ...editedWorker } as Partial<Worker>;
+    const out: Partial<Worker> = {};
+    for (const key of keys) {
+      if (key in merged) {
+        (out as Record<string, unknown>)[key] = (merged as Record<string, unknown>)[key];
+      }
+    }
+    return { ...out, ...extra };
+  };
+
+  const persistWorkerMaster = (patch: Partial<Worker>, successDescription: string) => {
     if (!workerRef) return;
-    const base: Partial<Worker> & { updatedAt: number } = { ...editedWorker, ...extra, updatedAt: Date.now() };
+    const base: Partial<Worker> & { updatedAt: number } = { ...patch, updatedAt: Date.now() };
     if (!canViewLaborCost) {
       delete base.laborCostUsePositionDefault;
       delete base.laborCostCustomOnshore;
@@ -435,10 +498,11 @@ function WorkerDetailContent({ id }: { id: string }) {
     setRateEditSaving(true);
     updateDoc(workerRef, payload)
       .then(() => {
-        setIsEditing(false);
+        setEditingSection(null);
+        setEditedWorker({});
         setRateEditNotice(null);
         calculateAndStoreReadiness();
-        toast({ title: 'บันทึกสำเร็จ', description: 'ข้อมูลประวัติคนงานถูกอัปเดตแล้ว' });
+        toast({ title: 'บันทึกสำเร็จ', description: successDescription });
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
@@ -453,7 +517,25 @@ function WorkerDetailContent({ id }: { id: string }) {
       .finally(() => setRateEditSaving(false));
   };
 
-  const handleSaveMaster = () => {
+  const handleSaveProfile = () => {
+    if (!canEditWorker) {
+      toast({
+        variant: 'destructive',
+        title: 'ไม่มีสิทธิ์แก้ไข',
+        description: 'ทะเบียนคนงานแก้ได้เฉพาะ HR Manager / Admin ตามนโยบายสิทธิ์',
+      });
+      return;
+    }
+    if (!workerRef || !worker) return;
+    const firstName = String(editedWorker.firstName ?? worker.firstName ?? '').trim();
+    if (!firstName) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'กรุณาระบุชื่อ (ภาษาอังกฤษ)' });
+      return;
+    }
+    persistWorkerMaster(pickWorkerPatch(WORKER_PROFILE_KEYS), 'บันทึกข้อมูลส่วนตัวแล้ว');
+  };
+
+  const handleSaveSettings = () => {
     if (!canEditWorker) {
       toast({
         variant: 'destructive',
@@ -478,6 +560,33 @@ function WorkerDetailContent({ id }: { id: string }) {
       });
       return;
     }
+    const draftStart = normalizeStaffDateYmd(editedWorker.startDate ?? worker.startDate);
+    const draftEnd = normalizeStaffDateYmd(editedWorker.employmentEndDate ?? worker.employmentEndDate);
+    const draftEndReason = editedWorker.employmentEndReason ?? worker.employmentEndReason;
+    if (!draftStart) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลไม่ครบ',
+        description: 'กรุณาระบุวันที่เริ่มงานในกล่องตั้งค่าลูกจ้าง',
+      });
+      return;
+    }
+    if (afterKind === 'LUMP_SUM' && !draftEnd) {
+      toast({
+        variant: 'destructive',
+        title: 'ข้อมูลไม่ครบ',
+        description: 'ลูกจ้างแบบเหมาต้องระบุวันสิ้นสุดงานตามสัญญา',
+      });
+      return;
+    }
+    if (draftEnd && !draftEndReason) {
+      toast({
+        variant: 'destructive',
+        title: 'ระบุเหตุผลสิ้นสุดงาน',
+        description: 'เมื่อมีวันสิ้นสุดงาน ให้เลือกเหตุผล เช่น ลาออก / ให้ออก / ป่วย·อุบัติเหตุ',
+      });
+      return;
+    }
     const tenure = commitEmploymentTenure({
       existingTenures: editedWorker.employmentTenures ?? worker.employmentTenures,
       legacyStart: worker.startDate,
@@ -499,11 +608,14 @@ function WorkerDetailContent({ id }: { id: string }) {
     const tenurePatch: Partial<Worker> = {};
     if (!tenure.skipped) {
       const job = effectiveWorkerJobStatus(worker, workerMobilizations ?? []);
-      if (tenure.employmentEndDate && (job === 'ASSIGNED' || job === 'ON_SITE')) {
+      const endYmd = normalizeStaffDateYmd(tenure.employmentEndDate);
+      const todayYmd = thailandTodayYmd();
+      const pastContractEnd = Boolean(endYmd && endYmd < todayYmd);
+      if (pastContractEnd && (job === 'ASSIGNED' || job === 'ON_SITE')) {
         toast({
           variant: 'destructive',
-          title: 'บันทึกวันสิ้นสุดไม่ได้',
-          description: 'คนงานยังถูกมอบหมายงานอยู่ — ต้อง Unassign ก่อนจึงสิ้นสุดการทำงานได้',
+          title: 'เลยกำหนดสัญญาแล้วยังมอบหมายงานอยู่',
+          description: 'ต้อง Unassign ออกจากงานก่อน หรือขยายวันสิ้นสุดสัญญา แล้วค่อยบันทึก',
         });
         return;
       }
@@ -512,19 +624,24 @@ function WorkerDetailContent({ id }: { id: string }) {
       tenurePatch.employmentEndReason = tenure.endReason;
       tenurePatch.employmentEndReasonNote = tenure.endReasonNote;
       tenurePatch.employmentTenures = tenure.tenures;
-      if (tenure.employmentEndDate) {
+      if (pastContractEnd) {
         tenurePatch.readinessManualHold = true;
-        tenurePatch.readinessManualHoldReason = tenure.endReason === 'RESIGNED' ? 'RESIGNED' : 'OTHER';
+        tenurePatch.readinessManualHoldReason =
+          tenure.endReason === 'RESIGNED'
+            ? 'RESIGNED'
+            : tenure.endReason === 'MEDICAL_UNABLE'
+              ? 'SICK'
+              : 'OTHER';
         tenurePatch.readinessManualHoldReasonNote =
-          tenure.endReason === 'DISMISSED_DISCIPLINE'
-            ? 'ให้ออกผิดวินัยการทำงาน'
+          tenure.endReason === 'DISMISSED_DISCIPLINE' || tenure.endReason === 'MEDICAL_UNABLE'
+            ? employmentEndReasonLabelTh(tenure.endReason) || tenure.endReasonNote || ''
             : tenure.endReasonNote || '';
         tenurePatch.readinessManualHoldReasonAt = Date.now();
         tenurePatch.readinessManualHoldReasonByUserId = currentUser.id;
         if (worker.workerStatus === 'AVAILABLE' || worker.workerStatus === 'INACTIVE' || worker.workerStatus === 'ON_LEAVE') {
           tenurePatch.workerStatus = 'INACTIVE';
         }
-      } else if (worker.employmentEndDate) {
+      } else {
         tenurePatch.readinessManualHold = false;
         tenurePatch.readinessManualHoldReason = deleteField() as unknown as Worker['readinessManualHoldReason'];
         tenurePatch.readinessManualHoldReasonNote = deleteField() as unknown as string;
@@ -542,82 +659,13 @@ function WorkerDetailContent({ id }: { id: string }) {
       after: editedWorker,
       openAssignmentCount,
     });
-    tenurePatchRef.current = tenurePatch;
+    const settingsPatch = pickWorkerPatch(WORKER_SETTINGS_KEYS, tenurePatch);
+    tenurePatchRef.current = settingsPatch;
     if (notice) {
       setRateEditNotice(notice);
       return;
     }
-    persistWorkerMaster(tenurePatch);
-  };
-
-  const handleReadinessManualHoldChange = (
-    hold: boolean,
-    reason?: { code: WorkerNotReadyReasonCode; note?: string },
-  ) => {
-    if (!canToggleWorkerReadiness || !workerRef) {
-      toast({
-        variant: 'destructive',
-        title: 'ไม่มีสิทธิ์แก้ไข',
-        description: 'เฉพาะผู้มีสิทธิ์แก้ทะเบียนคนงาน (Payroll/HR) เท่านั้น',
-      });
-      return;
-    }
-    if (hold && worker) {
-      const job = effectiveWorkerJobStatus(worker, workerMobilizations ?? []);
-      if (job === 'ASSIGNED' || job === 'ON_SITE') {
-        toast({
-          variant: 'destructive',
-          title: 'ตั้งเป็นไม่พร้อมทำงานไม่ได้',
-          description: `คนงานยังถูกมอบหมายงานอยู่ (${job}) — ต้อง Unassign ออกจากงานก่อนจึงตั้งเป็นไม่พร้อมทำงานได้`,
-        });
-        return;
-      }
-      if (!reason?.code) {
-        toast({
-          variant: 'destructive',
-          title: 'ระบุเหตุผล',
-          description: 'เลือกเหตุผลที่ไม่พร้อมทำงานก่อนบันทึก',
-        });
-        return;
-      }
-      if (reason.code === 'OTHER' && !(reason.note || '').trim()) {
-        toast({
-          variant: 'destructive',
-          title: 'ระบุเหตุผล',
-          description: 'กรุณาระบุรายละเอียดเมื่อเลือก «อื่นๆ»',
-        });
-        return;
-      }
-    }
-    const now = Date.now();
-    if (hold && reason?.code) {
-      const note = reason.code === 'OTHER' ? (reason.note || '').trim().slice(0, 200) : '';
-      updateDocumentNonBlocking(workerRef, {
-        readinessManualHold: true,
-        readinessManualHoldReason: reason.code,
-        readinessManualHoldReasonNote: note || deleteField(),
-        readinessManualHoldReasonAt: now,
-        readinessManualHoldReasonByUserId: currentUser?.id || deleteField(),
-        updatedAt: now,
-      });
-      toast({
-        title: 'ตั้งเป็นไม่พร้อมทำงาน (Not Ready to Work)',
-        description: formatWorkerNotReadyReasonDisplay(reason.code, note) || 'ไม่ปรากฏในรายการมอบหมายจนกว่าจะเปิดสวิตช์พร้อมทำงานอีกครั้ง',
-      });
-      return;
-    }
-    updateDocumentNonBlocking(workerRef, {
-      readinessManualHold: false,
-      readinessManualHoldReason: deleteField(),
-      readinessManualHoldReasonNote: deleteField(),
-      readinessManualHoldReasonAt: deleteField(),
-      readinessManualHoldReasonByUserId: deleteField(),
-      updatedAt: now,
-    });
-    toast({
-      title: 'ตั้งเป็นพร้อมทำงาน (Ready to Work)',
-      description: 'ระบบใช้เกณฑ์เอกสารและความพร้อมตามที่คำนวณได้',
-    });
+    persistWorkerMaster(settingsPatch, 'บันทึกตั้งค่าลูกจ้างแล้ว');
   };
 
   // --- Business logic: readiness calculation (unchanged) ---
@@ -906,18 +954,6 @@ function WorkerDetailContent({ id }: { id: string }) {
             </p>
             <PayrollScopeTag scope="worker" showHint={false} className="mt-2" />
           </div>
-          <div className="flex gap-2">
-            {canEditWorker && (
-              <Button variant="outline" className="h-11" onClick={() => { setEditedWorker(worker); setIsEditing(!isEditing); }}>
-                {isEditing ? 'ยกเลิก (Cancel)' : 'แก้ไขประวัติ (Edit Profile)'}
-              </Button>
-            )}
-            {canEditWorker && isEditing && (
-              <Button className="h-11 gap-2 bg-primary font-bold shadow-md" onClick={handleSaveMaster}>
-                <Save className="h-4 w-4" /> บันทึกการเปลี่ยนแปลง (Save)
-              </Button>
-            )}
-          </div>
         </div>
 
         {/* Tabs */}
@@ -956,21 +992,28 @@ function WorkerDetailContent({ id }: { id: string }) {
           <TabsContent value="info" className="mt-6 space-y-6">
             <WorkerInfoTab
               worker={worker}
-              isEditing={isEditing}
+              isEditingProfile={isEditingProfile}
+              isEditingSettings={isEditingSettings}
               editedWorker={editedWorker}
               setEditedWorker={setEditedWorker}
               allPositions={allPositions}
               currentPosition={currentPositionForLabor}
+              canEditWorker={canEditWorker}
               canViewLaborCost={canViewLaborCost}
               canEditLaborCost={canEditLaborCost}
               canViewBankPayrollProfile={canViewBankPayrollProfile}
-              canEditWorkerReadiness={canToggleWorkerReadiness}
-              onReadinessManualHoldChange={handleReadinessManualHoldChange}
               canActivateWorkerLogin={canMutateWorkerRecords}
               onActivateWorkerLogin={handleActivateWorkerLogin}
               activateWorkerLoginBusy={activateLoginBusy}
               openMobilizations={workerMobilizations}
               assignedLaborQuotes={workerMobilizations ? assignedLaborQuotes : null}
+              sectionSaving={rateEditSaving}
+              onBeginEditProfile={() => beginEditSection('profile')}
+              onCancelEditProfile={cancelEditSection}
+              onSaveProfile={handleSaveProfile}
+              onBeginEditSettings={() => beginEditSection('settings')}
+              onCancelEditSettings={cancelEditSection}
+              onSaveSettings={handleSaveSettings}
             />
           </TabsContent>
 
@@ -1069,7 +1112,13 @@ function WorkerDetailContent({ id }: { id: string }) {
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel disabled={rateEditSaving}>ยกเลิก</AlertDialogCancel>
-              <Button type="button" disabled={rateEditSaving} onClick={() => persistWorkerMaster(tenurePatchRef.current)}>
+              <Button
+                type="button"
+                disabled={rateEditSaving}
+                onClick={() =>
+                  persistWorkerMaster(tenurePatchRef.current ?? {}, 'บันทึกตั้งค่าลูกจ้างแล้ว')
+                }
+              >
                 ยืนยันและบันทึก
               </Button>
             </AlertDialogFooter>

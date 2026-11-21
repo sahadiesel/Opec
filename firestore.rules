@@ -1110,5 +1110,10 @@ service cloud.firestore {
       allow read: if rs11() || isInternalUser();
       allow create, update, delete: if blockExecutiveWrite() && rs11();
     }
+    // ทะเบียนชื่อธนาคาร (HR master) — ใช้คู่กับ /hr/bank-registry
+    match /bank_name_catalog/{id} {
+      allow read: if rs11() || isInternalUser();
+      allow create, update, delete: if blockExecutiveWrite() && rs11();
+    }
   }
 }

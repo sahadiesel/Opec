@@ -121,6 +121,8 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
   const [saving, setSaving] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
   const [editingRejected, setEditingRejected] = useState(false);
 
   const okStore = useMemo(
@@ -523,18 +525,47 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
     }
   };
 
-  const cancel = async () => {
-    if (!okStore) return;
-    if (!firestore || !pr || (pr.status !== 'DRAFT' && pr.status !== 'PENDING_APPROVAL') || !prRef) return;
+  const canCancelDocument = useMemo(() => {
+    if (!okStore || !pr) return false;
+    if (pr.status === 'DRAFT' || pr.status === 'PENDING_APPROVAL') return true;
+    if (pr.status === 'APPROVED' && !pr.linkedPurchaseId) return true;
+    return false;
+  }, [okStore, pr]);
+
+  const cancelDocument = async () => {
+    if (!okStore || !canCancelDocument) return;
+    if (!firestore || !pr || !prRef || !currentUser) return;
+    const reason = cancelReason.trim();
+    if (reason.length < 3) {
+      toast({
+        variant: 'destructive',
+        title: 'ระบุเหตุผล',
+        description: 'ต้องบันทึกเหตุผลการยกเลิกอย่างน้อย 3 ตัวอักษร',
+      });
+      return;
+    }
     setSaving(true);
     try {
+      const now = Date.now();
+      const name = currentUser.displayName || currentUser.email || '';
       await updateDoc(prRef, {
         status: 'CANCELLED' as PurchaseRequestStatus,
-        updatedAt: Date.now(),
+        cancelReason: reason,
+        cancelledAt: now,
+        cancelledByUid: currentUser.id,
+        cancelledByName: name,
+        updatedAt: now,
       });
-      toast({ title: 'ยกเลิก PR' });
+      setCancelOpen(false);
+      setCancelReason('');
+      toast({ title: 'ยกเลิกเอกสารแล้ว', description: 'บันทึกเหตุผลไว้ใน PR แล้ว' });
     } catch (e) {
       console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'ยกเลิกไม่สำเร็จ',
+        description: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setSaving(false);
     }
@@ -690,7 +721,7 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
                     ? 'bg-blue-100 text-blue-900'
                     : displayStatus === 'PENDING_APPROVAL'
                       ? 'bg-amber-100 text-amber-900'
-                      : displayStatus === 'REJECTED'
+                      : displayStatus === 'REJECTED' || displayStatus === 'CANCELLED'
                         ? 'bg-red-100 text-red-900'
                         : ''
               }
@@ -700,7 +731,12 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           </div>
         </div>
 
-        <div className={cn('grid gap-4', isRejected && 'sm:grid-cols-2')}>
+        <div
+          className={cn(
+            'grid gap-4',
+            (isRejected || pr.status === 'CANCELLED') && 'sm:grid-cols-2',
+          )}
+        >
           <Card className="border-primary/20 bg-primary/5">
             <CardContent className="grid gap-4 pt-5 sm:grid-cols-3 text-sm">
               <div>
@@ -748,19 +784,54 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
               </CardContent>
             </Card>
           )}
+
+          {pr.status === 'CANCELLED' && (
+            <Card className="border-red-200 bg-red-50/60">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base text-red-900">เหตุผลการยกเลิกเอกสาร</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm">
+                <p className="whitespace-pre-wrap text-red-950">
+                  {pr.cancelReason?.trim() || '— ไม่ได้ระบุเหตุผล —'}
+                </p>
+                {pr.cancelledAt ? (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    โดย {pr.cancelledByName?.trim() || '—'} ·{' '}
+                    {new Date(pr.cancelledAt).toLocaleString('th-TH')}
+                  </p>
+                ) : null}
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {showPoLink && okStore && (
           <Card className="border-emerald-200 bg-emerald-50/40">
-            <CardContent className="pt-4">
-              <p className="mb-3 text-sm text-emerald-900">
+            <CardContent className="pt-4 space-y-3">
+              <p className="text-sm text-emerald-900">
                 PR อนุมัติแล้ว — สร้าง PO จากเมนูใบสั่งซื้อ ระบบจะดึงรายการและยอดจาก PR นี้ (แก้บรรทัดใน PO ไม่ได้)
               </p>
-              <Button className="font-bold" asChild>
-                <Link href="/purchases">
-                  <PackageSearch className="mr-2 h-4 w-4" /> สร้างใบสั่งซื้อ
-                </Link>
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button className="font-bold" asChild>
+                  <Link href="/purchases">
+                    <PackageSearch className="mr-2 h-4 w-4" /> สร้างใบสั่งซื้อ
+                  </Link>
+                </Button>
+                {canCancelDocument ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="font-semibold"
+                    disabled={saving}
+                    onClick={() => {
+                      setCancelReason('');
+                      setCancelOpen(true);
+                    }}
+                  >
+                    <Ban className="mr-2 h-4 w-4" /> ยกเลิกเอกสาร
+                  </Button>
+                ) : null}
+              </div>
             </CardContent>
           </Card>
         )}
@@ -1067,21 +1138,48 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
             <Button type="button" className="font-bold" onClick={() => void submitForApproval()} disabled={saving}>
               <Send className="mr-2 h-4 w-4" /> ส่งขออนุมัติ
             </Button>
-            <Button type="button" variant="ghost" onClick={() => void cancel()} disabled={saving}>
-              <Ban className="mr-2 h-4 w-4" /> ยกเลิก
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-destructive"
+              onClick={() => {
+                setCancelReason('');
+                setCancelOpen(true);
+              }}
+              disabled={saving}
+            >
+              <Ban className="mr-2 h-4 w-4" /> ยกเลิกเอกสาร
             </Button>
           </div>
         )}
 
-        {pr.status === 'PENDING_APPROVAL' && canDecidePr && (
+        {pr.status === 'PENDING_APPROVAL' && (
           <div className="flex flex-wrap gap-2">
-            <Button className="bg-green-600 font-bold hover:bg-green-700" onClick={() => void approve()} disabled={saving}>
-              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
-              อนุมัติ
-            </Button>
-            <Button variant="destructive" onClick={() => setRejectOpen(true)} disabled={saving}>
-              <XCircle className="mr-2 h-4 w-4" /> ไม่อนุมัติ
-            </Button>
+            {canDecidePr ? (
+              <>
+                <Button className="bg-green-600 font-bold hover:bg-green-700" onClick={() => void approve()} disabled={saving}>
+                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+                  อนุมัติ
+                </Button>
+                <Button variant="destructive" onClick={() => setRejectOpen(true)} disabled={saving}>
+                  <XCircle className="mr-2 h-4 w-4" /> ไม่อนุมัติ
+                </Button>
+              </>
+            ) : null}
+            {canCancelDocument ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="border-destructive/40 text-destructive"
+                onClick={() => {
+                  setCancelReason('');
+                  setCancelOpen(true);
+                }}
+                disabled={saving}
+              >
+                <Ban className="mr-2 h-4 w-4" /> ยกเลิกเอกสาร
+              </Button>
+            ) : null}
           </div>
         )}
 
@@ -1101,9 +1199,60 @@ export default function PurchaseRequestDetailPage({ params }: { params: Promise<
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setRejectOpen(false)} disabled={saving}>
-              ยกเลิก
+              ปิด
             </Button>
             <Button type="button" variant="destructive" onClick={() => void reject()} disabled={saving}>
+              บันทึก
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={cancelOpen}
+        onOpenChange={(open) => {
+          if (saving) return;
+          setCancelOpen(open);
+          if (!open) setCancelReason('');
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>ยกเลิกเอกสาร PR</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="pr-cancel-reason-dialog">เหตุผลการยกเลิก *</Label>
+            <Textarea
+              id="pr-cancel-reason-dialog"
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={3}
+              placeholder="เช่น ไม่ต้องการสั่งแล้ว / เปลี่ยนคู่ค้า / สั่งผิดรายการ"
+              disabled={saving}
+            />
+            <p className="text-xs text-muted-foreground">
+              1) กรอกเหตุผล → 2) กดบันทึก → สถานะเป็น «ยกเลิก» และสร้าง PO จาก PR นี้ไม่ได้
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setCancelOpen(false);
+                setCancelReason('');
+              }}
+              disabled={saving}
+            >
+              ปิด
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void cancelDocument()}
+              disabled={saving || cancelReason.trim().length < 3}
+            >
+              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               บันทึก
             </Button>
           </DialogFooter>

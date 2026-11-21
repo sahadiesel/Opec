@@ -9,24 +9,32 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   ArrowDownLeft,
-  Search,
   Building2,
   Calendar,
   Clock,
   Info,
   Printer,
 } from 'lucide-react';
-import { Input } from '@/components/ui/input';
 import { AccountsPayable, APStatus, Vendor } from '@/lib/types';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { apStatusBadge } from '@/lib/accounts-payable/ap-status-badge';
+import { apAsOfYmd, resolveApEffectiveStatus } from '@/lib/accounts-payable/ap-effective-status';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
 import { collection, query, orderBy } from 'firebase/firestore';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { formatPayrollYearMonthThaiBE, formatYmdLocalThaiBE } from '@/lib/date-thai';
+import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  describeYearMonthScopeFilter,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { DocumentListFilterBar } from '@/components/documents/document-list-filter-bar';
+import { DocumentStatusFilterSelect } from '@/components/documents/document-status-filter-select';
 import {
   Dialog,
   DialogContent,
@@ -72,10 +80,9 @@ export default function AccountsPayablePage() {
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [monthYm, setMonthYm] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  });
+  const [statusFilter, setStatusFilter] = useState<'all' | APStatus>('all');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
   const vendorById = useMemo(() => {
@@ -84,22 +91,33 @@ export default function AccountsPayablePage() {
     return m;
   }, [vendors]);
 
+  const yearOptionsCe = useMemo(
+    () => buildYearCeOptions((apItems ?? []).map((item) => String(item.billDate || '').slice(0, 7))),
+    [apItems],
+  );
+
+  const asOfYmd = useMemo(() => apAsOfYmd(), []);
+
   const monthFilteredItems = useMemo(() => {
     const list = apItems ?? [];
-    return list.filter((item) => String(item.billDate || '').slice(0, 7) === monthYm);
-  }, [apItems, monthYm]);
+    return list.filter((item) =>
+      ymMatchesYearMonthScope(String(item.billDate || '').slice(0, 7), yearFilterCe, monthScope),
+    );
+  }, [apItems, yearFilterCe, monthScope]);
 
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return monthFilteredItems;
     return monthFilteredItems.filter((item) => {
+      const effective = resolveApEffectiveStatus(item, asOfYmd);
+      if (statusFilter !== 'all' && effective !== statusFilter) return false;
+      if (!q) return true;
       const vendor = vendorById.get(item.vendorId);
       const haystack = [
         item.documentNo,
         item.referenceId,
         item.billDate,
         item.dueDate,
-        item.status,
+        effective,
         vendor?.vendorName,
         vendor?.vendorCode,
       ]
@@ -108,7 +126,7 @@ export default function AccountsPayablePage() {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [monthFilteredItems, searchQuery, vendorById]);
+  }, [monthFilteredItems, searchQuery, statusFilter, vendorById, asOfYmd]);
 
   const stats = useMemo(() => {
     const all = apItems ?? [];
@@ -116,15 +134,24 @@ export default function AccountsPayablePage() {
       globalOutstanding: all.reduce((sum, item) => sum + item.outstandingAmount, 0),
       monthOutstanding: monthFilteredItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
       overdue: monthFilteredItems
-        .filter((item) => item.status === 'OVERDUE')
+        .filter((item) => resolveApEffectiveStatus(item, asOfYmd) === 'OVERDUE')
         .reduce((sum, item) => sum + item.outstandingAmount, 0),
       paid: monthFilteredItems.reduce((sum, item) => sum + item.creditAmount, 0),
     };
-  }, [apItems, monthFilteredItems]);
+  }, [apItems, monthFilteredItems, asOfYmd]);
+
+  const periodLabel = useMemo(
+    () => describeYearMonthScopeFilter(yearFilterCe, monthScope),
+    [yearFilterCe, monthScope],
+  );
 
   const printFilterSummary = useMemo(
-    () => ({ searchTerm: searchQuery, monthYyyyMm: monthYm }),
-    [searchQuery, monthYm],
+    () => ({
+      searchTerm: searchQuery,
+      monthYyyyMm: periodLabel,
+      statusFilter,
+    }),
+    [searchQuery, periodLabel, statusFilter],
   );
 
   const buildPrintRows = useCallback(
@@ -139,10 +166,10 @@ export default function AccountsPayablePage() {
           debitLabel: formatApMoney(item.debitAmount ?? 0),
           creditLabel: formatApMoney(item.creditAmount ?? 0),
           outstandingLabel: formatApMoney(item.outstandingAmount ?? 0),
-          status: apStatusPrintLabel(item.status),
+          status: apStatusPrintLabel(resolveApEffectiveStatus(item, asOfYmd)),
         };
       }),
-    [vendorById],
+    [vendorById, asOfYmd],
   );
 
   const runAccountsPayableListPrint = useCallback(
@@ -237,7 +264,7 @@ export default function AccountsPayablePage() {
             <CardContent>
               <div className="text-3xl font-black text-indigo-700">฿ {stats.monthOutstanding.toLocaleString()}</div>
               <p className="text-[10px] text-muted-foreground mt-1">
-                งวด {formatPayrollYearMonthThaiBE(monthYm)} · จากใบในเดือนที่เลือก
+                งวด {periodLabel} · จากใบในช่วงที่เลือก
               </p>
             </CardContent>
           </Card>
@@ -248,7 +275,7 @@ export default function AccountsPayablePage() {
             <CardContent>
               <div className="text-3xl font-black text-red-600">฿ {stats.overdue.toLocaleString()}</div>
               <p className="text-[10px] text-muted-foreground mt-1">
-                งวด {formatPayrollYearMonthThaiBE(monthYm)} · หนี้เกินกำหนดในเดือนที่เลือก
+                งวด {periodLabel} · หนี้เกินกำหนดในช่วงที่เลือก
               </p>
             </CardContent>
           </Card>
@@ -259,7 +286,7 @@ export default function AccountsPayablePage() {
             <CardContent>
               <div className="text-3xl font-black text-green-700">฿ {stats.paid.toLocaleString()}</div>
               <p className="text-[10px] text-muted-foreground mt-1">
-                งวด {formatPayrollYearMonthThaiBE(monthYm)} · ยอดจ่ายแล้วในเดือนที่เลือก
+                งวด {periodLabel} · ยอดจ่ายแล้วในช่วงที่เลือก
               </p>
             </CardContent>
           </Card>
@@ -294,36 +321,40 @@ export default function AccountsPayablePage() {
           </AlertDescription>
         </Alert>
 
-        <div className="flex flex-col gap-3 bg-card p-4 rounded-lg border shadow-sm lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-sm">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="ค้นหาชื่อคู่ค้า หรือ เลขที่เอกสาร..."
-                className="pl-9 h-10"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                aria-label="ค้นหาเจ้าหนี้"
-              />
-            </div>
-            <Input
-              type="month"
-              className="h-10 w-[11rem] shrink-0 font-mono"
-              value={monthYm}
-              onChange={(e) => setMonthYm(e.target.value)}
-              aria-label="กรองตามเดือนเอกสาร"
-              title="เดือนเอกสาร"
+        <DocumentListFilterBar
+          idPrefix="ap"
+          searchValue={searchQuery}
+          onSearchChange={setSearchQuery}
+          searchPlaceholder="ค้นหาชื่อคู่ค้า หรือ เลขที่เอกสาร..."
+          searchAriaLabel="ค้นหาเจ้าหนี้"
+          yearCe={yearFilterCe}
+          monthScope={monthScope}
+          yearOptionsCe={yearOptionsCe}
+          onYearCeChange={setYearFilterCe}
+          onMonthScopeChange={setMonthScope}
+          extraFilters={
+            <DocumentStatusFilterSelect
+              value={statusFilter}
+              onValueChange={(v) => setStatusFilter(v as 'all' | APStatus)}
+              options={[
+                { value: 'OPEN', label: 'OPEN' },
+                { value: 'PARTIALLY_PAID', label: 'PARTIAL' },
+                { value: 'PAID', label: 'PAID' },
+                { value: 'OVERDUE', label: 'OVERDUE' },
+              ]}
             />
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-10 shrink-0 gap-2"
-            onClick={() => setPrintDialogOpen(true)}
-          >
-            <Printer className="h-4 w-4" /> พิมพ์รายการ
-          </Button>
-        </div>
+          }
+          actions={
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 shrink-0 gap-2"
+              onClick={() => setPrintDialogOpen(true)}
+            >
+              <Printer className="h-4 w-4" /> พิมพ์รายการ
+            </Button>
+          }
+        />
 
         <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
           <DialogContent className="max-w-md">
@@ -424,7 +455,7 @@ export default function AccountsPayablePage() {
                         <TableCell className="text-right text-sm">฿ {item.debitAmount.toLocaleString()}</TableCell>
                         <TableCell className="text-right text-sm text-green-600">฿ {item.creditAmount.toLocaleString()}</TableCell>
                         <TableCell className="text-right font-black text-primary">฿ {item.outstandingAmount.toLocaleString()}</TableCell>
-                        <TableCell>{getStatusBadge(item.status)}</TableCell>
+                        <TableCell>{getStatusBadge(resolveApEffectiveStatus(item, asOfYmd))}</TableCell>
                       </TableRow>
                     );
                   })}
@@ -432,8 +463,8 @@ export default function AccountsPayablePage() {
                     <TableRow>
                       <TableCell colSpan={7} className="text-center py-20 text-muted-foreground italic">
                         {searchQuery.trim()
-                          ? `ไม่พบรายการที่ตรงกับ "${searchQuery.trim()}" ในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`
-                          : `ไม่มีรายการเจ้าหนี้ในเดือน ${formatPayrollYearMonthThaiBE(monthYm)}`}
+                          ? `ไม่พบรายการที่ตรงกับ "${searchQuery.trim()}" ในช่วง ${periodLabel}`
+                          : `ไม่มีรายการเจ้าหนี้ในช่วง ${periodLabel}`}
                       </TableCell>
                     </TableRow>
                   )}

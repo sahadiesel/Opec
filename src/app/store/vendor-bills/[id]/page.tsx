@@ -394,6 +394,9 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
   const [whtTaxBaseSaving, setWhtTaxBaseSaving] = useState(false);
   /** พรีวิว + เลือกชุดพิมพ์หัก ณ ที่จ่าย (หลังจ่ายแล้ว) */
   const [whtHubOpen, setWhtHubOpen] = useState(false);
+  /** ติ๊กแสดงลายเซ็น / ตรายางบนเอกสารตอนพิมพ์ (ค่าเริ่มจาก company profile) */
+  const [whtHubIncludeSignature, setWhtHubIncludeSignature] = useState(false);
+  const [whtHubIncludeStamp, setWhtHubIncludeStamp] = useState(false);
   const [vatMode, setVatMode] = useState<VatModeUi>('AUTO');
   const [supportingDelivery, setSupportingDelivery] = useState<SupportingFormRow>(() =>
     supportingFromBill(undefined),
@@ -663,14 +666,48 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     return bill?.billVatTreatment ?? inferred;
   }, [purchase, bill?.status, bill?.billVatTreatment, vatMode]);
 
-  const mergeWhtCertDisplaySettings = (c: CompanyProfileWhtInput | null | undefined) => {
+  const mergeWhtCertDisplaySettings = (
+    c: CompanyProfileWhtInput | null | undefined,
+    overrides?: { showSignatureImage?: boolean; showCompanyStamp?: boolean },
+  ) => {
     const d = c?.whtCertificateDisplay;
     return {
-      showSignatureImage: !!d?.showSignatureImage,
-      showCompanyStamp: !!d?.showCompanyStamp,
+      showSignatureImage: overrides?.showSignatureImage ?? !!d?.showSignatureImage,
+      showCompanyStamp: overrides?.showCompanyStamp ?? !!d?.showCompanyStamp,
       showSystemGeneratedNote: d?.showSystemGeneratedNote !== false,
+      signatureImageUrlOverride: (d?.signatureImageUrl || '').trim() || undefined,
+      companyStampImageUrlOverride:
+        (d?.companyStampImageUrl || '').trim() ||
+        (c?.documentHeaderStampUrl || '').trim() ||
+        undefined,
     };
   };
+
+  const whtHubSignatureUrlReady = useMemo(() => {
+    const fromDoc = (effectiveWhtPrintDoc?.signatureImageUrl || '').trim();
+    const fromProfile = (companyProfile?.whtCertificateDisplay?.signatureImageUrl || '').trim();
+    return Boolean(fromDoc || fromProfile);
+  }, [effectiveWhtPrintDoc?.signatureImageUrl, companyProfile?.whtCertificateDisplay?.signatureImageUrl]);
+
+  const whtHubStampUrlReady = useMemo(() => {
+    const fromDoc = (effectiveWhtPrintDoc?.companyStampImageUrl || '').trim();
+    const fromProfile = (companyProfile?.whtCertificateDisplay?.companyStampImageUrl || '').trim();
+    const fromHeader = (companyProfile?.documentHeaderStampUrl || '').trim();
+    return Boolean(fromDoc || fromProfile || fromHeader);
+  }, [
+    effectiveWhtPrintDoc?.companyStampImageUrl,
+    companyProfile?.whtCertificateDisplay?.companyStampImageUrl,
+    companyProfile?.documentHeaderStampUrl,
+  ]);
+
+  const whtHubDisplayOpts = useMemo(
+    () =>
+      mergeWhtCertDisplaySettings(companyProfile, {
+        showSignatureImage: whtHubIncludeSignature,
+        showCompanyStamp: whtHubIncludeStamp,
+      }),
+    [companyProfile, whtHubIncludeSignature, whtHubIncludeStamp],
+  );
 
   /** พิมพ์ตัวอย่างหนังสือรับรองก่อนบันทึกจ่าย — ใช้วันที่/ธนาคารจากฟอร์มด้านบน (ไม่เผาเลขที่จริง) */
   const handleSubmittedPreviewWhtCertificate = async () => {
@@ -757,6 +794,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     variant: WithholdingCertificateCopyVariant,
     official: boolean,
     hideDraftChrome = false,
+    displayOpts?: ReturnType<typeof mergeWhtCertDisplaySettings>,
   ) => {
     if (!currentUser) return;
     setWhtPrintBusy(true);
@@ -776,7 +814,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         hideDraftChrome,
         printedByName: actor,
         printedAtMs: Date.now(),
-        ...mergeWhtCertDisplaySettings(companyProfile),
+        ...(displayOpts ?? mergeWhtCertDisplaySettings(companyProfile)),
       });
       openWithholdingCertificatePrintWindow(html);
       if (official && isPersistedWhtCertDoc(whtDoc) && firestore && whtCertRef) {
@@ -814,6 +852,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
     whtDoc: WithholdingCertificateDocument,
     official: boolean,
     hideDraftChrome = false,
+    displayOpts?: ReturnType<typeof mergeWhtCertDisplaySettings>,
   ) => {
     if (!currentUser) return;
     setWhtPrintBusy(true);
@@ -829,7 +868,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
         hideDraftChrome,
         printedByName: actor,
         printedAtMs: Date.now(),
-        ...mergeWhtCertDisplaySettings(companyProfile),
+        ...(displayOpts ?? mergeWhtCertDisplaySettings(companyProfile)),
       });
       openWithholdingCertificatePrintWindow(html);
       if (official && isPersistedWhtCertDoc(whtDoc) && firestore && whtCertRef) {
@@ -883,15 +922,15 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       hideDraftChrome: true,
       printedByName: actor,
       printedAtMs: Date.now(),
-      ...mergeWhtCertDisplaySettings(companyProfile),
+      ...whtHubDisplayOpts,
     });
-  }, [whtHubOpen, effectiveWhtPrintDoc, currentUser, companyProfile, whtHubOfficialPrint]);
+  }, [whtHubOpen, effectiveWhtPrintDoc, currentUser, whtHubOfficialPrint, whtHubDisplayOpts]);
 
   const whtHubIframeKey = useMemo(() => {
     const d = whtCertificate ?? effectiveWhtPrintDoc;
     if (!d?.id) return 'wht-preview';
-    return `${d.id}-${effectiveWhtCertificateDocumentNo(d)}-${d.updatedAt ?? 0}`;
-  }, [whtCertificate, effectiveWhtPrintDoc]);
+    return `${d.id}-${effectiveWhtCertificateDocumentNo(d)}-${d.updatedAt ?? 0}-sig${whtHubIncludeSignature ? 1 : 0}-st${whtHubIncludeStamp ? 1 : 0}`;
+  }, [whtCertificate, effectiveWhtPrintDoc, whtHubIncludeSignature, whtHubIncludeStamp]);
 
   const showWhtAssignNumberPanel =
     !!bill?.whtCertificateDocumentId &&
@@ -919,6 +958,9 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
       toast({ variant: 'destructive', title: 'เปิดพรีวิวไม่ได้', description: errs.join(' ') });
       return;
     }
+    const d = companyProfile?.whtCertificateDisplay;
+    setWhtHubIncludeSignature(!!d?.showSignatureImage);
+    setWhtHubIncludeStamp(!!d?.showCompanyStamp);
     setWhtHubOpen(true);
   };
 
@@ -2978,6 +3020,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                           effectiveWhtPrintDoc,
                           whtHubOfficialPrint,
                           true,
+                          whtHubDisplayOpts,
                         )
                       }
                     >
@@ -2999,6 +3042,7 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                           'COPY_PAYER_RECORD',
                           whtHubOfficialPrint,
                           true,
+                          whtHubDisplayOpts,
                         )
                       }
                     >
@@ -3008,6 +3052,43 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                         <span className="text-xs text-muted-foreground">สำเนาสำหรับผู้จ่ายเงิน</span>
                       </span>
                     </Button>
+                  </div>
+                  <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      ลายเซ็น / ตรายาง
+                    </p>
+                    <label className="flex items-start gap-2 text-sm">
+                      <Checkbox
+                        checked={whtHubIncludeSignature}
+                        onCheckedChange={(v) => setWhtHubIncludeSignature(v === true)}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="font-medium">ลายเซ็น</span>
+                        <span className="block text-xs text-muted-foreground">
+                          วางเหนือบรรทัด「ลงชื่อ」
+                          {whtHubSignatureUrlReady
+                            ? ' · มีรูปในระบบ'
+                            : ' · ยังไม่มีรูป — ติ๊กแล้วจะว่าง (เซ็นมือได้)'}
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 text-sm">
+                      <Checkbox
+                        checked={whtHubIncludeStamp}
+                        onCheckedChange={(v) => setWhtHubIncludeStamp(v === true)}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="font-medium">ตรายาง</span>
+                        <span className="block text-xs text-muted-foreground">
+                          ช่อง「ตราประทับ (ถ้ามี)」ด้านขวา
+                          {whtHubStampUrlReady
+                            ? ' · มีรูปในระบบ'
+                            : ' · ยังไม่มีรูป — ตั้งได้ที่หัวเอกสารบริษัท'}
+                        </span>
+                      </span>
+                    </label>
                   </div>
                 </div>
               </ScrollArea>

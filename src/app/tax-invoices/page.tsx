@@ -8,7 +8,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Plus,
-  Search,
   ChevronRight,
   FileBadge,
   Info,
@@ -26,7 +25,8 @@ import {
   currentYearCe,
   ymMatchesYearMonthScope,
 } from '@/lib/date/year-month-scope-filter';
-import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
+import { DocumentListFilterBar } from '@/components/documents/document-list-filter-bar';
+import { DocumentStatusFilterSelect } from '@/components/documents/document-status-filter-select';
 import { TaxInvoice, TaxInvoiceStatus, User, Customer, CommercialInvoice, MoneyReceipt, VendorBillWhtPresetCategory } from '@/lib/types';
 import {
   VENDOR_BILL_WHT_PRESET_OPTIONS,
@@ -52,7 +52,6 @@ import {
   DialogDescription,
   DialogHeader, 
   DialogTitle, 
-  DialogTrigger,
   DialogFooter
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -191,6 +190,7 @@ export default function TaxInvoicesPage() {
   const [deleting, setDeleting] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | TaxInvoiceStatus>('all');
   const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
   const [monthScope, setMonthScope] = useState(() => currentMonthMm());
 
@@ -236,17 +236,18 @@ export default function TaxInvoicesPage() {
       if (!ymMatchesYearMonthScope((inv.issueDate || '').slice(0, 7), yearFilterCe, monthScope)) {
         return false;
       }
+      if (statusFilter !== 'all' && inv.status !== statusFilter) return false;
       if (!term) return true;
       const no = (inv.taxInvoiceNo || '').toLowerCase();
       const cust = customers?.find((c) => c.id === inv.customerId);
       const custName = (cust?.name || '').toLowerCase();
       return no.includes(term) || custName.includes(term);
     });
-  }, [visibleInvoices, searchTerm, yearFilterCe, monthScope, customers]);
+  }, [visibleInvoices, searchTerm, statusFilter, yearFilterCe, monthScope, customers]);
 
   const printFilterSummary = useMemo(
-    () => ({ searchTerm, yearCe: yearFilterCe, monthScope }),
-    [searchTerm, yearFilterCe, monthScope],
+    () => ({ searchTerm, yearCe: yearFilterCe, monthScope, statusFilter }),
+    [searchTerm, yearFilterCe, monthScope, statusFilter],
   );
 
   const buildPrintRows = useCallback(
@@ -442,38 +443,48 @@ export default function TaxInvoicesPage() {
           </AlertDescription>
         </Alert>
 
-        <div className="flex flex-col gap-3 bg-card rounded-lg border p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <div className="relative min-w-0 flex-1 basis-full sm:basis-auto sm:min-w-[14rem] sm:max-w-sm">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="ค้นหาเลขที่ใบกำกับภาษี, ลูกค้า…"
-                className="h-10 pl-9"
-                aria-label="ค้นหาใบกำกับภาษี"
-              />
-            </div>
-            <YearMonthScopeSelects
-              idPrefix="tax-inv"
-              yearCe={yearFilterCe}
-              monthScope={monthScope}
-              yearOptionsCe={yearOptionsCe}
-              onYearCeChange={setYearFilterCe}
-              onMonthScopeChange={setMonthScope}
+        <DocumentListFilterBar
+          idPrefix="tax-inv"
+          searchValue={searchTerm}
+          onSearchChange={setSearchTerm}
+          searchPlaceholder="ค้นหาเลขที่ใบกำกับภาษี, ลูกค้า…"
+          searchAriaLabel="ค้นหาใบกำกับภาษี"
+          yearCe={yearFilterCe}
+          monthScope={monthScope}
+          yearOptionsCe={yearOptionsCe}
+          onYearCeChange={setYearFilterCe}
+          onMonthScopeChange={setMonthScope}
+          extraFilters={
+            <DocumentStatusFilterSelect
+              value={statusFilter}
+              onValueChange={(v) => setStatusFilter(v as 'all' | TaxInvoiceStatus)}
+              options={[
+                { value: 'DRAFT', label: 'DRAFT' },
+                { value: 'ISSUED', label: 'ISSUED' },
+                { value: 'CANCELLED', label: 'CANCELLED' },
+              ]}
             />
-          </div>
-
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 gap-2"
-              onClick={() => setPrintDialogOpen(true)}
-            >
-              <Printer className="h-4 w-4" /> พิมพ์รายการภาษีขาย
-            </Button>
+          }
+          actions={
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 gap-2"
+                onClick={() => setPrintDialogOpen(true)}
+              >
+                <Printer className="h-4 w-4" /> พิมพ์รายการภาษีขาย
+              </Button>
+              <Button
+                className="h-11 shrink-0 gap-2 bg-primary px-6 text-base font-bold shadow-md"
+                disabled={!canCreateInvoice}
+                onClick={() => setIsDialogOpen(true)}
+              >
+                <Plus className="h-5 w-5" /> สร้างใบกำกับภาษีร่าง
+              </Button>
+            </>
+          }
+        />
 
           <Dialog
             open={isAuthorized && canCreateInvoice && isDialogOpen}
@@ -486,14 +497,6 @@ export default function TaxInvoicesPage() {
               }
             }}
           >
-            <DialogTrigger asChild>
-              <Button
-                className="h-10 shrink-0 gap-2 bg-primary px-6 text-base font-bold shadow-md"
-                disabled={!canCreateInvoice}
-              >
-                <Plus className="h-5 w-5" /> สร้างใบกำกับภาษีร่าง
-              </Button>
-            </DialogTrigger>
             <DialogContent className="max-w-xl">
               <DialogHeader>
                 <DialogTitle>สร้างใบกำกับภาษีร่าง</DialogTitle>
@@ -589,8 +592,6 @@ export default function TaxInvoicesPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          </div>
-        </div>
 
         <Dialog open={printDialogOpen} onOpenChange={setPrintDialogOpen}>
           <DialogContent className="max-w-md">

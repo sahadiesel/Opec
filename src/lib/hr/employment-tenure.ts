@@ -3,7 +3,8 @@ import { normalizeStaffDateYmd } from '@/lib/payroll/office-staff-date-ymd';
 
 export const EMPLOYMENT_END_REASONS = [
   { code: 'RESIGNED', labelTh: 'ลาออก' },
-  { code: 'DISMISSED_DISCIPLINE', labelTh: 'ให้ออกผิดวินัยการทำงาน' },
+  { code: 'DISMISSED_DISCIPLINE', labelTh: 'ให้ออก' },
+  { code: 'MEDICAL_UNABLE', labelTh: 'ป่วย/อุบัติเหตุไม่สามารถทำงานได้' },
   { code: 'OTHER', labelTh: 'อื่นๆ' },
 ] as const;
 
@@ -22,7 +23,12 @@ export interface EmploymentTenure {
 }
 
 export function isEmploymentEndReason(v: unknown): v is EmploymentEndReason {
-  return v === 'RESIGNED' || v === 'DISMISSED_DISCIPLINE' || v === 'OTHER';
+  return (
+    v === 'RESIGNED' ||
+    v === 'DISMISSED_DISCIPLINE' ||
+    v === 'MEDICAL_UNABLE' ||
+    v === 'OTHER'
+  );
 }
 
 export function employmentEndReasonLabelTh(code: EmploymentEndReason | string | undefined | null): string {

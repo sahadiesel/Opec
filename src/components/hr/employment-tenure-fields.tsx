@@ -14,6 +14,7 @@ import {
   type EmploymentTenure,
 } from '@/lib/hr/employment-tenure';
 import { normalizeStaffDateYmd } from '@/lib/payroll/office-staff-date-ymd';
+import { cn } from '@/lib/utils';
 
 export function EmploymentTenureFields({
   startDate,
@@ -25,6 +26,9 @@ export function EmploymentTenureFields({
   legacyEnd,
   disabled,
   onChange,
+  requireEndDate = false,
+  endDateHint,
+  compact = false,
 }: {
   startDate: string;
   endDate: string;
@@ -40,18 +44,30 @@ export function EmploymentTenureFields({
     endReason: EmploymentEndReason | '';
     endReasonNote: string;
   }) => void;
+  /** ลูกจ้างแบบเหมา — บังคับมีวันสิ้นสุดตามสัญญา */
+  requireEndDate?: boolean;
+  endDateHint?: string;
+  compact?: boolean;
 }) {
   const history = seedEmploymentTenures(tenures, legacyStart, legacyEnd);
   const latest = history[history.length - 1];
   const startYmd = normalizeStaffDateYmd(startDate) || '';
   const endYmd = normalizeStaffDateYmd(endDate) || '';
   const willOpenNewCycle = Boolean(latest?.endDate && startYmd && startYmd > latest.endDate);
+  const showReasonNote = endReason === 'OTHER' || endReason === 'MEDICAL_UNABLE';
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+      <div
+        className={cn(
+          'grid gap-4',
+          compact ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2 md:items-end md:gap-6',
+        )}
+      >
         <div className="space-y-2">
-          <Label className="font-bold">วันที่เริ่มงาน</Label>
+          <Label className="font-bold">
+            วันที่เริ่มงาน{requireEndDate ? ' *' : ''}
+          </Label>
           <DatePickerThaiBE
             className="h-10"
             disabled={disabled}
@@ -70,16 +86,25 @@ export function EmploymentTenureFields({
           />
         </div>
         <div className="space-y-2">
-          <Label className="font-bold">วันที่สิ้นสุดการทำงาน</Label>
-          <p className="text-[11px] text-muted-foreground leading-snug">
-            กำหนดล่วงหน้าได้ (เช่น ฝึกงาน) — ยังถือว่าทำงานอยู่จนถึงวันนี้ ไม่ตัดสถานะทันที
-          </p>
+          <Label className="font-bold inline leading-snug">
+            วันที่สิ้นสุดการทำงาน{requireEndDate ? ' *' : ''}
+            <span className="ml-2 font-normal text-[11px] text-amber-800/90">
+              {endDateHint ||
+                (requireEndDate
+                  ? 'ตามสัญญา — แก้ให้หมดก่อนหรือหลังกำหนดได้'
+                  : 'เมื่อสิ้นสุดงานให้ระบุวันและเหตุผล — ยังถือว่าทำงานอยู่จนถึงวันนี้')}
+            </span>
+          </Label>
           <DatePickerThaiBE
             className="h-10"
-            placeholder="ยังไม่ระบุ"
-            allowClear
+            placeholder={requireEndDate ? 'ระบุวันสิ้นสุดตามสัญญา' : 'ยังไม่ระบุ'}
+            allowClear={!requireEndDate}
             disabled={disabled}
-            onClear={() => onChange({ startDate, endDate: '', endReason: '', endReasonNote: '' })}
+            onClear={
+              requireEndDate
+                ? undefined
+                : () => onChange({ startDate, endDate: '', endReason: '', endReasonNote: '' })
+            }
             value={endDate ? htmlDateValueToTimestampMs(endDate) : undefined}
             onChange={(ms) => {
               const nextEnd = ms ? timestampToHtmlDateValue(ms) : '';
@@ -94,7 +119,7 @@ export function EmploymentTenureFields({
         </div>
       </div>
       {endYmd ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className={cn('grid gap-4', compact ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2')}>
           <div className="space-y-2">
             <Label className="font-bold">เหตุผลการสิ้นสุดการทำงาน</Label>
             <Select
@@ -105,7 +130,7 @@ export function EmploymentTenureFields({
                   startDate,
                   endDate,
                   endReason: v as EmploymentEndReason,
-                  endReasonNote: v === 'OTHER' ? endReasonNote : '',
+                  endReasonNote: v === 'OTHER' || v === 'MEDICAL_UNABLE' ? endReasonNote : '',
                 })
               }
             >
@@ -121,9 +146,11 @@ export function EmploymentTenureFields({
               </SelectContent>
             </Select>
           </div>
-          {endReason === 'OTHER' ? (
+          {showReasonNote ? (
             <div className="space-y-2">
-              <Label className="font-bold">รายละเอียดเหตุผล</Label>
+              <Label className="font-bold">
+                {endReason === 'MEDICAL_UNABLE' ? 'รายละเอียด (ถ้ามี)' : 'รายละเอียดเหตุผล'}
+              </Label>
               <Textarea
                 disabled={disabled}
                 value={endReasonNote}
@@ -131,6 +158,7 @@ export function EmploymentTenureFields({
                   onChange({ startDate, endDate, endReason, endReasonNote: e.target.value })
                 }
                 className="min-h-[40px]"
+                placeholder={endReason === 'OTHER' ? 'ระบุเหตุผล' : 'เช่น ป่วย / อุบัติเหตุ'}
               />
             </div>
           ) : null}
@@ -149,12 +177,12 @@ export function EmploymentTenureFields({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-14">ครั้ง</TableHead>
+              <TableHead className="w-10">ครั้ง</TableHead>
               <TableHead>เริ่มงาน</TableHead>
               <TableHead>สิ้นสุด</TableHead>
               <TableHead>เหตุผล</TableHead>
-              <TableHead>ผู้บันทึก</TableHead>
-              <TableHead>บันทึกเมื่อ</TableHead>
+              <TableHead className={compact ? 'hidden sm:table-cell' : undefined}>ผู้บันทึก</TableHead>
+              <TableHead className={compact ? 'hidden md:table-cell' : undefined}>บันทึกเมื่อ</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -168,11 +196,17 @@ export function EmploymentTenureFields({
               history.map((row, index) => (
                 <TableRow key={row.id || index}>
                   <TableCell className="font-mono text-xs">{index + 1}</TableCell>
-                  <TableCell>{formatYmdLocalThaiBE(row.startDate)}</TableCell>
-                  <TableCell>{row.endDate ? formatYmdLocalThaiBE(row.endDate) : '—'}</TableCell>
-                  <TableCell>{formatEmploymentEndReasonDisplay(row.endReason, row.endReasonNote) || '—'}</TableCell>
-                  <TableCell>{row.recordedByName || '—'}</TableCell>
+                  <TableCell className="text-xs whitespace-nowrap">{formatYmdLocalThaiBE(row.startDate)}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap">
+                    {row.endDate ? formatYmdLocalThaiBE(row.endDate) : '—'}
+                  </TableCell>
+                  <TableCell className="text-xs">
+                    {formatEmploymentEndReasonDisplay(row.endReason, row.endReasonNote) || '—'}
+                  </TableCell>
+                  <TableCell className={cn('text-xs', compact && 'hidden sm:table-cell')}>
+                    {row.recordedByName || '—'}
+                  </TableCell>
+                  <TableCell className={cn('text-xs whitespace-nowrap', compact && 'hidden md:table-cell')}>
                     {row.recordedAt ? formatDateTimeThaiBE(row.recordedAt) : '—'}
                   </TableCell>
                 </TableRow>

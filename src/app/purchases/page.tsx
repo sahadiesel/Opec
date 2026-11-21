@@ -10,13 +10,21 @@ import {
   Plus,
   Search,
   ChevronRight,
-  PackageSearch, 
-  Building2, 
+  PackageSearch,
+  Building2,
   Calendar,
   AlertTriangle,
   Loader2,
   Trash2,
+  Filter,
 } from 'lucide-react';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { Input } from '@/components/ui/input';
 import { formatYmdLocalThaiBE, htmlDateValueToTimestampMs, timestampToHtmlDateValue } from '@/lib/date-thai';
@@ -283,7 +291,9 @@ export default function PurchasesPage() {
   const [deleteTarget, setDeleteTarget] = useState<Purchase | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [poSearch, setPoSearch] = useState('');
-  const [poMonth, setPoMonth] = useState<string>('all');
+  const [poStatusFilter, setPoStatusFilter] = useState<'all' | PurchaseStatus>('all');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [poVendorId, setPoVendorId] = useState<string>('all');
   /** รออนุมัติเฉพาะ PO เก่าที่ไม่อ้าง PR — ทางทำงานหลักอนุมัติที่ PR ไม่ใช่ PO */
   const pendingApprovalCount = useMemo(
@@ -302,13 +312,20 @@ export default function PurchasesPage() {
     return `${parts[0]}-${String(parts[1]).padStart(2, '0')}`;
   }
 
+  const yearOptionsCe = useMemo(
+    () => buildYearCeOptions((visiblePurchases || []).map((p) => purchaseRowMonth(p.purchaseDate))),
+    [visiblePurchases],
+  );
+
   const purchasesFiltered = useMemo(() => {
     const qq = poSearch.trim().toLowerCase();
     return (visiblePurchases || []).filter((p) => {
       const v = vendors?.find((x) => x.id === p.vendorId);
       if (poVendorId !== 'all' && p.vendorId !== poVendorId) return false;
-      const ym = purchaseRowMonth(p.purchaseDate);
-      if (poMonth !== 'all' && ym !== poMonth) return false;
+      if (poStatusFilter !== 'all' && p.status !== poStatusFilter) return false;
+      if (!ymMatchesYearMonthScope(purchaseRowMonth(p.purchaseDate), yearFilterCe, monthScope)) {
+        return false;
+      }
       if (!qq) return true;
       return (
         (p.purchaseNo || '').toLowerCase().includes(qq) ||
@@ -316,16 +333,7 @@ export default function PurchasesPage() {
         (p.purchaseRequestId || '').toLowerCase().includes(qq)
       );
     });
-  }, [visiblePurchases, poSearch, poMonth, poVendorId, vendors]);
-
-  const purchaseMonthOptions = useMemo(() => {
-    const set = new Set<string>();
-    (visiblePurchases || []).forEach((p) => {
-      const ym = purchaseRowMonth(p.purchaseDate);
-      if (ym) set.add(ym);
-    });
-    return [...set].sort().reverse();
-  }, [visiblePurchases]);
+  }, [visiblePurchases, poSearch, poStatusFilter, yearFilterCe, monthScope, poVendorId, vendors]);
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -344,6 +352,20 @@ export default function PurchasesPage() {
       return;
     }
     const pr = prSnap.data() as PurchaseRequest;
+
+    if (pr.status !== 'APPROVED' || pr.linkedPurchaseId) {
+      toast({
+        variant: 'destructive',
+        title: 'สร้าง PO ไม่ได้',
+        description:
+          pr.status === 'CANCELLED'
+            ? 'PR นี้ถูกยกเลิกแล้ว — สร้างใบสั่งซื้อต่อไม่ได้'
+            : pr.linkedPurchaseId
+              ? 'PR นี้ถูกสร้างเป็นใบสั่งซื้อไปแล้ว'
+              : 'เปิดใบสั่งซื้อได้เฉพาะ PR ที่อนุมัติแล้วเท่านั้น',
+      });
+      return;
+    }
 
     if (!salesOfficerCanAccessDocument(currentUser, pr)) {
       toast({
@@ -586,8 +608,8 @@ export default function PurchasesPage() {
           </Alert>
         )}
 
-        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex flex-col sm:flex-row flex-wrap items-stretch gap-3 flex-1">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
+          <div className="flex flex-1 flex-wrap items-center gap-3">
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -597,19 +619,41 @@ export default function PurchasesPage() {
                 onChange={(e) => setPoSearch(e.target.value)}
               />
             </div>
-            <Select value={poMonth} onValueChange={setPoMonth}>
-              <SelectTrigger className="h-11 w-[200px]">
-                <SelectValue placeholder="เดือน" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">ทุกเดือน</SelectItem>
-                {purchaseMonthOptions.map((ym) => (
-                  <SelectItem key={ym} value={ym}>
-                    {ym}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <YearMonthScopeSelects
+              idPrefix="purchases"
+              yearCe={yearFilterCe}
+              monthScope={monthScope}
+              yearOptionsCe={yearOptionsCe}
+              onYearCeChange={setYearFilterCe}
+              onMonthScopeChange={setMonthScope}
+              yearTriggerClassName="h-11 w-[7.5rem]"
+              monthTriggerClassName="h-11 w-[9.5rem]"
+            />
+            <div className="w-[210px]">
+              <Select
+                value={poStatusFilter}
+                onValueChange={(v) => setPoStatusFilter(v as 'all' | PurchaseStatus)}
+              >
+                <SelectTrigger className="h-11 gap-2">
+                  <div className="flex items-center gap-2">
+                    <Filter className="h-4 w-4" />
+                    <SelectValue placeholder="ตัวกรองสถานะ" />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">ทุกสถานะ</SelectItem>
+                  <SelectItem value="DRAFT">ฉบับร่าง</SelectItem>
+                  <SelectItem value="PENDING_APPROVAL">รออนุมัติ</SelectItem>
+                  <SelectItem value="RETURNED_FOR_REVISION">ส่งกลับแก้ไข</SelectItem>
+                  <SelectItem value="APPROVED">อนุมัติแล้ว</SelectItem>
+                  <SelectItem value="ISSUED">ISSUED</SelectItem>
+                  <SelectItem value="COMPLETED">COMPLETED</SelectItem>
+                  <SelectItem value="PENDING_CANCELLATION">รอยกเลิก</SelectItem>
+                  <SelectItem value="CANCELLED">ยกเลิก</SelectItem>
+                  <SelectItem value="REJECTED">ไม่อนุมัติ</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <Select value={poVendorId} onValueChange={setPoVendorId}>
               <SelectTrigger className="h-11 w-[220px]">
                 <SelectValue placeholder="คู่ค้า" />

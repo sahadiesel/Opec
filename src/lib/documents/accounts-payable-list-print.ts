@@ -15,6 +15,7 @@ export type AccountsPayableListPrintRow = {
 export type AccountsPayableListPrintFilterSummary = {
   searchTerm: string;
   monthYyyyMm: string;
+  statusFilter?: string;
 };
 
 const PRINT_ROW_LIMIT = 500;
@@ -22,7 +23,14 @@ const PRINT_ROW_LIMIT = 500;
 export function describeAccountsPayableListPrintFilters(f: AccountsPayableListPrintFilterSummary): string[] {
   const lines: string[] = [];
   if (f.monthYyyyMm.trim()) {
-    lines.push(`เดือนเอกสาร: ${formatPayrollYearMonthThaiBE(f.monthYyyyMm)}`);
+    // รองรับทั้ง YYYY-MM และข้อความช่วงจาก describeYearMonthScopeFilter
+    const period = /^\d{4}-\d{2}$/.test(f.monthYyyyMm.trim())
+      ? formatPayrollYearMonthThaiBE(f.monthYyyyMm)
+      : f.monthYyyyMm.trim();
+    lines.push(`เดือนเอกสาร: ${period}`);
+  }
+  if (f.statusFilter && f.statusFilter !== 'all') {
+    lines.push(`สถานะ: ${f.statusFilter}`);
   }
   if (f.searchTerm.trim()) {
     lines.push(`ค้นหา: "${f.searchTerm.trim()}"`);

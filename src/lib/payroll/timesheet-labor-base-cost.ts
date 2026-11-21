@@ -6,10 +6,11 @@
  * สวิตช์ทะเบียนเปิด (ค่าเริ่มต้น — ยึดฐานตามสัญญา):
  * เรทต้นทุนบน Rate Sheet ของสัญญานั้น (คอลัมน์ OFF/ON Work — matrix ก่อน แล้ว baseline)
  * → ทะเบียนต่อสัญญาบน Position → ฐานมาตรฐานตำแหน่ง
- * → บวกค่าตำแหน่งรายคน → ถ้ายังไม่มี ใช้ costBaselineSnapshot ของ PO
+ * → ถ้ายังไม่มี ใช้ costBaselineSnapshot ของ PO
+ * (เลิกบวกค่าตำแหน่งรายคน — ถ้าเรทไม่เท่าสัญญาให้ตั้งค่าเองที่ทะเบียน)
  *
  * สวิตช์ปิด (ไม่ยึดสัญญา): ฐาน onshore/offshore ที่กรอกในทะเบียนลูกจ้าง
- * ไม่บวกค่าตำแหน่ง และไม่ใช้เรทในสัญญา
+ * ไม่ใช้เรทในสัญญา
  */
 import { collection, doc, getDoc, getDocs, type Firestore } from 'firebase/firestore';
 import type {
@@ -36,16 +37,7 @@ import {
   resolveWorkModeForPoContext,
 } from '@/lib/ops/po-active-bundle';
 
-function workerPositionAllowanceDaily(worker: Worker | null | undefined): number {
-  if (!worker) return 0;
-  const n = Number(worker.positionAllowanceDailyBaht);
-  return Number.isFinite(n) && n > 0 ? n : 0;
-}
-
-/**
- * หลังได้ฐานต้นทุนต่อวันจากเส้นทางเดิม (custom → ทะเบียนต่อสัญญา → default ตำแหน่ง → snapshot PO) — บวกค่าตำแหน่งรายคนถ้ามี
- * ต้นทุนฝั่ง OPEC เท่านั้น — ไม่ใช้ราคาขาย · ไม่บวกเมื่อ override รายคน · ค่าว่าง/0 = ไม่บวก
- */
+/** @deprecated ค่าตำแหน่งรายคนเลิกใช้แล้ว — คืนค่าเดิมไม่บวกเพิ่ม */
 function applyWorkerPositionAllowanceToResolvedBase(input: {
   worker: Worker | null | undefined;
   baseCost: number;
@@ -54,21 +46,8 @@ function applyWorkerPositionAllowanceToResolvedBase(input: {
   baseCost: number;
   resolution: { rate: number; source: LaborCostSourceKind; workMode: LaborCostWorkMode } | null;
 } {
-  const add = workerPositionAllowanceDaily(input.worker);
-  if (add <= 0 || input.baseCost <= 0) return input;
-  if (input.resolution?.source === 'worker_custom') return input;
-
-  if (input.resolution) {
-    return {
-      baseCost: input.baseCost + add,
-      resolution: {
-        ...input.resolution,
-        rate: input.resolution.rate + add,
-      },
-    };
-  }
-  /* ฐานจาก PO snapshot — ยังบวกค่าตำแหน่งได้ */
-  return { baseCost: input.baseCost + add, resolution: null };
+  void input.worker;
+  return { baseCost: input.baseCost, resolution: input.resolution };
 }
 
 /**
@@ -543,7 +522,7 @@ export function resolvePoLineForPayrollTimesheet(
   return direct || {};
 }
 
-/** Snapshot ฐานที่ใช้คิดสลิปจริง (รวมค่าตำแหน่ง) — ไม่ใช่แค่ default ของตำแหน่ง */
+/** Snapshot ฐานที่ใช้คิดสลิปจริง — ไม่ใช่แค่ default ของตำแหน่ง */
 export function buildPayrollLaborResolutionSnapshotForTimesheets(
   timesheets: readonly DailyTimesheet[],
   deps: {

@@ -730,6 +730,7 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                   tenures={formData.employmentTenures}
                   legacyStart={staffData?.startDate}
                   legacyEnd={staffData?.employmentEndDate}
+                  endDateHint="กำหนดล่วงหน้าได้ (เช่น ฝึกงาน) — ยังถือว่าทำงานอยู่จนถึงวันนี้ ไม่ตัดสถานะทันที"
                   disabled={isSubmitting || (isNew ? !canCreateOfficeStaff : !canEditOfficeStaff)}
                   onChange={(patch) =>
                     setFormData({
@@ -1019,17 +1020,33 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                   </div>
                   <div className="space-y-2">
                     <Label className="font-bold">โรงพยาบาลประกันสังคม</Label>
-                    <Input
-                      list="hrm-hospital-datalist-office"
-                      value={formData.socialSecurityHospital ?? ''}
-                      onChange={(e) => setFormData({ ...formData, socialSecurityHospital: e.target.value })}
-                      placeholder="พิมพ์หรือเลือกจากรายการ"
-                    />
-                    <datalist id="hrm-hospital-datalist-office">
-                      {activeHospitalCatalog.map((h) => (
-                        <option key={h.id} value={h.nameTh} />
-                      ))}
-                    </datalist>
+                    <Select
+                      value={formData.socialSecurityHospital?.trim() ? formData.socialSecurityHospital : '__none__'}
+                      onValueChange={(v) =>
+                        setFormData({
+                          ...formData,
+                          socialSecurityHospital: v === '__none__' ? '' : v,
+                        })
+                      }
+                    >
+                      <SelectTrigger className="h-11">
+                        <SelectValue placeholder="เลือกโรงพยาบาล" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">— ไม่ระบุ —</SelectItem>
+                        {formData.socialSecurityHospital?.trim() &&
+                        !activeHospitalCatalog.some((h) => h.nameTh === formData.socialSecurityHospital) ? (
+                          <SelectItem value={formData.socialSecurityHospital}>
+                            {formData.socialSecurityHospital} (ค่าเดิม)
+                          </SelectItem>
+                        ) : null}
+                        {activeHospitalCatalog.map((h) => (
+                          <SelectItem key={h.id} value={h.nameTh}>
+                            {h.nameTh}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <p className="text-[11px] text-muted-foreground">
                       <Link href="/hr/hospital-registry" className="text-primary underline hover:no-underline">
                         จัดการทะเบียนโรงพยาบาล
@@ -1051,17 +1068,31 @@ export default function OfficeStaffDetailPage({ params }: { params: Promise<{ id
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-2 md:col-span-1">
                     <Label className="font-bold">ชื่อธนาคาร</Label>
-                    <Input
-                      list="hrm-bank-datalist-office"
-                      value={formData.bankName ?? ''}
-                      onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
-                      placeholder="พิมพ์หรือเลือกจากรายการ"
-                    />
-                    <datalist id="hrm-bank-datalist-office">
-                      {activeBankCatalog.map((b) => (
-                        <option key={b.id} value={b.nameTh} />
-                      ))}
-                    </datalist>
+                    <Select
+                      value={formData.bankName?.trim() ? formData.bankName : '__none__'}
+                      onValueChange={(v) =>
+                        setFormData({
+                          ...formData,
+                          bankName: v === '__none__' ? '' : v,
+                        })
+                      }
+                    >
+                      <SelectTrigger className="h-11">
+                        <SelectValue placeholder="เลือกธนาคาร" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">— ไม่ระบุ —</SelectItem>
+                        {formData.bankName?.trim() &&
+                        !activeBankCatalog.some((b) => b.nameTh === formData.bankName) ? (
+                          <SelectItem value={formData.bankName}>{formData.bankName} (ค่าเดิม)</SelectItem>
+                        ) : null}
+                        {activeBankCatalog.map((b) => (
+                          <SelectItem key={b.id} value={b.nameTh}>
+                            {b.nameTh}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <p className="text-[11px] text-muted-foreground">
                       <Link href="/hr/bank-registry" className="text-primary underline hover:no-underline">
                         จัดการทะเบียนธนาคาร

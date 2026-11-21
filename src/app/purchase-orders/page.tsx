@@ -7,7 +7,7 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Info, ArrowRight, Loader2, Pencil, CheckCircle2, Trash2, Printer } from 'lucide-react';
+import { Plus, ShoppingCart, ChevronRight, Building2, FileText, Calendar, Info, ArrowRight, Loader2, Pencil, CheckCircle2, Trash2, Printer } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { PurchaseOrder, Customer, MainContract, Quotation, JobMode } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
@@ -46,7 +46,8 @@ import {
 } from '@/lib/documents/own-created-list';
 import { canManageDocumentShare } from '@/lib/documents/document-share';
 import { DocumentShareListMarker } from '@/components/documents/document-share-controls';
-import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
+import { DocumentListFilterBar } from '@/components/documents/document-list-filter-bar';
+import { DocumentStatusFilterSelect } from '@/components/documents/document-status-filter-select';
 import {
   buildYearCeOptions,
   currentMonthMm,
@@ -178,6 +179,7 @@ function CustomerPOsPageContent() {
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | PurchaseOrder['status']>('all');
   const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
   const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
@@ -196,6 +198,7 @@ function CustomerPOsPageContent() {
     const term = searchTerm.trim().toLowerCase();
     return visiblePos.filter((po) => {
       if (!ymMatchesYearMonthScope(poListYm(po), yearFilterCe, monthScope)) return false;
+      if (statusFilter !== 'all' && po.status !== statusFilter) return false;
       if (!term) return true;
       const customer = customers?.find((c) => c.id === po.customerId);
       const hay = [
@@ -210,7 +213,7 @@ function CustomerPOsPageContent() {
         .toLowerCase();
       return hay.includes(term);
     });
-  }, [visiblePos, searchTerm, yearFilterCe, monthScope, customers]);
+  }, [visiblePos, searchTerm, statusFilter, yearFilterCe, monthScope, customers]);
 
   const contractPos = useMemo(
     () => filteredPos.filter((po) => !isQuotationSourcedPo(po)),
@@ -662,36 +665,39 @@ function CustomerPOsPageContent() {
         </Alert>
 
         {/* 3. Action Bar */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex flex-wrap items-center gap-3 flex-1">
-            <div className="relative w-full max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="ค้นหาเลขที่ PO หรือ ชื่อโครงการ..."
-                className="pl-9 h-11"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-            <YearMonthScopeSelects
-              idPrefix="customer-po"
-              yearCe={yearFilterCe}
-              monthScope={monthScope}
-              yearOptionsCe={yearOptionsCe}
-              onYearCeChange={setYearFilterCe}
-              onMonthScopeChange={setMonthScope}
+        <DocumentListFilterBar
+          idPrefix="customer-po"
+          searchValue={searchTerm}
+          onSearchChange={setSearchTerm}
+          searchPlaceholder="ค้นหาเลขที่ PO หรือ ชื่อโครงการ..."
+          searchAriaLabel="ค้นหา Customer PO"
+          yearCe={yearFilterCe}
+          monthScope={monthScope}
+          yearOptionsCe={yearOptionsCe}
+          onYearCeChange={setYearFilterCe}
+          onMonthScopeChange={setMonthScope}
+          extraFilters={
+            <DocumentStatusFilterSelect
+              value={statusFilter}
+              onValueChange={(v) => setStatusFilter(v as 'all' | PurchaseOrder['status'])}
+              options={[
+                { value: 'pending', label: 'PENDING' },
+                { value: 'active', label: 'ACTIVE' },
+                { value: 'closed', label: 'CLOSED' },
+              ]}
             />
-            <Button type="button" variant="outline" className="h-11 gap-2" onClick={() => setPrintDialogOpen(true)}>
-              <Printer className="h-4 w-4" /> พิมพ์รายการ
-            </Button>
-          </div>
-          
-          <Dialog open={canCreatePO && isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!canCreatePO}>
-                <Plus className="h-5 w-5" /> สร้าง Customer PO ใหม่ (New PO)
+          }
+          actions={
+            <>
+              <Button type="button" variant="outline" className="h-11 gap-2" onClick={() => setPrintDialogOpen(true)}>
+                <Printer className="h-4 w-4" /> พิมพ์รายการ
               </Button>
-            </DialogTrigger>
+              <Dialog open={canCreatePO && isCreateOpen} onOpenChange={setIsCreateOpen}>
+                <DialogTrigger asChild>
+                  <Button className="gap-2 h-11 px-6 bg-primary shadow-md text-base font-bold" disabled={!canCreatePO}>
+                    <Plus className="h-5 w-5" /> สร้าง Customer PO ใหม่ (New PO)
+                  </Button>
+                </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto grid-cols-1">
               <div className="flex min-w-0 flex-col gap-4">
               <DialogHeader>
@@ -857,7 +863,9 @@ function CustomerPOsPageContent() {
               </div>
             </DialogContent>
           </Dialog>
-        </div>
+            </>
+          }
+        />
 
         {isPOLoading ? (
           <Card className="shadow-lg border-none overflow-hidden">
@@ -907,6 +915,7 @@ function CustomerPOsPageContent() {
                 <p className="font-semibold text-xs uppercase text-muted-foreground">ตัวกรองปัจจุบัน</p>
                 <ul className="list-disc list-inside text-xs text-muted-foreground">
                   <li>{describeYearMonthScopeFilter(yearFilterCe, monthScope)}</li>
+                  {statusFilter !== 'all' ? <li>สถานะ: {statusFilter.toUpperCase()}</li> : null}
                   {searchTerm.trim() ? <li>ค้นหา: {searchTerm.trim()}</li> : null}
                 </ul>
                 <p className="text-xs font-medium pt-1">

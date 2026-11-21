@@ -10,7 +10,6 @@ import {
   Info,
   Loader2,
   Plus,
-  Search,
   Wrench,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/app-shell';
@@ -20,6 +19,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
+import { DocumentListFilterBar } from '@/components/documents/document-list-filter-bar';
+import { DocumentStatusFilterSelect } from '@/components/documents/document-status-filter-select';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
 import {
   Dialog,
   DialogContent,
@@ -91,6 +98,9 @@ export default function RentContractsPage() {
   const { data: customers } = useCollection<Customer>(customersQuery as any);
 
   const [search, setSearch] = useState('');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
+  const [statusFilter, setStatusFilter] = useState<'all' | EquipmentRentalContractStatus>('all');
   const [createOpen, setCreateOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -149,17 +159,28 @@ export default function RentContractsPage() {
     }));
   }, [customerId, customers]);
 
+  const yearOptionsCe = useMemo(
+    () =>
+      buildYearCeOptions(
+        (contracts ?? []).map((c) => String(c.startDate || '').slice(0, 7) || String(c.createdAt || '').slice(0, 7)),
+      ),
+    [contracts],
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const list = contracts ?? [];
-    if (!q) return list;
-    return list.filter(
-      (c) =>
+    return (contracts ?? []).filter((c) => {
+      if (statusFilter !== 'all' && c.status !== statusFilter) return false;
+      const ym = String(c.startDate || '').slice(0, 7);
+      if (!ymMatchesYearMonthScope(ym, yearFilterCe, monthScope)) return false;
+      if (!q) return true;
+      return (
         c.contractNo?.toLowerCase().includes(q) ||
         c.title?.toLowerCase().includes(q) ||
-        c.customerNameSnapshot?.toLowerCase().includes(q),
-    );
-  }, [contracts, search]);
+        c.customerNameSnapshot?.toLowerCase().includes(q)
+      );
+    });
+  }, [contracts, search, statusFilter, yearFilterCe, monthScope]);
 
   const handleCreate = async () => {
     if (!firestore || !currentUser) return;
@@ -385,15 +406,29 @@ export default function RentContractsPage() {
           </AlertDescription>
         </Alert>
 
-        <div className="relative max-w-md">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            className="h-9 pl-8 text-xs"
-            placeholder="ค้นหาเลขสัญญา ชื่อสัญญา หรือลูกค้า…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
+        <DocumentListFilterBar
+          idPrefix="rent-contracts"
+          searchValue={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="ค้นหาเลขสัญญา ชื่อสัญญา หรือลูกค้า…"
+          yearCe={yearFilterCe}
+          monthScope={monthScope}
+          yearOptionsCe={yearOptionsCe}
+          onYearCeChange={setYearFilterCe}
+          onMonthScopeChange={setMonthScope}
+          extraFilters={
+            <DocumentStatusFilterSelect
+              value={statusFilter}
+              onValueChange={(v) => setStatusFilter(v as 'all' | EquipmentRentalContractStatus)}
+              options={[
+                { value: 'DRAFT', label: 'ร่าง' },
+                { value: 'ACTIVE', label: 'ใช้งาน' },
+                { value: 'EXPIRED', label: 'สิ้นสุด' },
+                { value: 'CANCELLED', label: 'ยกเลิก' },
+              ]}
+            />
+          }
+        />
 
         <Card className="shadow-sm border overflow-hidden">
           <CardContent className="p-0">

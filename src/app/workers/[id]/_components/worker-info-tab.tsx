@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,16 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { CreditCard, HeartPulse, User, Phone, History, AlertTriangle, Wallet, Mail, CheckCircle2 } from 'lucide-react';
+import { CreditCard, HeartPulse, User, History, AlertTriangle, Wallet, Mail, CheckCircle2, Settings2, Save } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Worker, Position, Assignment } from '@/lib/types';
 import { formatDateThaiBE, formatDateTimeThaiBE } from '@/lib/date-thai';
@@ -32,12 +23,7 @@ import { NameTitleSelect, NameTitleEnSelect, type EnNameTitle } from '@/componen
 import { EmploymentTenureFields } from '@/components/hr/employment-tenure-fields';
 import type { EmploymentEndReason } from '@/lib/hr/employment-tenure';
 import { displayWorkerRegistryJobStatus, workerRegistryJobStatusBadgeProps } from '@/lib/ops/worker-effective-job-status';
-import {
-  WORKER_NOT_READY_REASON_OPTIONS,
-  formatWorkerNotReadyReasonDisplay,
-  isWorkerNotReadyReasonCode,
-  type WorkerNotReadyReasonCode,
-} from '@/lib/hr/worker-not-ready-reason';
+import { workerEmploymentContractStatus } from '@/lib/hr/worker-employment-contract-status';
 import {
   LUMP_SUM_ENGAGEMENT_LOCKED_MESSAGE,
   workerPayrollEngagementChangeBlocked,
@@ -45,21 +31,17 @@ import {
 
 interface WorkerInfoTabProps {
   worker: Worker;
-  isEditing: boolean;
+  isEditingProfile: boolean;
+  isEditingSettings: boolean;
   editedWorker: Partial<Worker>;
   setEditedWorker: (v: Partial<Worker>) => void;
   allPositions: Position[] | null;
   currentPosition: Position | null;
+  canEditWorker: boolean;
   canViewLaborCost: boolean;
   canEditLaborCost: boolean;
   /** เลขบัญชี / ข้อมูลการเงิน (จ่ายเงิน) — ซ่อนสำหรับ operations_officer / timekeeper */
   canViewBankPayrollProfile?: boolean;
-  /** แก้สวิตช์พร้อม/ไม่พร้อมที่หัวข้อมูลส่วนตัว */
-  canEditWorkerReadiness?: boolean;
-  onReadinessManualHoldChange?: (
-    hold: boolean,
-    reason?: { code: WorkerNotReadyReasonCode; note?: string },
-  ) => void;
   /** HR/ผู้มีสิทธิ์แก้ทะเบียน — แสดงปุ่มเปิดใช้บัญชี Firebase */
   canActivateWorkerLogin?: boolean;
   onActivateWorkerLogin?: () => void | Promise<void>;
@@ -68,6 +50,13 @@ interface WorkerInfoTabProps {
   openMobilizations?: Assignment[] | null;
   /** null = กำลังโหลดเรทจากสัญญาของงานที่มอบหมาย */
   assignedLaborQuotes?: AssignedContractLaborQuote[] | null;
+  sectionSaving?: boolean;
+  onBeginEditProfile?: () => void;
+  onCancelEditProfile?: () => void;
+  onSaveProfile?: () => void;
+  onBeginEditSettings?: () => void;
+  onCancelEditSettings?: () => void;
+  onSaveSettings?: () => void;
 }
 
 function numIn(v: number | undefined) {
@@ -85,21 +74,28 @@ function parseThaiMoneyInput(raw: string): number | undefined {
 
 export function WorkerInfoTab({
   worker,
-  isEditing,
+  isEditingProfile,
+  isEditingSettings,
   editedWorker,
   setEditedWorker,
   allPositions,
   currentPosition,
+  canEditWorker,
   canViewLaborCost,
   canEditLaborCost,
   canViewBankPayrollProfile = true,
-  canEditWorkerReadiness = false,
-  onReadinessManualHoldChange,
   canActivateWorkerLogin = false,
   onActivateWorkerLogin,
   activateWorkerLoginBusy = false,
   openMobilizations,
   assignedLaborQuotes = null,
+  sectionSaving = false,
+  onBeginEditProfile,
+  onCancelEditProfile,
+  onSaveProfile,
+  onBeginEditSettings,
+  onCancelEditSettings,
+  onSaveSettings,
 }: WorkerInfoTabProps) {
   const activeBankCatalog = useActiveBankNameCatalog();
   const activeHospitalCatalog = useActiveSsoHospitalCatalog();
@@ -113,14 +109,28 @@ export function WorkerInfoTab({
     [allPositions]
   );
 
-  const wEff = isEditing ? ({ ...worker, ...editedWorker } as Worker) : worker;
+  const isEditingAny = isEditingProfile || isEditingSettings;
+  const wEff = isEditingAny ? ({ ...worker, ...editedWorker } as Worker) : worker;
+  const profileLocked = !isEditingProfile;
+  const settingsLocked = !isEditingSettings;
+  const laborReadOnly = settingsLocked || !canEditLaborCost;
+  const bankNameValue = (isEditingProfile ? editedWorker.bankName : worker.bankName) ?? '';
+  const bankNameInCatalog = activeBankCatalog.some((b) => b.nameTh === bankNameValue);
+  const hospitalValue =
+    (isEditingProfile ? editedWorker.socialSecurityHospital : worker.socialSecurityHospital) ?? '';
+  const hospitalInCatalog = activeHospitalCatalog.some((h) => h.nameTh === hospitalValue);
+  const engagementKind = wEff.payrollEngagementKind === 'LUMP_SUM' ? 'LUMP_SUM' : 'COMPANY';
+  const isLumpSum = engagementKind === 'LUMP_SUM';
+  const contractStatus = workerEmploymentContractStatus(wEff);
+  const assignedNow = displayJobStatus === 'ASSIGNED' || displayJobStatus === 'ON_SITE';
+  const pastContractWhileWorking = contractStatus.pastEndDate && assignedNow;
+  const contractReady = contractStatus.inContract;
   const onshoreEff = canViewLaborCost
     ? resolveWorkerLaborBaseRate(
         {
           laborCostUsePositionDefault: wEff.laborCostUsePositionDefault,
           laborCostCustomOnshore: wEff.laborCostCustomOnshore,
           laborCostCustomOffshore: wEff.laborCostCustomOffshore,
-          positionAllowanceDailyBaht: wEff.positionAllowanceDailyBaht,
         },
         currentPosition,
         'onshore',
@@ -132,25 +142,23 @@ export function WorkerInfoTab({
           laborCostUsePositionDefault: wEff.laborCostUsePositionDefault,
           laborCostCustomOnshore: wEff.laborCostCustomOnshore,
           laborCostCustomOffshore: wEff.laborCostCustomOffshore,
-          positionAllowanceDailyBaht: wEff.positionAllowanceDailyBaht,
         },
         currentPosition,
         'offshore',
       )
     : null;
-  const usePosDefault = (isEditing ? editedWorker.laborCostUsePositionDefault : worker.laborCostUsePositionDefault) !== false;
-  const laborReadOnly = !isEditing || !canEditLaborCost;
-  const customOnDisplay = isEditing
-    ? (editedWorker.laborCostCustomOnshore !== undefined ? editedWorker.laborCostCustomOnshore : worker.laborCostCustomOnshore)
+  const usePosDefault =
+    (isEditingSettings ? editedWorker.laborCostUsePositionDefault : worker.laborCostUsePositionDefault) !== false;
+  const customOnDisplay = isEditingSettings
+    ? editedWorker.laborCostCustomOnshore !== undefined
+      ? editedWorker.laborCostCustomOnshore
+      : worker.laborCostCustomOnshore
     : worker.laborCostCustomOnshore;
-  const customOffDisplay = isEditing
-    ? (editedWorker.laborCostCustomOffshore !== undefined ? editedWorker.laborCostCustomOffshore : worker.laborCostCustomOffshore)
+  const customOffDisplay = isEditingSettings
+    ? editedWorker.laborCostCustomOffshore !== undefined
+      ? editedWorker.laborCostCustomOffshore
+      : worker.laborCostCustomOffshore
     : worker.laborCostCustomOffshore;
-
-  const allowanceDaily = (() => {
-    const n = Number(wEff.positionAllowanceDailyBaht);
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  })();
 
   const slipRateLabel = (mode: 'onshore' | 'offshore') => {
     if (!usePosDefault) {
@@ -159,16 +167,14 @@ export function WorkerInfoTab({
     }
     const fromContract = (assignedLaborQuotes ?? []).find((q) => q.workMode === mode && q.contractDaily > 0);
     if (fromContract) {
-      const total = allowanceDaily > 0 ? fromContract.contractDaily + allowanceDaily : fromContract.contractDaily;
-      return `฿${total.toLocaleString('th-TH')} (สัญญา${allowanceDaily > 0 ? ' + ค่าตำแหน่ง' : ''})`;
+      return `฿${fromContract.contractDaily.toLocaleString('th-TH')} (สัญญา)`;
     }
     const fallback = mode === 'onshore'
       ? currentPosition?.defaultLaborCostOnshore
       : currentPosition?.defaultLaborCostOffshore;
     const n = Number(fallback);
     if (Number.isFinite(n) && n > 0) {
-      const total = allowanceDaily > 0 ? n + allowanceDaily : n;
-      return `฿${total.toLocaleString('th-TH')} (ฐานตำแหน่ง)`;
+      return `฿${n.toLocaleString('th-TH')} (ฐานตำแหน่ง)`;
     }
     return '—';
   };
@@ -181,7 +187,7 @@ export function WorkerInfoTab({
         (q) => q.workMode === 'offshore' && q.contractDaily > 0,
       );
       const base = fromContract?.contractDaily || Number(currentPosition?.defaultLaborCostOffshore) || 0;
-      if (base > 0) d = allowanceDaily > 0 ? base + allowanceDaily : base;
+      if (base > 0) d = base;
     } else {
       d = offshoreEff?.rate ?? null;
     }
@@ -196,193 +202,58 @@ export function WorkerInfoTab({
     usePosDefault,
     assignedLaborQuotes,
     currentPosition?.defaultLaborCostOffshore,
-    allowanceDaily,
     offshoreEff?.rate,
   ]);
 
-  const readinessOnHold = worker.readinessManualHold === true;
   const readinessComplianceOk = worker.readinessStatus === 'READY';
-  /** ยังผูกงานอยู่ — ห้ามสลับเป็นไม่พร้อมจนกว่าจะ Unassign (เปิดกลับเป็นพร้อมได้) */
-  const assignedNow = displayJobStatus === 'ASSIGNED' || displayJobStatus === 'ON_SITE';
-  const readinessToggleBlockedByAssignment = assignedNow && !readinessOnHold;
-
-  const [notReadyDialogOpen, setNotReadyDialogOpen] = useState(false);
-  const [reasonCodeDraft, setReasonCodeDraft] = useState<WorkerNotReadyReasonCode | ''>('');
-  const [reasonNoteDraft, setReasonNoteDraft] = useState('');
-
-  const holdReasonDisplay = formatWorkerNotReadyReasonDisplay(
-    worker.readinessManualHoldReason,
-    worker.readinessManualHoldReasonNote,
-  );
-  const holdMissingReason = readinessOnHold && !holdReasonDisplay;
-
-  const openNotReadyReasonDialog = (prefill = true) => {
-    if (prefill && isWorkerNotReadyReasonCode(worker.readinessManualHoldReason)) {
-      setReasonCodeDraft(worker.readinessManualHoldReason);
-      setReasonNoteDraft((worker.readinessManualHoldReasonNote || '').trim());
-    } else {
-      setReasonCodeDraft('');
-      setReasonNoteDraft('');
-    }
-    setNotReadyDialogOpen(true);
-  };
-
-  const confirmNotReadyReason = () => {
-    if (!reasonCodeDraft) return;
-    if (reasonCodeDraft === 'OTHER' && !reasonNoteDraft.trim()) return;
-    onReadinessManualHoldChange?.(true, {
-      code: reasonCodeDraft,
-      note: reasonCodeDraft === 'OTHER' ? reasonNoteDraft.trim() : undefined,
-    });
-    setNotReadyDialogOpen(false);
-  };
-
-  const handleReadinessSwitch = (on: boolean) => {
-    if (on) {
-      // พร้อม
-      onReadinessManualHoldChange?.(false);
-      return;
-    }
-    // ไม่พร้อม — ต้องเลือกเหตุผลก่อน
-    openNotReadyReasonDialog(false);
-  };
 
   return (
-    <>
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div className="lg:col-span-2 space-y-6">
+    <div className="space-y-6">
         <Card className="shadow-sm">
           <CardHeader className="bg-primary/5 border-b space-y-3">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <CardTitle className="text-lg flex items-center gap-2 text-primary">
                 <User className="h-5 w-5 shrink-0" /> ข้อมูลส่วนตัว (Personal Details)
               </CardTitle>
-              <div className="flex flex-col gap-1.5 min-w-0 max-w-xl">
-              <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-                <span
-                  className={`text-xs font-semibold whitespace-nowrap ${
-                    (isEditing ? editedWorker.payrollEngagementKind ?? worker.payrollEngagementKind : worker.payrollEngagementKind) !==
-                    'LUMP_SUM'
-                      ? 'text-primary'
-                      : 'text-muted-foreground'
-                  }`}
-                >
-                  ลูกจ้างบริษัท
-                </span>
-                <Switch
-                  checked={
-                    (isEditing
-                      ? editedWorker.payrollEngagementKind ?? worker.payrollEngagementKind
-                      : worker.payrollEngagementKind) === 'LUMP_SUM'
-                  }
-                  disabled={!isEditing || engagementChangeLocked}
-                  title={engagementChangeLocked ? LUMP_SUM_ENGAGEMENT_LOCKED_MESSAGE : undefined}
-                  aria-label="ประเภทลูกจ้าง บริษัท หรือแบบเหมา"
-                  onCheckedChange={(on) => {
-                    if (engagementChangeLocked) return;
-                    setEditedWorker({
-                      ...editedWorker,
-                      payrollEngagementKind: on ? 'LUMP_SUM' : 'COMPANY',
-                    });
-                  }}
-                />
-                <span
-                  className={`text-xs font-semibold whitespace-nowrap ${
-                    (isEditing ? editedWorker.payrollEngagementKind ?? worker.payrollEngagementKind : worker.payrollEngagementKind) ===
-                    'LUMP_SUM'
-                      ? 'text-amber-800'
-                      : 'text-muted-foreground'
-                  }`}
-                >
-                  ลูกจ้างแบบเหมา
-                </span>
-              </div>
-              {engagementChangeLocked ? (
-                <p className="text-[11px] text-amber-800 leading-snug">
-                  {LUMP_SUM_ENGAGEMENT_LOCKED_MESSAGE}
-                </p>
-              ) : (
-                <p className="text-[11px] text-muted-foreground leading-snug">
-                  เปลี่ยนได้เฉพาะเมื่อยังไม่ถูกมอบหมาย / ยังไม่ลงไซต์ — เพื่อไม่ให้สลิป หัก ณ ที่จ่าย และประกันสังคมปนกันในรอบงานเดียวกัน
-                </p>
-              )}
-              </div>
-              <div className="flex flex-col items-stretch gap-2 sm:items-end shrink-0">
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <span
-                    className={`text-xs font-semibold whitespace-nowrap ${readinessOnHold ? 'text-amber-900' : 'text-muted-foreground'}`}
-                  >
-                    ไม่พร้อมทำงาน
-                  </span>
-                  <Switch
-                    checked={!readinessOnHold}
-                    disabled={!canEditWorkerReadiness || readinessToggleBlockedByAssignment}
-                    title={
-                      !canEditWorkerReadiness
-                        ? 'ไม่มีสิทธิ์แก้ไขสถานะพร้อมทำงาน'
-                        : readinessToggleBlockedByAssignment
-                          ? 'ยังถูกมอบหมายงานอยู่ (ASSIGNED/ON_SITE) — ต้อง Unassign ก่อนจึงตั้งเป็นไม่พร้อมทำงานได้'
-                          : undefined
-                    }
-                    aria-label="สลับสถานะพร้อมทำงาน (Not Ready to Work)"
-                    onCheckedChange={handleReadinessSwitch}
-                  />
-                  <span
-                    className={`text-xs font-semibold whitespace-nowrap ${!readinessOnHold ? 'text-green-700' : 'text-muted-foreground'}`}
-                  >
-                    พร้อมทำงาน
-                  </span>
+              {canEditWorker ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {isEditingProfile ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9"
+                        disabled={sectionSaving || isEditingSettings}
+                        onClick={onCancelEditProfile}
+                      >
+                        ยกเลิก
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-9 gap-1.5 font-semibold"
+                        disabled={sectionSaving || isEditingSettings}
+                        onClick={onSaveProfile}
+                      >
+                        {sectionSaving ? null : <Save className="h-3.5 w-3.5" />}
+                        บันทึกข้อมูลส่วนตัว
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9"
+                      disabled={isEditingSettings}
+                      onClick={onBeginEditProfile}
+                    >
+                      แก้ไข
+                    </Button>
+                  )}
                 </div>
-                {readinessOnHold ? (
-                  <div className="w-full min-w-[220px] max-w-[320px] rounded-md border border-amber-300 bg-amber-50/90 px-3 py-2 text-left sm:text-right dark:bg-amber-950/40 dark:border-amber-700">
-                    {holdReasonDisplay ? (
-                      <>
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-800/80 dark:text-amber-200/80">
-                          เหตุผลที่ไม่พร้อมทำงาน
-                        </p>
-                        <p className="text-sm font-bold text-amber-950 dark:text-amber-50 leading-snug mt-0.5">
-                          {holdReasonDisplay}
-                        </p>
-                        {canEditWorkerReadiness ? (
-                          <button
-                            type="button"
-                            className="mt-1 text-[11px] font-medium text-amber-900 underline underline-offset-2 hover:text-amber-700 dark:text-amber-100"
-                            onClick={() => openNotReadyReasonDialog(true)}
-                          >
-                            เปลี่ยนเหตุผล
-                          </button>
-                        ) : null}
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-xs font-semibold text-amber-950 dark:text-amber-50">
-                          ยังไม่ได้ระบุเหตุผล
-                        </p>
-                        <p className="text-[10px] text-amber-900/80 dark:text-amber-100/80 mt-0.5 leading-snug">
-                          เลื่อนเป็นพร้อมทำงานแล้วกลับเป็นไม่พร้อมอีกครั้ง หรือกดปุ่มด้านล่างเพื่อระบุ
-                        </p>
-                        {canEditWorkerReadiness ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="mt-2 h-8 border-amber-600 text-amber-950"
-                            onClick={() => openNotReadyReasonDialog(false)}
-                          >
-                            ระบุเหตุผล
-                          </Button>
-                        ) : null}
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-[10px] text-muted-foreground max-w-[280px] sm:text-right leading-snug">
-                    {readinessToggleBlockedByAssignment
-                      ? 'คนงานยังถูกมอบหมายงานอยู่ — ต้อง Unassign ออกจากงานก่อนจึงตั้งเป็นไม่พร้อมทำงานได้'
-                      : 'สวิตช์นี้ = ไม่พร้อมทำงาน (Not Ready to Work) เมื่อลาออก พักงาน เจ็บป่วย หรือเหตุอื่น — ไม่ใช่สถานะเอกสาร'}
-                  </p>
-                )}
-              </div>
+              ) : null}
             </div>
             {readinessComplianceOk && worker.complianceAlertLevel === 'warning' && (
               <p className="text-xs flex items-center gap-1.5 text-orange-800 bg-orange-50 border border-orange-200 rounded-md px-2 py-1.5 w-fit">
@@ -397,150 +268,132 @@ export function WorkerInfoTab({
                 <strong className="font-mono">{worker.readinessStatus}</strong> — แก้ที่แท็บ เอกสาร/ใบเซอร์ / Medical / Drug ตามเกณฑ์
               </p>
             )}
-            {readinessComplianceOk && !readinessOnHold && (
+            {readinessComplianceOk && contractReady && (
               <p className="text-xs flex items-center gap-1.5 text-green-800 bg-green-50 border border-green-200 rounded-md px-2 py-1.5 w-fit">
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                ผ่านเกณฑ์เอกสาร และพร้อมทำงาน — เข้าคิวมอบหมายได้
+                ผ่านเกณฑ์เอกสาร และยังอยู่ในช่วงสัญญา — เข้าคิวมอบหมายได้
               </p>
             )}
-            {readinessComplianceOk && readinessOnHold && (
+            {readinessComplianceOk && !contractReady && (
               <p className="text-xs flex items-center gap-1.5 text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 w-fit">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                ไม่พร้อมทำงาน (Not Ready to Work)
-                {holdReasonDisplay ? (
-                  <>
-                    {' '}
-                    — <strong>{holdReasonDisplay}</strong>
-                  </>
-                ) : holdMissingReason ? (
-                  ' — ยังไม่ได้ระบุเหตุผล'
-                ) : null}{' '}
-                · เอกสารยังครบแต่ไม่แสดงในรายการมอบหมาย
+                {contractStatus.beforeStart
+                  ? 'ยังไม่ถึงวันเริ่มงานตามทะเบียน'
+                  : 'เลยช่วงสัญญา / สิ้นสุดการจ้างแล้ว — แก้วันที่ในกล่องตั้งค่าลูกจ้างด้านล่าง'}
               </p>
             )}
           </CardHeader>
           <CardContent className="pt-6 space-y-6">
-            <EmploymentTenureFields
-              startDate={(isEditing ? editedWorker.startDate : worker.startDate) || ''}
-              endDate={(isEditing ? editedWorker.employmentEndDate : worker.employmentEndDate) || ''}
-              endReason={((isEditing ? editedWorker.employmentEndReason : worker.employmentEndReason) || '') as EmploymentEndReason | ''}
-              endReasonNote={(isEditing ? editedWorker.employmentEndReasonNote : worker.employmentEndReasonNote) || ''}
-              tenures={isEditing ? editedWorker.employmentTenures ?? worker.employmentTenures : worker.employmentTenures}
-              legacyStart={worker.startDate}
-              legacyEnd={worker.employmentEndDate}
-              disabled={!isEditing}
-              onChange={(patch) =>
-                setEditedWorker({
-                  ...editedWorker,
-                  startDate: patch.startDate,
-                  employmentEndDate: patch.endDate,
-                  employmentEndReason: patch.endReason,
-                  employmentEndReasonNote: patch.endReasonNote,
-                })
-              }
-            />
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 xl:gap-5">
               <div className="space-y-2">
                 <Label className="font-bold">รหัสคนงาน (Worker Code)</Label>
                 <Input disabled value={worker.workerCode || '(Auto-generated)'} className="bg-muted font-mono font-bold" />
               </div>
               <div className="space-y-2">
                 <Label className="font-bold">เลขบัตรประชาชน (ID Card No.) *</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.thaiNationalId : worker.thaiNationalId) ?? ''} onChange={e => setEditedWorker({...editedWorker, thaiNationalId: e.target.value})} />
-              </div>
-              <div className="space-y-2">
-                <Label className="font-bold">เลขพาสปอร์ต (Passport No.)</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.passportNo : worker.passportNo) ?? ''} onChange={e => setEditedWorker({...editedWorker, passportNo: e.target.value})} />
+                <Input disabled={profileLocked} value={(isEditingProfile ? editedWorker.thaiNationalId : worker.thaiNationalId) ?? ''} onChange={e => setEditedWorker({...editedWorker, thaiNationalId: e.target.value})} />
               </div>
               <div className="space-y-2">
                 <Label className="font-bold">คำนำหน้าชื่อ (ภาษาไทย)</Label>
                 <NameTitleSelect
-                  disabled={!isEditing}
-                  value={(isEditing ? editedWorker.nameTitle : worker.nameTitle) ?? ''}
+                  disabled={profileLocked}
+                  value={(isEditingProfile ? editedWorker.nameTitle : worker.nameTitle) ?? ''}
                   onChange={(nameTitle) => setEditedWorker({ ...editedWorker, nameTitle })}
                 />
               </div>
               <div className="space-y-2">
                 <Label className="font-bold">ชื่อ (ภาษาไทย)</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.firstNameTh : worker.firstNameTh) ?? ''} onChange={e => setEditedWorker({...editedWorker, firstNameTh: e.target.value})} />
+                <Input disabled={profileLocked} value={(isEditingProfile ? editedWorker.firstNameTh : worker.firstNameTh) ?? ''} onChange={e => setEditedWorker({...editedWorker, firstNameTh: e.target.value})} />
               </div>
               <div className="space-y-2">
                 <Label className="font-bold">นามสกุล (ภาษาไทย)</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.lastNameTh : worker.lastNameTh) ?? ''} onChange={e => setEditedWorker({...editedWorker, lastNameTh: e.target.value})} />
+                <Input disabled={profileLocked} value={(isEditingProfile ? editedWorker.lastNameTh : worker.lastNameTh) ?? ''} onChange={e => setEditedWorker({...editedWorker, lastNameTh: e.target.value})} />
               </div>
               <div className="space-y-2">
                 <Label className="font-bold">คำนำหน้าชื่อ (ภาษาอังกฤษ)</Label>
                 <NameTitleEnSelect
-                  disabled={!isEditing}
-                  value={(isEditing ? editedWorker.nameTitleEn : worker.nameTitleEn) ?? ''}
+                  disabled={profileLocked}
+                  value={(isEditingProfile ? editedWorker.nameTitleEn : worker.nameTitleEn) ?? ''}
                   onChange={(nameTitleEn: EnNameTitle | '') => setEditedWorker({ ...editedWorker, nameTitleEn })}
                 />
               </div>
               <div className="space-y-2">
                 <Label className="font-bold">ชื่อ (ภาษาอังกฤษ) *</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.firstName : worker.firstName) ?? ''} onChange={e => setEditedWorker({...editedWorker, firstName: e.target.value})} />
+                <Input disabled={profileLocked} value={(isEditingProfile ? editedWorker.firstName : worker.firstName) ?? ''} onChange={e => setEditedWorker({...editedWorker, firstName: e.target.value})} />
               </div>
               <div className="space-y-2">
                 <Label className="font-bold">นามสกุล (ภาษาอังกฤษ) *</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.lastName : worker.lastName) ?? ''} onChange={e => setEditedWorker({...editedWorker, lastName: e.target.value})} />
+                <Input disabled={profileLocked} value={(isEditingProfile ? editedWorker.lastName : worker.lastName) ?? ''} onChange={e => setEditedWorker({...editedWorker, lastName: e.target.value})} />
               </div>
               <div className="space-y-2">
                 <Label className="font-bold">ชื่อเล่น (Nickname)</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.nickname : worker.nickname) ?? ''} onChange={e => setEditedWorker({...editedWorker, nickname: e.target.value})} />
+                <Input disabled={profileLocked} value={(isEditingProfile ? editedWorker.nickname : worker.nickname) ?? ''} onChange={e => setEditedWorker({...editedWorker, nickname: e.target.value})} />
               </div>
               <div className="space-y-2">
                 <Label className="font-bold">สัญชาติ (Nationality)</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.nationality : worker.nationality) ?? ''} onChange={e => setEditedWorker({...editedWorker, nationality: e.target.value})} />
+                <Input disabled={profileLocked} value={(isEditingProfile ? editedWorker.nationality : worker.nationality) ?? ''} onChange={e => setEditedWorker({...editedWorker, nationality: e.target.value})} />
               </div>
-              <div className="space-y-2">
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 xl:gap-5 items-end">
+              <div className="space-y-2 min-w-0">
                 <Label className="font-bold">เบอร์โทรศัพท์ (Contact Phone) *</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.contactPhone : worker.contactPhone) ?? ''} onChange={e => setEditedWorker({...editedWorker, contactPhone: e.target.value})} />
+                <Input
+                  className="h-10"
+                  disabled={profileLocked}
+                  value={(isEditingProfile ? editedWorker.contactPhone : worker.contactPhone) ?? ''}
+                  onChange={(e) => setEditedWorker({ ...editedWorker, contactPhone: e.target.value })}
+                />
               </div>
-              <div className="space-y-2 md:col-span-2">
+              <div className="space-y-2 min-w-0">
                 <Label className="font-bold flex items-center gap-2">
-                  <Mail className="h-4 w-4 opacity-70" /> อีเมล (สำหรับล็อกอิน Portal)
+                  <Mail className="h-4 w-4 shrink-0 opacity-70" /> อีเมล (ล็อกอิน)
                 </Label>
                 <Input
                   type="email"
                   autoComplete="off"
-                  disabled={!isEditing}
+                  className="h-10"
+                  disabled={profileLocked}
                   placeholder="name@example.com"
-                  value={(isEditing ? editedWorker.email : worker.email) ?? ''}
+                  value={(isEditingProfile ? editedWorker.email : worker.email) ?? ''}
                   onChange={(e) => setEditedWorker({ ...editedWorker, email: e.target.value })}
                 />
-                <p className="text-xs text-muted-foreground leading-snug">
-                  พนักงานล็อกอินด้วยอีเมลนี้ได้หลังผู้ดูแล HR กด «เปิดใช้อีเมลล็อกอิน» เท่านั้น — การแก้อีเมลในทะเบียนอย่างเดียวไม่ทำให้ Firebase Auth เปลี่ยนตามจนกว่าจะกดปุ่มนี้อีกครั้ง
-                </p>
               </div>
-              <div className="space-y-2 flex flex-col justify-end pb-1">
-                {worker.linkedUserId ? (
-                  <Badge className="w-fit bg-emerald-600 hover:bg-emerald-600">เปิดใช้ล็อกอินแล้ว</Badge>
-                ) : (
-                  <Badge variant="outline" className="w-fit border-amber-500 text-amber-900 bg-amber-50">
-                    ยังไม่เปิดใช้ล็อกอิน
-                  </Badge>
-                )}
+              <div className="space-y-2 min-w-0">
+                <Label className="font-bold flex flex-wrap items-center gap-2">
+                  สถานะล็อกอิน
+                  {worker.linkedUserId ? (
+                    <Badge className="bg-emerald-600 hover:bg-emerald-600 font-normal">เปิดใช้แล้ว</Badge>
+                  ) : (
+                    <Badge variant="outline" className="border-amber-500 text-amber-900 bg-amber-50 font-normal">
+                      ยังไม่เปิดใช้
+                    </Badge>
+                  )}
+                </Label>
                 {canActivateWorkerLogin && onActivateWorkerLogin ? (
                   <Button
                     type="button"
                     variant="secondary"
-                    size="sm"
-                    className="w-full sm:w-auto shrink-0 font-semibold"
+                    className="h-10 w-full font-semibold"
                     disabled={
                       activateWorkerLoginBusy ||
-                      isEditing ||
+                      isEditingProfile ||
                       !String(worker.email ?? '').trim().includes('@')
                     }
                     onClick={() => void onActivateWorkerLogin()}
                   >
-                    {activateWorkerLoginBusy ? 'กำลังดำเนินการ…' : 'เปิดใช้อีเมลล็อกอิน (Activate)'}
+                    {activateWorkerLoginBusy ? 'กำลังดำเนินการ…' : 'เปิดใช้อีเมลล็อกอิน'}
                   </Button>
-                ) : null}
+                ) : (
+                  <div className="flex h-10 items-center rounded-md border border-dashed px-3 text-xs text-muted-foreground">
+                    {worker.linkedUserId ? 'ใช้งานล็อกอินได้แล้ว' : 'ไม่มีสิทธิ์เปิดใช้'}
+                  </div>
+                )}
               </div>
-              <div className={canViewLaborCost ? 'space-y-2 md:col-span-2' : 'space-y-2 md:col-span-3'}>
+              <div className="space-y-2 min-w-0">
                 <Label className="font-bold">ตำแหน่งงานหลัก (Primary Position) *</Label>
                 <Select
-                  disabled={!isEditing}
+                  disabled={profileLocked}
                   onValueChange={(v) =>
                     setEditedWorker({
                       ...editedWorker,
@@ -548,10 +401,12 @@ export function WorkerInfoTab({
                     })
                   }
                   value={
-                    (isEditing ? editedWorker.currentPositionId : worker.currentPositionId) || '__none__'
+                    (isEditingProfile ? editedWorker.currentPositionId : worker.currentPositionId) || '__none__'
                   }
                 >
-                  <SelectTrigger className="h-10"><SelectValue placeholder="เลือกตำแหน่ง" /></SelectTrigger>
+                  <SelectTrigger className="h-10">
+                    <SelectValue placeholder="เลือกตำแหน่ง" />
+                  </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__none__">— เลือกตำแหน่ง —</SelectItem>
                     {positionsSorted.map((p) => (
@@ -562,84 +417,365 @@ export function WorkerInfoTab({
                   </SelectContent>
                 </Select>
               </div>
-              {canViewLaborCost ? (
-                <div className="space-y-2 md:col-span-1">
-                  <Label className="font-bold">ค่าตำแหน่ง (บาท/วัน)</Label>
-                  <Input
-                    type="text"
-                    inputMode="decimal"
-                    className="font-mono"
-                    disabled={!isEditing || !canEditLaborCost}
-                    placeholder="เช่น 150"
-                    value={numIn(
-                      isEditing
-                        ? editedWorker.positionAllowanceDailyBaht !== undefined
-                          ? editedWorker.positionAllowanceDailyBaht
-                          : worker.positionAllowanceDailyBaht
-                        : worker.positionAllowanceDailyBaht,
-                    )}
-                    onChange={(e) =>
-                      setEditedWorker({
-                        ...editedWorker,
-                        positionAllowanceDailyBaht: parseThaiMoneyInput(e.target.value),
-                      })
-                    }
-                  />
-                  <p className="text-[11px] text-muted-foreground leading-snug">
-                    ต้นทุนจ่ายเท่านั้น (ไม่ใช่ราคาขาย): หลังระบบคำนวณฐานต้นทุนต่อวันตามเดิมแล้ว จะบวกจำนวนนี้เพิ่ม · ว่างหรือ 0 = ไม่บวก ·
-                    ไม่บวกเมื่อใช้ override ฐานรายคน
+            </div>
+            <p className="text-xs text-muted-foreground leading-snug -mt-2">
+              พนักงานล็อกอินด้วยอีเมลได้หลังผู้ดูแล HR กด «เปิดใช้อีเมลล็อกอิน» — แก้อีเมลในทะเบียนอย่างเดียวไม่เปลี่ยน Firebase Auth จนกว่าจะกดปุ่มอีกครั้ง
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 xl:gap-5">
+              <div className="space-y-2">
+                <Label className="font-bold">ที่อยู่ (Residential Address)</Label>
+                <Textarea
+                  disabled={profileLocked}
+                  rows={5}
+                  className="min-h-[7.5rem] resize-y"
+                  value={(isEditingProfile ? editedWorker.address : worker.address) ?? ''}
+                  onChange={(e) => setEditedWorker({ ...editedWorker, address: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold">ทักษะ / ความสามารถ (Skills / Trade)</Label>
+                <Textarea
+                  disabled={profileLocked}
+                  rows={5}
+                  className="min-h-[7.5rem] resize-y"
+                  placeholder="เช่น Welder 6G, Rigger, Scaffolder..."
+                  value={(isEditingProfile ? (editedWorker.skills ?? []) : (worker.skills ?? [])).join(', ')}
+                  onChange={(e) =>
+                    setEditedWorker({
+                      ...editedWorker,
+                      skills: e.target.value
+                        .split(',')
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 xl:gap-5">
+              <div className="space-y-2 col-span-2">
+                <Label className="font-bold">ชื่อผู้ติดต่อฉุกเฉิน (Contact Name)</Label>
+                <Input
+                  disabled={profileLocked}
+                  value={(isEditingProfile ? editedWorker.emergencyContactName : worker.emergencyContactName) ?? ''}
+                  onChange={(e) => setEditedWorker({ ...editedWorker, emergencyContactName: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2 col-span-2">
+                <Label className="font-bold">เบอร์โทรฉุกเฉิน (Emergency Phone)</Label>
+                <Input
+                  disabled={profileLocked}
+                  value={(isEditingProfile ? editedWorker.emergencyContactPhone : worker.emergencyContactPhone) ?? ''}
+                  onChange={(e) => setEditedWorker({ ...editedWorker, emergencyContactPhone: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div
+              className={cn(
+                'grid grid-cols-1 gap-4 xl:gap-5 pt-2',
+                canViewBankPayrollProfile
+                  ? 'lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)_minmax(0,1fr)]'
+                  : 'lg:grid-cols-2',
+              )}
+            >
+              {canViewBankPayrollProfile ? (
+                <div className="space-y-3 rounded-lg border border-blue-100 bg-blue-50/20 p-4 min-w-0">
+                  <p className="text-sm font-bold flex items-center gap-2 text-blue-800 whitespace-nowrap">
+                    <CreditCard className="h-4 w-4 shrink-0" /> ข้อมูลการเงิน
                   </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-3">
+                    <div className="space-y-2 min-w-0">
+                      <Label className="font-bold whitespace-nowrap">ชื่อธนาคาร (Bank Name)</Label>
+                      <Select
+                        disabled={profileLocked}
+                        value={bankNameValue ? bankNameValue : '__none__'}
+                        onValueChange={(v) =>
+                          setEditedWorker({
+                            ...editedWorker,
+                            bankName: v === '__none__' ? '' : v,
+                          })
+                        }
+                      >
+                        <SelectTrigger className="h-10 bg-background">
+                          <SelectValue placeholder="เลือกธนาคาร" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">— ไม่ระบุ —</SelectItem>
+                          {bankNameValue && !bankNameInCatalog ? (
+                            <SelectItem value={bankNameValue}>{bankNameValue} (ค่าเดิม)</SelectItem>
+                          ) : null}
+                          {activeBankCatalog.map((b) => (
+                            <SelectItem key={b.id} value={b.nameTh}>
+                              {b.nameTh}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground">
+                        <Link href="/hr/bank-registry" className="text-primary underline hover:no-underline">
+                          จัดการทะเบียนธนาคาร
+                        </Link>
+                        {activeBankCatalog.length === 0 ? ' · ยังไม่มีรายการในทะเบียน' : null}
+                      </p>
+                    </div>
+                    <div className="space-y-2 min-w-0">
+                      <Label className="font-bold whitespace-nowrap">เลขที่บัญชี (Bank Account No.)</Label>
+                      <Input
+                        disabled={profileLocked}
+                        value={(isEditingProfile ? editedWorker.bankAccountNumber : worker.bankAccountNumber) ?? ''}
+                        onChange={(e) => setEditedWorker({ ...editedWorker, bankAccountNumber: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-bold whitespace-nowrap">ชื่อบัญชี (Account Holder Name)</Label>
+                    <Input
+                      disabled={profileLocked}
+                      value={(isEditingProfile ? editedWorker.bankAccountName : worker.bankAccountName) ?? ''}
+                      onChange={(e) => setEditedWorker({ ...editedWorker, bankAccountName: e.target.value })}
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="space-y-2 rounded-lg border border-emerald-100 bg-emerald-50/15 p-4 min-w-0">
+                <p className="text-sm font-bold flex items-center gap-2 text-emerald-900 leading-snug">
+                  <HeartPulse className="h-4 w-4 shrink-0" /> ประกันสังคม — โรงพยาบาลหลัก
+                </p>
+                <Label className="font-bold">โรงพยาบาลประกันสังคม</Label>
+                <Select
+                  disabled={profileLocked}
+                  value={hospitalValue ? hospitalValue : '__none__'}
+                  onValueChange={(v) =>
+                    setEditedWorker({
+                      ...editedWorker,
+                      socialSecurityHospital: v === '__none__' ? '' : v,
+                    })
+                  }
+                >
+                  <SelectTrigger className="h-10 bg-background">
+                    <SelectValue placeholder="เลือกโรงพยาบาล" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— ไม่ระบุ —</SelectItem>
+                    {hospitalValue && !hospitalInCatalog ? (
+                      <SelectItem value={hospitalValue}>{hospitalValue} (ค่าเดิม)</SelectItem>
+                    ) : null}
+                    {activeHospitalCatalog.map((h) => (
+                      <SelectItem key={h.id} value={h.nameTh}>
+                        {h.nameTh}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  <Link href="/hr/hospital-registry" className="text-primary underline hover:no-underline">
+                    จัดการทะเบียนโรงพยาบาล
+                  </Link>
+                  {activeHospitalCatalog.length === 0 ? ' · ยังไม่มีรายการในทะเบียน' : null}
+                </p>
+              </div>
+
+              <div className="space-y-2 rounded-lg border border-destructive/10 bg-destructive/5 p-4 min-w-0">
+                <p className="text-sm font-bold flex items-center gap-2 text-destructive whitespace-nowrap">
+                  <AlertTriangle className="h-4 w-4 shrink-0" /> บันทึกทางวินัย
+                </p>
+                <Textarea
+                  disabled={profileLocked}
+                  className="min-h-[7.5rem] text-destructive border-destructive/20 focus:border-destructive"
+                  placeholder="ระบุความผิดปกติ หรือเหตุการณ์สำคัญ..."
+                  value={(isEditingProfile ? editedWorker.disciplinaryNotes : worker.disciplinaryNotes) ?? ''}
+                  onChange={(e) => setEditedWorker({ ...editedWorker, disciplinaryNotes: e.target.value })}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-sm border-amber-200/60 bg-amber-50/20">
+          <CardHeader className="bg-amber-100/40 border-b border-amber-100 space-y-1">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1">
+                <CardTitle className="text-lg flex items-center gap-2 text-amber-900">
+                  <Settings2 className="h-5 w-5" /> ตั้งค่าลูกจ้าง
+                </CardTitle>
+                <p className="text-xs text-amber-900/80 leading-snug">
+                  ประเภทจ้าง · วันเริ่ม–สิ้นสุด · สถานะจากสัญญา · ราคาที่ใช้คำนวณค่าจ้าง
+                </p>
+              </div>
+              {canEditWorker ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {isEditingSettings ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9"
+                        disabled={sectionSaving || isEditingProfile}
+                        onClick={onCancelEditSettings}
+                      >
+                        ยกเลิก
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="h-9 gap-1.5 font-semibold bg-amber-800 hover:bg-amber-800"
+                        disabled={sectionSaving || isEditingProfile}
+                        onClick={onSaveSettings}
+                      >
+                        {sectionSaving ? null : <Save className="h-3.5 w-3.5" />}
+                        บันทึกตั้งค่า
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9"
+                      disabled={isEditingProfile}
+                      onClick={onBeginEditSettings}
+                    >
+                      แก้ไข
+                    </Button>
+                  )}
                 </div>
               ) : null}
             </div>
+          </CardHeader>
+          <CardContent className="pt-6 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2 rounded-md border border-amber-200/70 bg-background/80 p-3">
+                <Label className="font-bold">ประเภทลูกจ้าง</Label>
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <span
+                    className={cn(
+                      'text-xs font-semibold whitespace-nowrap',
+                      !isLumpSum ? 'text-primary' : 'text-muted-foreground',
+                    )}
+                  >
+                    ลูกจ้างบริษัท
+                  </span>
+                  <Switch
+                    checked={isLumpSum}
+                    disabled={settingsLocked || engagementChangeLocked}
+                    title={engagementChangeLocked ? LUMP_SUM_ENGAGEMENT_LOCKED_MESSAGE : undefined}
+                    aria-label="ประเภทลูกจ้าง บริษัท หรือแบบเหมา"
+                    onCheckedChange={(on) => {
+                      if (engagementChangeLocked) return;
+                      setEditedWorker({
+                        ...editedWorker,
+                        payrollEngagementKind: on ? 'LUMP_SUM' : 'COMPANY',
+                      });
+                    }}
+                  />
+                  <span
+                    className={cn(
+                      'text-xs font-semibold whitespace-nowrap',
+                      isLumpSum ? 'text-amber-800' : 'text-muted-foreground',
+                    )}
+                  >
+                    ลูกจ้างแบบเหมา
+                  </span>
+                </div>
+                {engagementChangeLocked ? (
+                  <p className="text-[11px] text-amber-800 leading-snug">{LUMP_SUM_ENGAGEMENT_LOCKED_MESSAGE}</p>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    เงื่อนไขคำนวณจ่ายเงินยังตามประเภทเดิม — เปลี่ยนได้เมื่อยังไม่ถูกมอบหมาย / ยังไม่ลงไซต์
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2 rounded-md border border-amber-200/70 bg-background/80 p-3">
+                <Label className="font-bold">สถานะพร้อมทำงาน (จากสัญญา)</Label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge
+                    className={cn(
+                      'text-[11px]',
+                      contractReady
+                        ? 'bg-green-700 hover:bg-green-700 text-white'
+                        : 'bg-amber-800 hover:bg-amber-800 text-white',
+                    )}
+                  >
+                    {contractReady ? 'พร้อมทำงาน' : 'ไม่พร้อมทำงาน'}
+                  </Badge>
+                  <span className="text-[11px] text-muted-foreground">
+                    {contractStatus.beforeStart
+                      ? 'ยังไม่ถึงวันเริ่มงาน'
+                      : contractStatus.pastEndDate
+                        ? 'เลยวันสิ้นสุดสัญญาแล้ว'
+                        : contractStatus.endYmd
+                          ? 'ยังอยู่ในช่วงเริ่ม–สิ้นสุด'
+                          : 'ยังไม่มีวันสิ้นสุด — ถือว่าอยู่ในสัญญา'}
+                  </span>
+                </div>
+                {pastContractWhileWorking ? (
+                  <p className="text-xs flex items-start gap-1.5 text-destructive bg-destructive/5 border border-destructive/20 rounded-md px-2 py-1.5">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>เลยกำหนดสัญญา</strong> แต่ยังถูกมอบหมายงานอยู่ — ให้ฝ่ายบุคคลแก้วันสิ้นสุด
+                      หรือ Unassign ออกจากงาน
+                    </span>
+                  </p>
+                ) : null}
+                {!contractStatus.startYmd ? (
+                  <p className="text-[11px] text-amber-900">ยังไม่ได้ระบุวันเริ่มงาน</p>
+                ) : null}
+                {isLumpSum && !contractStatus.endYmd ? (
+                  <p className="text-[11px] text-amber-900">ลูกจ้างแบบเหมาต้องระบุวันสิ้นสุดตามสัญญา</p>
+                ) : null}
+              </div>
+            </div>
 
             <div className="space-y-2">
-              <Label className="font-bold">ทักษะ / ความสามารถ (Skills / Trade)</Label>
-              <Input
-                disabled={!isEditing}
-                placeholder="เช่น Welder 6G, Rigger, Scaffolder..."
-                value={(isEditing ? (editedWorker.skills ?? []) : (worker.skills ?? [])).join(', ')}
-                onChange={e => setEditedWorker({...editedWorker, skills: e.target.value.split(',').map(s => s.trim()).filter(Boolean)})}
+              <Label className="font-bold">วันเริ่มงาน / สิ้นสุดงาน</Label>
+              <EmploymentTenureFields
+                requireEndDate={isLumpSum}
+                endDateHint={
+                  isLumpSum
+                    ? 'ตามสัญญา — แก้ให้หมดก่อนหรือหลังกำหนดได้'
+                    : 'เมื่อสิ้นสุดงานระบุวันพร้อมเหตุผล (ลาออก / ให้ออก / ป่วย·อุบัติเหตุ)'
+                }
+                startDate={(isEditingSettings ? editedWorker.startDate : worker.startDate) || ''}
+                endDate={(isEditingSettings ? editedWorker.employmentEndDate : worker.employmentEndDate) || ''}
+                endReason={
+                  ((isEditingSettings ? editedWorker.employmentEndReason : worker.employmentEndReason) ||
+                    '') as EmploymentEndReason | ''
+                }
+                endReasonNote={
+                  (isEditingSettings ? editedWorker.employmentEndReasonNote : worker.employmentEndReasonNote) || ''
+                }
+                tenures={
+                  isEditingSettings
+                    ? editedWorker.employmentTenures ?? worker.employmentTenures
+                    : worker.employmentTenures
+                }
+                legacyStart={worker.startDate}
+                legacyEnd={worker.employmentEndDate}
+                disabled={settingsLocked}
+                onChange={(patch) =>
+                  setEditedWorker({
+                    ...editedWorker,
+                    startDate: patch.startDate,
+                    employmentEndDate: patch.endDate,
+                    employmentEndReason: patch.endReason,
+                    employmentEndReasonNote: patch.endReasonNote,
+                  })
+                }
               />
             </div>
 
-            <div className="space-y-2">
-              <Label className="font-bold">ที่อยู่ (Residential Address)</Label>
-              <Textarea disabled={!isEditing} value={(isEditing ? editedWorker.address : worker.address) ?? ''} onChange={e => setEditedWorker({...editedWorker, address: e.target.value})} />
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="shadow-sm">
-          <CardHeader className="bg-primary/5 border-b">
-            <CardTitle className="text-lg flex items-center gap-2 text-primary">
-              <Phone className="h-5 w-5" /> ผู้ติดต่อฉุกเฉิน (Emergency Contact)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <Label className="font-bold">ชื่อผู้ติดต่อ (Contact Name)</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.emergencyContactName : worker.emergencyContactName) ?? ''} onChange={e => setEditedWorker({...editedWorker, emergencyContactName: e.target.value})} />
+            {canViewLaborCost ? (
+              <div className="space-y-4 border-t border-amber-200/70 pt-4">
+              <div className="flex items-center gap-2 text-amber-950">
+                <Wallet className="h-4 w-4" />
+                <Label className="font-bold text-base">ต้นทุนค่าแรง (OPEC ฝั่งจ่าย)</Label>
               </div>
-              <div className="space-y-2">
-                <Label className="font-bold">เบอร์โทรฉุกเฉิน (Emergency Phone)</Label>
-                <Input disabled={!isEditing} value={(isEditing ? editedWorker.emergencyContactPhone : worker.emergencyContactPhone) ?? ''} onChange={e => setEditedWorker({...editedWorker, emergencyContactPhone: e.target.value})} />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="space-y-6">
-        {canViewLaborCost && (
-          <Card className="shadow-sm border-amber-200/60 bg-amber-50/20">
-            <CardHeader className="bg-amber-100/40 border-b border-amber-100">
-              <CardTitle className="text-lg flex items-center gap-2 text-amber-900">
-                <Wallet className="h-5 w-5" /> ต้นทุนค่าแรง (OPEC ฝั่งจ่าย)
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-6 space-y-4">
               <div className="space-y-2">
                 <Label className="font-bold">วิธีคำนวณค่าแรง</Label>
                 <div className="flex flex-wrap items-center gap-2">
@@ -690,7 +826,7 @@ export function WorkerInfoTab({
                 <p className="text-xs text-muted-foreground leading-relaxed">
                   {usePosDefault
                     ? 'กำลังดึง OFF/ON Work จากสัญญาของลูกค้าที่ได้รับมอบหมายไปทำงาน'
-                    : 'กำลังใช้ฐานที่กรอกด้านล่าง — ไม่บวกค่าตำแหน่ง และไม่ใช้เรทในสัญญา'}
+                    : 'กำลังใช้ฐานที่กรอกด้านล่าง — ไม่ใช้เรทในสัญญา (ตั้งค่าเองเมื่อเรทคนนี้ไม่เท่าสัญญา)'}
                 </p>
               </div>
               {usePosDefault && assignedLaborQuotes == null && (
@@ -704,11 +840,7 @@ export function WorkerInfoTab({
               )}
               {usePosDefault && assignedLaborQuotes != null && assignedLaborQuotes.length > 0 && (
                 <div className="space-y-2">
-                  {assignedLaborQuotes.map((q) => {
-                    const slipDaily = q.contractDaily > 0 && allowanceDaily > 0
-                      ? q.contractDaily + allowanceDaily
-                      : q.contractDaily;
-                    return (
+                  {assignedLaborQuotes.map((q) => (
                       <div
                         key={q.assignmentId}
                         className="text-sm rounded-md border border-amber-200/60 bg-amber-50/50 p-3 text-amber-950 space-y-1"
@@ -728,15 +860,8 @@ export function WorkerInfoTab({
                             <span>สัญญานี้ยังไม่มีเรทต้นทุนของตำแหน่งนี้</span>
                           )}
                         </p>
-                        {q.contractDaily > 0 && allowanceDaily > 0 ? (
-                          <p>
-                            ค่าตำแหน่ง +฿{allowanceDaily.toLocaleString('th-TH')} → วันทำงานในสลิป{' '}
-                            <strong>฿{slipDaily.toLocaleString('th-TH')}</strong>
-                          </p>
-                        ) : null}
                       </div>
-                    );
-                  })}
+                    ))}
                 </div>
               )}
               {usePosDefault && currentPosition && (
@@ -796,95 +921,15 @@ export function WorkerInfoTab({
                   ใช้คิดสลิปต่อวัน: ออนชอร์ {slipRateLabel('onshore')} · ออฟชอร์ {slipRateLabel('offshore')}
                 </p>
                 <p className="text-[11px]">
-                  ถ้าเลือก «ตั้งค่าเอง» — ค่าแรงรวม OT (payroll + ตกเบิก) คำนวณจากฐานหน้าลูกจ้างตามสูตรด้านบน ไม่บวกค่าตำแหน่ง และไม่ใช้เรทในสัญญา
+                  ถ้าเลือก «ตั้งค่าเอง» — ค่าแรงรวม OT (payroll + ตกเบิก) คำนวณจากฐานหน้าลูกจ้างตามสูตรด้านบน ไม่ใช้เรทในสัญญา
                 </p>
               </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {canViewBankPayrollProfile ? (
-        <Card className="shadow-sm border-blue-100 bg-blue-50/20">
-          <CardHeader className="bg-blue-100/50 border-b border-blue-100">
-            <CardTitle className="text-lg flex items-center gap-2 text-blue-800">
-              <CreditCard className="h-5 w-5" /> ข้อมูลการเงิน (Financial Profile)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-6 space-y-4">
-            <div className="space-y-2">
-              <Label className="font-bold">ชื่อธนาคาร (Bank Name)</Label>
-              <Input
-                disabled={!isEditing}
-                list="hrm-bank-datalist-worker"
-                value={(isEditing ? editedWorker.bankName : worker.bankName) ?? ''}
-                onChange={(e) => setEditedWorker({ ...editedWorker, bankName: e.target.value })}
-                placeholder="พิมพ์หรือเลือกจากรายการ"
-              />
-              <datalist id="hrm-bank-datalist-worker">
-                {activeBankCatalog.map((b) => (
-                  <option key={b.id} value={b.nameTh} />
-                ))}
-              </datalist>
-              <p className="text-[11px] text-muted-foreground">
-                <Link href="/hr/bank-registry" className="text-primary underline hover:no-underline">
-                  จัดการทะเบียนธนาคาร
-                </Link>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground border-t border-amber-200/70 pt-4">
+                ไม่มีสิทธิ์ดูต้นทุนค่าแรง
               </p>
-            </div>
-            <div className="space-y-2">
-              <Label className="font-bold">ชื่อบัญชี (Account Holder Name)</Label>
-              <Input disabled={!isEditing} value={(isEditing ? editedWorker.bankAccountName : worker.bankAccountName) ?? ''} onChange={e => setEditedWorker({...editedWorker, bankAccountName: e.target.value})} />
-            </div>
-            <div className="space-y-2">
-              <Label className="font-bold">เลขที่บัญชี (Bank Account No.)</Label>
-              <Input disabled={!isEditing} value={(isEditing ? editedWorker.bankAccountNumber : worker.bankAccountNumber) ?? ''} onChange={e => setEditedWorker({...editedWorker, bankAccountNumber: e.target.value})} />
-            </div>
-          </CardContent>
-        </Card>
-        ) : null}
-
-        <Card className="shadow-sm border-emerald-100 bg-emerald-50/15">
-          <CardHeader className="bg-emerald-100/40 border-b border-emerald-100">
-            <CardTitle className="text-lg flex items-center gap-2 text-emerald-900">
-              <HeartPulse className="h-5 w-5" /> ประกันสังคม — โรงพยาบาลหลัก (ถ้ามี)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-6 space-y-2">
-            <Label className="font-bold">โรงพยาบาลประกันสังคม</Label>
-            <Input
-              disabled={!isEditing}
-              list="hrm-hospital-datalist-worker"
-              value={(isEditing ? editedWorker.socialSecurityHospital : worker.socialSecurityHospital) ?? ''}
-              onChange={(e) => setEditedWorker({ ...editedWorker, socialSecurityHospital: e.target.value })}
-              placeholder="พิมพ์หรือเลือกจากรายการ"
-            />
-            <datalist id="hrm-hospital-datalist-worker">
-              {activeHospitalCatalog.map((h) => (
-                <option key={h.id} value={h.nameTh} />
-              ))}
-            </datalist>
-            <p className="text-[11px] text-muted-foreground">
-              <Link href="/hr/hospital-registry" className="text-primary underline hover:no-underline">
-                จัดการทะเบียนโรงพยาบาล
-              </Link>
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="shadow-sm">
-          <CardHeader className="bg-destructive/5 border-b border-destructive/10">
-            <CardTitle className="text-lg flex items-center gap-2 text-destructive">
-              <AlertTriangle className="h-5 w-5" /> บันทึกทางวินัย (Disciplinary Notes)
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <Textarea
-              disabled={!isEditing}
-              className="min-h-[120px] text-destructive border-destructive/20 focus:border-destructive"
-              placeholder="ระบุความผิดปกติ หรือเหตุการณ์สำคัญ..."
-              value={(isEditing ? editedWorker.disciplinaryNotes : worker.disciplinaryNotes) ?? ''}
-              onChange={e => setEditedWorker({...editedWorker, disciplinaryNotes: e.target.value})}
-            />
+            )}
           </CardContent>
         </Card>
 
@@ -894,86 +939,34 @@ export function WorkerInfoTab({
               <History className="h-4 w-4" /> ข้อมูลระบบ (System Meta)
             </CardTitle>
           </CardHeader>
-          <CardContent className="pt-4 space-y-2 text-xs">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">ลงทะเบียนเมื่อ:</span>
-              <span className="font-medium">{formatDateThaiBE(worker.createdAt)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">อัปเดตล่าสุด:</span>
-              <span className="font-medium">{formatDateTimeThaiBE(worker.updatedAt)}</span>
-            </div>
-            <div className="flex justify-between border-t pt-2 mt-2 items-start gap-2">
-              <span className="text-muted-foreground shrink-0">สถานะงาน (Job Status):</span>
-              <div className="flex flex-col items-end gap-0.5 min-w-0">
-                <Badge variant={jobBadge.variant} className={`text-[9px] uppercase font-bold ${jobBadge.className}`}>
-                  {jobBadge.label}
-                </Badge>
-                {displayJobStatus === 'NOT_READY_TO_WORK' ? (
-                  <span className="text-[10px] text-orange-800 font-medium text-right">
-                    {holdReasonDisplay || 'ยังไม่ระบุเหตุผล'}
-                  </span>
-                ) : displayJobStatus === 'NOT_READY_TO_ASSIGN' ? (
-                  <span className="text-[10px] text-amber-800 text-right">เอกสาร/เซอร์ไม่ครบ</span>
-                ) : null}
+          <CardContent className="pt-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4 text-xs">
+              <div className="space-y-1">
+                <span className="text-muted-foreground block">ลงทะเบียนเมื่อ</span>
+                <span className="font-medium">{formatDateThaiBE(worker.createdAt)}</span>
+              </div>
+              <div className="space-y-1">
+                <span className="text-muted-foreground block">อัปเดตล่าสุด</span>
+                <span className="font-medium">{formatDateTimeThaiBE(worker.updatedAt)}</span>
+              </div>
+              <div className="space-y-1">
+                <span className="text-muted-foreground block">สถานะงาน (Job Status)</span>
+                <div className="flex flex-col items-start gap-0.5 min-w-0">
+                  <Badge variant={jobBadge.variant} className={`text-[9px] uppercase font-bold ${jobBadge.className}`}>
+                    {jobBadge.label}
+                  </Badge>
+                  {displayJobStatus === 'NOT_READY_TO_WORK' ? (
+                    <span className="text-[10px] text-orange-800 font-medium">
+                      {contractStatus.pastEndDate ? 'เลย/สิ้นสุดสัญญา' : 'ไม่พร้อมทำงาน'}
+                    </span>
+                  ) : displayJobStatus === 'NOT_READY_TO_ASSIGN' ? (
+                    <span className="text-[10px] text-amber-800">เอกสาร/เซอร์ไม่ครบ</span>
+                  ) : null}
+                </div>
               </div>
             </div>
           </CardContent>
         </Card>
-      </div>
     </div>
-
-      <Dialog open={notReadyDialogOpen} onOpenChange={setNotReadyDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>เหตุผลที่ไม่พร้อมทำงาน</DialogTitle>
-            <DialogDescription>
-              เลือกเหตุผลเมื่อตั้งเป็นไม่พร้อมทำงาน (Not Ready to Work) — ลาออก / พักงาน / เจ็บป่วย / อื่นๆ — จะแสดงในโปรไฟล์และทะเบียน
-            </DialogDescription>
-          </DialogHeader>
-          <RadioGroup
-            value={reasonCodeDraft || undefined}
-            onValueChange={(v) => setReasonCodeDraft(v as WorkerNotReadyReasonCode)}
-            className="gap-3 py-2"
-          >
-            {WORKER_NOT_READY_REASON_OPTIONS.map((opt, idx) => (
-              <div key={opt.code} className="flex items-start gap-3">
-                <RadioGroupItem value={opt.code} id={`nr-reason-${opt.code}`} className="mt-0.5" />
-                <Label htmlFor={`nr-reason-${opt.code}`} className="font-medium cursor-pointer leading-snug">
-                  {idx + 1}. {opt.labelTh}
-                  {opt.code === 'OTHER' ? ' ระบุ…' : ''}
-                </Label>
-              </div>
-            ))}
-          </RadioGroup>
-          {reasonCodeDraft === 'OTHER' ? (
-            <div className="space-y-2">
-              <Label htmlFor="nr-reason-note" className="font-bold">
-                ระบุรายละเอียด *
-              </Label>
-              <Input
-                id="nr-reason-note"
-                value={reasonNoteDraft}
-                maxLength={200}
-                placeholder="เช่น ติดคดี / ย้ายต่างประเทศ"
-                onChange={(e) => setReasonNoteDraft(e.target.value)}
-              />
-            </div>
-          ) : null}
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" onClick={() => setNotReadyDialogOpen(false)}>
-              ยกเลิก
-            </Button>
-            <Button
-              type="button"
-              disabled={!reasonCodeDraft || (reasonCodeDraft === 'OTHER' && !reasonNoteDraft.trim())}
-              onClick={confirmNotReadyReason}
-            >
-              บันทึกไม่พร้อมทำงาน
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
   );
 }

@@ -24,7 +24,7 @@ import type { BankNameCatalogItem, User } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { PayrollScopeTag } from '@/components/hr/payroll-scope-tag';
 import { useAppUser } from '@/hooks/use-app-user';
-import { isHrManager, isSystemAdmin } from '@/lib/permissions';
+import { canEdit, canView } from '@/lib/permissions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,19 +41,21 @@ export default function BankRegistryPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  // ทะเบียนธนาคารเป็น master data ฝั่ง HR — accounting/operations/store ไม่จำเป็นต้องเข้ามาแก้ไข
-  // จำกัด UI gate ให้ตรงสิทธิ์จริง เพื่อไม่ให้ยิง Firestore แล้วโดน rules บล็อก -> overlay error
-  const canManage = useMemo(() => {
-    if (!currentUser) return false;
-    if (isSystemAdmin(currentUser)) return true;
-    return isHrManager(currentUser);
-  }, [currentUser]);
+  // ให้สอดคล้องทะเบียนโรงพยาบาล + firestore.rules (bank_name_catalog / rs11)
+  const canViewPage = useMemo(
+    () => canView(currentUser, 'office_staff') || canView(currentUser, 'workers'),
+    [currentUser],
+  );
+  const canManage = useMemo(
+    () => canEdit(currentUser, 'office_staff') || canEdit(currentUser, 'workers'),
+    [currentUser],
+  );
 
   const [banks, setBanks] = useState<BankNameCatalogItem[] | null>(null);
   const loadingBanks = banks === null;
 
   const loadBanks = useCallback(async () => {
-    if (!firestore || !canManage) {
+    if (!firestore || !canViewPage) {
       setBanks([]);
       return;
     }
@@ -62,20 +64,19 @@ export default function BankRegistryPage() {
       const snap = await getDocs(q);
       setBanks(snap.docs.map((d) => ({ id: d.id, ...d.data() } as BankNameCatalogItem)));
     } catch (e) {
-      // กลืน permission-denied แบบเงียบ — UI gate ข้างบนจะแสดง "ไม่มีสิทธิ์" อยู่แล้ว ไม่ต้องดัน Next.js error overlay
       const code = (e as { code?: string } | undefined)?.code;
       if (code !== 'permission-denied') console.error(e);
       setBanks([]);
     }
-  }, [firestore, canManage]);
+  }, [firestore, canViewPage]);
 
   useEffect(() => {
-    if (!canManage || !firestore) {
+    if (!canViewPage || !firestore) {
       setBanks([]);
       return;
     }
     void loadBanks();
-  }, [canManage, firestore, loadBanks]);
+  }, [canViewPage, firestore, loadBanks]);
 
   const [bankDialogOpen, setBankDialogOpen] = useState(false);
   const [bankForm, setBankForm] = useState<Partial<Pick<BankNameCatalogItem, 'nameTh' | 'isActive'>>>({
@@ -105,6 +106,10 @@ export default function BankRegistryPage() {
   };
 
   const saveBank = async () => {
+    if (!canManage) {
+      toast({ variant: 'destructive', title: 'ไม่มีสิทธิ์บันทึก' });
+      return;
+    }
     if (!firestore || !bankForm.nameTh?.trim()) {
       toast({ variant: 'destructive', title: 'ระบุชื่อธนาคาร' });
       return;
@@ -154,7 +159,7 @@ export default function BankRegistryPage() {
 
   if (userLoading || !currentUser) return null;
 
-  if (!canManage) {
+  if (!canViewPage) {
     return (
       <AppShell user={currentUser as User} onLogout={() => {}}>
         <div className="max-w-lg mx-auto py-20 text-center text-muted-foreground">ไม่มีสิทธิ์เข้าถึงทะเบียนนี้</div>
@@ -181,9 +186,11 @@ export default function BankRegistryPage() {
               <CardTitle>รายชื่อธนาคาร</CardTitle>
               <CardDescription>เรียงลำดับอัตโนมัติตามการเพิ่มรายการ · ปิดใช้งานได้โดยไม่ลบข้อมูล</CardDescription>
             </div>
-            <Button type="button" className="gap-2" onClick={openNewBank}>
-              <Plus className="h-4 w-4" /> เพิ่ม
-            </Button>
+            {canManage ? (
+              <Button type="button" className="gap-2" onClick={openNewBank}>
+                <Plus className="h-4 w-4" /> เพิ่ม
+              </Button>
+            ) : null}
           </CardHeader>
           <CardContent className="p-0">
             {loadingBanks ? (
@@ -194,16 +201,16 @@ export default function BankRegistryPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>ชื่อ</TableHead>
-                    <TableHead className="w-28">สถานะ</TableHead>
-                    <TableHead className="w-28 text-right">จัดการ</TableHead>
+                    <TableHead className="h-10 py-2">ชื่อ</TableHead>
+                    <TableHead className="h-10 w-24 py-2">สถานะ</TableHead>
+                    <TableHead className="h-10 w-24 py-2 text-right">จัดการ</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {(banks ?? []).map((b) => (
-                    <TableRow key={b.id}>
-                      <TableCell className="font-medium">{b.nameTh}</TableCell>
-                      <TableCell>
+                    <TableRow key={b.id} className="h-11">
+                      <TableCell className="py-1.5 font-medium">{b.nameTh}</TableCell>
+                      <TableCell className="py-1.5">
                         {b.isActive ? (
                           <Badge variant="outline" className="bg-green-50 text-green-800">
                             ใช้งาน
@@ -212,20 +219,33 @@ export default function BankRegistryPage() {
                           <Badge variant="secondary">ปิด</Badge>
                         )}
                       </TableCell>
-                      <TableCell className="text-right space-x-1">
-                        <Button type="button" variant="ghost" size="icon" onClick={() => openEditBank(b)} title="แก้ไข">
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive"
-                          onClick={() => setDeleteBankId(b.id)}
-                          title="ลบ"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                      <TableCell className="py-1.5 text-right">
+                        {canManage ? (
+                          <div className="inline-flex flex-row items-center justify-end gap-0.5 whitespace-nowrap">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 shrink-0"
+                              onClick={() => openEditBank(b)}
+                              title="แก้ไข"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 shrink-0 text-destructive"
+                              onClick={() => setDeleteBankId(b.id)}
+                              title="ลบ"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

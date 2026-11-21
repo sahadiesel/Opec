@@ -16,6 +16,7 @@ export type AccountsReceivableListPrintFilterSummary = {
   searchTerm: string;
   yearCe: number;
   monthScope: string;
+  statusFilter?: string;
 };
 
 const PRINT_ROW_LIMIT = 500;
@@ -25,6 +26,9 @@ export function describeAccountsReceivableListPrintFilters(
 ): string[] {
   const lines: string[] = [];
   lines.push(`เดือนเอกสาร: ${describeYearMonthScopeFilter(f.yearCe, f.monthScope)}`);
+  if (f.statusFilter && f.statusFilter !== 'all') {
+    lines.push(`สถานะ: ${f.statusFilter}`);
+  }
   if (f.searchTerm.trim()) {
     lines.push(`ค้นหา: "${f.searchTerm.trim()}"`);
   }

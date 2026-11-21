@@ -48,6 +48,8 @@ export type CompanyProfileWhtInput = {
   phone?: string;
   email?: string;
   taxpayerType?: 'COMPANY' | 'PERSON' | 'OTHER';
+  /** ตรายางหัวเอกสารบริษัท — ใช้เป็น fallback เมื่อไม่ได้ตั้ง URL ใน whtCertificateDisplay */
+  documentHeaderStampUrl?: string | null;
   whtCertificateDisplay?: {
     showSignatureImage?: boolean;
     showCompanyStamp?: boolean;
@@ -222,8 +224,12 @@ export function refreshWhtCertificateMasterDataPatch(params: {
     payee,
     authorizedSignerName: disp?.authorizedSignerName,
     signerPosition: disp?.signerPosition,
-    signatureImageUrl: disp?.showSignatureImage ? disp?.signatureImageUrl : undefined,
-    companyStampImageUrl: disp?.showCompanyStamp ? disp?.companyStampImageUrl : undefined,
+    /** เก็บ URL ไว้เสมอ — การแสดง/ไม่แสดงควบคุมตอนพิมพ์ */
+    signatureImageUrl: (disp?.signatureImageUrl || '').trim() || undefined,
+    companyStampImageUrl:
+      (disp?.companyStampImageUrl || '').trim() ||
+      (company?.documentHeaderStampUrl || '').trim() ||
+      undefined,
     whtElectronicData: stripFirestoreUndefined({
       ...existing.whtElectronicData,
       ...electronic,
@@ -426,8 +432,12 @@ export function buildWithholdingCertificateDraft(params: BuildWhtDraftParams): O
     sourceWithholdingAtSourceItemId,
     authorizedSignerName: disp?.authorizedSignerName,
     signerPosition: disp?.signerPosition,
-    signatureImageUrl: disp?.showSignatureImage ? disp?.signatureImageUrl : undefined,
-    companyStampImageUrl: disp?.showCompanyStamp ? disp?.companyStampImageUrl : undefined,
+    /** เก็บ URL ไว้เสมอ — การแสดง/ไม่แสดงควบคุมตอนพิมพ์ */
+    signatureImageUrl: (disp?.signatureImageUrl || '').trim() || undefined,
+    companyStampImageUrl:
+      (disp?.companyStampImageUrl || '').trim() ||
+      (company?.documentHeaderStampUrl || '').trim() ||
+      undefined,
     createdAt: now,
     createdByUid: '',
     updatedAt: now,

@@ -36,6 +36,7 @@ import {
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
 import { collection, query, where, limit, orderBy } from 'firebase/firestore';
 import { reconcileAllStaleArEntries } from '@/lib/services/reconcile-stale-ar-from-receipts';
+import { resolveArEffectiveStatus } from '@/lib/accounts-receivable/ar-effective-status';
 import {
   buildSupersededCommercialInvoiceIds,
   filterSupersededCommercialArEntries,
@@ -143,8 +144,8 @@ export default function AccountingDashboardPage() {
       });
     });
 
-    // Overdue AR
-    visibleArItems.filter(item => item.status === 'OVERDUE').forEach(item => {
+    // Overdue AR (derive จาก dueDate — ไม่พึ่ง status ที่ค้างเป็น OPEN ใน Firestore)
+    visibleArItems.filter((item) => resolveArEffectiveStatus(item) === 'OVERDUE').forEach((item) => {
       tasks.push({
         id: item.id,
         type: 'Collection',

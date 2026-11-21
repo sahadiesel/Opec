@@ -173,8 +173,8 @@ export interface Worker {
   laborCostCustomOnshore?: number;
   laborCostCustomOffshore?: number;
   /**
-   * ค่าตำแหน่งเพิ่มเติม (บาท/วัน) ฝั่งต้นทุนจ่าย — หลังได้ฐานต้นทุนต่อวันตามเส้นทาง payroll เดิมแล้ว จะบวกจำนวนนี้เข้าไป (ไม่เกี่ยวราคาขายลูกค้า)
-   * ไม่ระบุหรือ 0 = ไม่บวกเพิ่ม · ไม่บวกเมื่อใช้ override ต้นทุนรายคน (`laborCostCustom*`)
+   * @deprecated เลิกบวกค่าตำแหน่งรายคนแล้ว — ถ้าเรทไม่เท่าสัญญาให้ใช้ laborCostCustom* / สวิตช์ตั้งค่าเอง
+   * เก็บไว้เฉพาะข้อมูลเก่าใน Firestore
    */
   positionAllowanceDailyBaht?: number;
   /** audit — migration เฟส 1 จาก main contract เดียว */

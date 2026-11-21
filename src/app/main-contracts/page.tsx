@@ -7,10 +7,19 @@ import { AppShell } from '@/components/layout/app-shell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Search, ClipboardList, ChevronRight, Building2, Info, ArrowRight, Filter, ShieldAlert, Loader2, Trash2 } from 'lucide-react';
+import { Plus, ClipboardList, ChevronRight, Building2, Info, ArrowRight, ShieldAlert, Loader2, Trash2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { MainContract, User, Customer } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
+import { DocumentListFilterBar } from '@/components/documents/document-list-filter-bar';
+import { DocumentStatusFilterSelect } from '@/components/documents/document-status-filter-select';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { timestampToHtmlDateValue } from '@/lib/date-thai';
 import {
   Dialog, 
   DialogContent, 
@@ -18,7 +27,6 @@ import {
   DialogFooter, 
   DialogHeader, 
   DialogTitle, 
-  DialogTrigger 
 } from '@/components/ui/dialog';
 import {
   AlertDialog,
@@ -59,6 +67,10 @@ export default function MainContractsPage() {
   const [isCreating, setIsCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<MainContract | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
+  const [statusFilter, setStatusFilter] = useState<'all' | string>('all');
   const [newContract, setNewContract] = useState<Partial<MainContract>>({
     title: '',
     contractNumber: getPreviewPattern('main_contract'),
@@ -93,6 +105,33 @@ export default function MainContractsPage() {
     (contracts || []).forEach((c) => map.set(c.id, c.contractNumber));
     return map;
   }, [contracts]);
+
+  const yearOptionsCe = useMemo(
+    () =>
+      buildYearCeOptions(
+        (contracts || []).map((c) => {
+          const start = typeof c.startDate === 'number' ? timestampToHtmlDateValue(c.startDate) : String(c.startDate || '');
+          return start.slice(0, 7);
+        }),
+      ),
+    [contracts],
+  );
+
+  const filteredContracts = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return (contracts || []).filter((c) => {
+      if (statusFilter !== 'all' && String(c.status || '') !== statusFilter) return false;
+      const start = typeof c.startDate === 'number' ? timestampToHtmlDateValue(c.startDate) : String(c.startDate || '');
+      if (!ymMatchesYearMonthScope(start.slice(0, 7), yearFilterCe, monthScope)) return false;
+      if (!q) return true;
+      const customerName = customers?.find((x) => x.id === c.customerId)?.name || '';
+      return (
+        (c.contractNumber || '').toLowerCase().includes(q) ||
+        (c.title || '').toLowerCase().includes(q) ||
+        customerName.toLowerCase().includes(q)
+      );
+    });
+  }, [contracts, searchTerm, statusFilter, yearFilterCe, monthScope, customers]);
 
   const customersQuery = useMemoFirebase(() => {
     if (!firestore || !isStaff) return null;
@@ -268,25 +307,43 @@ export default function MainContractsPage() {
           </AlertDescription>
         </Alert>
 
-        {/* 3. Action Bar */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card p-4 rounded-lg border shadow-sm">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="relative w-full max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="ค้นหาเลขที่สัญญา หรือ ชื่อสัญญา..." className="pl-9 h-11" />
-            </div>
-            <Button variant="outline" className="h-11 gap-2"><Filter className="h-4 w-4" /> ตัวกรอง</Button>
-          </div>
-          
+        <DocumentListFilterBar
+          idPrefix="main-contracts"
+          searchValue={searchTerm}
+          onSearchChange={setSearchTerm}
+          searchPlaceholder="ค้นหาเลขที่สัญญา หรือ ชื่อสัญญา..."
+          yearCe={yearFilterCe}
+          monthScope={monthScope}
+          yearOptionsCe={yearOptionsCe}
+          onYearCeChange={setYearFilterCe}
+          onMonthScopeChange={setMonthScope}
+          extraFilters={
+            <DocumentStatusFilterSelect
+              value={statusFilter}
+              onValueChange={setStatusFilter}
+              options={[
+                { value: 'pending', label: 'รอดำเนินการ' },
+                { value: 'active', label: 'ใช้งาน' },
+                { value: 'expired', label: 'หมดอายุ' },
+                { value: 'cancelled', label: 'ยกเลิก' },
+              ]}
+            />
+          }
+          actions={
+            <Button
+              className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold"
+              disabled={!canCreateContracts}
+              onClick={() => setIsCreateOpen(true)}
+            >
+              <Plus className="h-5 w-5" /> สร้างสัญญาหลักใหม่ (New Main Contract)
+            </Button>
+          }
+        />
+
           <Dialog open={isCreateOpen} onOpenChange={(open) => {
             if (!open) setIsCreating(false);
             setIsCreateOpen(open);
           }}>
-            <DialogTrigger asChild>
-              <Button className="gap-2 h-11 px-6 shadow-md bg-primary hover:bg-primary/90 text-base font-bold" disabled={!canCreateContracts}>
-                <Plus className="h-5 w-5" /> สร้างสัญญาหลักใหม่ (New Main Contract)
-              </Button>
-            </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>ลงทะเบียนสัญญาหลักใหม่ (New Contract Registration)</DialogTitle>
@@ -364,7 +421,6 @@ export default function MainContractsPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-        </div>
 
         {/* 4. Data Content */}
         <Card className="shadow-lg border-none overflow-hidden">
@@ -386,7 +442,7 @@ export default function MainContractsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {contracts?.map((contract) => {
+                  {filteredContracts.map((contract) => {
                     const customer = customers?.find(c => c.id === contract.customerId);
                     return (
                       <TableRow 
@@ -454,9 +510,13 @@ export default function MainContractsPage() {
                       </TableRow>
                     );
                   })}
-                  {!isLoading && (!contracts || contracts.length === 0) && (
+                  {!isLoading && filteredContracts.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">ไม่พบข้อมูลสัญญาหลักในระบบ</TableCell>
+                      <TableCell colSpan={8} className="text-center py-20 text-muted-foreground italic">
+                        {!(contracts && contracts.length)
+                          ? 'ไม่พบข้อมูลสัญญาหลักในระบบ'
+                          : 'ไม่พบสัญญาตามคำค้นหา/ตัวกรอง'}
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>

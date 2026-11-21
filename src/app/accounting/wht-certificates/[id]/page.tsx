@@ -84,6 +84,11 @@ function mergeWhtCertDisplaySettings(c: CompanyProfileWhtInput | null | undefine
     showSignatureImage: !!d?.showSignatureImage,
     showCompanyStamp: !!d?.showCompanyStamp,
     showSystemGeneratedNote: d?.showSystemGeneratedNote !== false,
+    signatureImageUrlOverride: (d?.signatureImageUrl || '').trim() || undefined,
+    companyStampImageUrlOverride:
+      (d?.companyStampImageUrl || '').trim() ||
+      (c?.documentHeaderStampUrl || '').trim() ||
+      undefined,
   };
 }
 

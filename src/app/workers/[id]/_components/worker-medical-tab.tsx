@@ -11,13 +11,14 @@ import { DatePickerThaiBE } from '@/components/date/date-picker-thai-be';
 import { htmlDateValueToTimestampMs, timestampToHtmlDateValue, formatDateThaiBE } from '@/lib/date-thai';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Plus, Trash2, Stethoscope, Pencil, Camera, Loader2, X, FileText, FileImage } from 'lucide-react';
+import { Plus, Trash2, Stethoscope, Pencil, Camera, Loader2, X, FileText } from 'lucide-react';
 import { deleteField, doc, type Firestore, type CollectionReference } from 'firebase/firestore';
 import { addDocumentNonBlocking, deleteDocumentNonBlocking, updateDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { useFirebaseApp } from '@/firebase';
 import { uploadWorkerMedicalPhoto } from '@/lib/storage/worker-medical-photos';
 import { isPdfAttachment, isPdfFile } from '@/lib/storage/worker-credential-attachment';
+import { WorkerCredentialAttachmentThumb } from '@/components/workers/worker-credential-attachment-thumb';
 import type { WorkerMedicalRecord, WaveMonthTimesheetPhotoAttachment } from '@/lib/types';
 
 interface WorkerMedicalTabProps {
@@ -205,7 +206,7 @@ export function WorkerMedicalTab({ workerId, firestore, medicals, medicalsQuery,
           </TableHeader>
           <TableBody>
             {medicals?.map((m) => {
-              const thumbUrl = m.attachment?.downloadUrl;
+              const hasAttachment = Boolean(m.attachment?.downloadUrl || m.attachment?.storagePath);
               return (
                 <TableRow key={m.id}>
                   <TableCell className="pl-6 font-medium text-primary">{m.medicalType}</TableCell>
@@ -222,33 +223,8 @@ export function WorkerMedicalTab({ workerId, firestore, medicals, medicalsQuery,
                     </Badge>
                   </TableCell>
                   <TableCell className="text-center align-top">
-                    {thumbUrl ? (
-                      isPdfAttachment(m.attachment) ? (
-                        <a
-                          href={thumbUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex flex-col items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-red-800 hover:bg-red-100"
-                          title="เปิด PDF"
-                        >
-                          <FileText className="h-8 w-8" />
-                          <span className="text-[10px] font-semibold">PDF</span>
-                        </a>
-                      ) : (
-                        <a
-                          href={thumbUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex flex-col items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-blue-700 hover:bg-blue-100"
-                          title="เปิดเอกสารแนบ"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={thumbUrl} alt="" className="h-10 w-10 rounded object-cover" />
-                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold">
-                            <FileImage className="h-3 w-3" /> ดูเอกสาร
-                          </span>
-                        </a>
-                      )
+                    {hasAttachment ? (
+                      <WorkerCredentialAttachmentThumb attachment={m.attachment} />
                     ) : (
                       <span className="text-xs text-muted-foreground">—</span>
                     )}

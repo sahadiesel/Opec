@@ -14,8 +14,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Plus, ChevronLeft, ChevronRight, FileText, Loader2, PackageSearch, Search, Trash2 } from 'lucide-react';
-import { Input } from '@/components/ui/input';
+import { Plus, ChevronLeft, ChevronRight, FileText, Loader2, PackageSearch, Trash2 } from 'lucide-react';
+import { DocumentListFilterBar } from '@/components/documents/document-list-filter-bar';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import {
   collection,
@@ -76,7 +76,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
 import { RentalPayablesPayoutSection } from '@/components/accounting/rental-payables-payout-section';
 import { VendorBillPostPaymentAdjustMenu } from '@/components/purchases/vendor-bill-post-payment-adjust-controls';
 import { formatYmdLocalThaiBE } from '@/lib/date-thai';
@@ -523,38 +522,32 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
               <TabsTrigger value="PAID">จ่ายแล้ว</TabsTrigger>
             </TabsList>
           </Tabs>
-          <div className="flex flex-col sm:flex-row flex-wrap gap-3">
-            <div className="relative flex-1 min-w-[200px] max-w-md">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="pl-9 h-10"
-                placeholder="ค้นหาเลขที่ใบรับวางบิล / PO / คู่ค้า…"
-                value={billSearch}
-                onChange={(e) => setBillSearch(e.target.value)}
-              />
-            </div>
-            <YearMonthScopeSelects
-              idPrefix="vendor-bills"
-              yearCe={yearFilterCe}
-              monthScope={monthScope}
-              yearOptionsCe={yearOptionsCe}
-              onYearCeChange={setYearFilterCe}
-              onMonthScopeChange={setMonthScope}
-            />
-            <Select value={billVendorId} onValueChange={setBillVendorId}>
-              <SelectTrigger className="h-10 w-full sm:w-[220px]">
-                <SelectValue placeholder="คู่ค้า" />
-              </SelectTrigger>
-              <SelectContent className="max-h-72">
-                <SelectItem value="all">คู่ค้าทั้งหมด</SelectItem>
-                {vendors?.map((v) => (
-                  <SelectItem key={v.id} value={v.id}>
-                    {v.vendorName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <DocumentListFilterBar
+            idPrefix="vendor-bills"
+            searchValue={billSearch}
+            onSearchChange={setBillSearch}
+            searchPlaceholder="ค้นหาเลขที่ใบรับวางบิล / PO / คู่ค้า…"
+            yearCe={yearFilterCe}
+            monthScope={monthScope}
+            yearOptionsCe={yearOptionsCe}
+            onYearCeChange={setYearFilterCe}
+            onMonthScopeChange={setMonthScope}
+            extraFilters={
+              <Select value={billVendorId} onValueChange={setBillVendorId}>
+                <SelectTrigger className="h-11 w-full sm:w-[220px]">
+                  <SelectValue placeholder="คู่ค้า" />
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  <SelectItem value="all">คู่ค้าทั้งหมด</SelectItem>
+                  {vendors?.map((v) => (
+                    <SelectItem key={v.id} value={v.id}>
+                      {v.vendorName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
         </div>
 
         <Card>
