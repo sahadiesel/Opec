@@ -24,6 +24,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  documentId,
   query,
   orderBy,
   updateDoc,
@@ -46,6 +47,7 @@ import {
   Vendor,
 } from '@/lib/types';
 import { effectiveVendorBillStatus } from '@/lib/ops/vendor-bill-status';
+import { vendorBillListMoneyColumns } from '@/lib/ops/purchase-payment-milestones';
 import {
   Dialog,
   DialogContent,
@@ -225,6 +227,7 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
   const billPurchaseIds = useMemo(() => new Set((bills || []).map((b) => b.purchaseId)), [bills]);
+  const [purchaseById, setPurchaseById] = useState<Record<string, Purchase>>({});
 
   const yearOptionsCe = useMemo(() => {
     const set = new Set<string>();
@@ -272,6 +275,41 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
     return list;
   }, [bills, tab, billSearch, yearFilterCe, monthScope, billVendorId, vendors]);
 
+  const purchaseIdsKey = useMemo(() => {
+    const ids = new Set<string>();
+    for (const bill of billsFiltered) {
+      if (bill.purchaseId) ids.add(bill.purchaseId);
+    }
+    return [...ids].sort().join('|');
+  }, [billsFiltered]);
+
+  useEffect(() => {
+    if (!firestore || !purchaseIdsKey) {
+      setPurchaseById({});
+      return;
+    }
+    const ids = purchaseIdsKey.split('|');
+    let cancelled = false;
+    void (async () => {
+      const found: Record<string, Purchase> = {};
+      for (let i = 0; i < ids.length; i += 10) {
+        const chunk = ids.slice(i, i + 10);
+        const snap = await getDocs(
+          query(collection(firestore, 'purchases'), where(documentId(), 'in', chunk)),
+        );
+        snap.forEach((row) => {
+          found[row.id] = { id: row.id, ...(row.data() as Purchase) };
+        });
+      }
+      if (!cancelled) setPurchaseById(found);
+    })().catch((error) => {
+      console.error(error);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, purchaseIdsKey]);
+
   useEffect(() => {
     setListPage(1);
   }, [tab, billSearch, yearFilterCe, monthScope, billVendorId]);
@@ -287,12 +325,25 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
     return billsFiltered.slice(start, start + VENDOR_BILLS_PAGE_SIZE);
   }, [billsFiltered, listPage]);
 
-  const billsFilteredBillAmountSum = useMemo(() => {
+  const billsFilteredPaidSum = useMemo(() => {
     return billsFiltered.reduce((sum, b) => {
       if (b.status === 'PENDING_CANCELLATION' || b.status === 'CANCELLED') return sum;
-      return sum + (Number(b.billAmount) || 0);
+      const money = vendorBillListMoneyColumns(b, purchaseById[b.purchaseId]);
+      return sum + (money?.paid ?? Number(b.billAmount) || 0);
     }, 0);
-  }, [billsFiltered]);
+  }, [billsFiltered, purchaseById]);
+
+  const billsFilteredTaxSums = useMemo(() => {
+    let vat = 0;
+    let wht = 0;
+    for (const bill of billsFiltered) {
+      const money = vendorBillListMoneyColumns(bill, purchaseById[bill.purchaseId]);
+      if (!money) continue;
+      vat += money.vat;
+      wht += money.wht;
+    }
+    return { vat, wht };
+  }, [billsFiltered, purchaseById]);
 
   const selectablePurchases = useMemo(() => {
     return (approvedPurchases || []).filter((p) => {
@@ -547,6 +598,30 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                 </SelectContent>
               </Select>
             }
+            actions={
+              <>
+                <div className="flex h-11 min-w-[12.5rem] items-center justify-between gap-3 rounded-md border bg-background px-3">
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">รวมภาษีมูลค่าเพิ่ม</span>
+                  <span className="font-mono text-sm font-semibold tabular-nums">
+                    ฿
+                    {billsFilteredTaxSums.vat.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+                <div className="flex h-11 min-w-[13.5rem] items-center justify-between gap-3 rounded-md border bg-background px-3">
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">รวมหัก ณ ที่จ่าย</span>
+                  <span className="font-mono text-sm font-semibold tabular-nums">
+                    ฿
+                    {billsFilteredTaxSums.wht.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+              </>
+            }
           />
         </div>
 
@@ -565,12 +640,13 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                   <TableHeader>
                     <TableRow>
                       <TableHead className="h-9 py-2 pl-4 text-xs">เลขที่ใบรับวางบิล</TableHead>
-                      <TableHead className="h-9 py-2 text-xs">ใบสั่งซื้อ</TableHead>
                       <TableHead className="h-9 py-2 text-xs">คู่ค้า</TableHead>
-                      <TableHead className="h-9 py-2 text-xs">ยอดในใบ</TableHead>
-                      <TableHead className="h-9 py-2 text-xs">วันรับวางบิล</TableHead>
-                      <TableHead className="h-9 py-2 text-xs">วันจ่าย (แผน)</TableHead>
-                      <TableHead className="h-9 py-2 text-xs">สถานะ</TableHead>
+                      <TableHead className="h-9 py-2 text-right text-xs whitespace-nowrap">ยอดก่อนภาษี</TableHead>
+                      <TableHead className="h-9 py-2 text-right text-xs whitespace-nowrap">ภาษี</TableHead>
+                      <TableHead className="h-9 py-2 text-right text-xs whitespace-nowrap">ยอดหัก ณ ที่จ่าย</TableHead>
+                      <TableHead className="h-9 py-2 text-right text-xs whitespace-nowrap">ยอดที่จ่าย</TableHead>
+                      <TableHead className="h-9 py-2 text-xs whitespace-nowrap">วันจ่าย (แผน)</TableHead>
+                      <TableHead className="h-9 py-2 text-right text-xs">สถานะ</TableHead>
                       {showBillDeleteColumn && (
                         <TableHead className="h-9 w-14 px-2 py-2 text-center text-xs text-muted-foreground">ลบ</TableHead>
                       )}
@@ -589,25 +665,31 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                           onClick={() => router.push(detailHref)}
                         >
                           <TableCell className="py-2.5 pl-4 font-mono text-xs font-bold text-primary">{b.receiptNo}</TableCell>
-                          <TableCell className="py-2.5 font-mono text-xs font-bold text-primary">
-                            {b.purchaseNo || b.purchaseId}
-                          </TableCell>
                           <TableCell className="py-2.5 text-sm">{v?.vendorName || '—'}</TableCell>
-                          <TableCell className="py-2.5 text-right text-sm">
-                            {b.cancellationSettlement ? (
-                              <span className="font-mono font-medium">฿0.00</span>
-                            ) : b.billAmount != null && b.billAmount > 0 ? (
-                              <span className="font-mono font-medium">
-                                ฿{b.billAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground italic">ตาม PO</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="py-2.5 text-sm">{formatYmdLocalThaiBE(b.billingReceivedDate)}</TableCell>
-                          <TableCell className="py-2.5 text-sm">{formatYmdLocalThaiBE(b.plannedPaymentDate)}</TableCell>
-                          <TableCell className="py-2.5">
-                            <div className="space-y-1">
+                          {(() => {
+                            const money = vendorBillListMoneyColumns(b, purchaseById[b.purchaseId]);
+                            const fmt = (n: number) =>
+                              `฿${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                            return (
+                              <>
+                                <TableCell className="py-2.5 text-right font-mono text-sm tabular-nums">
+                                  {money ? fmt(money.beforeTax) : '—'}
+                                </TableCell>
+                                <TableCell className="py-2.5 text-right font-mono text-sm tabular-nums">
+                                  {money ? fmt(money.vat) : '—'}
+                                </TableCell>
+                                <TableCell className="py-2.5 text-right font-mono text-sm tabular-nums">
+                                  {money ? fmt(money.wht) : '—'}
+                                </TableCell>
+                                <TableCell className="py-2.5 text-right font-mono text-sm font-semibold tabular-nums">
+                                  {money ? fmt(money.paid) : '—'}
+                                </TableCell>
+                              </>
+                            );
+                          })()}
+                          <TableCell className="py-2.5 text-sm whitespace-nowrap">{formatYmdLocalThaiBE(b.plannedPaymentDate)}</TableCell>
+                          <TableCell className="py-2.5 text-right">
+                            <div className="flex flex-col items-end gap-1">
                               {statusBadge(b)}
                               {b.status === 'PENDING_CANCELLATION' || b.status === 'CANCELLED' ? (
                                 <p className="max-w-[220px] text-[10px] leading-snug text-muted-foreground">
@@ -697,7 +779,7 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                     {billsFiltered.length === 0 && (
                       <TableRow>
                         <TableCell
-                          colSpan={showBillDeleteColumn ? 9 : 8}
+                          colSpan={showBillDeleteColumn ? 10 : 9}
                           className="text-center py-12 text-muted-foreground"
                         >
                           ยังไม่มีรายการในชุดนี้
@@ -710,14 +792,14 @@ export function PurchaseVendorBillsList({ mode }: { mode: PurchaseVendorBillsLis
                   <div className="border-t px-4 py-2.5 bg-muted/25 text-sm flex flex-col gap-2">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                       <span className="text-muted-foreground leading-snug">
-                        ยอดรวมฟิลด์ «ยอดในใบ» ตามตัวกรอง ({billsFiltered.length} ใบ)
+                        ยอดรวม «ยอดที่จ่าย» ตามตัวกรอง ({billsFiltered.length} ใบ)
                         {` · เดือนสร้าง ${describeYearMonthScopeFilter(yearFilterCe, monthScope)}`}
                         {billVendorId !== 'all'
                           ? ` · คู่ค้า: ${vendors?.find((v) => v.id === billVendorId)?.vendorName ?? ''}`
                           : ''}
                       </span>
                       <span className="font-mono font-bold text-base tabular-nums">
-                        ฿{billsFilteredBillAmountSum.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        ฿{billsFilteredPaidSum.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </span>
                     </div>
                     {billsFiltered.length > VENDOR_BILLS_PAGE_SIZE ? (

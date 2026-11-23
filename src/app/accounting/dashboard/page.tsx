@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useEffect, useRef } from 'react';
+import { useMemo, useEffect, useRef, useState } from 'react';
 import { AppShell } from '@/components/layout/app-shell';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { 
@@ -31,10 +31,18 @@ import {
   AccountsReceivable, 
   AccountsPayable, 
   PayrollRun, 
-  BankAccount
+  BankAccount,
+  PurchaseVendorBill,
+  Purchase,
+  RentalPayable,
+  OfficePayrollRun,
+  OfficePayrollLine,
+  PayrollBatch,
+  PayrollBatchLine,
+  PayrollPeriod,
 } from '@/lib/types';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, query, where, limit, orderBy } from 'firebase/firestore';
+import { collection, documentId, getDocs, limit, orderBy, query, where } from 'firebase/firestore';
 import { reconcileAllStaleArEntries } from '@/lib/services/reconcile-stale-ar-from-receipts';
 import { resolveArEffectiveStatus } from '@/lib/accounts-receivable/ar-effective-status';
 import {
@@ -48,11 +56,27 @@ import { Separator } from '@/components/ui/separator';
 import { canSeeAccountingPillarUi, canViewBankAccountSensitiveDetails } from '@/lib/permissions';
 import { isSystemAdmin } from '@/lib/permission-core';
 import { useAppUser } from '@/hooks/use-app-user';
+import { YearMonthScopeSelects } from '@/components/accounting/year-month-scope-selects';
+import {
+  buildYearCeOptions,
+  currentMonthMm,
+  currentYearCe,
+  resolveYearMonthScopeSet,
+  ymMatchesYearMonthScope,
+} from '@/lib/date/year-month-scope-filter';
+import { computeDashboardMonitorTotals } from '@/lib/accounting/dashboard-monitor-totals';
+import {
+  cancelledVendorBillApKeys,
+  isApFromCancelledVendorBill,
+} from '@/lib/accounts-payable/cancelled-vendor-bill-ap';
+import { cashOnHandExcludingOd } from '@/lib/bank-account-od';
 
 export default function AccountingDashboardPage() {
   const { currentUser, isLoading: userLoading } = useAppUser();
   const firestore = useFirestore();
   const staleArReconcileRan = useRef(false);
+  const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
+  const [monthScope, setMonthScope] = useState(() => currentMonthMm());
 
   const isAccountingAuthorized = useMemo(() => {
     return isSystemAdmin(currentUser) || canSeeAccountingPillarUi(currentUser, null);
@@ -105,6 +129,52 @@ export default function AccountingDashboardPage() {
   }, [firestore, isAccountingAuthorized]);
   const { data: pendingPayroll } = useCollection<PayrollRun>(prQuery as any);
 
+  const yearOptionsCe = useMemo(() => {
+    const keys: string[] = [];
+    for (const item of commercialDrafts ?? []) keys.push(String(item.issueDate || '').slice(0, 7));
+    for (const item of draftInvoices ?? []) keys.push(String(item.issueDate || '').slice(0, 7));
+    for (const item of visibleArItems) keys.push(String(item.issueDate || '').slice(0, 7));
+    for (const item of apItems ?? []) keys.push(String(item.billDate || '').slice(0, 7));
+    for (const item of pendingPayroll ?? []) keys.push(String(item.payrollPeriodStart || '').slice(0, 7));
+    return buildYearCeOptions(keys);
+  }, [commercialDrafts, draftInvoices, visibleArItems, apItems, pendingPayroll]);
+
+  const scopedCommercialDrafts = useMemo(
+    () =>
+      (commercialDrafts ?? []).filter((item) =>
+        ymMatchesYearMonthScope(String(item.issueDate || '').slice(0, 7), yearFilterCe, monthScope),
+      ),
+    [commercialDrafts, yearFilterCe, monthScope],
+  );
+  const scopedDraftInvoices = useMemo(
+    () =>
+      (draftInvoices ?? []).filter((item) =>
+        ymMatchesYearMonthScope(String(item.issueDate || '').slice(0, 7), yearFilterCe, monthScope),
+      ),
+    [draftInvoices, yearFilterCe, monthScope],
+  );
+  const scopedArItems = useMemo(
+    () =>
+      visibleArItems.filter((item) =>
+        ymMatchesYearMonthScope(String(item.issueDate || '').slice(0, 7), yearFilterCe, monthScope),
+      ),
+    [visibleArItems, yearFilterCe, monthScope],
+  );
+  const scopedApItems = useMemo(
+    () =>
+      (apItems ?? []).filter((item) =>
+        ymMatchesYearMonthScope(String(item.billDate || '').slice(0, 7), yearFilterCe, monthScope),
+      ),
+    [apItems, yearFilterCe, monthScope],
+  );
+  const scopedPayroll = useMemo(
+    () =>
+      (pendingPayroll ?? []).filter((item) =>
+        ymMatchesYearMonthScope(String(item.payrollPeriodStart || '').slice(0, 7), yearFilterCe, monthScope),
+      ),
+    [pendingPayroll, yearFilterCe, monthScope],
+  );
+
   const canViewBankBalances = useMemo(
     () => canViewBankAccountSensitiveDetails(currentUser),
     [currentUser],
@@ -116,24 +186,214 @@ export default function AccountingDashboardPage() {
   }, [firestore, isAccountingAuthorized, canViewBankBalances]);
   const { data: bankAccounts } = useCollection<BankAccount>(bankQuery as any);
 
+  const issuedSalesQuery = useMemoFirebase(() => {
+    if (!firestore || !isAccountingAuthorized) return null;
+    return query(collection(firestore, 'tax_invoices'), where('status', '==', 'ISSUED'), limit(400));
+  }, [firestore, isAccountingAuthorized]);
+  const { data: issuedSalesInvoices, isLoading: issuedSalesLoading } = useCollection<TaxInvoice>(issuedSalesQuery as any);
+
+  const vendorBillsQuery = useMemoFirebase(() => {
+    if (!firestore || !isAccountingAuthorized) return null;
+    return query(collection(firestore, 'purchase_vendor_bills'), orderBy('createdAt', 'desc'));
+  }, [firestore, isAccountingAuthorized]);
+  const { data: vendorBills, isLoading: vendorBillsLoading } = useCollection<PurchaseVendorBill>(vendorBillsQuery as any);
+  const cancelledApKeys = useMemo(() => cancelledVendorBillApKeys(vendorBills ?? []), [vendorBills]);
+  const openScopedApItems = useMemo(
+    () => scopedApItems.filter((item) => !isApFromCancelledVendorBill(item, cancelledApKeys)),
+    [scopedApItems, cancelledApKeys],
+  );
+
+  const rentalPayablesQuery = useMemoFirebase(() => {
+    if (!firestore || !isAccountingAuthorized) return null;
+    return collection(firestore, 'rental_payables');
+  }, [firestore, isAccountingAuthorized]);
+  const { data: rentalPayables, isLoading: rentalPayablesLoading } = useCollection<RentalPayable>(rentalPayablesQuery as any);
+
+  const [purchaseById, setPurchaseById] = useState<Record<string, Purchase>>({});
+  const [purchasesLoading, setPurchasesLoading] = useState(false);
+  const purchaseIdsKey = useMemo(() => {
+    const ids = new Set<string>();
+    for (const bill of vendorBills ?? []) {
+      if (bill.cancellationSettlement || bill.status === 'DRAFT' || bill.status === 'CANCELLED') continue;
+      if (bill.purchaseId) ids.add(bill.purchaseId);
+    }
+    return [...ids].sort().join('|');
+  }, [vendorBills]);
+
+  useEffect(() => {
+    if (!firestore || !purchaseIdsKey) {
+      setPurchaseById({});
+      setPurchasesLoading(false);
+      return;
+    }
+    const ids = purchaseIdsKey.split('|');
+    let cancelled = false;
+    setPurchasesLoading(true);
+    void (async () => {
+      const found: Record<string, Purchase> = {};
+      for (let i = 0; i < ids.length; i += 10) {
+        const chunk = ids.slice(i, i + 10);
+        const snap = await getDocs(query(collection(firestore, 'purchases'), where(documentId(), 'in', chunk)));
+        snap.forEach((row) => {
+          found[row.id] = { id: row.id, ...(row.data() as Purchase) };
+        });
+      }
+      if (!cancelled) setPurchaseById(found);
+    })()
+      .catch((error) => {
+        console.error(error);
+      })
+      .finally(() => {
+        if (!cancelled) setPurchasesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, purchaseIdsKey]);
+
+  const [officePayrollLines, setOfficePayrollLines] = useState<
+    { run: OfficePayrollRun; line: OfficePayrollLine; kind?: 'office' | 'executive' }[]
+  >([]);
+  const [workerPayrollLines, setWorkerPayrollLines] = useState<{ batch: PayrollBatch; line: PayrollBatchLine }[]>([]);
+  const [payrollMonitorLoading, setPayrollMonitorLoading] = useState(true);
+
+  useEffect(() => {
+    if (!firestore || !isAccountingAuthorized) {
+      setPayrollMonitorLoading(false);
+      return;
+    }
+    const months = [...resolveYearMonthScopeSet(yearFilterCe, monthScope)];
+    let cancelled = false;
+    setPayrollMonitorLoading(true);
+    void (async () => {
+      const periodSnap = await getDocs(collection(firestore, 'payroll_periods'));
+      const periodIds = periodSnap.docs
+        .filter((row) => {
+          const period = row.data() as PayrollPeriod;
+          const ym = String(period.endDate || period.startDate || '').slice(0, 7);
+          return months.includes(ym);
+        })
+        .map((row) => row.id);
+
+      const batches: PayrollBatch[] = [];
+      for (let i = 0; i < periodIds.length; i += 10) {
+        const chunk = periodIds.slice(i, i + 10);
+        const snap = await getDocs(
+          query(collection(firestore, 'payroll_batches'), where('payrollPeriodId', 'in', chunk)),
+        );
+        snap.forEach((row) => {
+          batches.push({ id: row.id, ...(row.data() as PayrollBatch) });
+        });
+      }
+
+      const workerLines: { batch: PayrollBatch; line: PayrollBatchLine }[] = [];
+      await Promise.all(
+        batches.map(async (batch) => {
+          const snap = await getDocs(collection(firestore, 'payroll_batches', batch.id, 'lines'));
+          snap.forEach((row) => {
+            workerLines.push({ batch, line: { id: row.id, ...(row.data() as PayrollBatchLine) } });
+          });
+        }),
+      );
+
+      const loadPayrollRunLines = async (collectionName: 'office_payroll_runs' | 'executive_payroll_runs', kind: 'office' | 'executive') => {
+        const runs: OfficePayrollRun[] = [];
+        for (let i = 0; i < months.length; i += 10) {
+          const chunk = months.slice(i, i + 10);
+          const snap = await getDocs(
+            query(collection(firestore, collectionName), where('payrollMonth', 'in', chunk)),
+          );
+          snap.forEach((row) => {
+            runs.push({ id: row.id, ...(row.data() as OfficePayrollRun) });
+          });
+        }
+        const lines: { run: OfficePayrollRun; line: OfficePayrollLine; kind: 'office' | 'executive' }[] = [];
+        await Promise.all(
+          runs.map(async (run) => {
+            const snap = await getDocs(collection(firestore, collectionName, run.id, 'lines'));
+            snap.forEach((row) => {
+              lines.push({ run, kind, line: { id: row.id, ...(row.data() as OfficePayrollLine) } });
+            });
+          }),
+        );
+        return lines;
+      };
+      const [officeOnlyLines, executiveLines] = await Promise.all([
+        loadPayrollRunLines('office_payroll_runs', 'office'),
+        loadPayrollRunLines('executive_payroll_runs', 'executive'),
+      ]);
+      const officeLines = [...officeOnlyLines, ...executiveLines];
+
+      if (!cancelled) {
+        setWorkerPayrollLines(workerLines);
+        setOfficePayrollLines(officeLines);
+      }
+    })()
+      .catch((error) => {
+        console.error(error);
+      })
+      .finally(() => {
+        if (!cancelled) setPayrollMonitorLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, isAccountingAuthorized, yearFilterCe, monthScope]);
+
+  const monitorTotals = useMemo(
+    () =>
+      computeDashboardMonitorTotals({
+        yearCe: yearFilterCe,
+        monthScope,
+        issuedTaxInvoices: issuedSalesInvoices ?? [],
+        vendorBills: vendorBills ?? [],
+        purchasesById: purchaseById,
+        rentalPayables: rentalPayables ?? [],
+        officeLines: officePayrollLines,
+        workerLines: workerPayrollLines,
+      }),
+    [
+      yearFilterCe,
+      monthScope,
+      issuedSalesInvoices,
+      vendorBills,
+      purchaseById,
+      rentalPayables,
+      officePayrollLines,
+      workerPayrollLines,
+    ],
+  );
+
+  const yearOptionsForFilter = useMemo(() => {
+    const keys: string[] = yearOptionsCe.map((year) => `${year}-01`);
+    for (const item of issuedSalesInvoices ?? []) keys.push(String(item.issueDate || '').slice(0, 7));
+    for (const item of vendorBills ?? []) keys.push(String(item.billingReceivedDate || item.rentalPeriodMonth || '').slice(0, 7));
+    for (const item of rentalPayables ?? []) keys.push(String(item.periodMonth || '').slice(0, 7));
+    for (const item of officePayrollLines) keys.push(String(item.run.payrollMonth || '').slice(0, 7));
+    for (const item of workerPayrollLines) keys.push(String(item.line.periodEndDate || item.line.periodStartDate || '').slice(0, 7));
+    return buildYearCeOptions(keys);
+  }, [yearOptionsCe, issuedSalesInvoices, vendorBills, rentalPayables, officePayrollLines, workerPayrollLines]);
+
+  const tradeMonitorLoading = issuedSalesLoading || vendorBillsLoading || rentalPayablesLoading || purchasesLoading;
+
   // --- Computed Stats ---
 
   const stats = useMemo(() => {
     return {
-      pendingBilling: commercialDrafts?.length || 0,
-      draftInvoices: draftInvoices?.length || 0,
-      outstandingAR: visibleArItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
-      pendingAP: apItems?.reduce((sum, item) => sum + item.outstandingAmount, 0) || 0,
-      payrollWaiting: pendingPayroll?.length || 0,
-      totalCash: bankAccounts?.reduce((sum, acc) => sum + acc.currentBalance, 0) || 0,
+      pendingBilling: scopedCommercialDrafts.length,
+      draftInvoices: scopedDraftInvoices.length,
+      outstandingAR: scopedArItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
+      pendingAP: openScopedApItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
+      payrollWaiting: scopedPayroll.length,
+      totalCash: bankAccounts?.reduce((sum, acc) => sum + cashOnHandExcludingOd(acc), 0) || 0,
     };
-  }, [commercialDrafts, draftInvoices, visibleArItems, apItems, pendingPayroll, bankAccounts]);
+  }, [scopedCommercialDrafts, scopedDraftInvoices, scopedArItems, openScopedApItems, scopedPayroll, bankAccounts]);
 
   const urgentTasks = useMemo(() => {
     const tasks: any[] = [];
     
     // Payroll Handoff
-    pendingPayroll?.forEach(run => {
+    scopedPayroll.forEach(run => {
       tasks.push({
         id: run.id,
         type: 'Payroll Payment',
@@ -145,7 +405,7 @@ export default function AccountingDashboardPage() {
     });
 
     // Overdue AR (derive จาก dueDate — ไม่พึ่ง status ที่ค้างเป็น OPEN ใน Firestore)
-    visibleArItems.filter((item) => resolveArEffectiveStatus(item) === 'OVERDUE').forEach((item) => {
+    scopedArItems.filter((item) => resolveArEffectiveStatus(item) === 'OVERDUE').forEach((item) => {
       tasks.push({
         id: item.id,
         type: 'Collection',
@@ -158,7 +418,7 @@ export default function AccountingDashboardPage() {
     });
 
     // Draft Invoices
-    draftInvoices?.forEach(inv => {
+    scopedDraftInvoices.forEach(inv => {
       tasks.push({
         id: inv.id,
         type: 'Tax Invoice',
@@ -170,7 +430,7 @@ export default function AccountingDashboardPage() {
     });
 
     return tasks;
-  }, [pendingPayroll, visibleArItems, draftInvoices]);
+  }, [scopedPayroll, scopedArItems, scopedDraftInvoices]);
 
   useEffect(() => {
     if (!firestore || !isAccountingAuthorized || staleArReconcileRan.current) return;
@@ -198,13 +458,27 @@ export default function AccountingDashboardPage() {
     <AppShell user={currentUser} onLogout={() => {}}>
       <div className="space-y-8 max-w-[1600px] mx-auto">
         {/* Header */}
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
-            <Calculator className="h-8 w-8" /> แดชบอร์ดฝ่ายบัญชีและการเงิน (Accounting Dashboard)
-          </h1>
-          <p className="text-muted-foreground text-lg italic">
-            ติดตามงานวางบิล ใบกำกับภาษี ลูกหนี้ เจ้าหนี้ การจ่ายเงิน และงานการเงินที่ต้องดำเนินการ (Monitor billing, invoicing, AR/AP, and payments).
-          </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-3xl font-bold tracking-tight text-primary flex items-center gap-3">
+              <Calculator className="h-8 w-8" /> แดชบอร์ดฝ่ายบัญชีและการเงิน (Accounting Dashboard)
+            </h1>
+            <p className="text-muted-foreground text-lg italic">
+              ติดตามงานวางบิล ใบกำกับภาษี ลูกหนี้ เจ้าหนี้ การจ่ายเงิน และงานการเงินที่ต้องดำเนินการ (Monitor billing, invoicing, AR/AP, and payments).
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <YearMonthScopeSelects
+              idPrefix="accounting-dashboard"
+              yearCe={yearFilterCe}
+              monthScope={monthScope}
+              yearOptionsCe={yearOptionsForFilter}
+              onYearCeChange={setYearFilterCe}
+              onMonthScopeChange={setMonthScope}
+              yearTriggerClassName="h-11 w-[7.5rem]"
+              monthTriggerClassName="h-11 w-[9.5rem]"
+            />
+          </div>
         </div>
 
         {/* Top KPI Row */}
@@ -217,10 +491,35 @@ export default function AccountingDashboardPage() {
           <StatCard
             title="ยอดเงินสดรวม"
             value={canViewBankBalances ? `฿${stats.totalCash.toLocaleString()}` : '—'}
-            sub={canViewBankBalances ? 'All Bank Balances' : 'เฉพาะผู้จัดการบัญชี'}
+            sub={canViewBankBalances ? 'ไม่รวมวงเงิน OD' : 'เฉพาะผู้จัดการบัญชี'}
             icon={Wallet}
             colorClass="border-l-green-600"
           />
+        </div>
+
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+            <StatCard title="ยอดขาย" value={monitorBaht(monitorTotals.salesBeforeTax, tradeMonitorLoading)} sub="ก่อนภาษี · ใบกำกับที่ออกแล้ว" icon={Receipt} colorClass="border-l-blue-600" />
+            <StatCard title="ภาษีขาย" value={monitorBaht(monitorTotals.salesVat, tradeMonitorLoading)} sub="ภาษีมูลค่าเพิ่มขาออก" icon={FileBadge} colorClass="border-l-indigo-500" />
+            <StatCard title="ยอดซื้อ" value={monitorBaht(monitorTotals.purchaseBeforeTax, tradeMonitorLoading)} sub="สินค้า · ค่าเช่า · ใบสั่งซื้อ · เหมา" icon={ArrowDownLeft} colorClass="border-l-amber-500" />
+            <StatCard title="ภาษีซื้อ" value={monitorBaht(monitorTotals.purchaseVat, tradeMonitorLoading)} sub="ภาษีมูลค่าเพิ่มขาเข้า" icon={FileText} colorClass="border-l-orange-500" />
+            <StatCard title="หัก ณ ที่จ่ายคู่ค้า" value={monitorBaht(monitorTotals.whtWithheldFromVendors, tradeMonitorLoading)} sub="ยอดที่เราหักคู่ค้า" icon={Coins} colorClass="border-l-rose-500" />
+            <StatCard title="ถูกหัก ณ ที่จ่าย" value={monitorBaht(monitorTotals.whtWithheldFromUs, tradeMonitorLoading)} sub="ยอดที่ลูกค้าหักเรา" icon={ArrowUpRight} colorClass="border-l-sky-600" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+            <StatCard title="เงินเดือนออฟฟิศ" value={monitorBaht(monitorTotals.officeSalary, payrollMonitorLoading)} sub="พนักงานออฟฟิศ + ผู้บริหาร · ก่อนหัก" icon={Building2} colorClass="border-l-violet-600" />
+            <StatCard title="เงินเดือนลูกจ้าง" value={monitorBaht(monitorTotals.workerSalary, payrollMonitorLoading)} sub="บริษัท + เหมา · ก่อนหัก" icon={Coins} colorClass="border-l-fuchsia-600" />
+            <StatCard title="ประกันสังคม" value={monitorBaht(monitorTotals.socialSecurity, payrollMonitorLoading)} sub="ลูกจ้าง + นายจ้าง" icon={Wallet} colorClass="border-l-teal-600" />
+            <StatCard title="หัก ณ ที่จ่าย" value={monitorBaht(monitorTotals.payrollWht, payrollMonitorLoading)} sub="เงินเดือนออฟฟิศ + ลูกจ้าง" icon={FileBadge} colorClass="border-l-red-600" />
+            <StatCard title="หักเข้ากองทุน" value={monitorBaht(monitorTotals.assistanceFund, payrollMonitorLoading)} sub="กองทุนสงเคราะห์ลูกจ้าง" icon={History} colorClass="border-l-slate-600" />
+            <StatCard
+              title="ส่วนต่างภาษี"
+              value={monitorBaht(monitorTotals.vatDifference, tradeMonitorLoading)}
+              sub="ภาษีขาย − ภาษีซื้อ"
+              icon={Calculator}
+              colorClass={monitorTotals.vatDifference < 0 ? 'border-l-red-600' : 'border-l-green-600'}
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -235,7 +534,7 @@ export default function AccountingDashboardPage() {
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="divide-y">
-                    {visibleArItems.slice(0, 5).map(item => (
+                    {scopedArItems.slice(0, 5).map(item => (
                       <div key={item.id} className="p-3 flex items-center justify-between text-xs">
                         <div className="space-y-0.5">
                           <p className="font-bold">{item.documentNo}</p>
@@ -247,7 +546,7 @@ export default function AccountingDashboardPage() {
                         </div>
                       </div>
                     ))}
-                    {visibleArItems.length === 0 && <p className="p-10 text-center text-xs text-muted-foreground italic">No outstanding AR</p>}
+                    {scopedArItems.length === 0 && <p className="p-10 text-center text-xs text-muted-foreground italic">No outstanding AR</p>}
                   </div>
                 </CardContent>
               </Card>
@@ -260,7 +559,7 @@ export default function AccountingDashboardPage() {
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="divide-y">
-                    {apItems?.slice(0, 5).map(item => (
+                    {openScopedApItems.slice(0, 5).map(item => (
                       <div key={item.id} className="p-3 flex items-center justify-between text-xs">
                         <div className="space-y-0.5">
                           <p className="font-bold">{item.documentNo}</p>
@@ -272,7 +571,7 @@ export default function AccountingDashboardPage() {
                         </div>
                       </div>
                     ))}
-                    {(!apItems || apItems.length === 0) && <p className="p-10 text-center text-xs text-muted-foreground italic">No outstanding AP</p>}
+                    {openScopedApItems.length === 0 && <p className="p-10 text-center text-xs text-muted-foreground italic">No outstanding AP</p>}
                   </div>
                 </CardContent>
               </Card>
@@ -379,6 +678,11 @@ export default function AccountingDashboardPage() {
       </div>
     </AppShell>
   );
+}
+
+function monitorBaht(amount: number, loading: boolean): string {
+  if (loading) return '…';
+  return `฿${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function StatCard({ title, value, sub, icon: Icon, colorClass }: any) {

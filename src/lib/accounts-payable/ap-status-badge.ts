@@ -12,6 +12,8 @@ export function apStatusBadge(status: APStatus | string): StatusBadgeSpec {
       return { label: 'PAID', tone: 'success' };
     case 'OVERDUE':
       return { label: 'OVERDUE', tone: 'destructive' };
+    case 'CANCELLED':
+      return { label: 'ยกเลิก', tone: 'outline' };
     default:
       return { label: String(status), tone: 'outline' };
   }

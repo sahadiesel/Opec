@@ -167,9 +167,11 @@ function statusLabel(s: PurchaseVendorBillStatus) {
 function installmentPayStatusLabel(
   payStatus: VendorBillPaymentInstallment['payStatus'],
   billClosed: boolean,
+  billStatus?: PurchaseVendorBillStatus,
 ) {
   if (payStatus === 'PAID' && billClosed) return 'Close';
   if (payStatus === 'PAID') return 'จ่ายแล้ว';
+  if (billStatus === 'CANCELLED') return 'ยกเลิก';
   return 'รอจ่าย';
 }
 
@@ -1758,11 +1760,11 @@ export default function StoreVendorBillDetailPage({ params }: { params: Promise<
                                       billClosed ? 'bg-slate-800 hover:bg-slate-800' : 'bg-green-600'
                                     }
                                   >
-                                    {installmentPayStatusLabel(row.payStatus, billClosed)}
+                                    {installmentPayStatusLabel(row.payStatus, billClosed, bill.status)}
                                   </Badge>
                                 ) : (
                                   <Badge variant="outline">
-                                    {installmentPayStatusLabel(row.payStatus, billClosed)}
+                                    {installmentPayStatusLabel(row.payStatus, billClosed, bill.status)}
                                   </Badge>
                                 )}
                               </td>

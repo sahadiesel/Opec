@@ -10,6 +10,23 @@ export function hasConfiguredOdLimit(odLimit: number | undefined | null): boolea
   return odLimit != null && Number.isFinite(Number(odLimit)) && Number(odLimit) > 0;
 }
 
+/**
+ * เงินสดที่นับได้ของบัญชีนี้
+ * บัญชีกระแสรายวันที่มีวงเงิน OD นับเฉพาะส่วนเกิน (ยอดปัจจุบัน − วงเงิน) และไม่ติดลบ
+ * บัญชีอื่นใช้ยอดปัจจุบันทั้งจำนวน
+ */
+export function cashOnHandExcludingOd(account: {
+  accountType?: BankAccountType | string | null;
+  currentBalance?: number | null;
+  odLimit?: number | null;
+}): number {
+  const balance = roundMoney2(Number(account.currentBalance) || 0);
+  if (!isCurrentBankAccount(account.accountType) || !hasConfiguredOdLimit(account.odLimit)) {
+    return balance;
+  }
+  return Math.max(0, computeOdBalanceDelta(balance, account.odLimit));
+}
+
 /** ยอดเงินปัจจุบัน − วงเงิน OD */
 export function computeOdBalanceDelta(
   currentBalance: number | undefined | null,

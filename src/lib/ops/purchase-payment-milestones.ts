@@ -220,6 +220,43 @@ export function effectiveVendorBillWhtRatePercent(
   return Math.max(0, Number(purchase.supplierWithholdingRatePercent) || 0);
 }
 
+/** ตัวเลข 4 คอลัมน์ในรายการใบวางบิล: ก่อนภาษี, VAT, หัก ณ ที่จ่าย, สุทธิที่จ่ายคู่ค้า */
+export function vendorBillListMoneyColumns(
+  bill: Pick<
+    PurchaseVendorBill,
+    | 'billAmount'
+    | 'billVatTreatment'
+    | 'supplierWithholdingEnabledBill'
+    | 'supplierWithholdingRatePercentBill'
+    | 'vendorBillWhtPresetCategory'
+    | 'supplierWithholdingTaxBaseBill'
+  >,
+  purchase:
+    | Pick<
+        Purchase,
+        | 'totalAmount'
+        | 'amountBeforeTax'
+        | 'vatAmount'
+        | 'supplierWithholdingEnabled'
+        | 'supplierWithholdingRatePercent'
+        | 'supplierWithholdingCategory'
+      >
+    | null
+    | undefined,
+): { beforeTax: number; vat: number; wht: number; paid: number } | null {
+  if (!purchase) return null;
+  const gross = roundMoney2(Number(bill.billAmount ?? purchase.totalAmount) || 0);
+  const treatment = bill.billVatTreatment ?? null;
+  const { beforeTax, vat } = resolveVendorBillVatAmounts(gross, treatment, purchase);
+  const enabled = effectiveVendorBillWithholdingEnabled(bill, purchase);
+  const rate = enabled ? effectiveVendorBillWhtRatePercent(bill, purchase) : 0;
+  if (rate > 0.005) {
+    const wht = supplierWithholdingOnVendorBill(gross, rate, purchase, treatment, bill);
+    return { beforeTax, vat, wht: wht.wht, paid: wht.netPaid };
+  }
+  return { beforeTax, vat, wht: 0, paid: gross };
+}
+
 /** หัก ณ ที่จ่ายผู้รับเงิน: % จากฐานก่อน VAT ของงวด — สุทธิจ่าย = ยอดงวดรวม VAT − หัก ณ ที่จ่าย */
 export function supplierWithholdingOnMilestone(
   milestoneAmountInclVat: number,

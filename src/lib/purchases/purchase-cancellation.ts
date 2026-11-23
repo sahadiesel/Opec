@@ -124,6 +124,17 @@ async function syncExistingVendorBillsForCancellation(
     if (phase === 'CANCELLED' && data.status !== 'PENDING_CANCELLATION' && !OPEN_VENDOR_BILL_STATUSES.has(String(data.status || ''))) {
       continue;
     }
+    if (phase === 'CANCELLED') {
+      const apSnap = await getDoc(doc(db, 'accounts_payable', billDoc.id));
+      if (apSnap.exists() && (Number(apSnap.data().outstandingAmount) || 0) > 0.005) {
+        batch.update(apSnap.ref, {
+          outstandingAmount: 0,
+          closedByVendorBillCancellation: true,
+          updatedAt: now,
+        });
+        writes += 1;
+      }
+    }
     batch.update(billDoc.ref, {
       status: phase,
       cancellationReason: (detail.reason || data.cancellationReason || '').trim(),

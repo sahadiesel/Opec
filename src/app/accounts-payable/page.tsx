@@ -15,14 +15,18 @@ import {
   Info,
   Printer,
 } from 'lucide-react';
-import { AccountsPayable, APStatus, Vendor } from '@/lib/types';
+import { AccountsPayable, APStatus, PurchaseVendorBill, Vendor } from '@/lib/types';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { apStatusBadge } from '@/lib/accounts-payable/ap-status-badge';
 import { apAsOfYmd, resolveApEffectiveStatus } from '@/lib/accounts-payable/ap-effective-status';
 import { useFirestore, useCollection, useMemoFirebase, useUser } from '@/firebase';
 import { useAppUser } from '@/hooks/use-app-user';
 import { canView } from '@/lib/permissions';
-import { collection, query, orderBy } from 'firebase/firestore';
+import { collection, orderBy, query, where } from 'firebase/firestore';
+import {
+  cancelledVendorBillApKeys,
+  isApFromCancelledVendorBill,
+} from '@/lib/accounts-payable/cancelled-vendor-bill-ap';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { formatYmdLocalThaiBE } from '@/lib/date-thai';
 import { useToast } from '@/hooks/use-toast';
@@ -55,7 +59,8 @@ function formatApMoney(amount: number): string {
   return `฿ ${amount.toLocaleString()}`;
 }
 
-function apStatusPrintLabel(status: APStatus): string {
+function apStatusPrintLabel(status: APStatus | 'CANCELLED'): string {
+  if (status === 'CANCELLED') return 'ยกเลิก';
   if (status === 'PARTIALLY_PAID') return 'PARTIAL';
   return status;
 }
@@ -75,6 +80,16 @@ export default function AccountsPayablePage() {
   }, [firestore, isAuthorized]);
 
   const { data: apItems, isLoading } = useCollection<AccountsPayable>(apQuery as any);
+
+  const cancelledBillsQuery = useMemoFirebase(() => {
+    if (!firestore || !isAuthorized) return null;
+    return query(collection(firestore, 'purchase_vendor_bills'), where('status', '==', 'CANCELLED'));
+  }, [firestore, isAuthorized]);
+  const { data: cancelledBills } = useCollection<PurchaseVendorBill>(cancelledBillsQuery as any);
+  const cancelledApKeys = useMemo(
+    () => cancelledVendorBillApKeys(cancelledBills ?? []),
+    [cancelledBills],
+  );
 
   const vendorsQuery = useMemoFirebase(() => (firestore && isAuthorized ? collection(firestore, 'vendors') : null), [firestore, isAuthorized]);
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
@@ -108,7 +123,8 @@ export default function AccountsPayablePage() {
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return monthFilteredItems.filter((item) => {
-      const effective = resolveApEffectiveStatus(item, asOfYmd);
+      const cancelled = isApFromCancelledVendorBill(item, cancelledApKeys);
+      const effective = cancelled ? 'CANCELLED' : resolveApEffectiveStatus(item, asOfYmd);
       if (statusFilter !== 'all' && effective !== statusFilter) return false;
       if (!q) return true;
       const vendor = vendorById.get(item.vendorId);
@@ -126,19 +142,21 @@ export default function AccountsPayablePage() {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [monthFilteredItems, searchQuery, statusFilter, vendorById, asOfYmd]);
+  }, [monthFilteredItems, searchQuery, statusFilter, vendorById, asOfYmd, cancelledApKeys]);
 
   const stats = useMemo(() => {
-    const all = apItems ?? [];
+    const countsAsOpen = (item: AccountsPayable) => !isApFromCancelledVendorBill(item, cancelledApKeys);
+    const all = (apItems ?? []).filter(countsAsOpen);
+    const monthOpen = monthFilteredItems.filter(countsAsOpen);
     return {
       globalOutstanding: all.reduce((sum, item) => sum + item.outstandingAmount, 0),
-      monthOutstanding: monthFilteredItems.reduce((sum, item) => sum + item.outstandingAmount, 0),
-      overdue: monthFilteredItems
+      monthOutstanding: monthOpen.reduce((sum, item) => sum + item.outstandingAmount, 0),
+      overdue: monthOpen
         .filter((item) => resolveApEffectiveStatus(item, asOfYmd) === 'OVERDUE')
         .reduce((sum, item) => sum + item.outstandingAmount, 0),
       paid: monthFilteredItems.reduce((sum, item) => sum + item.creditAmount, 0),
     };
-  }, [apItems, monthFilteredItems, asOfYmd]);
+  }, [apItems, monthFilteredItems, asOfYmd, cancelledApKeys]);
 
   const periodLabel = useMemo(
     () => describeYearMonthScopeFilter(yearFilterCe, monthScope),
@@ -165,11 +183,17 @@ export default function AccountsPayablePage() {
           dueDate: formatYmdLocalThaiBE(item.dueDate),
           debitLabel: formatApMoney(item.debitAmount ?? 0),
           creditLabel: formatApMoney(item.creditAmount ?? 0),
-          outstandingLabel: formatApMoney(item.outstandingAmount ?? 0),
-          status: apStatusPrintLabel(resolveApEffectiveStatus(item, asOfYmd)),
+          outstandingLabel: formatApMoney(
+            isApFromCancelledVendorBill(item, cancelledApKeys) ? 0 : item.outstandingAmount ?? 0,
+          ),
+          status: apStatusPrintLabel(
+            isApFromCancelledVendorBill(item, cancelledApKeys)
+              ? 'CANCELLED'
+              : resolveApEffectiveStatus(item, asOfYmd),
+          ),
         };
       }),
-    [vendorById, asOfYmd],
+    [vendorById, asOfYmd, cancelledApKeys],
   );
 
   const runAccountsPayableListPrint = useCallback(
@@ -231,7 +255,7 @@ export default function AccountsPayablePage() {
     [filteredItems, apItems, buildPrintRows, printFilterSummary, currentUser?.displayName, toast],
   );
 
-  const getStatusBadge = (status: APStatus) => <StatusBadge {...apStatusBadge(status)} />;
+  const getStatusBadge = (status: APStatus | 'CANCELLED') => <StatusBadge {...apStatusBadge(status)} />;
 
   if (isUserLoading || userLoading || !currentUser) return null;
 
@@ -419,6 +443,8 @@ export default function AccountsPayablePage() {
                 <TableBody>
                   {filteredItems.map((item) => {
                     const vendor = vendorById.get(item.vendorId);
+                    const cancelled = isApFromCancelledVendorBill(item, cancelledApKeys);
+                    const outstanding = cancelled ? 0 : item.outstandingAmount;
                     return (
                       <TableRow key={item.id} className="hover:bg-muted/20">
                         <TableCell className="py-4 pl-6">
@@ -454,8 +480,10 @@ export default function AccountsPayablePage() {
                         </TableCell>
                         <TableCell className="text-right text-sm">฿ {item.debitAmount.toLocaleString()}</TableCell>
                         <TableCell className="text-right text-sm text-green-600">฿ {item.creditAmount.toLocaleString()}</TableCell>
-                        <TableCell className="text-right font-black text-primary">฿ {item.outstandingAmount.toLocaleString()}</TableCell>
-                        <TableCell>{getStatusBadge(resolveApEffectiveStatus(item, asOfYmd))}</TableCell>
+                        <TableCell className="text-right font-black text-primary">฿ {outstanding.toLocaleString()}</TableCell>
+                        <TableCell>
+                          {getStatusBadge(cancelled ? 'CANCELLED' : resolveApEffectiveStatus(item, asOfYmd))}
+                        </TableCell>
                       </TableRow>
                     );
                   })}
