@@ -83,6 +83,7 @@ import {
 } from '@/lib/timesheet/mobilization-clearance-timesheet';
 import {
   addDaysToYmd,
+  assignmentAssignedYmd,
   assignmentHasMobLocationForPhase1,
   canRunFinalClearanceStep,
   canSaveFinalClearanceMob,
@@ -544,6 +545,78 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
     setClearanceEditMode(0);
   };
 
+  const beginStepDateEdit = (step: 1 | 2 | 3) => {
+    if (!assignment || !canEditMobilization || isMobUnassigned(assignment)) return;
+    // แก้วัน Mob หลังเริ่มงานแล้ว → ต้องย้อนขั้น 5 ก่อน (cascade)
+    if (step === 2 && isFinalClearanceStep3Done(assignment)) {
+      setStep2CascadeOpen(true);
+      return;
+    }
+    syncClearanceDraftsFromAssignment(assignment);
+    setClearanceFormEditing(false);
+    setClearanceEditMode(step);
+  };
+
+  const cancelStepDateEdit = () => {
+    if (assignment) syncClearanceDraftsFromAssignment(assignment);
+    setClearanceEditMode(0);
+  };
+
+  const assignedYmdForOrder = useMemo(
+    () => (assignment ? assignmentAssignedYmd(assignment) : ''),
+    [assignment],
+  );
+
+  /** ขอบเขตวันที่ขั้น 3–5 ตามลำดับ Assign ≤ Pre-Mob < Mob < Work */
+  const clearanceDateBounds = useMemo(() => {
+    const isYmd = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+    const assigned = assignedYmdForOrder;
+    const preSkipped = assignment?.mobPreMobSkipped === true;
+    const mobSkipped = assignment?.mobMobSkipped === true;
+    const pre =
+      (preMobDateDraft || '').trim() ||
+      (!preSkipped ? (assignment?.mobPreMobDate || '').trim() : '');
+    const mob =
+      (standbyDateDraft || '').trim() ||
+      (!mobSkipped ? (assignment?.mobStandbyDate || '').trim() : '');
+    const work =
+      (workingStartDateDraft || '').trim() || (assignment?.mobWorkingStartDate || '').trim();
+
+    const dayBefore = (ymd: string) => (isYmd(ymd) ? addDaysToYmd(ymd, -1) : '');
+    const dayAfter = (ymd: string) => (isYmd(ymd) ? addDaysToYmd(ymd, 1) : '');
+
+    const preMin = assigned || undefined;
+    const preMax =
+      isYmd(mob) && !mobSkipped
+        ? dayBefore(mob)
+        : isYmd(work)
+          ? dayBefore(work)
+          : undefined;
+
+    const mobMin = isYmd(pre) && !preSkipped ? dayAfter(pre) : assigned || undefined;
+    const mobMax = isYmd(work) ? dayBefore(work) : undefined;
+
+    const workMin = isYmd(mob) && !mobSkipped
+      ? dayAfter(mob)
+      : isYmd(pre) && !preSkipped
+        ? dayAfter(pre)
+        : assigned || undefined;
+
+    return {
+      preMin: preMin && isYmd(preMin) ? preMin : undefined,
+      preMax: preMax && isYmd(preMax) ? preMax : undefined,
+      mobMin: mobMin && isYmd(mobMin) ? mobMin : undefined,
+      mobMax: mobMax && isYmd(mobMax) ? mobMax : undefined,
+      workMin: workMin && isYmd(workMin) ? workMin : undefined,
+    };
+  }, [
+    assignment,
+    assignedYmdForOrder,
+    preMobDateDraft,
+    standbyDateDraft,
+    workingStartDateDraft,
+  ]);
+
   const confirmStep2CascadeAndEdit = async () => {
     if (!firestore || !assignment) return;
     try {
@@ -596,6 +669,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       return false;
     }
     const orderGate = validateFinalClearanceDateOrder({
+      assignedYmd: assignmentAssignedYmd(assignment),
       preMobYmd: ymd,
       preMobSkipped: false,
       mobYmd: (standbyDateDraft || '').trim() || (assignment.mobStandbyDate || '').trim(),
@@ -956,6 +1030,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       return false;
     }
     const orderGate = validateFinalClearanceDateOrder({
+      assignedYmd: assignmentAssignedYmd(assignment),
       preMobYmd: (preMobDateDraft || '').trim() || (assignment.mobPreMobDate || '').trim(),
       preMobSkipped: assignment.mobPreMobSkipped === true,
       mobYmd: ymd,
@@ -1124,6 +1199,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       return false;
     }
     const orderGate = validateFinalClearanceDateOrder({
+      assignedYmd: assignmentAssignedYmd(assignment),
       preMobYmd: (preMobDateDraft || '').trim() || (assignment.mobPreMobDate || '').trim(),
       preMobSkipped: assignment.mobPreMobSkipped === true,
       mobYmd: hasStandby ? standbyYmd : '',
@@ -1861,6 +1937,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           <DatePickerThaiBE
                             className="h-11 flex-1 min-w-0"
                             value={htmlDateValueToTimestampMs(preMobDateDraft)}
+                            minYmd={clearanceDateBounds.preMin}
+                            maxYmd={clearanceDateBounds.preMax}
                             onChange={(ms) => {
                               const v = timestampToHtmlDateValue(ms);
                               setPreMobDateDraft(v);
@@ -1894,7 +1972,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     clearanceSavingStep !== 0 ||
                                     clearanceFormSaving ||
                                     !primaryPoLine ||
-                                    isFinalClearancePreMobDone(assignment) ||
+                                    (isFinalClearancePreMobDone(assignment) && clearanceEditMode !== 1) ||
                                     !preMobSaveGate.ok
                                   }
                                   onClick={() => openPreMobChargeConfig('PRE_MOB')}
@@ -1909,11 +1987,13 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
-                              {isFinalClearancePreMobDone(assignment)
-                                ? 'บันทึก / ข้าม Pre-Mob แล้ว — แก้วันที่ที่ตารางลงเวลา'
+                              {isFinalClearancePreMobDone(assignment) && clearanceEditMode !== 1
+                                ? 'บันทึก / ข้าม Pre-Mob แล้ว — กด «แก้ไข» เพื่อเปลี่ยนวันที่'
                                 : !preMobSaveGate.ok
                                   ? preMobSaveGate.message
-                                  : 'บันทึก SB 8 ชม. ในตารางรายวันทันที'}
+                                  : clearanceEditMode === 1
+                                    ? 'บันทึกวัน Pre-Mob ที่แก้แล้ว'
+                                    : 'บันทึก SB 8 ชม. ในตารางรายวันทันที'}
                             </TooltipContent>
                           </Tooltip>
                           <Tooltip>
@@ -1941,8 +2021,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
                               {assignment.mobPreMobSkipped && !(assignment.mobPreMobDate || '').trim()
                                 ? 'ข้าม Pre-Mob อยู่แล้ว'
-                                : isFinalClearancePreMobDone(assignment)
-                                ? 'บันทึก Pre-Mob แล้ว — แก้วันที่ที่ตารางลงเวลา'
+                                : isFinalClearancePreMobDone(assignment) && clearanceEditMode !== 1
+                                ? 'บันทึก Pre-Mob แล้ว — กด «แก้ไข» เพื่อเปลี่ยน'
                                 : !preMobSaveGate.ok
                                   ? preMobSaveGate.message
                                   : 'ข้ามวัน Pre-Mob — ไปขั้น Mob ได้เลย'}
@@ -1950,20 +2030,51 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           </Tooltip>
                         </div>
                         {isFinalClearancePreMobDone(assignment) ? (
-                          <p className="text-sm">
-                            {assignment.mobPreMobSkipped ? (
-                              <>ข้าม Pre-Mob แล้ว · {formatDateTimeThaiBE(assignment.mobPreMobRecordedAt)}</>
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <p className="text-sm">
+                              {assignment.mobPreMobSkipped ? (
+                                <>ข้าม Pre-Mob แล้ว · {formatDateTimeThaiBE(assignment.mobPreMobRecordedAt)}</>
+                              ) : (
+                                <>
+                                  บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobPreMobDate)} · SB 8 ชม. ·{' '}
+                                  {formatDateTimeThaiBE(assignment.mobPreMobRecordedAt)}
+                                </>
+                              )}
+                            </p>
+                            {clearanceEditMode === 1 ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="h-11 shrink-0"
+                                disabled={clearanceSavingStep !== 0}
+                                onClick={cancelStepDateEdit}
+                              >
+                                ยกเลิก
+                              </Button>
                             ) : (
-                              <>
-                                บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobPreMobDate)} · SB 8 ชม. ·{' '}
-                                {formatDateTimeThaiBE(assignment.mobPreMobRecordedAt)}
-                              </>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-11 w-36 shrink-0"
+                                disabled={
+                                  !canEditMobilization ||
+                                  isMobUnassigned(assignment) ||
+                                  clearanceSavingStep !== 0 ||
+                                  clearanceFormSaving ||
+                                  clearanceEditMode !== 0
+                                }
+                                onClick={() => beginStepDateEdit(1)}
+                              >
+                                <Pencil className="h-4 w-4 mr-1" />
+                                แก้ไข
+                              </Button>
                             )}
-                          </p>
+                          </div>
                         ) : (
                           <p className="text-xs text-muted-foreground">
                             Pre-Mob = SB 8 ชม. · หรือกด «ไม่มี Pre-Mob» หากไม่ต้องการวัน Standby ·
-                            เลือกวันแล้วระบบตั้งวัน Mob = +1 และวันเริ่มงาน = +2 ให้อัตโนมัติ
+                            เลือกวันแล้วระบบตั้งวัน Mob = +1 และวันเริ่มงาน = +2 ให้อัตโนมัติ ·
+                            ต้องไม่ก่อนวันมอบหมาย และต้องก่อนวัน Mob
                           </p>
                         )}
                       </div>
@@ -1979,6 +2090,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           <DatePickerThaiBE
                             className="h-11 flex-1 min-w-0"
                             value={htmlDateValueToTimestampMs(standbyDateDraft)}
+                            minYmd={clearanceDateBounds.mobMin}
+                            maxYmd={clearanceDateBounds.mobMax}
                             onChange={(ms) => {
                               const v = timestampToHtmlDateValue(ms);
                               setStandbyDateDraft(v);
@@ -1988,7 +2101,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                 setWorkingStartDateDraft(addDaysToYmd(v, 1));
                                 return;
                               }
-                              if (clearanceFormEditing) {
+                              if (clearanceFormEditing || clearanceEditMode === 2) {
                                 setWorkingStartDateDraft((cur) => {
                                   const c = (cur || '').trim();
                                   if (!/^\d{4}-\d{2}-\d{2}$/.test(c) || c <= v) return addDaysToYmd(v, 1);
@@ -2016,7 +2129,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     clearanceSavingStep !== 0 ||
                                     clearanceFormSaving ||
                                     !primaryPoLine ||
-                                    isFinalClearanceMobDone(assignment) ||
+                                    (isFinalClearanceMobDone(assignment) && clearanceEditMode !== 2) ||
                                     !mobSaveGate.ok
                                   }
                                   onClick={() => openPreMobChargeConfig('MOB')}
@@ -2031,11 +2144,13 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
-                              {isFinalClearanceMobDone(assignment)
-                                ? 'บันทึก Mob แล้ว — แก้วันที่ที่ตารางลงเวลา'
+                              {isFinalClearanceMobDone(assignment) && clearanceEditMode !== 2
+                                ? 'บันทึก Mob แล้ว — กด «แก้ไข» เพื่อเปลี่ยนวันที่'
                                 : !mobSaveGate.ok
                                   ? mobSaveGate.message
-                                  : 'เปิดหน้าต่างกำหนดค่า M1 แล้วบันทึก · ต้องทำ Pre-Mob หรือข้ามก่อน'}
+                                  : clearanceEditMode === 2
+                                    ? 'บันทึกวัน Mob ที่แก้แล้ว'
+                                    : 'เปิดหน้าต่างกำหนดค่า M1 แล้วบันทึก · ต้องทำ Pre-Mob หรือข้ามก่อน'}
                             </TooltipContent>
                           </Tooltip>
                           <Tooltip>
@@ -2063,8 +2178,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
                               {assignment.mobMobSkipped && !(assignment.mobStandbyDate || '').trim()
                                 ? 'ข้าม Mob อยู่แล้ว'
-                                : isFinalClearanceMobDone(assignment)
-                                ? 'บันทึก / ข้าม Mob แล้ว — แก้วันที่ที่ตารางลงเวลา'
+                                : isFinalClearanceMobDone(assignment) && clearanceEditMode !== 2
+                                ? 'บันทึก / ข้าม Mob แล้ว — กด «แก้ไข» เพื่อเปลี่ยน'
                                 : !mobSaveGate.ok
                                   ? mobSaveGate.message
                                   : 'ข้ามวัน Mob — ไม่บันทึกวัน M1 · ตารางเวลาเริ่มที่วันทำงานเลย'}
@@ -2072,33 +2187,64 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           </Tooltip>
                         </div>
                         {isFinalClearanceMobDone(assignment) ? (
-                          <div className="space-y-1 text-sm">
-                            {assignment.mobMobSkipped ? (
-                              <p>
-                                ข้าม Mob แล้ว — ไม่มีวัน M1 · ตารางเวลาเริ่มที่วันทำงานเลย ·{' '}
-                                {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
-                              </p>
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="space-y-1 text-sm">
+                              {assignment.mobMobSkipped ? (
+                                <p>
+                                  ข้าม Mob แล้ว — ไม่มีวัน M1 · ตารางเวลาเริ่มที่วันทำงานเลย ·{' '}
+                                  {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
+                                </p>
+                              ) : (
+                                <p>
+                                  บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobStandbyDate)} ·{' '}
+                                  {assignment.mobStep2Choice
+                                    ? mobStep2ChoiceLabel(assignment.mobStep2Choice)
+                                    : mobStandbyMobDayChoiceLabel(assignment.mobStandbyDayEventType ?? 'mobilization_day')}{' '}
+                                  ({mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ?? 'MO'}) ·{' '}
+                                  {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
+                                </p>
+                              )}
+                              {assignment.mobStep2BillingCharge || assignment.mobStep2PayrollCharge ? (
+                                <p className="text-xs text-muted-foreground">
+                                  วางบิล {formatMobDayChargeSummary(assignment.mobStep2BillingCharge)} · จ่ายลูกจ้าง{' '}
+                                  {formatMobDayChargeSummary(assignment.mobStep2PayrollCharge)}
+                                  <span className="text-muted-foreground/80"> — ใช้เฉพาะคนนี้ในงานนี้</span>
+                                </p>
+                              ) : null}
+                            </div>
+                            {clearanceEditMode === 2 ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="h-11 shrink-0"
+                                disabled={clearanceSavingStep !== 0}
+                                onClick={cancelStepDateEdit}
+                              >
+                                ยกเลิก
+                              </Button>
                             ) : (
-                              <p>
-                                บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobStandbyDate)} ·{' '}
-                                {assignment.mobStep2Choice
-                                  ? mobStep2ChoiceLabel(assignment.mobStep2Choice)
-                                  : mobStandbyMobDayChoiceLabel(assignment.mobStandbyDayEventType ?? 'mobilization_day')}{' '}
-                                ({mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ?? 'MO'}) ·{' '}
-                                {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
-                              </p>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-11 w-36 shrink-0"
+                                disabled={
+                                  !canEditMobilization ||
+                                  isMobUnassigned(assignment) ||
+                                  clearanceSavingStep !== 0 ||
+                                  clearanceFormSaving ||
+                                  clearanceEditMode !== 0
+                                }
+                                onClick={() => beginStepDateEdit(2)}
+                              >
+                                <Pencil className="h-4 w-4 mr-1" />
+                                แก้ไข
+                              </Button>
                             )}
-                            {assignment.mobStep2BillingCharge || assignment.mobStep2PayrollCharge ? (
-                              <p className="text-xs text-muted-foreground">
-                                วางบิล {formatMobDayChargeSummary(assignment.mobStep2BillingCharge)} · จ่ายลูกจ้าง{' '}
-                                {formatMobDayChargeSummary(assignment.mobStep2PayrollCharge)}
-                                <span className="text-muted-foreground/80"> — ใช้เฉพาะคนนี้ในงานนี้</span>
-                              </p>
-                            ) : null}
                           </div>
                         ) : (
                           <p className="text-xs text-muted-foreground">
-                            Mob = วัน M1 (MO) · หรือกด «ไม่มี Mob» หากไม่ต้องการวันเดินทาง — ตารางเวลาจะเริ่มที่วันทำงานเลย
+                            Mob = วัน M1 (MO) · หรือกด «ไม่มี Mob» หากไม่ต้องการวันเดินทาง — ตารางเวลาจะเริ่มที่วันทำงานเลย ·
+                            ต้องหลังวัน Pre-Mob และก่อนวันเริ่มงาน
                           </p>
                         )}
                       </div>
@@ -2114,6 +2260,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                           <DatePickerThaiBE
                             className="h-11 flex-1 min-w-0"
                             value={htmlDateValueToTimestampMs(workingStartDateDraft)}
+                            minYmd={clearanceDateBounds.workMin}
                             onChange={(ms) => setWorkingStartDateDraft(timestampToHtmlDateValue(ms))}
                             disabled={
                               !canEditMobilization ||
@@ -2136,7 +2283,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     clearanceFormSaving ||
                                     !primaryPoLine ||
                                     !isFinalClearanceStep2Done(assignment) ||
-                                    isFinalClearanceStep3Done(assignment) ||
+                                    (isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3) ||
                                     !step3SaveGate.ok
                                   }
                                   onClick={() => void runFinalClearanceStep3()}
@@ -2151,20 +2298,56 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                               </span>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="max-w-sm text-xs leading-relaxed">
-                              {isFinalClearanceStep3Done(assignment)
-                                ? 'เริ่มวันทำงานแล้ว — แก้วันที่ที่ตารางลงเวลา'
+                              {isFinalClearanceStep3Done(assignment) && clearanceEditMode !== 3
+                                ? 'เริ่มวันทำงานแล้ว — กด «แก้ไข» เพื่อเปลี่ยนวันที่'
                                 : !step3SaveGate.ok
                                   ? step3SaveGate.message
-                                  : 'วันเริ่มงานต้องหลังวัน Mob — ระบบจะเติมวัน Standby ในช่วงว่างอัตโนมัติ · ถ้าต่อจากเดือนก่อนจะเติมวันทำงานต้นเดือนจนถึงก่อนวัน Mob'}
+                                  : clearanceEditMode === 3
+                                    ? 'บันทึกวันเริ่มงานที่แก้แล้ว'
+                                    : 'วันเริ่มงานต้องหลังวัน Mob — ระบบจะเติมวัน Standby ในช่วงว่างอัตโนมัติ · ถ้าต่อจากเดือนก่อนจะเติมวันทำงานต้นเดือนจนถึงก่อนวัน Mob'}
                             </TooltipContent>
                           </Tooltip>
                         </div>
                         {isFinalClearanceStep3Done(assignment) ? (
-                          <p className="text-sm">
-                            เริ่มแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobWorkingStartDate)} ·{' '}
-                            {formatDateTimeThaiBE(assignment.mobWorkingStartedAt)}
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <p className="text-sm">
+                              เริ่มแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobWorkingStartDate)} ·{' '}
+                              {formatDateTimeThaiBE(assignment.mobWorkingStartedAt)}
+                            </p>
+                            {clearanceEditMode === 3 ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="h-11 shrink-0"
+                                disabled={clearanceSavingStep !== 0}
+                                onClick={cancelStepDateEdit}
+                              >
+                                ยกเลิก
+                              </Button>
+                            ) : (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-11 w-36 shrink-0"
+                                disabled={
+                                  !canEditMobilization ||
+                                  isMobUnassigned(assignment) ||
+                                  clearanceSavingStep !== 0 ||
+                                  clearanceFormSaving ||
+                                  clearanceEditMode !== 0
+                                }
+                                onClick={() => beginStepDateEdit(3)}
+                              >
+                                <Pencil className="h-4 w-4 mr-1" />
+                                แก้ไข
+                              </Button>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            วันเริ่มงานต้องหลังวัน Mob (และไม่ก่อนวันมอบหมาย)
                           </p>
-                        ) : null}
+                        )}
                       </div>
 
                       <Separator />
@@ -2390,7 +2573,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                 <p className="text-xs text-blue-900/90">
                   ห้ามข้ามขั้น — ถ้ากดเมื่อยังไม่ครบขั้นก่อนหน้า ระบบจะแจ้งเตือนและไม่บันทึก · ขั้น 3–5 จะเขียนลง{' '}
                   <span className="font-mono">daily_timesheets</span> ทันที (ไม่เขียนลงงวด PO+เดือนที่ล็อกแล้ว)
-                  · หลังบันทึกแล้ว แก้วัน Pre-Mob, Mob หรือวันเริ่มงานที่ตารางลงเวลา — ปุ่มแก้ไข/บันทึกของขั้น 2 ใช้กับสถานที่เท่านั้น
+                  · หลังบันทึกแล้ว กด «แก้ไข» ที่ขั้น 3–5 เพื่อเปลี่ยนวันที่ (ลำดับ Assign ≤ Pre-Mob ก่อน Mob ก่อนวันเริ่มงาน) — ปุ่มแก้ไข/บันทึกของขั้น 2 ใช้กับสถานที่เท่านั้น
                 </p>
               </CardContent>
             </Card>

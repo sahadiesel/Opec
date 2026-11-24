@@ -380,11 +380,13 @@ export function canSaveFinalClearanceWorkStart(
 
 /**
  * ลำดับวันที่ Final Clearance:
+ * - วันมอบหมาย (assigned) ≤ วัน Pre-Mob / Mob / เริ่มงาน ที่ใช้งานจริง
  * - ขั้น 3 (Pre-Mob) ต้องอยู่ก่อนขั้น 4 (Mob) — ห้ามวันเดียวกันหรือหลัง
  * - ขั้น 4 (Mob) ต้องอยู่ก่อนขั้น 5 (Start working) — ห้ามวันเดียวกันหรือหลัง
  * ข้ามขั้นที่ไม่มีวันที่ (skipped / ว่าง) จะไม่ตรวจคู่ที่ขาด
  */
 export function validateFinalClearanceDateOrder(opts: {
+  assignedYmd?: string | null;
   preMobYmd?: string | null;
   preMobSkipped?: boolean;
   mobYmd?: string | null;
@@ -392,12 +394,35 @@ export function validateFinalClearanceDateOrder(opts: {
   workStartYmd?: string | null;
 }): FinalClearanceGate {
   const isYmd = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const assigned = (opts.assignedYmd || '').trim().slice(0, 10);
   const pre = (opts.preMobYmd || '').trim();
   const mob = (opts.mobYmd || '').trim();
   const work = (opts.workStartYmd || '').trim();
   const preActive = !opts.preMobSkipped && isYmd(pre);
   const mobActive = !opts.mobSkipped && isYmd(mob);
   const workActive = isYmd(work);
+  const assignedActive = isYmd(assigned);
+
+  if (assignedActive) {
+    if (preActive && pre < assigned) {
+      return {
+        ok: false,
+        message: 'วัน Pre-Mob ต้องไม่ก่อนวันมอบหมาย (Assign)',
+      };
+    }
+    if (mobActive && mob < assigned) {
+      return {
+        ok: false,
+        message: 'วัน Mob ต้องไม่ก่อนวันมอบหมาย (Assign)',
+      };
+    }
+    if (workActive && work < assigned) {
+      return {
+        ok: false,
+        message: 'วันเริ่มงานต้องไม่ก่อนวันมอบหมาย (Assign)',
+      };
+    }
+  }
 
   if (preActive && mobActive && pre >= mob) {
     return {
@@ -411,7 +436,19 @@ export function validateFinalClearanceDateOrder(opts: {
       message: 'วัน Mob (ขั้น 4) ต้องอยู่ก่อนวันเริ่มงาน (ขั้น 5) — ห้ามวันเดียวกันหรือหลังกว่า',
     };
   }
+  if (preActive && !mobActive && workActive && pre >= work) {
+    return {
+      ok: false,
+      message: 'วัน Pre-Mob ต้องอยู่ก่อนวันเริ่มงาน — ห้ามวันเดียวกันหรือหลังกว่า',
+    };
+  }
   return { ok: true };
+}
+
+/** วันมอบหมายจาก assignment (yyyy-mm-dd) */
+export function assignmentAssignedYmd(a: Pick<Assignment, 'assignedDate' | 'startDate'>): string {
+  const d = (a.assignedDate || a.startDate || '').trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : '';
 }
 
 /** ย้อนขั้น 1 ได้เมื่อยังไม่บันทึก Standby/Mob */

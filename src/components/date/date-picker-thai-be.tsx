@@ -22,12 +22,23 @@ export type DatePickerThaiBEProps = {
   /** แสดงปุ่มล้างค่า (ส่ง onClear) */
   allowClear?: boolean;
   onClear?: () => void;
+  /** จำกัดช่วงเลือก (yyyy-mm-dd ค.ศ.) — วันนอกช่วงจะ disabled ในปฏิทิน */
+  minYmd?: string | null;
+  maxYmd?: string | null;
 };
 
 /**
  * เลือกวันที่แบบไทย: ปุ่มแสดง dd/mm/yyyy พ.ศ. + ปฏิทินภาษาไทย หัวเดือนเป็นพ.ศ.
  * ใช้แทน &lt;input type="date" /&gt; ที่เบราว์เซอร์บังคับรูปแบบ US/EN
  */
+function ymdToLocalNoonDate(ymd: string): Date | undefined {
+  const s = (ymd || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return undefined;
+  const [y, m, d] = s.split('-').map(Number);
+  if (!y || !m || !d) return undefined;
+  return new Date(y, m - 1, d, 12, 0, 0, 0);
+}
+
 export function DatePickerThaiBE({
   value,
   onChange,
@@ -37,6 +48,8 @@ export function DatePickerThaiBE({
   placeholder = 'เลือกวันที่',
   allowClear,
   onClear,
+  minYmd,
+  maxYmd,
 }: DatePickerThaiBEProps) {
   const [open, setOpen] = React.useState(false);
   const date =
@@ -50,6 +63,9 @@ export function DatePickerThaiBE({
       endMonth: new Date(y + 50, 11, 31),
     };
   }, []);
+
+  const minDate = React.useMemo(() => ymdToLocalNoonDate(minYmd || ''), [minYmd]);
+  const maxDate = React.useMemo(() => ymdToLocalNoonDate(maxYmd || ''), [maxYmd]);
 
   const setNoon = (d: Date) => {
     const x = new Date(d);
@@ -90,6 +106,17 @@ export function DatePickerThaiBE({
           reverseYears
           startMonth={navBounds.startMonth}
           endMonth={navBounds.endMonth}
+          disabled={
+            minDate || maxDate
+              ? (d) => {
+                  const t = new Date(d);
+                  t.setHours(12, 0, 0, 0);
+                  if (minDate && t < minDate) return true;
+                  if (maxDate && t > maxDate) return true;
+                  return false;
+                }
+              : undefined
+          }
           onSelect={(d) => {
             if (d) {
               onChange(setNoon(d));
