@@ -70,16 +70,30 @@ export function resolvePoActiveAutoDailySyncKind(a: Assignment, dateYmd: string)
   }
 
   /** SB ตามฟิลด์ mobilization ก่อนวันเริ่มงาน — ให้ตรงกับช่องที่ตารางรายเดือนเปิดอยู่แล้ว */
+  const preMob = (a.mobPreMobDate || '').trim().slice(0, 10);
+  const hasPreMob = a.mobPreMobSkipped !== true && /^\d{4}-\d{2}-\d{2}$/.test(preMob);
   const mobStandby = (a.mobStandbyDate || '').trim().slice(0, 10);
   const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
   const hasNaturalSb = /^\d{4}-\d{2}-\d{2}$/.test(mobStandby);
   const hasMobStart = /^\d{4}-\d{2}-\d{2}$/.test(mobStart);
 
   /**
-   * วัน Mob (M1) — บันทึกจาก Final clearance เท่านั้น
-   * ห้าม auto สร้าง W/SB ทับวันเดียวกับ M1 (W เริ่มวันถัดไปหลัง M1)
+   * วัน Pre-Mob / Mob (M1) — บันทึกจาก Final clearance เท่านั้น
+   * ห้าม auto สร้าง W/SB ทับวันเดียวกับแถว clearance
    */
+  if (hasPreMob && dateYmd === preMob) {
+    return null;
+  }
   if (hasNaturalSb && dateYmd === mobStandby) {
+    return null;
+  }
+
+  /** ช่องว่างหลัง Pre-Mob ก่อนวัน Mob — เติม SB อัตโนมัติ (ให้แก้ในตารางได้ตั้งแต่ Premob) */
+  if (hasPreMob && hasNaturalSb && preMob < mobStandby && dateYmd > preMob && dateYmd < mobStandby) {
+    return 'standby_day';
+  }
+  /** มีแค่ Pre-Mob ยังไม่มี Mob — ยังไม่ auto วันหลัง Premob (รอขั้น Mob / ลงมือ) */
+  if (hasPreMob && !hasNaturalSb && !hasMobStart) {
     return null;
   }
 
@@ -123,6 +137,8 @@ export function computePoActiveAutoDailyRange(
   const today = thailandTodayYmd();
   const throughYmd = today;
 
+  const preMob = ((a.mobPreMobDate || '') as string).trim().slice(0, 10);
+  const hasPreMob = a.mobPreMobSkipped !== true && /^\d{4}-\d{2}-\d{2}$/.test(preMob);
   const mobStandby = ((a.mobStandbyDate || '') as string).trim().slice(0, 10);
   const mobStart = ((a.mobWorkingStartDate || '') as string).trim().slice(0, 10);
   const assignStart = ((a.startDate || '') as string).trim().slice(0, 10);
@@ -134,7 +150,12 @@ export function computePoActiveAutoDailyRange(
 
   let startRaw = '';
 
-  if (hasStandby && hasMobStart && mobStandby < mobStart) {
+  if (hasPreMob) {
+    /** ช่วงลงเวลาเริ่มที่ Pre-Mob — ช่องว่างถึง Mob เติม SB ใน sync */
+    startRaw = preMob;
+    if (hasStandby && mobStandby < startRaw) startRaw = mobStandby;
+    if (hasMobStart && mobStart < startRaw) startRaw = mobStart;
+  } else if (hasStandby && hasMobStart && mobStandby < mobStart) {
     startRaw = mobStandby;
   } else if (hasMobStart) {
     startRaw = mobStart;

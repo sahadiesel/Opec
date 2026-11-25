@@ -377,16 +377,20 @@ export function resolvePriorCycleWorkStartFloorYmd(
 
 /** วันแรกของ mobilization รอบใหม่ (Standby หรือเริ่มงาน — อันไหนมาก่อน) */
 export function resolveMobSegmentStartYmd(
-  a: Pick<Assignment, 'mobStandbyDate' | 'mobWorkingStartDate'>,
+  a: Pick<Assignment, 'mobStandbyDate' | 'mobWorkingStartDate' | 'mobPreMobDate' | 'mobPreMobSkipped'>,
 ): string | undefined {
+  const candidates: string[] = [];
+  const preMob = (a.mobPreMobDate || '').trim().slice(0, 10);
+  /** Pre-Mob ที่บันทึกแล้ว = วันแรกของช่วงลงเวลา (ไม่นับเมื่อข้าม Pre-Mob) */
+  if (a.mobPreMobSkipped !== true && /^\d{4}-\d{2}-\d{2}$/.test(preMob)) {
+    candidates.push(preMob);
+  }
   const mobStandby = (a.mobStandbyDate || '').trim().slice(0, 10);
   const mobStart = (a.mobWorkingStartDate || '').trim().slice(0, 10);
-  const hasStandby = /^\d{4}-\d{2}-\d{2}$/.test(mobStandby);
-  const hasMobStart = /^\d{4}-\d{2}-\d{2}$/.test(mobStart);
-  if (hasStandby && hasMobStart) return mobStandby <= mobStart ? mobStandby : mobStart;
-  if (hasStandby) return mobStandby;
-  if (hasMobStart) return mobStart;
-  return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(mobStandby)) candidates.push(mobStandby);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(mobStart)) candidates.push(mobStart);
+  if (!candidates.length) return undefined;
+  return candidates.reduce((earliest, y) => (y < earliest ? y : earliest));
 }
 
 /** ช่วง SB อัตโนมัติจากปุ่ม «หยุดแบบ standby» บนกระดาน PO Active */
@@ -568,8 +572,8 @@ export function* eachYmdInRemobGapBetweenCycles(
 
 /**
  * วันนี้ควรแสดง/รวมในตารางสรุปรายเดือน (และชม.ทำงาน) หรือไม่ — อิง mobilization จริงบนไซต์
- * - ขอบล่างปกติ = วันแรกของช่วง mobilization บนไซต์ = min(วัน Standby, วันเริ่มทำงาน) เทียบ PO Active — ไม่ใช้แค่วันเริ่มทำงาน
- *   (กันวัน SB ก่อนเริ่มงานถูกตัดจนช่องว่าง)
+ * - ขอบล่างปกติ = วันแรกของช่วง = min(Pre-Mob, วัน Mob/Standby, วันเริ่มทำงาน) เทียบ PO Active
+ *   (กันวัน SB ก่อนเริ่มงาน / หลัง Premob ถูกตัดจนช่องว่าง)
  * - หลังจบรอบแล้วเริ่มรอบใหม่ (mobWorkingStartDate เป็นเดือนถัดไป) ไม่ใช้วันเริ่มรอบใหม่ไปตัดเดือนเก่า —
  *   ใช้ช่วงมอบหมายเป็นขอบล่างสำหรับวันที่อยู่ก่อนรอบใหม่ (เดือนปฏิทินต่างจากเดือนของ mobWorkingStartDate
  *   หรือวัน ≤ mobLocationEndDate เมื่อจบรอบก่อนก่อนวันเริ่มรอบใหม่)
@@ -581,6 +585,8 @@ export function isYmdWithinAssignmentMobTimesheetWindow(
     Assignment,
     | 'mobStandbyDate'
     | 'mobWorkingStartDate'
+    | 'mobPreMobDate'
+    | 'mobPreMobSkipped'
     | 'startDate'
     | 'assignedDate'
     | 'mobLocationEndDate'
@@ -787,6 +793,8 @@ export function isYmdEditableForAssignmentTimesheet(
     | 'unassignedAt'
     | 'mobStandbyDate'
     | 'mobWorkingStartDate'
+    | 'mobPreMobDate'
+    | 'mobPreMobSkipped'
     | 'startDate'
     | 'assignedDate'
     | 'endDate'
@@ -799,7 +807,7 @@ export function isYmdEditableForAssignmentTimesheet(
     /** mobilization อื่นของคนเดียวกัน — ใช้เปิดลงมือในช่วงว่างข้ามเอกสาร */
     siblingAssignments?: readonly Pick<
       Assignment,
-      'id' | 'mobLocationEndDate' | 'mobStandbyDate' | 'mobWorkingStartDate'
+      'id' | 'mobLocationEndDate' | 'mobStandbyDate' | 'mobWorkingStartDate' | 'mobPreMobDate' | 'mobPreMobSkipped'
     >[];
   },
 ): boolean {

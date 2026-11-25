@@ -577,19 +577,27 @@ export function PoQuotaQueueCardShell({
 }
 
 /**
- * เฟส 3 — หน้า Assignments: เลือกชุด PO Active ก่อน แล้วค่อย drill-down มอบหมายตามชุด
+ * เลือกชุด PO Active ก่อน drill-down — ใช้หน้า Assignments และ Mobilization
  */
 export function PoAssignmentBundleLandingPanel({
   rows,
   customers,
   assignments,
   loading,
+  /** ค่าเริ่มต้น `/assignments` — หน้า Mob ส่ง `/mobilization` */
+  listBasePath = '/assignments',
+  mode = 'assignment',
 }: {
   rows: PoQuotaQueueRow[];
   customers: Customer[] | undefined;
   assignments: Assignment[] | undefined;
   loading: boolean;
+  listBasePath?: string;
+  mode?: 'assignment' | 'mobilization';
 }) {
+  const isMob = mode === 'mobilization';
+  const allListHref = `${listBasePath}?all=1`;
+
   if (loading) {
     return (
       <Card className="border-primary/20 shadow-md">
@@ -607,7 +615,7 @@ export function PoAssignmentBundleLandingPanel({
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <Layers className="h-5 w-5 text-primary" />
-            ไม่พบชุด PO Active สำหรับมอบหมาย
+            {isMob ? 'ไม่พบชุด PO Active สำหรับ Mobilization' : 'ไม่พบชุด PO Active สำหรับมอบหมาย'}
           </CardTitle>
           <CardDescription>
             ต้องมี Customer PO สายสัญญาที่ Active และสัญญาหลัก Active พร้อมบรรทัดโควต้า — ตรวจที่เมนู Customer PO หรือ{' '}
@@ -631,7 +639,10 @@ export function PoAssignmentBundleLandingPanel({
             </CardTitle>
             <CardDescription className="text-xs max-w-3xl leading-relaxed">
               แต่ละแถวคือ <strong className="font-semibold text-foreground">หนึ่งชุด</strong> ต่อลูกค้าและ Onshore/Offshore — กด{' '}
-              <strong className="font-semibold text-foreground">เข้าชุดนี้</strong> เพื่อดูรายการมอบหมายและสร้างการมอบหมายภายในชุดเดียวกัน
+              <strong className="font-semibold text-foreground">เข้าชุดนี้</strong>{' '}
+              {isMob
+                ? 'เพื่อดูรายชื่อคนทั้งหมดในชุดและเปิดหน้าเตรียมความพร้อม / Final clearance'
+                : 'เพื่อดูรายการมอบหมายและสร้างการมอบหมายภายในชุดเดียวกัน'}
               <span className="block mt-1.5 text-muted-foreground">
                 คอลัมน์ <strong>สถานะ MOB</strong> แยกจำนวนที่ <strong>ผ่าน</strong> เกณฑ์ขึ้นตารางลงเวลา กับ{' '}
                 <strong>รอตรวจสอบ</strong> (มอบหมายแล้วแต่ยังไม่ mobilization ครบตาม Wave Board)
@@ -664,8 +675,8 @@ export function PoAssignmentBundleLandingPanel({
               const poCodesLine = pos.map((p) => p.poCode).join(', ');
               const poIdSet = new Set(pos.map((p) => p.id));
               const { mobPassed, mobWaiting } = countMobTimesheetSlotsForPoScope(assignments, poIdSet);
-              const manageHref = `/assignments?poActiveBundleId=${encodeURIComponent(bundleKey)}`;
-              const assignHref = `${manageHref}&openDialog=1`;
+              const manageHref = `${listBasePath}?poActiveBundleId=${encodeURIComponent(bundleKey)}`;
+              const assignHref = `/assignments?poActiveBundleId=${encodeURIComponent(bundleKey)}&openDialog=1`;
               return (
                 <TableRow key={bundleKey} className="align-top">
                   <TableCell className="pl-6 py-4">
@@ -717,11 +728,13 @@ export function PoAssignmentBundleLandingPanel({
                           เข้าชุดนี้ <ChevronRight className="h-3 w-3 ml-0.5" />
                         </Link>
                       </Button>
-                      <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
-                        <Link href={assignHref}>
-                          มอบหมายใหม่… <ChevronRight className="h-3 w-3 ml-0.5" />
-                        </Link>
-                      </Button>
+                      {!isMob ? (
+                        <Button variant="outline" size="sm" className="h-8 text-xs" asChild>
+                          <Link href={assignHref}>
+                            มอบหมายใหม่… <ChevronRight className="h-3 w-3 ml-0.5" />
+                          </Link>
+                        </Button>
+                      ) : null}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -731,8 +744,10 @@ export function PoAssignmentBundleLandingPanel({
         </Table>
         <div className="border-t bg-muted/20 px-4 py-3 text-[11px] text-muted-foreground flex flex-wrap gap-x-4 gap-y-2 justify-between">
           <span>
-            ต้องการดูรายการมอบหมายทั้งระบบโดยไม่แยกชุด?{' '}
-            <Link href="/assignments?all=1" className="font-semibold text-primary underline">
+            {isMob
+              ? 'ต้องการดูคิวเตรียมความพร้อมทั้งระบบโดยไม่แยกชุด? '
+              : 'ต้องการดูรายการมอบหมายทั้งระบบโดยไม่แยกชุด? '}
+            <Link href={allListHref} className="font-semibold text-primary underline">
               โหมดแสดงทั้งหมด
             </Link>
           </span>

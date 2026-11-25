@@ -749,7 +749,8 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
         mobStep2Choice: 'PRE_MOB',
       });
       setClearanceEditMode(0);
-      if (isFinalClearanceStep3Done(assignment)) {
+      /** มี Mob หรือเริ่มงานแล้ว — ซิงค์ช่องว่างหลัง Premob ให้ขึ้นในตารางเพื่อแก้ได้ */
+      if (isFinalClearanceMobDone(assignment) || isFinalClearanceStep3Done(assignment)) {
         try {
           const r = await syncPoActiveAutoDailyForAssignment(firestore, assignment.id, currentUser as AppUser, {
             ignoreBundleAutoDisabled: true,
@@ -758,7 +759,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
             if (!opts?.quiet) {
               toast({
                 title: editing ? 'แก้ไขวัน Pre-Mob และซิงค์ตารางแล้ว' : 'บันทึก Pre-Mob และซิงค์ตารางแล้ว',
-                description: `วันที่ ${ymd} · สร้าง ${r.created} · อัปเดต ${r.updated}`,
+                description: `วันที่ ${ymd} · สร้าง ${r.created} · อัปเดต ${r.updated} · ช่วงหลัง Premob พร้อมแก้ในตาราง`,
               });
             }
             return true;
@@ -770,7 +771,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
       if (!opts?.quiet) {
         toast({
           title: editing ? 'แก้ไขวัน Pre-Mob แล้ว' : 'บันทึก Pre-Mob แล้ว',
-          description: `วันที่ ${ymd} · SB 8 ชม. (วางบิล / จ่ายลูกจ้าง)`,
+          description: `วันที่ ${ymd} · SB 8 ชม. (วางบิล / จ่ายลูกจ้าง) · ลงเวลาได้ตั้งแต่วันนี้เป็นต้นไป`,
         });
       }
       return true;
