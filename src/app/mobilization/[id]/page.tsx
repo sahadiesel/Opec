@@ -1933,7 +1933,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                         {assignment.poLineId && !primaryPoLine ? (
                           <p className="text-xs text-amber-800 dark:text-amber-200">กำลังโหลดบรรทัด PO…</p>
                         ) : null}
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                           <DatePickerThaiBE
                             className="h-11 flex-1 min-w-0"
                             value={htmlDateValueToTimestampMs(preMobDateDraft)}
@@ -2028,24 +2028,12 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                   : 'ข้ามวัน Pre-Mob — ไปขั้น Mob ได้เลย'}
                             </TooltipContent>
                           </Tooltip>
-                        </div>
-                        {isFinalClearancePreMobDone(assignment) ? (
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <p className="text-sm">
-                              {assignment.mobPreMobSkipped ? (
-                                <>ข้าม Pre-Mob แล้ว · {formatDateTimeThaiBE(assignment.mobPreMobRecordedAt)}</>
-                              ) : (
-                                <>
-                                  บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobPreMobDate)} · SB 8 ชม. ·{' '}
-                                  {formatDateTimeThaiBE(assignment.mobPreMobRecordedAt)}
-                                </>
-                              )}
-                            </p>
-                            {clearanceEditMode === 1 ? (
+                          {isFinalClearancePreMobDone(assignment) ? (
+                            clearanceEditMode === 1 ? (
                               <Button
                                 type="button"
                                 variant="ghost"
-                                className="h-11 shrink-0"
+                                className="h-11 w-36 shrink-0"
                                 disabled={clearanceSavingStep !== 0}
                                 onClick={cancelStepDateEdit}
                               >
@@ -2068,8 +2056,20 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                 <Pencil className="h-4 w-4 mr-1" />
                                 แก้ไข
                               </Button>
+                            )
+                          ) : null}
+                        </div>
+                        {isFinalClearancePreMobDone(assignment) ? (
+                          <p className="text-sm">
+                            {assignment.mobPreMobSkipped ? (
+                              <>ข้าม Pre-Mob แล้ว · {formatDateTimeThaiBE(assignment.mobPreMobRecordedAt)}</>
+                            ) : (
+                              <>
+                                บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobPreMobDate)} · SB 8 ชม. ·{' '}
+                                {formatDateTimeThaiBE(assignment.mobPreMobRecordedAt)}
+                              </>
                             )}
-                          </div>
+                          </p>
                         ) : (
                           <p className="text-xs text-muted-foreground">
                             Pre-Mob = SB 8 ชม. · หรือกด «ไม่มี Pre-Mob» หากไม่ต้องการวัน Standby ·
@@ -2086,7 +2086,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                         {assignment.poLineId && !primaryPoLine ? (
                           <p className="text-xs text-amber-800 dark:text-amber-200">กำลังโหลดบรรทัด PO…</p>
                         ) : null}
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                           <DatePickerThaiBE
                             className="h-11 flex-1 min-w-0"
                             value={htmlDateValueToTimestampMs(standbyDateDraft)}
@@ -2185,38 +2185,12 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                   : 'ข้ามวัน Mob — ไม่บันทึกวัน M1 · ตารางเวลาเริ่มที่วันทำงานเลย'}
                             </TooltipContent>
                           </Tooltip>
-                        </div>
-                        {isFinalClearanceMobDone(assignment) ? (
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="space-y-1 text-sm">
-                              {assignment.mobMobSkipped ? (
-                                <p>
-                                  ข้าม Mob แล้ว — ไม่มีวัน M1 · ตารางเวลาเริ่มที่วันทำงานเลย ·{' '}
-                                  {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
-                                </p>
-                              ) : (
-                                <p>
-                                  บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobStandbyDate)} ·{' '}
-                                  {assignment.mobStep2Choice
-                                    ? mobStep2ChoiceLabel(assignment.mobStep2Choice)
-                                    : mobStandbyMobDayChoiceLabel(assignment.mobStandbyDayEventType ?? 'mobilization_day')}{' '}
-                                  ({mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ?? 'MO'}) ·{' '}
-                                  {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
-                                </p>
-                              )}
-                              {assignment.mobStep2BillingCharge || assignment.mobStep2PayrollCharge ? (
-                                <p className="text-xs text-muted-foreground">
-                                  วางบิล {formatMobDayChargeSummary(assignment.mobStep2BillingCharge)} · จ่ายลูกจ้าง{' '}
-                                  {formatMobDayChargeSummary(assignment.mobStep2PayrollCharge)}
-                                  <span className="text-muted-foreground/80"> — ใช้เฉพาะคนนี้ในงานนี้</span>
-                                </p>
-                              ) : null}
-                            </div>
-                            {clearanceEditMode === 2 ? (
+                          {isFinalClearanceMobDone(assignment) ? (
+                            clearanceEditMode === 2 ? (
                               <Button
                                 type="button"
                                 variant="ghost"
-                                className="h-11 shrink-0"
+                                className="h-11 w-36 shrink-0"
                                 disabled={clearanceSavingStep !== 0}
                                 onClick={cancelStepDateEdit}
                               >
@@ -2239,7 +2213,33 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                 <Pencil className="h-4 w-4 mr-1" />
                                 แก้ไข
                               </Button>
+                            )
+                          ) : null}
+                        </div>
+                        {isFinalClearanceMobDone(assignment) ? (
+                          <div className="space-y-1 text-sm">
+                            {assignment.mobMobSkipped ? (
+                              <p>
+                                ข้าม Mob แล้ว — ไม่มีวัน M1 · ตารางเวลาเริ่มที่วันทำงานเลย ·{' '}
+                                {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
+                              </p>
+                            ) : (
+                              <p>
+                                บันทึกแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobStandbyDate)} ·{' '}
+                                {assignment.mobStep2Choice
+                                  ? mobStep2ChoiceLabel(assignment.mobStep2Choice)
+                                  : mobStandbyMobDayChoiceLabel(assignment.mobStandbyDayEventType ?? 'mobilization_day')}{' '}
+                                ({mobStandbyMobDayStatusCode(assignment.mobStandbyDayEventType) ?? 'MO'}) ·{' '}
+                                {formatDateTimeThaiBE(assignment.mobStandbyRecordedAt)}
+                              </p>
                             )}
+                            {assignment.mobStep2BillingCharge || assignment.mobStep2PayrollCharge ? (
+                              <p className="text-xs text-muted-foreground">
+                                วางบิล {formatMobDayChargeSummary(assignment.mobStep2BillingCharge)} · จ่ายลูกจ้าง{' '}
+                                {formatMobDayChargeSummary(assignment.mobStep2PayrollCharge)}
+                                <span className="text-muted-foreground/80"> — ใช้เฉพาะคนนี้ในงานนี้</span>
+                              </p>
+                            ) : null}
                           </div>
                         ) : (
                           <p className="text-xs text-muted-foreground">
@@ -2256,7 +2256,7 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                         {assignment.poLineId && !primaryPoLine ? (
                           <p className="text-xs text-amber-800 dark:text-amber-200">กำลังโหลดบรรทัด PO…</p>
                         ) : null}
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                           <DatePickerThaiBE
                             className="h-11 flex-1 min-w-0"
                             value={htmlDateValueToTimestampMs(workingStartDateDraft)}
@@ -2307,18 +2307,12 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                     : 'วันเริ่มงานต้องหลังวัน Mob — ระบบจะเติมวัน Standby ในช่วงว่างอัตโนมัติ · ถ้าต่อจากเดือนก่อนจะเติมวันทำงานต้นเดือนจนถึงก่อนวัน Mob'}
                             </TooltipContent>
                           </Tooltip>
-                        </div>
-                        {isFinalClearanceStep3Done(assignment) ? (
-                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <p className="text-sm">
-                              เริ่มแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobWorkingStartDate)} ·{' '}
-                              {formatDateTimeThaiBE(assignment.mobWorkingStartedAt)}
-                            </p>
-                            {clearanceEditMode === 3 ? (
+                          {isFinalClearanceStep3Done(assignment) ? (
+                            clearanceEditMode === 3 ? (
                               <Button
                                 type="button"
                                 variant="ghost"
-                                className="h-11 shrink-0"
+                                className="h-11 w-36 shrink-0"
                                 disabled={clearanceSavingStep !== 0}
                                 onClick={cancelStepDateEdit}
                               >
@@ -2341,8 +2335,14 @@ export default function MobilizationDetailPage({ params }: { params: Promise<{ i
                                 <Pencil className="h-4 w-4 mr-1" />
                                 แก้ไข
                               </Button>
-                            )}
-                          </div>
+                            )
+                          ) : null}
+                        </div>
+                        {isFinalClearanceStep3Done(assignment) ? (
+                          <p className="text-sm">
+                            เริ่มแล้ว — วันที่ {formatYmdLocalThaiBE(assignment.mobWorkingStartDate)} ·{' '}
+                            {formatDateTimeThaiBE(assignment.mobWorkingStartedAt)}
+                          </p>
                         ) : (
                           <p className="text-xs text-muted-foreground">
                             วันเริ่มงานต้องหลังวัน Mob (และไม่ก่อนวันมอบหมาย)
