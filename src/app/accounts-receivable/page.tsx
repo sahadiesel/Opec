@@ -97,7 +97,8 @@ export default function AccountsReceivablePage() {
   const [deleteTarget, setDeleteTarget] = useState<(AccountsReceivable & { id: string }) | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | ARStatus>('all');
+  /** ทุกรายการ | จ่ายแล้ว | ยังไม่จ่าย (OPEN / PARTIAL / OVERDUE) */
+  const [statusFilter, setStatusFilter] = useState<'all' | 'paid' | 'unpaid'>('all');
   const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
   const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
@@ -216,7 +217,8 @@ export default function AccountsReceivablePage() {
     const q = searchQuery.trim().toLowerCase();
     return monthFilteredItems.filter((item) => {
       const effective = resolveArEffectiveStatus(item, asOfYmd);
-      if (statusFilter !== 'all' && effective !== statusFilter) return false;
+      if (statusFilter === 'paid' && effective !== 'PAID') return false;
+      if (statusFilter === 'unpaid' && effective === 'PAID') return false;
       if (!q) return true;
       const customer = customerById.get(item.customerId);
       const haystack = [
@@ -537,12 +539,12 @@ export default function AccountsReceivablePage() {
           extraFilters={
             <DocumentStatusFilterSelect
               value={statusFilter}
-              onValueChange={(v) => setStatusFilter(v as 'all' | ARStatus)}
+              onValueChange={(v) => setStatusFilter(v as 'all' | 'paid' | 'unpaid')}
+              allLabel="ทุกรายการ"
+              ariaLabel="กรองตามการจ่าย"
               options={[
-                { value: 'OPEN', label: 'OPEN' },
-                { value: 'PARTIALLY_PAID', label: 'PARTIAL' },
-                { value: 'PAID', label: 'PAID' },
-                { value: 'OVERDUE', label: 'OVERDUE' },
+                { value: 'paid', label: 'เฉพาะที่จ่ายแล้ว' },
+                { value: 'unpaid', label: 'เฉพาะที่ยังไม่จ่าย' },
               ]}
             />
           }

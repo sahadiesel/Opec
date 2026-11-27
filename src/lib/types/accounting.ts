@@ -638,6 +638,17 @@ export interface CashbookEntry {
   grossPaymentAmount?: number;
   /** หัก ณ ที่จ่ายที่ไม่ได้ตัดจากบัญชีธนาคาร (รอนำส่งสรรพากร) */
   supplierWithholdingAmount?: number;
+  /**
+   * ยอดตามใบเสร็จ/ใบกำกับ (ก่อนหัก WHT ลูกค้า + ค่าธรรมเนียม) — รายการรับ CUSTOMER_RECEIPT
+   * เมื่อมีบรรทัดหักแยกใน cashbook
+   */
+  grossReceiptAmount?: number;
+  /** ลูกค้าหัก ณ ที่จ่าย (อ้างอิงใบกำกับ) — metadata บนรายการรับหลัก */
+  customerWithholdingAmount?: number;
+  /** รวมค่าธรรมเนียม/หักอื่นที่ตัดจากเงินเข้าบัญชี — metadata บนรายการรับหลัก */
+  bankFeeTotalAmount?: number;
+  /** บทบาทบรรทัดในชุดรับเงินลูกค้า — ช่วยจัดกลุ่มบน UI */
+  customerReceiptLineRole?: 'GROSS_IN' | 'CUSTOMER_WHT_OUT' | 'BANK_FEE_OUT';
 }
 
 /**
@@ -753,6 +764,18 @@ export interface MoneyReceipt {
   bankAccountId?: string;
   cashbookEntryId?: string;
   cashbookEntryNo?: string;
+  /** ยอดเข้าบัญชีจริงหลังหัก WHT ลูกค้า + ค่าธรรมเนียม (ถ้ามี) */
+  bankNetAmount?: number;
+  /** ลูกค้าหัก ณ ที่จ่าย ณ ตอนรับเงิน (จากใบกำกับ) */
+  customerWithholdingAmount?: number;
+  /** รายการหักอื่น / ค่าธรรมเนียมที่บันทึกลง cashbook */
+  otherDeductions?: { label: string; amount: number }[];
+  /** รายการ cashbook หัก WHT ลูกค้า (ถ้ามี) */
+  cashbookWhtEntryId?: string;
+  cashbookWhtEntryNo?: string;
+  /** รายการ cashbook ค่าธรรมเนียม/หักอื่น */
+  cashbookFeeEntryIds?: string[];
+  cashbookFeeEntryNos?: string[];
   createdAt: number;
   updatedAt: number;
   createdByUid?: string;

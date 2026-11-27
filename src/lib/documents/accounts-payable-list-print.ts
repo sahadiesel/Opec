@@ -30,7 +30,13 @@ export function describeAccountsPayableListPrintFilters(f: AccountsPayableListPr
     lines.push(`เดือนเอกสาร: ${period}`);
   }
   if (f.statusFilter && f.statusFilter !== 'all') {
-    lines.push(`สถานะ: ${f.statusFilter}`);
+    const statusLabel =
+      f.statusFilter === 'paid'
+        ? 'เฉพาะที่จ่ายแล้ว'
+        : f.statusFilter === 'unpaid'
+          ? 'เฉพาะที่ยังไม่จ่าย'
+          : f.statusFilter;
+    lines.push(`สถานะ: ${statusLabel}`);
   }
   if (f.searchTerm.trim()) {
     lines.push(`ค้นหา: "${f.searchTerm.trim()}"`);

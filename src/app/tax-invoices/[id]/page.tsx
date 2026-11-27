@@ -24,6 +24,7 @@ import {
   Paperclip,
   AlertTriangle,
   FileText,
+  Plus,
 } from 'lucide-react';
 import { useFirestore, useDoc, useMemoFirebase, useUser, useFirebaseApp, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, addDoc } from 'firebase/firestore';
@@ -92,6 +93,7 @@ import {
 import {
   recordTaxInvoicePaymentNotification,
   confirmPaymentAndIssueMoneyReceipt,
+  computeCustomerReceiptBankNet,
   expectedMoneyReceiptAmount,
 } from '@/lib/services/money-receipt-service';
 import { useDocumentPrintLocale } from '@/hooks/use-document-print-locale';
@@ -150,9 +152,12 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
   const [payNotifyLoading, setPayNotifyLoading] = useState(false);
   const [payConfirmLoading, setPayConfirmLoading] = useState(false);
   const [payConfirmOpen, setPayConfirmOpen] = useState(false);
-  const [payConfirmAmountStr, setPayConfirmAmountStr] = useState('');
   const [payConfirmEntryDate, setPayConfirmEntryDate] = useState('');
   const [payConfirmBankId, setPayConfirmBankId] = useState('');
+  /** ค่าธรรมเนียม / หักอื่น — ว่างหรือยอด 0 = ไม่ลงบรรทัด cashbook */
+  const [payConfirmFeeRows, setPayConfirmFeeRows] = useState<{ label: string; amountStr: string }[]>([
+    { label: 'ค่าธรรมเนียมการโอน', amountStr: '' },
+  ]);
   const [payConfirmIncludeSignature, setPayConfirmIncludeSignature] = useState(false);
   const [payConfirmIncludeStamp, setPayConfirmIncludeStamp] = useState(false);
   const issuerSignatureUrl = useUserSignatureUrl(currentUser?.id);
@@ -202,6 +207,27 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
     const w = Number(invoice.withholdingTaxAmount) || 0;
     return roundMoney2(invoice.totalAmount - w);
   }, [invoice]);
+
+  const payConfirmInvoiceWht = useMemo(() => {
+    if (!showWhtBlock || !invoice) return 0;
+    return roundMoney2(Number(invoice.withholdingTaxAmount) || 0);
+  }, [showWhtBlock, invoice]);
+
+  const payConfirmBankPreview = useMemo(() => {
+    const gross = invoice ? expectedMoneyReceiptAmount(invoice) : 0;
+    /** พรีวิวข้ามแถวที่ยังกรอกไม่ครบ — ตอนยืนยันค่อยบังคับชื่อรายการเมื่อมียอด */
+    const readyFees = payConfirmFeeRows
+      .map((r) => ({
+        label: r.label.trim(),
+        amount: Number(String(r.amountStr).replace(/,/g, '')) || 0,
+      }))
+      .filter((r) => r.label && r.amount > 0.005);
+    return computeCustomerReceiptBankNet({
+      grossAmount: gross,
+      customerWithholdingAmount: payConfirmInvoiceWht,
+      otherDeductions: readyFees,
+    });
+  }, [payConfirmInvoiceWht, payConfirmFeeRows, invoice]);
 
   const whtRateDisplay = Number(invoice?.withholdingTaxRatePercentOnDocument ?? 3);
 
@@ -774,9 +800,9 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       toast({ variant: 'destructive', title: 'เฉพาะบัญชี/ผู้ดูแลระบบ' });
       return;
     }
-    setPayConfirmAmountStr(String(expectedMoneyReceiptAmount(invoice)));
     setPayConfirmEntryDate(timestampToHtmlDateValue(Date.now()));
     setPayConfirmBankId('');
+    setPayConfirmFeeRows([{ label: 'ค่าธรรมเนียมการโอน', amountStr: '' }]);
     setPayConfirmIncludeSignature(false);
     setPayConfirmIncludeStamp(false);
     setPayConfirmOpen(true);
@@ -792,15 +818,45 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'เลือกบัญชีธนาคารที่รับเงิน' });
       return;
     }
-    const raw = payConfirmAmountStr.replace(/,/g, '').trim();
-    const amount = roundMoney2(Number(raw));
+    if (!payConfirmEntryDate.trim()) {
+      toast({ variant: 'destructive', title: 'ข้อมูลไม่ครบ', description: 'ระบุวันที่รับเงิน' });
+      return;
+    }
+    const amount = expectedMoneyReceiptAmount(invoice);
     if (!Number.isFinite(amount) || amount <= 0) {
-      toast({ variant: 'destructive', title: 'ยอดไม่ถูกต้อง', description: 'กรอกตัวเลขยอดรับเงิน' });
+      toast({ variant: 'destructive', title: 'ยอดไม่ถูกต้อง', description: 'ยอดตามใบกำกับไม่ถูกต้อง' });
+      return;
+    }
+    let fees: { label: string; amount: number }[] = [];
+    try {
+      const preview = computeCustomerReceiptBankNet({
+        grossAmount: amount,
+        customerWithholdingAmount: payConfirmInvoiceWht,
+        otherDeductions: payConfirmFeeRows.map((r) => ({
+          label: r.label,
+          amount: Number(String(r.amountStr).replace(/,/g, '')) || 0,
+        })),
+      });
+      fees = preview.fees;
+      if (preview.bankNet <= 0.005) {
+        toast({
+          variant: 'destructive',
+          title: 'ยอดเข้าบัญชีไม่ถูกต้อง',
+          description: 'ยอดเข้าบัญชีจริงต้องมากกว่า 0 — ตรวจยอดหัก',
+        });
+        return;
+      }
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'รายการหักไม่ครบ',
+        description: e instanceof Error ? e.message : 'ตรวจชื่อรายการและยอดหัก',
+      });
       return;
     }
     setPayConfirmLoading(true);
     try {
-      const { receiptId, receiptNo, cashbookEntryNo } = await confirmPaymentAndIssueMoneyReceipt(
+      const { receiptId, receiptNo, cashbookEntryNo, bankNetAmount } = await confirmPaymentAndIssueMoneyReceipt(
         firestore,
         invoice,
         currentUser as User,
@@ -808,6 +864,8 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
           bankAccountId: payConfirmBankId.trim(),
           amount,
           entryDate: payConfirmEntryDate.trim(),
+          customerWithholdingAmount: payConfirmInvoiceWht > 0.005 ? payConfirmInvoiceWht : undefined,
+          otherDeductions: fees,
           receiverSignatureImageUrl:
             payConfirmIncludeSignature && issuerSignatureUrl ? issuerSignatureUrl : undefined,
           companyStampImageUrl:
@@ -819,7 +877,7 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
       setPayConfirmOpen(false);
       toast({
         title: 'ออกใบเสร็จและลง cashbook แล้ว',
-        description: `${receiptNo} · รายการรับ ${cashbookEntryNo}`,
+        description: `${receiptNo} · รับ ${cashbookEntryNo} · เข้าบัญชี ฿${bankNetAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       });
       router.push(`/receipts/${receiptId}`);
     } catch (e) {
@@ -1676,35 +1734,136 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
             if (!o) setPayConfirmLoading(false);
           }}
         >
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>ยืนยันรับเงิน · ออกใบเสร็จ · ลง Cashbook</DialogTitle>
               <DialogDescription>
-                ตรวจยอดที่รับจริงและเลือกบัญชีธนาคารที่เงินเข้า — ระบบจะสร้างใบเสร็จรับเงิน รายการรับในรายรับรายจ่าย
-                และเพิ่มยอดคงเหลือในบัญชีที่เลือก (ขั้นตอนเดียวกัน)
+                ใบเสร็จออกตามยอดใบกำกับ — ส่วน cashbook แจงบรรทัดรับ / หัก ณ ที่จ่าย / ค่าธรรมเนียม แล้วเทียบยอดเข้าบัญชีจริงกับ bookbank ก่อนยืนยัน
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="pay-confirm-amt">ยอดรับ ({invoice?.currency ?? 'THB'})</Label>
-                <Input
-                  id="pay-confirm-amt"
-                  inputMode="decimal"
-                  value={payConfirmAmountStr}
-                  onChange={(e) => setPayConfirmAmountStr(e.target.value)}
-                  placeholder="0.00"
-                  className="font-mono"
-                />
-                {invoice ? (
-                  <p className="text-xs text-muted-foreground">
-                    ใบเสร็จออกตามยอดรวมใบกำกับ (ฐานภาษี + VAT){' '}
-                    <span className="font-semibold text-foreground">
-                      {invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                    {showWhtBlock ? ' — ไม่หัก ณ ที่จ่ายในใบเสร็จ' : null}
+              <div className="space-y-2 rounded-lg border p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">แจงรายการลง Cashbook</p>
+                <div className="flex items-start justify-between gap-3 text-sm">
+                  <div>
+                    <p className="font-medium">ยอดตามใบกำกับ (รับ)</p>
+                    <p className="text-xs text-muted-foreground">= ยอดใบเสร็จ · ไม่หักในเอกสารใบเสร็จ</p>
+                  </div>
+                  <p className="font-mono font-semibold tabular-nums text-emerald-700 shrink-0">
+                    +{' '}
+                    {(invoice ? expectedMoneyReceiptAmount(invoice) : 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
                   </p>
-                ) : null}
+                </div>
+                {payConfirmInvoiceWht > 0.005 ? (
+                  <div className="flex items-start justify-between gap-3 text-sm border-t pt-2">
+                    <div>
+                      <p className="font-medium">ลูกค้าหักภาษี ณ ที่จ่าย</p>
+                      <p className="text-xs text-muted-foreground">
+                        ตามใบกำกับ · ลงเป็นบรรทัดหักใน cashbook
+                        {whtRateDisplay > 0 ? ` (${whtRateDisplay}%)` : ''}
+                      </p>
+                    </div>
+                    <p className="font-mono font-semibold tabular-nums text-red-700 shrink-0">
+                      −{' '}
+                      {payConfirmInvoiceWht.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground border-t pt-2">
+                    ไม่มียอดหัก ณ ที่จ่ายบนใบกำกับ — ไม่สร้างบรรทัดหัก WHT
+                  </p>
+                )}
+                <div className="space-y-2 border-t pt-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium">ค่าธรรมเนียม / หักอื่น</p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() =>
+                        setPayConfirmFeeRows((prev) => [...prev, { label: '', amountStr: '' }])
+                      }
+                    >
+                      <Plus className="mr-1 h-3.5 w-3.5" />
+                      เพิ่มรายการ
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-snug">
+                    ถ้าว่างหรือยอด 0 จะไม่ลงบรรทัดใน cashbook (ไม่แสดงยอด 0)
+                  </p>
+                  {payConfirmFeeRows.map((row, idx) => (
+                    <div key={`fee-row-${idx}`} className="grid grid-cols-[1fr_7.5rem_auto] gap-2 items-center">
+                      <Input
+                        value={row.label}
+                        onChange={(e) =>
+                          setPayConfirmFeeRows((prev) =>
+                            prev.map((r, i) => (i === idx ? { ...r, label: e.target.value } : r)),
+                          )
+                        }
+                        placeholder="เช่น ค่าธรรมเนียมการโอน"
+                        className="h-9 text-sm"
+                      />
+                      <Input
+                        inputMode="decimal"
+                        value={row.amountStr}
+                        onChange={(e) =>
+                          setPayConfirmFeeRows((prev) =>
+                            prev.map((r, i) => (i === idx ? { ...r, amountStr: e.target.value } : r)),
+                          )
+                        }
+                        placeholder="0.00"
+                        className="h-9 font-mono text-sm"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 shrink-0"
+                        disabled={payConfirmFeeRows.length <= 1}
+                        onClick={() =>
+                          setPayConfirmFeeRows((prev) => prev.filter((_, i) => i !== idx))
+                        }
+                        title="ลบรายการ"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  {payConfirmBankPreview.feeTotal > 0.005 ? (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">รวมหักอื่น</span>
+                      <span className="font-mono tabular-nums text-red-700">
+                        −{' '}
+                        {payConfirmBankPreview.feeTotal.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex items-center justify-between gap-3 rounded-md bg-slate-950 text-slate-50 px-3 py-2.5 mt-1">
+                  <div>
+                    <p className="text-xs text-slate-300">ยอดเข้าบัญชีจริง (เทียบ bookbank)</p>
+                    <p className="text-[11px] text-slate-400">ระบบจะปรับยอดบัญชีธนาคารตามตัวเลขนี้</p>
+                  </div>
+                  <p className="text-lg font-black font-mono tabular-nums shrink-0">
+                    ฿{' '}
+                    {payConfirmBankPreview.bankNet.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </p>
+                </div>
               </div>
+
               <div className="space-y-2">
                 <Label htmlFor="pay-confirm-date">วันที่รับเงิน (ลงบัญชี)</Label>
                 <Input
@@ -1771,9 +1930,13 @@ export default function TaxInvoiceDetailPage({ params }: { params: Promise<{ id:
               <Button variant="outline" onClick={() => setPayConfirmOpen(false)} disabled={payConfirmLoading}>
                 ยกเลิก
               </Button>
-              <Button type="button" onClick={() => void handleSubmitPayConfirmIssueReceipt()} disabled={payConfirmLoading}>
+              <Button
+                type="button"
+                onClick={() => void handleSubmitPayConfirmIssueReceipt()}
+                disabled={payConfirmLoading || payConfirmBankPreview.bankNet <= 0.005}
+              >
                 {payConfirmLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                ยืนยันและออกใบเสร็จ
+                ยืนยัน · ออกใบเสร็จ · ลง Cashbook
               </Button>
             </DialogFooter>
           </DialogContent>

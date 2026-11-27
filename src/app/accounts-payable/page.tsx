@@ -95,7 +95,8 @@ export default function AccountsPayablePage() {
   const { data: vendors } = useCollection<Vendor>(vendorsQuery as any);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | APStatus>('all');
+  /** ทุกรายการ | จ่ายแล้ว | ยังไม่จ่าย — แบบเดียวกับหน้าลูกหนี้ */
+  const [statusFilter, setStatusFilter] = useState<'all' | 'paid' | 'unpaid'>('all');
   const [yearFilterCe, setYearFilterCe] = useState(() => currentYearCe());
   const [monthScope, setMonthScope] = useState(() => currentMonthMm());
   const [printDialogOpen, setPrintDialogOpen] = useState(false);
@@ -125,7 +126,8 @@ export default function AccountsPayablePage() {
     return monthFilteredItems.filter((item) => {
       const cancelled = isApFromCancelledVendorBill(item, cancelledApKeys);
       const effective = cancelled ? 'CANCELLED' : resolveApEffectiveStatus(item, asOfYmd);
-      if (statusFilter !== 'all' && effective !== statusFilter) return false;
+      if (statusFilter === 'paid' && effective !== 'PAID') return false;
+      if (statusFilter === 'unpaid' && (effective === 'PAID' || effective === 'CANCELLED')) return false;
       if (!q) return true;
       const vendor = vendorById.get(item.vendorId);
       const haystack = [
@@ -359,12 +361,12 @@ export default function AccountsPayablePage() {
           extraFilters={
             <DocumentStatusFilterSelect
               value={statusFilter}
-              onValueChange={(v) => setStatusFilter(v as 'all' | APStatus)}
+              onValueChange={(v) => setStatusFilter(v as 'all' | 'paid' | 'unpaid')}
+              allLabel="ทุกรายการ"
+              ariaLabel="กรองตามการจ่าย"
               options={[
-                { value: 'OPEN', label: 'OPEN' },
-                { value: 'PARTIALLY_PAID', label: 'PARTIAL' },
-                { value: 'PAID', label: 'PAID' },
-                { value: 'OVERDUE', label: 'OVERDUE' },
+                { value: 'paid', label: 'เฉพาะที่จ่ายแล้ว' },
+                { value: 'unpaid', label: 'เฉพาะที่ยังไม่จ่าย' },
               ]}
             />
           }
