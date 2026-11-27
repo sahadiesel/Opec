@@ -19,9 +19,11 @@ import {
 } from '@/lib/payroll/payroll-office-wht-model';
 import {
   workerPayrollLineEmployeeAssistanceFundAmount,
+  workerPayrollLineLumpSumWhtAmount,
+  workerPayrollLinePitAmount,
   workerPayrollLineSocialSecurityAmount,
-  workerPayrollLineWithholdingAmount,
 } from '@/lib/payroll/payroll-worker-wht-model';
+import { isLumpSumPayrollLine } from '@/lib/payroll/lump-sum-worker';
 
 export type DashboardMonitorTotals = {
   salesBeforeTax: number;
@@ -127,6 +129,21 @@ function addPayrollSlots(
   target.fund = round2(target.fund + extras.fund);
 }
 
+/**
+ * ยอดหัก ณ ที่จ่ายของบรรทัดลูกจ้างบนแดชบอร์ด —
+ * ลูกจ้างบริษัท = ภงด.1 · ลูกจ้างเหมา = 50ทวิ (รวมกรณีบรรทัดเก่าที่ไม่มี engagement kind แต่มียอด lump_sum_wht)
+ */
+function dashboardWorkerWithholdingAmount(line: PayrollBatchLine): number {
+  const lump = workerPayrollLineLumpSumWhtAmount(line);
+  if (isLumpSumPayrollLine(line)) return lump;
+  if (line.payrollEngagementKind !== 'COMPANY' && lump > 0.005) return lump;
+  return workerPayrollLinePitAmount(line);
+}
+
+function emptyPayBucket() {
+  return { salary: 0, socialSecurity: 0, wht: 0, fund: 0 };
+}
+
 export function computeDashboardMonitorTotals(input: {
   yearCe: number;
   monthScope: string;
@@ -180,8 +197,9 @@ export function computeDashboardMonitorTotals(input: {
     );
   }
 
-  const officeSlots = new Map<string, PaySlot>();
-  const officeExtra = { gross: 0, socialSecurity: 0, wht: 0, fund: 0 };
+  const officeStaffSlots = new Map<string, PaySlot>();
+  const executiveSlots = new Map<string, PaySlot>();
+  const emptyExtra = () => ({ gross: 0, socialSecurity: 0, wht: 0, fund: 0 });
   for (const { run, line, kind } of input.officeLines) {
     if (OFFICE_RUN_SKIP.has(run.status)) continue;
     const periodYm = ymOf(run.payrollMonth) || ymOf(line.payrollMonth);
@@ -194,47 +212,71 @@ export function computeDashboardMonitorTotals(input: {
       fund: officePayrollLineEmployeeAssistanceFundAmount(line),
       periodYm,
     };
-    const key = `${kind === 'executive' ? 'executive' : 'office'}|${line.staffId}|${periodYm}`;
-    officeSlots.set(key, newer(officeSlots.get(key), slot));
+    const isExecutive = kind === 'executive';
+    const key = `${isExecutive ? 'executive' : 'office'}|${line.staffId}|${periodYm}`;
+    const map = isExecutive ? executiveSlots : officeStaffSlots;
+    map.set(key, newer(map.get(key), slot));
   }
 
-  const workerSlots = new Map<string, PaySlot>();
-  const workerExtra = { gross: 0, socialSecurity: 0, wht: 0, fund: 0 };
+  const companyWorkerSlots = new Map<string, PaySlot>();
+  const lumpSumWorkerSlots = new Map<string, PaySlot>();
+  const companyWorkerExtra = emptyExtra();
+  const lumpSumWorkerExtra = emptyExtra();
   for (const { batch, line } of input.workerLines) {
     if (batch.status === 'DRAFT') continue;
     const periodYm = ymOf(line.periodEndDate) || ymOf(line.periodStartDate);
     if (!inScope(periodYm, yearCe, monthScope)) continue;
+    const wht = dashboardWorkerWithholdingAmount(line);
+    const lumpWht = workerPayrollLineLumpSumWhtAmount(line);
+    const isLump =
+      isLumpSumPayrollLine(line) ||
+      (line.payrollEngagementKind !== 'COMPANY' && lumpWht > 0.005);
     const slot: PaySlot = {
       recency: Number(batch.updatedAt) || 0,
       gross: Number(line.grossAmount) || 0,
-      employeeSso: workerPayrollLineSocialSecurityAmount(line),
-      wht: workerPayrollLineWithholdingAmount(line),
-      fund: workerPayrollLineEmployeeAssistanceFundAmount(line),
+      employeeSso: isLump ? 0 : workerPayrollLineSocialSecurityAmount(line),
+      wht,
+      fund: isLump ? 0 : workerPayrollLineEmployeeAssistanceFundAmount(line),
       periodYm,
     };
     if (batch.batchType === 'SUPPLEMENTAL') {
-      workerExtra.gross = round2(workerExtra.gross + slot.gross);
-      workerExtra.socialSecurity = round2(
-        workerExtra.socialSecurity + ssoCombinedRemitAmount(cappedEmployeeSso(slot.employeeSso, periodYm)),
-      );
-      workerExtra.wht = round2(workerExtra.wht + slot.wht);
-      workerExtra.fund = round2(workerExtra.fund + slot.fund);
+      const extra = isLump ? lumpSumWorkerExtra : companyWorkerExtra;
+      extra.gross = round2(extra.gross + slot.gross);
+      if (!isLump) {
+        extra.socialSecurity = round2(
+          extra.socialSecurity + ssoCombinedRemitAmount(cappedEmployeeSso(slot.employeeSso, periodYm)),
+        );
+        extra.fund = round2(extra.fund + slot.fund);
+      }
+      extra.wht = round2(extra.wht + slot.wht);
       continue;
     }
     const key = `${line.workerId}|${periodYm}`;
-    workerSlots.set(key, newer(workerSlots.get(key), slot));
+    const map = isLump ? lumpSumWorkerSlots : companyWorkerSlots;
+    map.set(key, newer(map.get(key), slot));
   }
 
-  const office = { salary: 0, socialSecurity: 0, wht: 0, fund: 0 };
-  const worker = { salary: 0, socialSecurity: 0, wht: 0, fund: 0 };
-  addPayrollSlots(officeSlots, officeExtra, office);
-  addPayrollSlots(workerSlots, workerExtra, worker);
+  const officeStaff = emptyPayBucket();
+  const executive = emptyPayBucket();
+  const companyWorker = emptyPayBucket();
+  const lumpSumWorker = emptyPayBucket();
+  addPayrollSlots(officeStaffSlots, emptyExtra(), officeStaff);
+  addPayrollSlots(executiveSlots, emptyExtra(), executive);
+  addPayrollSlots(companyWorkerSlots, companyWorkerExtra, companyWorker);
+  addPayrollSlots(lumpSumWorkerSlots, lumpSumWorkerExtra, lumpSumWorker);
 
-  totals.officeSalary = office.salary;
-  totals.workerSalary = worker.salary;
-  totals.socialSecurity = round2(office.socialSecurity + worker.socialSecurity);
-  totals.payrollWht = round2(office.wht + worker.wht);
-  totals.assistanceFund = round2(office.fund + worker.fund);
+  totals.officeSalary = round2(officeStaff.salary + executive.salary);
+  totals.workerSalary = round2(companyWorker.salary + lumpSumWorker.salary);
+  totals.socialSecurity = round2(
+    officeStaff.socialSecurity + executive.socialSecurity + companyWorker.socialSecurity,
+  );
+  /** ออฟฟิศ + ลูกจ้างบริษัท + ลูกจ้างเหมา + นายจ้าง/ผู้บริหาร */
+  totals.payrollWht = round2(
+    officeStaff.wht + companyWorker.wht + lumpSumWorker.wht + executive.wht,
+  );
+  totals.assistanceFund = round2(
+    officeStaff.fund + executive.fund + companyWorker.fund,
+  );
   totals.vatDifference = round2(totals.salesVat - totals.purchaseVat);
   return totals;
 }

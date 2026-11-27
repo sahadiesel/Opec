@@ -510,7 +510,7 @@ export default function AccountingDashboardPage() {
             <StatCard title="เงินเดือนออฟฟิศ" value={monitorBaht(monitorTotals.officeSalary, payrollMonitorLoading)} sub="พนักงานออฟฟิศ + ผู้บริหาร · ก่อนหัก" icon={Building2} colorClass="border-l-violet-600" />
             <StatCard title="เงินเดือนลูกจ้าง" value={monitorBaht(monitorTotals.workerSalary, payrollMonitorLoading)} sub="บริษัท + เหมา · ก่อนหัก" icon={Coins} colorClass="border-l-fuchsia-600" />
             <StatCard title="ประกันสังคม" value={monitorBaht(monitorTotals.socialSecurity, payrollMonitorLoading)} sub="ลูกจ้าง + นายจ้าง" icon={Wallet} colorClass="border-l-teal-600" />
-            <StatCard title="หัก ณ ที่จ่าย" value={monitorBaht(monitorTotals.payrollWht, payrollMonitorLoading)} sub="เงินเดือนออฟฟิศ + ลูกจ้าง" icon={FileBadge} colorClass="border-l-red-600" />
+            <StatCard title="หัก ณ ที่จ่าย" value={monitorBaht(monitorTotals.payrollWht, payrollMonitorLoading)} sub="ออฟฟิศ · ลูกจ้างบริษัท · ลูกจ้างเหมา · นายจ้าง" icon={FileBadge} colorClass="border-l-red-600" />
             <StatCard title="หักเข้ากองทุน" value={monitorBaht(monitorTotals.assistanceFund, payrollMonitorLoading)} sub="กองทุนสงเคราะห์ลูกจ้าง" icon={History} colorClass="border-l-slate-600" />
             <StatCard
               title="ส่วนต่างภาษี"
